@@ -20,6 +20,23 @@ Category: **Access**.
 
 The checks run only for compliance areas not declared covered by the destination chat pool. When both areas are uncovered, both questions are sent to the selected System One model. The model also receives the request messages, so assess its own pool declarations before selecting it. See [content guard setup and behavior](settings.md#access-and-content-guard).
 
+### chat.prompt
+
+Category: **Chat**.
+
+| Key | Input / choices | Meaning | Restart |
+|---|---|---|---|
+| `chat.prompt.enabled` | Boolean | Master switch for the deployment-wide system prompt of a person's chat. Ships on. | No |
+| `chat.prompt.text` | Text | Standing instructions added to the system message of every person's chat while enabled; the field shows the built-in prompt while nothing is stored, and its reset button restores it. Agents and Dots keep their own instructions. | No |
+
+### chat.voice
+
+Category: **Chat**.
+
+| Key | Input / choices | Meaning | Restart |
+|---|---|---|---|
+| `chat.voice.directive` | Text | Standing instructions for voice turns, added to the system message of every voice-mode chat. The field shows the built-in directive while nothing is stored; its reset button restores it. | No |
+
 ### chat.ocr
 
 Category: **Chat**.
@@ -50,6 +67,7 @@ Category: **Chat**.
 | `chat.compaction.keep_recent_turns` | Integer | Turns kept verbatim at the end of the conversation. | No |
 | `chat.compaction.min_turns_to_compact` | Integer | Never compact a conversation shorter than this many turns. | No |
 | `chat.compaction.summary_max_tokens` | Integer | Token budget for the summary that replaces the compacted turns. | No |
+| `chat.compaction.summary_prompt` | Text | The summariser's instructions. The field shows the built-in prompt while nothing is stored; its reset button restores it. | No |
 
 ### chat.turns
 

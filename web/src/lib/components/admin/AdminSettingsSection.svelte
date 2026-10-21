@@ -16,7 +16,7 @@
 		<div><h2 class="card-title text-base">{t(titleKey)}</h2><p class="m-0 text-sm text-base-content/70">{t(blurbKey)}</p></div>
 		<div class="flex flex-col gap-3">
 			{#if master}<AdminSettingsField field={master} draft={drafts[master.key] ?? ''} error={errors[master.key]} {onchange} {onclear} />{/if}
-			{#if section.enabled === false && fields.length > 0}
+			{#if section.enabled === false && fields.length > 1}
 				<details open={fields.some((field) => errors[field.key])}><summary class="link link-hover cursor-pointer text-sm">{t('settings-show-fields', { count: fields.length })}</summary><div class="grid grid-cols-1 gap-x-4 gap-y-3 pt-3 sm:grid-cols-2">{#each fields as field (field.key)}<AdminSettingsField {field} draft={drafts[field.key] ?? ''} error={errors[field.key]} {onchange} {onclear} />{/each}</div></details>
 			{:else}<div class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">{#each fields as field (field.key)}<AdminSettingsField {field} draft={drafts[field.key] ?? ''} error={errors[field.key]} {onchange} {onclear} />{/each}</div>{/if}
 		</div>

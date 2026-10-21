@@ -624,6 +624,163 @@ async fn a_submitted_turn_streams_over_the_events_endpoint() {
 }
 
 #[tokio::test]
+async fn the_admin_chat_prompt_rides_in_the_persons_system_message() {
+    let upstream = MockServer::start().await;
+    mount_streaming_upstream(&upstream, &["Hi"], 0).await;
+
+    let (state, cookie) = setup(&upstream.uri()).await;
+    let app = router(state.clone());
+
+    aiplane_core::server::settings::store(
+        &state.db,
+        state.crypto.as_ref(),
+        &[
+            ("chat.prompt.enabled".to_owned(), "true".to_owned()),
+            (
+                "chat.prompt.text".to_owned(),
+                "Always answer in plain German.".to_owned(),
+            ),
+        ],
+    )
+    .await
+    .unwrap();
+    state.reload_settings().await;
+
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let resp = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"hi"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let events = app
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/chat/sessions/{}/events", session.id),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let frames = sse_frames(&body_string(events).await);
+    assert!(
+        frames
+            .iter()
+            .any(|(name, frame)| { name == "turn_finalized" && frame["status"] == "completed" }),
+        "unexpected frames: {frames:?}"
+    );
+
+    let body = upstream
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter_map(|request| serde_json::from_slice::<Value>(&request.body).ok())
+        .find(|body| {
+            body["messages"].as_array().is_some_and(|messages| {
+                messages
+                    .iter()
+                    .any(|message| message["role"] == "user" && message["content"] == "hi")
+            })
+        })
+        .expect("the turn reached the upstream");
+    let system = body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["role"] == "system")
+        .map(|message| message["content"].as_str().unwrap_or_default())
+        .collect::<String>();
+    assert!(
+        system.contains("Always answer in plain German."),
+        "the admin prompt is missing from the system message: {system}"
+    );
+    assert!(
+        system.contains("How a turn works here"),
+        "the turn-discipline rule must stay first: {system}"
+    );
+}
+
+#[tokio::test]
+async fn the_operators_voice_directive_rides_in_a_voice_turns_system_message() {
+    let upstream = MockServer::start().await;
+    mount_streaming_upstream(&upstream, &["Hi"], 0).await;
+
+    let (state, cookie) = setup(&upstream.uri()).await;
+    let app = router(state.clone());
+
+    aiplane_core::server::settings::store(
+        &state.db,
+        state.crypto.as_ref(),
+        &[(
+            "chat.voice.directive".to_owned(),
+            "Keep answers to one sentence.".to_owned(),
+        )],
+    )
+    .await
+    .unwrap();
+    state.reload_settings().await;
+
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let resp = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"hi","voice":true}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let events = app
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/chat/sessions/{}/events", session.id),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let frames = sse_frames(&body_string(events).await);
+    assert!(
+        frames
+            .iter()
+            .any(|(name, frame)| { name == "turn_finalized" && frame["status"] == "completed" }),
+        "unexpected frames: {frames:?}"
+    );
+
+    let body = upstream
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter_map(|request| serde_json::from_slice::<Value>(&request.body).ok())
+        .find(|body| {
+            body["messages"].as_array().is_some_and(|messages| {
+                messages
+                    .iter()
+                    .any(|message| message["role"] == "user" && message["content"] == "hi")
+            })
+        })
+        .expect("the turn reached the upstream");
+    let system = body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["role"] == "system")
+        .map(|message| message["content"].as_str().unwrap_or_default())
+        .collect::<String>();
+    assert!(
+        system.contains("Keep answers to one sentence."),
+        "the voice directive is missing from the system message: {system}"
+    );
+}
+
+#[tokio::test]
 async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
     let upstream = MockServer::start().await;
     Mock::given(method("POST"))

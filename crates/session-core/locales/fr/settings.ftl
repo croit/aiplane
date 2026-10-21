@@ -7,6 +7,7 @@
 
 settings-save = Enregistrer la section
 settings-saved = Enregistré. Actif dès la prochaine requête.
+settings-reset-default = Rétablir la valeur par défaut
 settings-restart-note = Les champs marqués « redémarrage » ne sont lus qu'au démarrage ; les modifier exige un redémarrage.
 settings-secret-set = enregistré — saisissez une nouvelle valeur pour le remplacer
 settings-secret-unset = non défini
@@ -22,10 +23,14 @@ settings-restart-pending-body = Ces réglages sont enregistrés mais ne prendron
 
 # ─── Cartes de section ───────────────────────────────────────────────────────
 
+settings-s-chat-prompt = Prompt de chat
+settings-s-chat-prompt-blurb = Instructions permanentes que le modèle suit dans chaque conversation d'une personne.
 settings-s-chat-ocr = OCR des documents
 settings-s-chat-ocr-blurb = Transformer les PDF et images envoyés en texte que le modèle peut lire.
 settings-s-chat-compaction = Compactage des conversations
 settings-s-chat-compaction-blurb = Résumer la moitié la plus ancienne d'une longue conversation pour qu'elle continue de tenir dans la fenêtre de contexte du modèle.
+settings-s-chat-voice = Voix
+settings-s-chat-voice-blurb = Les instructions permanentes d'un chat qui parle : comment l'assistant doit formuler ce qu'il dit à voix haute.
 settings-s-chat-turns = Conversations en parallèle
 settings-s-chat-turns-blurb = Combien de discussions d'une même personne peuvent répondre en même temps.
 settings-s-chat-loops = Relances après une boucle
@@ -87,6 +92,10 @@ settings-s-metrics-blurb = Le point d'accès de collecte GET /metrics. Il ne ré
 
 # ─── Champs ──────────────────────────────────────────────────────────────────
 
+settings-f-chat-prompt-enabled = Activer le prompt de chat
+settings-f-chat-prompt-enabled-help = Interrupteur principal du prompt système global des conversations des personnes.
+settings-f-chat-prompt-text = Prompt système
+settings-f-chat-prompt-text-help = Ajouté au message système de chaque conversation d'une personne quand activé. Les agents et les Dots conservent leurs propres instructions.
 settings-f-chat-ocr-enabled = Activer l'OCR
 settings-f-chat-ocr-enabled-help = Interrupteur principal pour l'extraction de texte des documents envoyés.
 settings-f-chat-ocr-model = Modèle d'OCR
@@ -122,6 +131,11 @@ settings-f-chat-compaction-min_turns_to_compact = Longueur minimale de conversat
 settings-f-chat-compaction-min_turns_to_compact-help = Ne jamais compacter une conversation plus courte que ce nombre de tours.
 settings-f-chat-compaction-summary_max_tokens = Budget de jetons du résumé
 settings-f-chat-compaction-summary_max_tokens-help = Budget de jetons pour le résumé qui remplace les tours compactés.
+settings-f-chat-compaction-summary_prompt = Prompt du résumeur
+settings-f-chat-compaction-summary_prompt-help = Les instructions du résumeur. Laisser vide pour utiliser le prompt intégré.
+
+settings-f-chat-voice-directive = Directif de voix
+settings-f-chat-voice-directive-help = Instructions permanentes des tours vocaux, ajoutées au message système. Laisser vide pour utiliser le directif intégré.
 
 settings-f-chat-turns-max_parallel = Conversations simultanées
 settings-f-chat-turns-max_parallel-help = Réponses qu'une personne peut avoir en cours en parallèle, dans des conversations différentes. 1 conserve le comportement actuel : la deuxième discussion attend.

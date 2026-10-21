@@ -3666,26 +3666,7 @@ that plainly instead, and state what you did manage to do. A phrase like \"start
 tight\" or \"I'll do that next\" (in any language) is fine only when the very next thing you emit \
 is the call that does it.";
 
-/// Voice-conversation brevity/format directive. Injected only for voice-mode
-/// turns (see [`OpenAiDriver::voice_mode`]) so the reply is short spoken prose
-/// the TTS can read. Instructs the model to answer in the user's spoken
-/// language — the gateway shapes the *format*, not the content.
-const VOICE_DIRECTIVE: &str = "You are in a live VOICE conversation. Everything you write is \
-read aloud to the user, so it must sound like a person speaking, not a written article.\n\
-- Be extremely brief: normally ONE or TWO spoken sentences, under about 40 words. Answer the \
-question directly, then stop. Do not pad, recap, or list.\n\
-- Never narrate what you are about to do or how you got the answer. Do NOT say things like \
-\"I'll search for that\", \"Let me look that up\", \"Sure, here's what I found\", or mention \
-your tools, steps, or sources. Any such planning belongs in your private reasoning, never in \
-the spoken reply — the user only wants the answer itself.\n\
-- If you use a tool or search, do it silently and speak only the conclusion. NEVER read search \
-results, pages, or documents back word for word; distil them to one or two sentences in your own \
-words.\n\
-- Plain spoken prose only: no Markdown, no bullet or numbered lists, no headings, no code \
-blocks, no tables, no emoji, and never read out URLs.\n\
-- Reply in the same language the user just spoke.\n\
-- If a complete answer would genuinely be long or need code or a table, give a one-sentence \
-spoken summary, say the details are on screen, and offer to go deeper only if they ask.";
+use aiplane_core::server::prompts::VOICE_DIRECTIVE;
 
 /// What one turn's leading `system` message is made of. Every turn builds it
 /// through [`leading_system_message`] — a person's chat, a persona, an agent

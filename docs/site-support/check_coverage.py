@@ -34,7 +34,7 @@ def check(root):
         errors.append(f'API index names an unregistered operation: {operation[0]} {operation[1]}')
     settings = (root / 'crates/aiplane-core/src/server/settings.rs').read_text()
     settings_registry = settings.split('pub static SECTIONS:')[1].split('\n];', 1)[0]
-    declared_fields = set(re.findall(r'\b(?:f|f_half|r)\(\s*"([^"]+)"', settings_registry))
+    declared_fields = set(re.findall(r'\b(?:f|f_half|r|f_default)\(\s*"([^"]+)"', settings_registry))
     field_reference = (docs / 'admin/settings-reference.md').read_text()
     documented_fields = set(re.findall(r'^\| `([^`]+)` \|', field_reference, re.M))
     for field in sorted(declared_fields - documented_fields):

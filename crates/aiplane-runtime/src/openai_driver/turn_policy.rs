@@ -18,6 +18,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
+use aiplane_core::server::prompts::CHAT_PROMPT;
 use serde_json::Value;
 
 use super::{
@@ -219,12 +220,13 @@ impl<'a> TurnPolicy<'a> {
         user_mcp: &UserMcpLayer,
         summary: Option<&str>,
     ) -> Value {
+        let config = d.state.config();
         let leading = match self {
             Self::Chat => Leading {
-                voice_directive: d.voice_mode.then_some(VOICE_DIRECTIVE),
+                voice_directive: d.voice_mode.then_some(voice_directive(&config)),
+                own: chat_own_sections(&config),
                 context: build_request_context(d, user_mcp, Audience::Person).await,
                 summary,
-                ..Leading::default()
             },
             Self::Agent(run) => Leading {
                 own: match run.surface() {
@@ -457,6 +459,34 @@ impl<'a> TurnPolicy<'a> {
     }
 }
 
+/// The voice directive for a voice-mode turn: the operator's own wording
+/// while it has text, the built-in directive otherwise. Only a person's chat
+/// carries it — a persona's turn is its persona's, and an agent run never
+/// gets voice.
+fn voice_directive(config: &aiplane_core::server::config::Config) -> &str {
+    match config.chat.voice.directive.trim() {
+        "" => VOICE_DIRECTIVE,
+        _ => &config.chat.voice.directive,
+    }
+}
+
+/// The operator's standing instructions for a person's chat, as the leading
+/// message's own section: one entry while the prompt is enabled — the
+/// operator's own text while it has text, the built-in prompt otherwise —
+/// none while it is off. An agent run never reads it — its system message
+/// comes from its spec — and a `/v1` request carries the client's own.
+fn chat_own_sections(config: &aiplane_core::server::config::Config) -> Vec<String> {
+    let prompt = &config.chat.prompt;
+    if !prompt.enabled {
+        return Vec::new();
+    }
+    let text = match prompt.text.trim() {
+        "" => CHAT_PROMPT,
+        _ => &prompt.text,
+    };
+    vec![text.to_string()]
+}
+
 /// An agent run's offer: its granted spec tools and synthetic tools (every
 /// grant, for a run with no spec), then the run's terminal tool.
 /// Whether an agent run is offered the skill loader without its spec
@@ -520,4 +550,55 @@ thread_local! {
 fn count_chat_only_read() {
     #[cfg(test)]
     CHAT_ONLY_READS.with(|reads| reads.set(reads.get() + 1));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aiplane_core::server::config::{Config, PromptConfig};
+
+    fn config_with(prompt: PromptConfig) -> Config {
+        let mut config = Config::default();
+        config.chat.prompt = prompt;
+        config
+    }
+
+    #[test]
+    fn the_admin_prompt_is_a_chat_section_while_enabled_with_the_builtin_as_fallback() {
+        assert_eq!(
+            chat_own_sections(&Config::default()),
+            vec![CHAT_PROMPT.to_owned()]
+        );
+        assert_eq!(
+            chat_own_sections(&config_with(PromptConfig {
+                enabled: true,
+                text: "   ".into()
+            })),
+            vec![CHAT_PROMPT.to_owned()]
+        );
+        assert!(
+            chat_own_sections(&config_with(PromptConfig {
+                enabled: false,
+                text: "Standby.".into()
+            }))
+            .is_empty()
+        );
+        assert_eq!(
+            chat_own_sections(&config_with(PromptConfig {
+                enabled: true,
+                text: "Answer in plain German.".into()
+            })),
+            vec!["Answer in plain German.".to_owned()]
+        );
+    }
+
+    #[test]
+    fn the_voice_directive_falls_back_to_the_builtin_one_while_blank() {
+        let mut config = Config::default();
+        assert_eq!(voice_directive(&config), VOICE_DIRECTIVE);
+        config.chat.voice.directive = "   ".into();
+        assert_eq!(voice_directive(&config), VOICE_DIRECTIVE);
+        config.chat.voice.directive = "Keep answers to one sentence.".into();
+        assert_eq!(voice_directive(&config), "Keep answers to one sentence.");
+    }
 }

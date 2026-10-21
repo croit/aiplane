@@ -29,7 +29,7 @@
 </script>
 
 <div class={field.span === 'full' ? 'flex flex-col gap-1 sm:col-span-2' : 'flex flex-col gap-1'}>
-	<label class="flex flex-wrap items-baseline gap-2" for={field.key}><span class="text-sm font-medium">{label}</span>{#if field.restart}<span class="badge badge-warning badge-xs">{t('settings-restart-badge')}</span>{/if}</label>
+	<label class="flex flex-wrap items-baseline gap-2" for={field.key}><span class="text-sm font-medium">{label}</span>{#if field.restart}<span class="badge badge-warning badge-xs">{t('settings-restart-badge')}</span>{/if}{#if field.default !== '' && draft !== field.default}<button type="button" class="btn btn-ghost btn-xs" data-testid={`settings-reset-${field.key.replaceAll('.', '-')}`} onclick={() => onchange(field.key, field.default)}>{t('settings-reset-default')}</button>{/if}</label>
 	{#if field.kind === 'bool'}
 		<input id={field.key} class="toggle toggle-sm" type="checkbox" checked={draft === 'true'} onchange={(event) => onchange(field.key, (event.currentTarget as HTMLInputElement).checked ? 'true' : 'false')} />
 	{:else if field.kind === 'secret'}
@@ -43,6 +43,8 @@
 	{:else if field.kind === 'model'}
 		{#if field.models.length === 0 && draft === ''}<p class="m-0 text-sm italic text-base-content/60">{t('settings-model-none-configured')}</p>
 		{:else}<SearchableSelect id={field.key} options={modelOptions} value={draft} onchange={(value) => onchange(field.key, value)} ariaLabel={label} class="w-full" />{/if}
+	{:else if field.kind === 'textarea'}
+		<textarea id={field.key} class="textarea w-full min-h-36" class:textarea-error={error} aria-invalid={error ? true : undefined} value={draft} oninput={(event) => onchange(field.key, (event.currentTarget as HTMLTextAreaElement).value)} />
 	{:else}
 		<input id={field.key} class="input w-full" class:input-error={error} aria-invalid={error ? true : undefined} type={field.kind === 'int' || field.kind === 'float' ? 'number' : 'text'} step={field.kind === 'float' ? 'any' : undefined} value={draft} oninput={(event) => onchange(field.key, (event.currentTarget as HTMLInputElement).value)} />
 	{/if}

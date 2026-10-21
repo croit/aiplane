@@ -7,6 +7,7 @@
 
 settings-save = Сохранить раздел
 settings-saved = Сохранено. Действует со следующего запроса.
+settings-reset-default = Сбросить к значению по умолчанию
 settings-restart-note = Поля с пометкой «перезапуск» читаются только при старте; чтобы изменения подействовали, нужен перезапуск.
 settings-secret-set = сохранено — введите новое значение, чтобы заменить
 settings-secret-unset = не задано
@@ -22,10 +23,14 @@ settings-restart-pending-body = Эти настройки сохранены, н
 
 # ─── Карточки разделов ───────────────────────────────────────────────────────
 
+settings-s-chat-prompt = Системный промпт чата
+settings-s-chat-prompt-blurb = Постоянные инструкции, которые модель выполняет в каждом чате пользователя.
 settings-s-chat-ocr = OCR документов
 settings-s-chat-ocr-blurb = Превращение загруженных PDF и изображений в текст, который может прочитать модель.
 settings-s-chat-compaction = Сжатие переписки
 settings-s-chat-compaction-blurb = Пересказ более старой половины длинного разговора, чтобы он и дальше помещался в контекстное окно модели.
+settings-s-chat-voice = Голос
+settings-s-chat-voice-blurb = Постоянные инструкции для голосового чата: как ассистент формулирует то, что произносит вслух.
 settings-s-chat-turns = Параллельные разговоры
 settings-s-chat-turns-blurb = Сколько чатов одного пользователя могут отвечать одновременно.
 settings-s-chat-loops = Перезапуск при зацикливании
@@ -86,6 +91,10 @@ settings-s-metrics-blurb = Эндпоинт сбора GET /metrics. Он отв
 
 # ─── Поля ────────────────────────────────────────────────────────────────────
 
+settings-f-chat-prompt-enabled = Включить промпт чата
+settings-f-chat-prompt-enabled-help = Главный переключатель общесистемного промпта для чатов пользователей.
+settings-f-chat-prompt-text = Системный промпт
+settings-f-chat-prompt-text-help = Добавляется в системное сообщение каждого чата пользователя, пока включён. Агенты и Dots сохраняют собственные инструкции.
 settings-f-chat-ocr-enabled = Включить OCR
 settings-f-chat-ocr-enabled-help = Главный переключатель извлечения текста из загруженных документов.
 settings-f-chat-ocr-model = Модель OCR
@@ -121,6 +130,11 @@ settings-f-chat-compaction-min_turns_to_compact = Минимальная дли�
 settings-f-chat-compaction-min_turns_to_compact-help = Разговоры короче этого числа реплик не сжимаются никогда.
 settings-f-chat-compaction-summary_max_tokens = Бюджет токенов пересказа
 settings-f-chat-compaction-summary_max_tokens-help = Бюджет токенов для пересказа, который заменяет сжатые реплики.
+settings-f-chat-compaction-summary_prompt = Промпт сумматора
+settings-f-chat-compaction-summary_prompt-help = Инструкции, по которым работает сумматор. Оставьте пустым, чтобы использовать встроенный промпт.
+
+settings-f-chat-voice-directive = Голосовая директива
+settings-f-chat-voice-directive-help = Постоянные инструкции для голосовых ходов, добавляемые к системному сообщению. Оставьте пустым, чтобы использовать встроенную директиву.
 
 settings-f-chat-turns-max_parallel = Разговоров одновременно
 settings-f-chat-turns-max_parallel-help = Сколько ответов пользователь может получать параллельно, в разных разговорах. 1 сохраняет прежнее поведение: второй чат ждёт.

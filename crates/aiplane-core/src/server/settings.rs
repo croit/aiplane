@@ -47,8 +47,8 @@ use crate::server::config::AllowedIps;
 use crate::server::config::{
     ChatConfig, ComfyuiConfig, CompactionConfig, Config, ContentGuardConfig, ContentGuardMode,
     ContentGuardPolicy, DotsConfig, FeedbackConfig, GatewayConfig, GeoipConfig, LimitsConfig,
-    LoopsConfig, MetricsConfig, OcrConfig, PushConfig, RagConfig, S3Config, SandboxConfig,
-    SkillsConfig, TurnsConfig, TypstConfig, UsageConfig,
+    LoopsConfig, MetricsConfig, OcrConfig, PromptConfig, PushConfig, RagConfig, S3Config,
+    SandboxConfig, SkillsConfig, TurnsConfig, TypstConfig, UsageConfig, VoiceConfig,
 };
 use crate::server::crypto::Crypto;
 use crate::server::db::{DbError, Pool, app_settings};
@@ -70,6 +70,10 @@ pub enum Kind {
     Int,
     Float,
     Text,
+    /// A multi-line text block: stored like [`Kind::Text`], rendered as a
+    /// textarea because a single-line input would make its content
+    /// unreadable.
+    TextArea,
     /// A filesystem path. Same storage as [`Kind::Text`]; rendered with a hint
     /// that it is resolved inside the container, which is the single most
     /// common way these get set wrong.
@@ -176,6 +180,7 @@ const fn span_for(kind: Kind) -> Span {
     match kind {
         Kind::Int | Kind::Float | Kind::Bool | Kind::Choice(_) => Span::Half,
         Kind::Text
+        | Kind::TextArea
         | Kind::Path
         | Kind::Secret
         | Kind::List
@@ -220,6 +225,10 @@ pub struct FieldSpec {
     /// How wide the control renders. Defaults from the kind via [`span_for`];
     /// [`f_half`] overrides it for a text field that holds something short.
     pub span: Span,
+    /// The built-in value the gateway falls back to while no value is
+    /// stored, shown in the editor and what its reset button restores.
+    /// Empty for a field with no built-in.
+    pub default: &'static str,
 }
 
 impl FieldSpec {
@@ -404,6 +413,19 @@ const fn f(key: &'static str, kind: Kind) -> FieldSpec {
         kind,
         restart: false,
         span: span_for(kind),
+        default: "",
+    }
+}
+
+/// Same as [`f`], with the built-in value the editor shows while no value is
+/// stored and its reset button restores.
+const fn f_default(key: &'static str, kind: Kind, default: &'static str) -> FieldSpec {
+    FieldSpec {
+        key,
+        kind,
+        restart: false,
+        span: span_for(kind),
+        default,
     }
 }
 
@@ -415,6 +437,7 @@ const fn f_half(key: &'static str, kind: Kind) -> FieldSpec {
         kind,
         restart: false,
         span: Span::Half,
+        default: "",
     }
 }
 
@@ -425,6 +448,7 @@ const fn r(key: &'static str, kind: Kind) -> FieldSpec {
         kind,
         restart: true,
         span: span_for(kind),
+        default: "",
     }
 }
 
@@ -440,6 +464,19 @@ const fn r(key: &'static str, kind: Kind) -> FieldSpec {
 /// Fluent for everyone else — would drift on the first edit, so `en` is just
 /// another locale file and this table stays a table.
 pub static SECTIONS: &[SectionSpec] = &[
+    SectionSpec {
+        name: "chat.prompt",
+        category: Category::Chat,
+        user_feature: false,
+        fields: &[
+            f("chat.prompt.enabled", Kind::Bool),
+            f_default(
+                "chat.prompt.text",
+                Kind::TextArea,
+                super::prompts::CHAT_PROMPT,
+            ),
+        ],
+    },
     SectionSpec {
         name: "content_guard",
         category: Category::Access,
@@ -457,6 +494,16 @@ pub static SECTIONS: &[SectionSpec] = &[
                 Kind::Choice(&["allow", "confirm", "deny"]),
             ),
         ],
+    },
+    SectionSpec {
+        name: "chat.voice",
+        category: Category::Chat,
+        user_feature: false,
+        fields: &[f_default(
+            "chat.voice.directive",
+            Kind::TextArea,
+            super::prompts::VOICE_DIRECTIVE,
+        )],
     },
     SectionSpec {
         name: "chat.ocr",
@@ -487,6 +534,11 @@ pub static SECTIONS: &[SectionSpec] = &[
             f("chat.compaction.keep_recent_turns", Kind::Int),
             f("chat.compaction.min_turns_to_compact", Kind::Int),
             f("chat.compaction.summary_max_tokens", Kind::Int),
+            f_default(
+                "chat.compaction.summary_prompt",
+                Kind::TextArea,
+                super::prompts::SUMMARY_SYSTEM_PROMPT,
+            ),
         ],
     },
     SectionSpec {
@@ -742,6 +794,7 @@ pub async fn clear_restart_pending(pool: &Pool) -> Result<(), DbError> {
 
 pub fn section_is_enabled(config: &Config, section: &SectionSpec) -> Option<bool> {
     Some(match section.name {
+        "chat.prompt" => config.chat.prompt.enabled,
         "chat.ocr" => config.chat.ocr.enabled,
         "chat.compaction" => config.chat.compaction.enabled,
         "chat.s3" => config.chat.s3.is_some(),
@@ -932,6 +985,8 @@ impl Settings {
 /// public URL fallback, the upstream topology — is left as it was.
 pub fn apply(settings: &Settings, config: &mut Config) {
     config.chat = ChatConfig {
+        prompt: prompt(settings),
+        voice: voice(settings),
         ocr: ocr(settings),
         compaction: compaction(settings),
         turns: turns(settings),
@@ -1007,6 +1062,20 @@ pub fn apply(settings: &Settings, config: &mut Config) {
     g.allow_impersonation = settings.bool("gateway.allow_impersonation", d.allow_impersonation);
 }
 
+fn prompt(s: &Settings) -> PromptConfig {
+    let d = PromptConfig::default();
+    PromptConfig {
+        enabled: s.bool("chat.prompt.enabled", d.enabled),
+        text: s.text_or("chat.prompt.text", ""),
+    }
+}
+
+fn voice(s: &Settings) -> VoiceConfig {
+    VoiceConfig {
+        directive: s.text_or("chat.voice.directive", ""),
+    }
+}
+
 fn ocr(s: &Settings) -> OcrConfig {
     let d = OcrConfig::default();
     OcrConfig {
@@ -1056,6 +1125,7 @@ fn compaction(s: &Settings) -> CompactionConfig {
             d.min_turns_to_compact,
         ),
         summary_max_tokens: s.int("chat.compaction.summary_max_tokens", d.summary_max_tokens),
+        summary_prompt: s.text_or("chat.compaction.summary_prompt", ""),
     }
 }
 
@@ -1286,6 +1356,10 @@ pub fn snapshot(c: &Config) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     let mut put = |key: &str, value: String| out.push((key.to_owned(), value));
 
+    put("chat.prompt.enabled", c.chat.prompt.enabled.to_string());
+    put("chat.prompt.text", c.chat.prompt.text.clone());
+    put("chat.voice.directive", c.chat.voice.directive.clone());
+
     put("chat.ocr.enabled", ocr.enabled.to_string());
     put("chat.ocr.model", ocr.model.clone().unwrap_or_default());
     put("chat.ocr.max_tokens", ocr.max_tokens.to_string());
@@ -1324,6 +1398,10 @@ pub fn snapshot(c: &Config) -> Vec<(String, String)> {
     put(
         "chat.compaction.summary_max_tokens",
         comp.summary_max_tokens.to_string(),
+    );
+    put(
+        "chat.compaction.summary_prompt",
+        comp.summary_prompt.clone(),
     );
 
     put(
@@ -1558,6 +1636,138 @@ mod tests {
                 .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
                 .collect(),
         )
+    }
+
+    #[test]
+    fn chat_prompt_round_trips_and_ships_enabled() {
+        let mut config = Config::default();
+        assert!(config.chat.prompt.enabled);
+        assert!(config.chat.prompt.text.is_empty());
+        apply(
+            &settings_of(&[
+                ("chat.prompt.enabled", "true"),
+                ("chat.prompt.text", "Answer in plain German."),
+            ]),
+            &mut config,
+        );
+        assert!(config.chat.prompt.enabled);
+        assert_eq!(config.chat.prompt.text, "Answer in plain German.");
+        assert_eq!(
+            snapshot(&config)
+                .into_iter()
+                .find(|(k, _)| k == "chat.prompt.text")
+                .map(|(_, v)| v),
+            Some("Answer in plain German.".to_owned())
+        );
+
+        let mut off = Config::default();
+        apply(&settings_of(&[("chat.prompt.enabled", "true")]), &mut off);
+        assert!(off.chat.prompt.enabled);
+        assert!(off.chat.prompt.text.is_empty());
+
+        let mut cleared = Config::default();
+        apply(
+            &settings_of(&[("chat.prompt.enabled", "true"), ("chat.prompt.text", "   ")]),
+            &mut cleared,
+        );
+        assert!(
+            cleared.chat.prompt.text.is_empty(),
+            "whitespace is not a prompt"
+        );
+    }
+
+    #[test]
+    fn chat_prompt_section_reports_its_master_switch() {
+        let mut config = Config::default();
+        let section = SECTIONS
+            .iter()
+            .find(|s| s.name == "chat.prompt")
+            .expect("the chat.prompt section");
+        assert_eq!(
+            section_is_enabled(&config, section),
+            Some(true),
+            "the built-in prompt ships enabled"
+        );
+        apply(
+            &settings_of(&[
+                ("chat.prompt.enabled", "false"),
+                ("chat.prompt.text", "Be terse."),
+            ]),
+            &mut config,
+        );
+        assert_eq!(section_is_enabled(&config, section), Some(false));
+    }
+
+    #[test]
+    fn the_prompt_fields_carry_their_built_in_defaults() {
+        assert_eq!(
+            field("chat.voice.directive")
+                .expect("the voice directive field")
+                .default,
+            super::super::prompts::VOICE_DIRECTIVE
+        );
+        assert_eq!(
+            field("chat.compaction.summary_prompt")
+                .expect("the summariser prompt field")
+                .default,
+            super::super::prompts::SUMMARY_SYSTEM_PROMPT
+        );
+        assert_eq!(
+            field("chat.prompt.text")
+                .expect("the chat prompt field")
+                .default,
+            super::super::prompts::CHAT_PROMPT
+        );
+    }
+
+    #[test]
+    fn compaction_and_voice_prompts_round_trip_and_default_to_empty() {
+        let mut config = Config::default();
+        assert!(config.chat.compaction.summary_prompt.is_empty());
+        assert!(config.chat.voice.directive.is_empty());
+        apply(
+            &settings_of(&[
+                (
+                    "chat.compaction.summary_prompt",
+                    "Summarise in one paragraph.",
+                ),
+                ("chat.voice.directive", "Speak like a calm host."),
+            ]),
+            &mut config,
+        );
+        assert_eq!(
+            config.chat.compaction.summary_prompt,
+            "Summarise in one paragraph."
+        );
+        assert_eq!(config.chat.voice.directive, "Speak like a calm host.");
+        assert_eq!(
+            snapshot(&config)
+                .into_iter()
+                .find(|(k, _)| k == "chat.compaction.summary_prompt")
+                .map(|(_, v)| v),
+            Some("Summarise in one paragraph.".to_owned())
+        );
+        assert_eq!(
+            snapshot(&config)
+                .into_iter()
+                .find(|(k, _)| k == "chat.voice.directive")
+                .map(|(_, v)| v),
+            Some("Speak like a calm host.".to_owned())
+        );
+
+        let mut cleared = Config::default();
+        apply(
+            &settings_of(&[
+                ("chat.compaction.summary_prompt", "   "),
+                ("chat.voice.directive", ""),
+            ]),
+            &mut cleared,
+        );
+        assert!(
+            cleared.chat.compaction.summary_prompt.is_empty(),
+            "blank means the built-in default"
+        );
+        assert!(cleared.chat.voice.directive.is_empty());
     }
 
     #[test]

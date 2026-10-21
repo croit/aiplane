@@ -1246,6 +1246,201 @@ async fn settings_list_save_clear() {
 }
 
 #[tokio::test]
+async fn chat_prompt_section_saves_and_reports_its_state() {
+    let (state, cookie) = setup().await;
+    let app = router(state);
+
+    let listed = || {
+        let app = &app;
+        let cookie = &cookie;
+        async move {
+            serde_json::from_str::<serde_json::Value>(
+                &body(
+                    app.serve(req(Method::GET, "/api/v0/admin/settings", cookie, None))
+                        .await
+                        .unwrap(),
+                )
+                .await,
+            )
+            .unwrap()
+        }
+    };
+
+    let find_field = |listed: &serde_json::Value, key: &str| {
+        listed["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|section| section["fields"].as_array().unwrap())
+            .find(|field| field["key"] == key)
+            .unwrap()
+            .clone()
+    };
+
+    let before = listed().await;
+    assert_eq!(find_field(&before, "chat.prompt.enabled")["value"], "true");
+    assert_eq!(find_field(&before, "chat.prompt.text")["kind"], "textarea");
+
+    let resp = app
+        .serve(req(
+            Method::POST,
+            "/api/v0/admin/settings",
+            &cookie,
+            Some(
+                r#"{"section":"chat.prompt","values":{"chat.prompt.enabled":"true","chat.prompt.text":"Answer in plain German."}}"#
+                    .into(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let after = listed().await;
+    let section = after["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|section| section["name"] == "chat.prompt")
+        .unwrap();
+    assert_eq!(section["enabled"], true);
+    assert_eq!(find_field(&after, "chat.prompt.enabled")["value"], "true");
+    assert_eq!(
+        find_field(&after, "chat.prompt.text")["value"],
+        "Answer in plain German."
+    );
+}
+
+#[tokio::test]
+async fn compaction_and_voice_prompt_fields_save_and_clear() {
+    let (state, cookie) = setup().await;
+    let app = router(state);
+
+    let listed = || {
+        let app = &app;
+        let cookie = &cookie;
+        async move {
+            serde_json::from_str::<serde_json::Value>(
+                &body(
+                    app.serve(req(Method::GET, "/api/v0/admin/settings", cookie, None))
+                        .await
+                        .unwrap(),
+                )
+                .await,
+            )
+            .unwrap()
+        }
+    };
+
+    let find_field = |listed: &serde_json::Value, key: &str| {
+        listed["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|section| section["fields"].as_array().unwrap())
+            .find(|field| field["key"] == key)
+            .unwrap()
+            .clone()
+    };
+
+    let before = listed().await;
+    assert_eq!(
+        find_field(&before, "chat.compaction.summary_prompt")["kind"],
+        "textarea"
+    );
+    assert_eq!(
+        find_field(&before, "chat.voice.directive")["kind"],
+        "textarea"
+    );
+    assert!(
+        find_field(&before, "chat.compaction.summary_prompt")["value"]
+            .as_str()
+            .unwrap()
+            .is_empty(),
+        "empty means the built-in default"
+    );
+    assert!(
+        find_field(&before, "chat.compaction.summary_prompt")["default"]
+            .as_str()
+            .unwrap()
+            .starts_with("You compress the earlier part of a chat conversation"),
+        "the built-in summariser prompt is what the editor shows and resets to"
+    );
+    assert!(
+        find_field(&before, "chat.voice.directive")["default"]
+            .as_str()
+            .unwrap()
+            .starts_with("You are in a live VOICE conversation"),
+        "the built-in voice directive is what the editor shows and resets to"
+    );
+    assert!(
+        find_field(&before, "chat.prompt.text")["default"]
+            .as_str()
+            .unwrap()
+            .starts_with("Your name is AIplane"),
+        "the built-in chat prompt is what the editor shows and resets to"
+    );
+
+    let resp = app
+        .serve(
+            req(
+                Method::POST,
+                "/api/v0/admin/settings",
+                &cookie,
+                Some(
+                    r#"{"section":"chat.voice","values":{"chat.voice.directive":"Keep answers to one sentence."}}"#
+                        .into(),
+                ),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = app
+        .serve(
+            req(
+                Method::POST,
+                "/api/v0/admin/settings",
+                &cookie,
+                Some(
+                    r#"{"section":"chat.compaction","values":{"chat.compaction.summary_prompt":"Summarise in one short paragraph."}}"#
+                        .into(),
+                ),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let after = listed().await;
+    assert_eq!(
+        find_field(&after, "chat.voice.directive")["value"],
+        "Keep answers to one sentence."
+    );
+    assert_eq!(
+        find_field(&after, "chat.compaction.summary_prompt")["value"],
+        "Summarise in one short paragraph."
+    );
+
+    let resp = app
+        .serve(req(
+            Method::POST,
+            "/api/v0/admin/settings",
+            &cookie,
+            Some(r#"{"section":"chat.voice","values":{"chat.voice.directive":""}}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let cleared = listed().await;
+    assert!(
+        find_field(&cleared, "chat.voice.directive")["value"]
+            .as_str()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn settings_list_exposes_system_one_model_compliance() {
     let (state, cookie) = setup().await;
     let app = router(state);
