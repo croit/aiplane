@@ -70,6 +70,11 @@ test('a conversation page suppresses the FAB and the composer carries the entry 
 	const composer = read('src/lib/Conversation.svelte');
 	assert.match(composer, /openDialog as openFeedback/);
 	assert.match(composer, /data-feedback-fab/, 'the composer button is not excluded from the capture');
+	assert.match(
+		composer,
+		/\{#if feedback\.enabled\}[\s\S]*?data-feedback-fab[\s\S]*?\{\/if\}/,
+		'the composer button is not gated on feedback.enabled — it renders although the feature is disabled'
+	);
 	assert.doesNotMatch(
 		composer,
 		/2xl:hidden[^>]*openFeedback|openFeedback[^>]*2xl:hidden/,
