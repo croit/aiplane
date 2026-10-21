@@ -1,7 +1,8 @@
 <script lang="ts">
-	import { t } from '#lib/i18n.svelte.js';
+	import { n, t } from '#lib/i18n.svelte.js';
 	import SearchableSelect from '#lib/components/SearchableSelect.svelte';
 	import { modelSelectOptions, type ChatModelOption } from '#lib/model-option.js';
+	import { formatModelPrice } from '#lib/model-price.js';
 
 	let {
 		id,
@@ -11,6 +12,7 @@
 		canFork,
 		shared,
 		models,
+		currency,
 		model = $bindable(),
 		transcriptionModels,
 		transcriptionModel = $bindable(),
@@ -30,6 +32,7 @@
 		canFork: boolean;
 		shared: boolean;
 		models: ChatModelOption[];
+		currency: string;
 		model: string;
 		transcriptionModels: string[];
 		transcriptionModel: string;
@@ -46,7 +49,7 @@
 	let modelOptions = $derived(modelSelectOptions(models, {
 		gdpr: t('searchable-select-model-gdpr'),
 		nda: t('searchable-select-model-nda')
-	}));
+	}, (price) => formatModelPrice(price, currency, t, n)));
 	let transcriptionOptions = $derived(transcriptionModels.map((id) => ({ value: id, label: id })));
 	let speechOptions = $derived([
 		{ value: '', label: t('chat-render-tts-voice-default') },

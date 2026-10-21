@@ -29,6 +29,12 @@ export interface ChatModelChoice {
 	nda: boolean;
 	/** The effort levels this model offers; empty when effort changes nothing. */
 	efforts: Effort[];
+	/**
+	 * The model's configured price, priced as the model it resolves to.
+	 * `null` for an automatic route, which reaches several models and so has
+	 * no single price — the picker shows no price for it.
+	 */
+	price: { input: number | null; output: number | null; unit: string } | null;
 }
 
 export interface ToolSummary {
@@ -483,9 +489,10 @@ export const api = {
 			{ method: 'DELETE' }
 		),
 
-	/** GET /api/v0/models — the caller's chat models (compliance flags included). */
+	/** GET /api/v0/models — the caller's chat models (compliance flags and
+	 * configured prices included) and the deployment's currency. */
 	listChatModels: () =>
-		request<{ models: ChatModelChoice[] }>('/api/v0/models'),
+		request<{ models: ChatModelChoice[]; currency: string }>('/api/v0/models'),
 
 	/** Build an unsaved personal skill from manually entered workflow steps. */
 	draftWorkflowSkill: (input: {

@@ -31,3 +31,47 @@ test('model options expose GDPR and NDA status badges for every model', () => {
 		]
 	);
 });
+
+test('a supplied price formatter appends a neutral price badge', () => {
+	const format = (price: { input: number | null; output: number | null; unit: string } | null | undefined) =>
+		price == null ? null : price.input || price.output ? `${price.input}/${price.output}` : 'free';
+	assert.deepEqual(
+		modelSelectOptions(
+			[
+				{ id: 'priced', gdpr: true, nda: true, price: { input: 3, output: 15, unit: 'tokens' } },
+				{ id: 'free', gdpr: true, nda: true, price: { input: null, output: null, unit: 'tokens' } },
+				{ id: 'route', gdpr: true, nda: true, price: null }
+			],
+			{ gdpr: 'GDPR', nda: 'NDA' },
+			format
+		),
+		[
+			{
+				value: 'priced',
+				label: 'priced',
+				badges: [
+					{ label: 'GDPR', tone: 'success' },
+					{ label: 'NDA', tone: 'success' },
+					{ label: '3/15', tone: 'neutral' }
+				]
+			},
+			{
+				value: 'free',
+				label: 'free',
+				badges: [
+					{ label: 'GDPR', tone: 'success' },
+					{ label: 'NDA', tone: 'success' },
+					{ label: 'free', tone: 'neutral' }
+				]
+			},
+			{
+				value: 'route',
+				label: 'route',
+				badges: [
+					{ label: 'GDPR', tone: 'success' },
+					{ label: 'NDA', tone: 'success' }
+				]
+			}
+		]
+	);
+});

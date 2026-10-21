@@ -238,7 +238,12 @@ of a native select. It searches labels, stored values, descriptions, keywords an
 badges; supports arrow keys, Enter and Escape; and bounds long result lists to
 their own scroll region. Model choices render the model id left-aligned and show
 compact GDPR and NDA status badges right-aligned on every row. Green check badges
-mean the model is cleared; red crossed-out badges mean it is restricted. The
+mean the model is cleared; red crossed-out badges mean it is restricted. The chat
+model picker additionally shows a neutral price badge: the model's configured
+price in the deployment's currency (an alias is priced as the model it resolves
+to), or "free" when unpriced. An automatic route reaches several models and has
+no single price, so it shows no price badge. The price badge is an outline badge
+(no check/cross), distinct from the compliance badges. The
 trigger looks and focuses like any other field (field border, primary focus
 ring), and keyboard-active options use a subtle surface change. In forms it takes
 the default size like the fields around it; `size="sm"` is for toolbars and filter bars. Small

@@ -607,6 +607,13 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
             .into_iter()
             .map(|row| (row.model_name, row.reasoning_style))
             .collect();
+    // Per-model prices keyed by the resolved model name, one map rather than a
+    // query per row — `model_defaults` is small. A model with no row here is
+    // simply unpriced (the UI shows "free"); a route is priced as nothing,
+    // because it reaches several models and has no single price of its own.
+    let prices = aiplane_core::server::db::model_defaults::all_prices(&state.db)
+        .await
+        .unwrap_or_default();
     let listed = models
         .into_iter()
         .map(|choice| {
@@ -618,6 +625,7 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
             // out on a name like `default` while the request path happily
             // sends Qwen's `enable_thinking`, which is the same disagreement
             // between UI and wire this whole field exists to prevent.
+            let is_route = choice.route.is_some();
             let targets = match choice.route {
                 Some(route) => route.candidates,
                 None => vec![
@@ -657,6 +665,17 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
                     Some(seen) => seen.into_iter().filter(|e| own.contains(e)).collect(),
                 });
             }
+            // A model (or an alias) is priced as the single model it resolves
+            // to; a route reaches several, so it carries no price of its own
+            // and the picker shows no price line for it.
+            let price = (!is_route).then(|| {
+                let named = prices.get(&targets[0]);
+                aiplane_api::pages::json_tokens::ModelPriceView {
+                    input: named.and_then(|p| p.input_price),
+                    output: named.and_then(|p| p.output_price),
+                    unit: named.map(|p| p.pricing_unit.as_str()).unwrap_or("tokens"),
+                }
+            });
             ChatModel {
                 id: choice.id,
                 gdpr: choice.compliance.gdpr,
@@ -666,15 +685,21 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
                     .into_iter()
                     .map(|e| e.as_str())
                     .collect(),
+                price,
             }
         })
         .collect();
-    json_ok(&ChatModels { models: listed })
+    json_ok(&ChatModels {
+        models: listed,
+        currency: state.config().usage.currency.clone(),
+    })
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct ChatModels {
     pub models: Vec<ChatModel>,
+    /// The deployment's currency, so a model's price reads as a cost.
+    pub currency: String,
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
@@ -687,6 +712,10 @@ pub struct ChatModel {
     /// The effort levels the composer offers for this model, least thinking
     /// first; empty when the effort control would change nothing.
     pub efforts: Vec<&'static str>,
+    /// The model's configured price, priced as the model it resolves to.
+    /// `null` for an automatic route, which reaches several models and so has
+    /// no single price; the picker shows no price line for it.
+    pub price: Option<aiplane_api::pages::json_tokens::ModelPriceView>,
 }
 
 pub async fn transcription_models(State(state): State<Arc<RamaState>>, req: Request) -> Response {

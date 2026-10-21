@@ -40,6 +40,7 @@
 	let session = $state<ChatSession | null>(null);
 	let model = $state('');
 	let models = $state<ChatModelChoice[]>([]);
+	let modelCurrency = $state('');
 	let transcriptionModels = $state<string[]>([]);
 	let transcriptionModel = $state('');
 	let speechAvailable = $state(false);
@@ -257,6 +258,7 @@
 		try {
 			const list = await api.listChatModels();
 			models = list.models;
+			modelCurrency = list.currency;
 			if (!model && models.length > 0) model = models[0].id;
 		} catch {
 			// Picker stays free-text; submitting still works.
@@ -852,6 +854,7 @@
 		{canFork}
 		shared={session?.shared ?? false}
 		{models}
+		currency={modelCurrency}
 		bind:model
 		{transcriptionModels}
 		bind:transcriptionModel

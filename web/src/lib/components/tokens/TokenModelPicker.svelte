@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { n, t } from '#lib/i18n.svelte.js';
 	import { filterTokenModels, groupTokenModels, isCompliant, selectionSummary, type TokenModel } from '#lib/token-models.js';
+	import { formatModelPrice } from '#lib/model-price.js';
 
 	/**
 	 * The model allowlist of one API token: a switch between "follows my
@@ -32,10 +33,10 @@
 	}
 
 	function price(model: TokenModel): string {
-		const p = model.price;
-		if (!p || (!p.input && !p.output)) return t('tokens-models-price-free');
-		if (p.unit === 'tokens') return t('tokens-models-price-tokens', { input: money(p.input ?? 0), output: money(p.output ?? 0) });
-		return t(`tokens-models-price-per-${p.unit}`, { price: money(p.output ?? p.input ?? 0) });
+		// The token catalog omits the price object for unpriced models, so an
+		// omitted price reads as "free" here — unlike the chat picker, where a
+		// `null` price marks a route that has no single price and shows none.
+		return formatModelPrice(model.price ?? { input: null, output: null, unit: 'tokens' }, currency, t, n) ?? '';
 	}
 
 	function toggle(id: string, checked: boolean) {

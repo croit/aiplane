@@ -1,6 +1,6 @@
 export interface SearchOptionBadge {
 	label: string;
-	tone: 'success' | 'error';
+	tone: 'success' | 'error' | 'neutral';
 }
 
 export interface SearchOption {

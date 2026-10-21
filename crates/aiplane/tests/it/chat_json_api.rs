@@ -2441,6 +2441,17 @@ async fn the_models_endpoint_lists_offered_chat_models() {
         .mount(&upstream)
         .await;
     let (state, cookie) = setup(&upstream.uri()).await;
+    // A configured price must surface on the model it is set for, in the
+    // deployment's currency — the picker shows it beside the compliance flags.
+    // Set before `router` consumes the `Arc`.
+    aiplane_core::server::db::model_defaults::set_pricing(
+        &state.db,
+        "model-a",
+        Some(3.0),
+        Some(15.0),
+    )
+    .await
+    .unwrap();
     let app = router(state);
 
     let resp = app
@@ -2454,13 +2465,17 @@ async fn the_models_endpoint_lists_offered_chat_models() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body: serde_json::Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    assert_eq!(body["currency"], "USD");
     let models = body["models"].as_array().unwrap();
-    assert!(
-        models.iter().any(|m| m["id"] == "model-a"),
-        "the seeded pool's model must be offered: {models:?}"
-    );
-    assert!(models[0]["gdpr"].is_boolean());
-    assert!(models[0]["nda"].is_boolean());
+    let model_a = models
+        .iter()
+        .find(|m| m["id"] == "model-a")
+        .unwrap_or_else(|| panic!("the seeded pool's model must be offered: {models:?}"));
+    assert!(model_a["gdpr"].is_boolean());
+    assert!(model_a["nda"].is_boolean());
+    assert_eq!(model_a["price"]["input"], 3.0);
+    assert_eq!(model_a["price"]["output"], 15.0);
+    assert_eq!(model_a["price"]["unit"], "tokens");
 
     // Anonymous → the 401 envelope.
     let resp = app
@@ -2525,14 +2540,29 @@ async fn automatic_route_stays_in_model_picker_while_selector_is_unavailable() {
         .await
         .unwrap();
     let body: serde_json::Value = serde_json::from_str(&body_string(response).await).unwrap();
+    let models = body["models"].as_array().unwrap();
     assert!(
-        body["models"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|model| model["id"] == "default"),
+        models.iter().any(|model| model["id"] == "default"),
         "fallback availability keeps the route usable"
     );
+    // A route reaches several models, so it carries no price of its own — the
+    // picker shows no price line for it.
+    let route = models
+        .iter()
+        .find(|model| model["id"] == "default")
+        .unwrap();
+    assert!(route["price"].is_null(), "a route has no single price");
+    // A real model with no configured price is the free shape, not `null`.
+    let plain = models
+        .iter()
+        .find(|model| model["id"] == "fast-model")
+        .unwrap();
+    assert!(
+        plain["price"]["unit"].is_string(),
+        "an unpriced model is the free shape"
+    );
+    assert!(plain["price"]["input"].is_null());
+    assert!(plain["price"]["output"].is_null());
 }
 
 /// The streamed round request a turn sent upstream (title calls are not
