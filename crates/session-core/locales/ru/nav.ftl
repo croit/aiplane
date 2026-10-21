@@ -23,6 +23,7 @@ nav-group-admin = Админ
 nav-group-toggle-aria = Свернуть или развернуть раздел { $label }
 
 nav-conversations-label = Беседы
+nav-new-chat = Новый чат
 nav-new-conversation-aria = Начать новую беседу
 nav-new-conversation-title = Новая беседа
 nav-untitled-chat = Без названия

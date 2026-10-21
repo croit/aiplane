@@ -23,6 +23,7 @@ nav-group-admin = Admin
 nav-group-toggle-aria = Alternar sección { $label }
 
 nav-conversations-label = Conversaciones
+nav-new-chat = Nuevo chat
 nav-new-conversation-aria = Iniciar una nueva conversación
 nav-new-conversation-title = Nueva conversación
 nav-untitled-chat = Chat sin título

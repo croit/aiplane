@@ -1221,15 +1221,6 @@ pub(crate) mod tests {
         assert_eq!(listed[1].id, b.id);
     }
 
-    #[tokio::test]
-    async fn latest_session_returns_none_then_most_recent() {
-        let pool = pool().await;
-        assert!(latest_session(&pool, "u1").await.unwrap().is_none());
-        let _a = create_session(&pool, "u1").await.unwrap();
-        let b = create_session(&pool, "u1").await.unwrap();
-        assert_eq!(latest_session(&pool, "u1").await.unwrap().unwrap().id, b.id);
-    }
-
     /// A task view needs one turn and the prompt before it, not the whole
     /// conversation: `turn_before` reads exactly the neighbour, skipping gaps a
     /// truncation left, scoped to the session.

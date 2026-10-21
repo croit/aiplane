@@ -2012,6 +2012,7 @@ export const es: Catalog = {
  "nav-main-aria": "Navegación principal",
  "nav-memory": "Memoria",
  "nav-models": "Modelos y enrutamiento",
+ "nav-new-chat": "Nuevo chat",
  "nav-new-conversation-aria": "Iniciar una nueva conversación",
  "nav-new-conversation-title": "Nueva conversación",
  "nav-open-menu": "Abrir el menú",

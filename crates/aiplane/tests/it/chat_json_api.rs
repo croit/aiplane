@@ -445,34 +445,46 @@ async fn edit_accepts_the_composers_multipart_shape() {
 }
 
 #[tokio::test]
-async fn chat_landing_resolves_one_stable_latest_session() {
+async fn chat_landing_opens_the_blank_conversation() {
     let (state, cookie) = setup("http://unused.invalid").await;
+    let db = state.db.clone();
     let app = router(state);
+    let land = async || {
+        let resp = app
+            .serve(json_req(
+                Method::GET,
+                "/api/v0/chat/landing".into(),
+                &cookie,
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: Value = serde_json::from_str(&body_string(resp).await).unwrap();
+        body["session"]["id"].as_str().unwrap().to_string()
+    };
 
-    let first = app
+    let older = land().await;
+    chat::create_user_turn(&db, &older, "older-turn", "an older topic")
+        .await
+        .unwrap();
+
+    let blank = land().await;
+    assert_ne!(blank, older);
+    assert_eq!(land().await, blank);
+
+    let created = app
         .serve(json_req(
-            Method::GET,
-            "/api/v0/chat/landing".into(),
+            Method::POST,
+            "/api/v0/chat/sessions".into(),
             &cookie,
             None,
         ))
         .await
         .unwrap();
-    assert_eq!(first.status(), StatusCode::OK);
-    let first: serde_json::Value = serde_json::from_str(&body_string(first).await).unwrap();
-    let id = first["session"]["id"].as_str().unwrap();
-
-    let second = app
-        .serve(json_req(
-            Method::GET,
-            "/api/v0/chat/landing".into(),
-            &cookie,
-            None,
-        ))
-        .await
-        .unwrap();
-    let second: serde_json::Value = serde_json::from_str(&body_string(second).await).unwrap();
-    assert_eq!(second["session"]["id"], id);
+    assert_eq!(created.status(), StatusCode::OK);
+    let created: Value = serde_json::from_str(&body_string(created).await).unwrap();
+    assert_eq!(created["session"]["id"], blank.as_str());
 
     let list = app
         .serve(json_req(
@@ -483,8 +495,8 @@ async fn chat_landing_resolves_one_stable_latest_session() {
         ))
         .await
         .unwrap();
-    let list: serde_json::Value = serde_json::from_str(&body_string(list).await).unwrap();
-    assert_eq!(list["sessions"].as_array().unwrap().len(), 1);
+    let list: Value = serde_json::from_str(&body_string(list).await).unwrap();
+    assert_eq!(list["sessions"].as_array().unwrap().len(), 2);
 
     let anonymous = app
         .serve(
@@ -495,6 +507,91 @@ async fn chat_landing_resolves_one_stable_latest_session() {
         .await
         .unwrap();
     assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn creating_a_conversation_reuses_the_empty_one() {
+    let (state, cookie) = setup("http://unused.invalid").await;
+    let db = state.db.clone();
+    let app = router(state);
+    let create = async || {
+        let resp = app
+            .serve(json_req(
+                Method::POST,
+                "/api/v0/chat/sessions".into(),
+                &cookie,
+                None,
+            ))
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body: Value = serde_json::from_str(&body_string(resp).await).unwrap();
+        (status, body["session"]["id"].as_str().unwrap().to_string())
+    };
+    let listed = async || {
+        let resp = app
+            .serve(json_req(
+                Method::GET,
+                "/api/v0/chat/sessions".into(),
+                &cookie,
+                None,
+            ))
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_str(&body_string(resp).await).unwrap();
+        body["sessions"].as_array().unwrap().len()
+    };
+
+    let (status, empty) = create().await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(create().await, (StatusCode::OK, empty.clone()));
+    assert_eq!(listed().await, 1);
+
+    chat::create_user_turn(&db, &empty, "first-turn", "hello")
+        .await
+        .unwrap();
+    let (status, fresh) = create().await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_ne!(fresh, empty);
+    assert_eq!(create().await, (StatusCode::OK, fresh));
+    assert_eq!(listed().await, 2);
+}
+
+/// A failed blank-conversation lookup is a 500, never a fallback to a fresh
+/// conversation the caller did not need.
+#[tokio::test]
+async fn a_failed_blank_conversation_lookup_is_a_500_and_creates_nothing() {
+    let (state, cookie) = setup("http://unused.invalid").await;
+    let db = state.db.clone();
+    let app = router(state);
+    sqlx::query("ALTER TABLE chat_turns RENAME TO chat_turns_unavailable")
+        .execute(&db)
+        .await
+        .unwrap();
+
+    for (method, uri) in [
+        (Method::POST, "/api/v0/chat/sessions"),
+        (Method::GET, "/api/v0/chat/landing"),
+    ] {
+        let resp = app
+            .serve(json_req(method.clone(), uri.into(), &cookie, None))
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{method} {uri}"
+        );
+        assert!(
+            body_string(resp).await.contains("\"internal_error\""),
+            "{method} {uri}"
+        );
+    }
+    let sessions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chat_sessions")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(sessions, 0);
 }
 
 #[tokio::test]

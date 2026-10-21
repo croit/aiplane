@@ -77,13 +77,21 @@
 		window.location.href = '/';
 	}
 
+	// A second press while the first is in flight would race it past the
+	// server's blank-conversation lookup and mint a duplicate.
+	let openingNewChat = false;
+
 	async function newChat() {
+		if (openingNewChat) return;
+		openingNewChat = true;
 		try {
 			const { session } = await api.createChatSession();
 			await refreshSidebar();
 			await goto(`/chat/${session.id}`);
-		} catch {
-			/* the layout's redirect handles 401 */
+		} catch (caught) {
+			sidebarError = String(caught);
+		} finally {
+			openingNewChat = false;
 		}
 	}
 
@@ -277,16 +285,16 @@
 
 		<!-- Primary nav -->
 		<nav class="flex flex-col gap-0.5 px-2 pt-1 pb-2">
-			<a
-				href="/chat"
-				class="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm {isChatActive()
-					? 'bg-primary/15 text-primary dark:text-base-content font-semibold'
-					: 'hover:bg-primary/10'}"
-				onclick={() => (sidebar.open = false)}
+			<button
+				class="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm text-left hover:bg-primary/10"
+				onclick={() => {
+					sidebar.open = false;
+					void newChat();
+				}}
 			>
 				<NavIcon name="message" />
-				{t('chat-default-title')}
-			</a>
+				{t('nav-new-chat')}
+			</button>
 
 			{#snippet group(name: string, open: boolean, items: NavLink[])}
 				{@const isOpen = name === 'workspace'

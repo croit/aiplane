@@ -2028,6 +2028,7 @@ export const ru: Catalog = {
  "nav-main-aria": "Основная навигация",
  "nav-memory": "Память",
  "nav-models": "Модели и маршрутизация",
+ "nav-new-chat": "Новый чат",
  "nav-new-conversation-aria": "Начать новую беседу",
  "nav-new-conversation-title": "Новая беседа",
  "nav-open-menu": "Открыть меню",

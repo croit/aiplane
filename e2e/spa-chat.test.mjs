@@ -28,6 +28,18 @@ async function conversationUrl(cookie, title) {
     return `/chat/${session.id}`;
 }
 
+/** Press a new-chat control and wait for the chat it resolved to. */
+async function startNewChat(page, name = "New Chat") {
+    const created = page.waitForResponse(
+        (response) => response.url().endsWith("/api/v0/chat/sessions") && response.request().method() === "POST",
+    );
+    await page.getByRole("button", { name, exact: true }).click();
+    const response = await created;
+    const { session } = await response.json();
+    await page.waitForURL((url) => url.pathname === `/chat/${session.id}`, { timeout: 5000 });
+    return { id: session.id, status: response.status() };
+}
+
 async function chooseSearchable(page, label, query, optionName = query) {
     const picker = page.getByRole("combobox", { name: label, exact: true });
     await picker.click();
@@ -69,10 +81,7 @@ test("chat entry resolves directly and keeps sidebar pin and delete actions", as
 
     await page.goto(`${BASE}/`, { waitUntil: "domcontentloaded" });
     await page.waitForURL((url) => /\/chat\/[^/]+$/.test(url.pathname), { timeout: 5000 });
-    const landing = page.url();
-    await page.getByRole("button", { name: "Start a new conversation", exact: true }).click();
-    await page.waitForURL((url) => /\/chat\/[^/]+$/.test(url.pathname) && url.href !== landing, { timeout: 5000 });
-    const id = page.url().split("/").at(-1);
+    const { id } = await startNewChat(page);
     const row = page.locator(`a[href$="/chat/${id}"]`).last().locator("..");
     await row.waitFor();
 
@@ -86,6 +95,121 @@ test("chat entry resolves directly and keeps sidebar pin and delete actions", as
     assert.equal((await removed).status(), 204);
     await page.waitForURL((url) => /\/chat\/[^/]+$/.test(url.pathname) && !url.pathname.endsWith(`/${id}`), { timeout: 5000 });
     assert.equal(await page.locator(`a[href$="/chat/${id}"]`).count(), 0);
+    await ctx.close();
+});
+
+test("New Chat reuses the one empty chat instead of adding another", async () => {
+    const cookieValue = await devSessionCookie();
+    const ctx = await browser.newContext();
+    await ctx.addCookies([{ name: "id", value: cookieValue, url: BASE }]);
+    const page = await ctx.newPage();
+    const rows = () => page.locator("[data-sidebar-conversations] > li");
+    const row = (id) => page.locator(`[data-sidebar-conversations] a[href$="/chat/${id}"]`);
+
+    await page.goto(`${BASE}/chat`, { waitUntil: "domcontentloaded" });
+    await page.waitForURL((url) => /\/chat\/[^/]+$/.test(url.pathname), { timeout: 5000 });
+    const { id: older } = await startNewChat(page);
+    const sent = await ctx.request.post(`${BASE}/api/v0/chat/sessions/${older}/messages`, {
+        data: { model: "demo-model", message: "an older topic" },
+    });
+    assert.ok(sent.ok(), `sending into the older chat failed: ${sent.status()}`);
+
+    const { id: empty, status } = await startNewChat(page);
+    assert.equal(status, 201);
+    assert.notEqual(empty, older);
+    await row(empty).waitFor();
+    const listed = await rows().count();
+
+    assert.deepEqual(await startNewChat(page), { id: empty, status: 200 });
+    assert.deepEqual(await startNewChat(page, "Start a new conversation"), { id: empty, status: 200 });
+    assert.equal(await rows().count(), listed);
+
+    await row(older).click();
+    await page.waitForURL((url) => url.pathname === `/chat/${older}`, { timeout: 5000 });
+    assert.deepEqual(await startNewChat(page), { id: empty, status: 200 });
+    assert.equal(await rows().count(), listed);
+    await ctx.close();
+});
+
+test("opening the website lands on the new chat", async () => {
+    const cookieValue = await devSessionCookie();
+    const ctx = await browser.newContext();
+    await ctx.addCookies([{ name: "id", value: cookieValue, url: BASE }]);
+    const page = await ctx.newPage();
+    const landed = async (path) => {
+        const landing = page.waitForResponse((response) => response.url().endsWith("/api/v0/chat/landing"));
+        await page.goto(`${BASE}${path}`, { waitUntil: "domcontentloaded" });
+        const { session } = await (await landing).json();
+        await page.waitForURL((url) => url.pathname === `/chat/${session.id}`, { timeout: 5000 });
+        return session.id;
+    };
+
+    const older = await landed("/");
+    const sent = await ctx.request.post(`${BASE}/api/v0/chat/sessions/${older}/messages`, {
+        data: { model: "demo-model", message: "an older topic" },
+    });
+    assert.ok(sent.ok(), `sending into the older chat failed: ${sent.status()}`);
+
+    const fresh = await landed("/");
+    assert.notEqual(fresh, older);
+    await page.getByRole("heading", { name: "New conversation", exact: true }).waitFor();
+    assert.equal(await landed("/chat"), fresh);
+    await ctx.close();
+});
+
+test("a double press on New Chat sends one request and adds one chat", async () => {
+    const cookieValue = await devSessionCookie();
+    const ctx = await browser.newContext();
+    await ctx.addCookies([{ name: "id", value: cookieValue, url: BASE }]);
+    const page = await ctx.newPage();
+    const rows = () => page.locator("[data-sidebar-conversations] > li");
+
+    await page.goto(`${BASE}/chat`, { waitUntil: "domcontentloaded" });
+    await page.waitForURL((url) => /\/chat\/[^/]+$/.test(url.pathname), { timeout: 5000 });
+    const used = page.url().split("/").at(-1);
+    const sent = await ctx.request.post(`${BASE}/api/v0/chat/sessions/${used}/messages`, {
+        data: { model: "demo-model", message: "an older topic" },
+    });
+    assert.ok(sent.ok(), `sending into the landing chat failed: ${sent.status()}`);
+    await page.locator(`[data-sidebar-conversations] a[href$="/chat/${used}"]`).waitFor();
+    const listed = await rows().count();
+
+    let creates = 0;
+    page.on("request", (request) => {
+        if (request.method() === "POST" && request.url().endsWith("/api/v0/chat/sessions")) creates++;
+    });
+    await page.getByRole("button", { name: "New Chat", exact: true }).dblclick();
+    await page.waitForURL((url) => /\/chat\/[^/]+$/.test(url.pathname) && !url.pathname.endsWith(`/${used}`), { timeout: 5000 });
+    await page.waitForFunction((count) => document.querySelectorAll("[data-sidebar-conversations] > li").length === count, listed + 1, { timeout: 5000 });
+    await page.waitForTimeout(500);
+    assert.equal(creates, 1);
+    assert.equal(await rows().count(), listed + 1);
+    await ctx.close();
+});
+
+test("a failed New Chat press says so", async () => {
+    const cookieValue = await devSessionCookie();
+    const ctx = await browser.newContext();
+    await ctx.addCookies([{ name: "id", value: cookieValue, url: BASE }]);
+    const page = await ctx.newPage();
+    await page.goto(`${BASE}/chat`, { waitUntil: "domcontentloaded" });
+    await page.waitForURL((url) => /\/chat\/[^/]+$/.test(url.pathname), { timeout: 5000 });
+    const before = page.url();
+
+    await page.route(`${BASE}/api/v0/chat/sessions`, (route) =>
+        route.request().method() === "POST"
+            ? route.fulfill({
+                  status: 500,
+                  contentType: "application/json",
+                  body: JSON.stringify({ error: { code: "internal_error", message: "database is unavailable" } }),
+              })
+            : route.continue(),
+    );
+    await page.getByRole("button", { name: "New Chat", exact: true }).click();
+    const toast = page.locator("[data-feedback-toast] .alert-error");
+    await toast.waitFor({ timeout: 5000 });
+    assert.match(await toast.innerText(), /500/);
+    assert.equal(page.url(), before);
     await ctx.close();
 });
 
@@ -136,9 +260,7 @@ test("a turn streams into the SPA over the JSON event protocol", async (t) => {
     await page.goto(`${BASE}/chat`, { waitUntil: "domcontentloaded" });
     await page.waitForURL((u) => /\/chat\/.+/.test(u.pathname), { timeout: 5000 });
     assert.equal(await page.title(), "Chat — AIplane");
-    const landing = page.url();
-    await page.getByRole("button", { name: "Start a new conversation", exact: true }).click();
-    await page.waitForURL((url) => /\/chat\/.+/.test(url.pathname) && url.href !== landing, { timeout: 5000 });
+    await startNewChat(page);
 
     // With SSR off, the composer only exists once Svelte has booted —
     // waiting for it also means its listeners are attached, so the Send
@@ -174,9 +296,7 @@ test("the voice-mode modal opens with its tap-to-talk control", async () => {
     const page = await ctx.newPage();
     await page.goto(`${BASE}/chat`, { waitUntil: "domcontentloaded" });
     await page.waitForURL((u) => /\/chat\/.+/.test(u.pathname), { timeout: 5000 });
-    const landing = page.url();
-    await page.getByRole("button", { name: "Start a new conversation", exact: true }).click();
-    await page.waitForURL((url) => /\/chat\/.+/.test(url.pathname) && url.href !== landing, { timeout: 5000 });
+    await startNewChat(page);
     await page.locator("textarea").waitFor();
 
     assert.equal(await page.getByRole("link", { name: "All chats", exact: true }).count(), 0);
@@ -439,7 +559,7 @@ test("a sent message is put on screen however far back the reader had scrolled",
 /** A conversation of this test's own, long enough to need scrolling. */
 async function seededConversation(cookie, turns) {
     const created = await fetch(`${BASE}/api/v0/chat/sessions`, { method: "POST", headers: { cookie } });
-    assert.equal(created.status, 201, "could not create a conversation");
+    assert.ok(created.ok, `could not create a conversation: ${created.status}`);
     const { session } = await created.json();
     for (let i = 0; i < turns; i++) {
         const posted = await fetch(`${BASE}/api/v0/chat/sessions/${session.id}/messages`, {

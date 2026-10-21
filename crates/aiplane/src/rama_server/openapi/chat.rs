@@ -74,7 +74,9 @@ pub(super) fn operations() -> Vec<Op> {
         get("/api/v0/chat/sessions", Access::Session)
             .query::<chat::SessionsQuery>()
             .ok(json::<chat::SessionsList>()),
-        post("/api/v0/chat/sessions", Access::Session).created(json::<chat::SessionEnvelope>()),
+        post("/api/v0/chat/sessions", Access::Session)
+            .ok(json::<chat::SessionEnvelope>())
+            .created(json::<chat::SessionEnvelope>()),
         get("/api/v0/chat/sessions/{id}", Access::Session)
             .ok(json::<chat::SessionDetail>())
             .errors(&[404]),
