@@ -20,8 +20,8 @@ class CoverageTests(unittest.TestCase):
         self.write('docs/site-support/coverage.json', '{"ui_pages":[{"source":"web/src/routes/+page.svelte","documentation":"guide.md"}]}')
         self.write('crates/aiplane/src/rama_server/router.rs', '.with_get("/", handler)')
         self.write('docs/reference/api.md', '| `GET /` | handler |\n')
-        self.write('crates/aiplane-core/src/server/settings.rs', 'pub static SECTIONS: &[SectionSpec] = &[f("chat.enabled", Kind::Bool)\n];')
-        self.write('docs/admin/settings-reference.md', '| `chat.enabled` | Boolean |\n')
+        self.write('crates/aiplane-core/src/server/settings.rs', 'pub static SECTIONS: &[SectionSpec] = &[f("chat.enabled", Kind::Bool), f_default("chat.voice.directive", Kind::TextArea, "built-in")\n];')
+        self.write('docs/admin/settings-reference.md', '| `chat.enabled` | Boolean |\n| `chat.voice.directive` | Text |\n')
 
     def write(self, relative, text):
         target = self.root / relative
@@ -48,6 +48,7 @@ class CoverageTests(unittest.TestCase):
         self.write('docs/guide.md', '[Missing](missing.md)\n')
         errors, _ = coverage.check(self.root)
         self.assertIn('Settings field needs documentation: chat.enabled', errors)
+        self.assertIn('Settings field needs documentation: chat.voice.directive', errors)
         self.assertIn('Broken relative link in guide.md: missing.md', errors)
 
 

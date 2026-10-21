@@ -2628,6 +2628,7 @@ export const zh: Catalog = {
  "settings-no-backend-body": "登录已配置好，但在添加后端之前，本网关不提供任何模型。在此之前，聊天和 /v1 接口都会拒绝请求。",
  "settings-no-backend-cta": "在“模型与路由”中添加后端 →",
  "settings-no-backend-heading": "尚未配置模型后端",
+ "settings-reset-default": "重置为默认值",
  "settings-restart-badge": "需重启",
  "settings-restart-note": "标记为“需重启”的字段仅在网关启动时读取，修改后需重启才能生效。",
  "settings-restart-pending-body": "以下设置已保存，但需重启网关后才会生效：",

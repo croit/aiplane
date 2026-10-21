@@ -1525,6 +1525,7 @@ pub async fn settings_list(State(state): State<Arc<RamaState>>, req: Request) ->
                         // every other kind. The SPA labels each option from
                         // its own catalog, so only the identifiers travel.
                         choices: f.choices(),
+                        default: f.default,
                     }
                 })
                 .collect();
@@ -1582,6 +1583,10 @@ pub struct SettingsFieldView {
     pub model_options: Vec<SettingsModelOption>,
     /// The allowed values of a `choice` field; empty otherwise.
     pub choices: &'static [&'static str],
+    /// The built-in value the gateway uses while no value is stored; empty
+    /// for a field without one. The editor shows it and its reset button
+    /// restores it.
+    pub default: &'static str,
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]

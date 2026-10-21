@@ -2649,6 +2649,7 @@ export const de: Catalog = {
  "settings-no-backend-body": "Die Anmeldung ist eingerichtet, aber dieses Gateway liefert erst Modelle, wenn ein Backend hinzugefügt ist. Bis dahin lehnen Chat und die /v1-API Anfragen ab.",
  "settings-no-backend-cta": "Backend unter Modelle & Routing hinzufügen →",
  "settings-no-backend-heading": "Noch kein Modell-Backend",
+ "settings-reset-default": "Auf Standard zurücksetzen",
  "settings-restart-badge": "Neustart",
  "settings-restart-note": "Mit „Neustart“ markierte Felder werden nur beim Start gelesen; Änderungen greifen erst nach einem Neustart.",
  "settings-restart-pending-body": "Diese Einstellungen sind gespeichert, greifen aber erst nach einem Neustart des Gateways:",

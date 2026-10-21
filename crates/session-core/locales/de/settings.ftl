@@ -7,6 +7,7 @@
 
 settings-save = Abschnitt speichern
 settings-saved = Gespeichert. Ab der nächsten Anfrage aktiv.
+settings-reset-default = Auf Standard zurücksetzen
 settings-restart-note = Mit „Neustart“ markierte Felder werden nur beim Start gelesen; Änderungen greifen erst nach einem Neustart.
 settings-secret-set = gespeichert — neuen Wert eingeben, um ihn zu ersetzen
 settings-secret-unset = nicht gesetzt

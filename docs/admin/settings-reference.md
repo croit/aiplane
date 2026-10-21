@@ -35,7 +35,7 @@ Category: **Chat**.
 
 | Key | Input / choices | Meaning | Restart |
 |---|---|---|---|
-| `chat.voice.directive` | Text | Standing instructions for voice turns, added to the system message of every voice-mode chat. Leave empty to use the built-in directive. | No |
+| `chat.voice.directive` | Text | Standing instructions for voice turns, added to the system message of every voice-mode chat. The field shows the built-in directive while nothing is stored; its reset button restores it. | No |
 
 ### chat.ocr
 
@@ -67,7 +67,7 @@ Category: **Chat**.
 | `chat.compaction.keep_recent_turns` | Integer | Turns kept verbatim at the end of the conversation. | No |
 | `chat.compaction.min_turns_to_compact` | Integer | Never compact a conversation shorter than this many turns. | No |
 | `chat.compaction.summary_max_tokens` | Integer | Token budget for the summary that replaces the compacted turns. | No |
-| `chat.compaction.summary_prompt` | Text | The summariser's instructions. Leave empty to use the built-in prompt. | No |
+| `chat.compaction.summary_prompt` | Text | The summariser's instructions. The field shows the built-in prompt while nothing is stored; its reset button restores it. | No |
 
 ### chat.turns
 

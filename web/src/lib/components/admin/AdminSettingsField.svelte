@@ -29,7 +29,7 @@
 </script>
 
 <div class={field.span === 'full' ? 'flex flex-col gap-1 sm:col-span-2' : 'flex flex-col gap-1'}>
-	<label class="flex flex-wrap items-baseline gap-2" for={field.key}><span class="text-sm font-medium">{label}</span>{#if field.restart}<span class="badge badge-warning badge-xs">{t('settings-restart-badge')}</span>{/if}</label>
+	<label class="flex flex-wrap items-baseline gap-2" for={field.key}><span class="text-sm font-medium">{label}</span>{#if field.restart}<span class="badge badge-warning badge-xs">{t('settings-restart-badge')}</span>{/if}{#if field.default !== '' && draft !== field.default}<button type="button" class="btn btn-ghost btn-xs" data-testid={`settings-reset-${field.key.replaceAll('.', '-')}`} onclick={() => onchange(field.key, field.default)}>{t('settings-reset-default')}</button>{/if}</label>
 	{#if field.kind === 'bool'}
 		<input id={field.key} class="toggle toggle-sm" type="checkbox" checked={draft === 'true'} onchange={(event) => onchange(field.key, (event.currentTarget as HTMLInputElement).checked ? 'true' : 'false')} />
 	{:else if field.kind === 'secret'}

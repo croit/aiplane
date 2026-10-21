@@ -601,7 +601,9 @@ the existing rule's `id`, it edits that row in place. `DELETE
 
 `GET /api/v0/admin/settings` carries the declarative settings specification
 into the SPA: category and section membership, effective values, field kinds
-and spans, feature enablement, valid models for model fields, secret-presence
+and spans, the built-in default each field falls back to (shown in the field
+while nothing is stored and restored by its reset button), feature
+enablement, valid models for model fields, secret-presence
 flags, restart-pending keys, and whether AIplane still needs its first
 backend. The category is a bookmarkable `?tab=` value. Disabled feature cards
 keep their master toggle visible and fold the remaining fields; each section
@@ -610,7 +612,13 @@ secrets use the explicit `/api/v0/admin/settings/clear` action to return to the
 built-in default. The Chat tab's *Chat prompt* card (a `textarea` field over
 `chat.prompt`) is the deployment-wide system prompt of a person's chat: it
 rides in the leading system message while enabled, takes effect on save
-without a restart, and never reaches an agent run or a `/v1` request.
+without a restart, and never reaches an agent run or a `/v1` request. The
+*Voice* card's `chat.voice.directive` and the *Conversation compaction*
+card's `chat.compaction.summary_prompt` are `textarea` fields over the two
+built-in prompts the gateway injects (the voice-turn directive, the
+summariser's instructions): while nothing is stored the field shows the
+built-in text, and saving an edit — or the reset button — takes effect on the
+next voice turn / compaction without a restart.
 
 `chat-protocol.ts` is deliberately framework-free — no Svelte, no DOM — so the fold is unit-testable under `node --test` (`chat-protocol.test.ts`, run by `mise run test-web`) and `chat.svelte.ts` stays a thin reactive wrapper around it. Keep it that way: wire behaviour that can only be tested through a browser is wire behaviour nobody tests.
 

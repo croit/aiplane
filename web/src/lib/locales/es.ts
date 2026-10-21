@@ -2649,6 +2649,7 @@ export const es: Catalog = {
  "settings-no-backend-body": "El inicio de sesión ya está configurado, pero esta pasarela no sirve ningún modelo hasta que añadas un backend. Hasta entonces, el chat y la API /v1 rechazan las peticiones.",
  "settings-no-backend-cta": "Añadir un backend en Modelos y enrutamiento →",
  "settings-no-backend-heading": "Todavía no hay backend de modelos",
+ "settings-reset-default": "Restablecer al valor predeterminado",
  "settings-restart-badge": "reinicio",
  "settings-restart-note": "Los campos marcados con «reinicio» se leen solo al arrancar; cambiarlos requiere reiniciar.",
  "settings-restart-pending-body": "Estos ajustes están guardados, pero solo se aplican tras reiniciar la pasarela:",

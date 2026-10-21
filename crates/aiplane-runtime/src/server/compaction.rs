@@ -67,19 +67,11 @@ pub(crate) async fn wait_for_completed_turn(
 const MAX_TOOL_ARGS_CHARS: usize = 200;
 const MAX_TOOL_OUTPUT_CHARS: usize = 600;
 
-const SUMMARY_SYSTEM_PROMPT: &str = "You compress the earlier part of a chat conversation into a \
-dense summary that will REPLACE those messages so the assistant can keep going without them.\n\
-Preserve: concrete facts, decisions made, the user's goals and constraints, file/function/entity \
-names, numbers, code or commands that matter, tool results the conversation relied on, and any \
-open questions or unfinished tasks.\n\
-Drop: pleasantries, redundancy, and step-by-step narration that no longer matters.\n\
-Write in compact prose or bullet points. No preamble, no meta-commentary, no \"here is the \
-summary\" — output only the summary itself.\n\
-/no_think";
-
 /// The summariser's instructions: the operator's own prompt while it has
 /// text, the built-in one otherwise.
 fn summary_instructions(cfg: &aiplane_core::server::config::CompactionConfig) -> &str {
+    use aiplane_core::server::prompts::SUMMARY_SYSTEM_PROMPT;
+
     if cfg.summary_prompt.is_empty() {
         SUMMARY_SYSTEM_PROMPT
     } else {
@@ -440,6 +432,7 @@ fn clean_summary(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aiplane_core::server::prompts::SUMMARY_SYSTEM_PROMPT;
     use jiff::Timestamp;
     use session_core::db::{Turn, TurnRole, TurnStatus};
 

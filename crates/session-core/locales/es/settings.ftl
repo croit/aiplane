@@ -8,6 +8,7 @@
 
 settings-save = Guardar sección
 settings-saved = Guardado. Activo desde la siguiente petición.
+settings-reset-default = Restablecer al valor predeterminado
 settings-restart-note = Los campos marcados con «reinicio» se leen solo al arrancar; cambiarlos requiere reiniciar.
 settings-secret-set = guardado — escribe un valor nuevo para sustituirlo
 settings-secret-unset = sin definir

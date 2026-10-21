@@ -13,6 +13,7 @@
 
 settings-save = Save section
 settings-saved = Saved. In effect from the next request.
+settings-reset-default = Reset to default
 settings-restart-note = Fields marked "restart" are read once when the gateway starts; changing them needs a restart to take effect.
 settings-secret-set = stored — type a new value to replace it
 settings-secret-unset = not set

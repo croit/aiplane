@@ -7,6 +7,7 @@
 
 settings-save = Enregistrer la section
 settings-saved = Enregistré. Actif dès la prochaine requête.
+settings-reset-default = Rétablir la valeur par défaut
 settings-restart-note = Les champs marqués « redémarrage » ne sont lus qu'au démarrage ; les modifier exige un redémarrage.
 settings-secret-set = enregistré — saisissez une nouvelle valeur pour le remplacer
 settings-secret-unset = non défini

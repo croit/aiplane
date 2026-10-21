@@ -7,6 +7,7 @@
 
 settings-save = 保存本节
 settings-saved = 已保存，下一个请求起生效。
+settings-reset-default = 重置为默认值
 settings-restart-note = 标记为“需重启”的字段仅在网关启动时读取，修改后需重启才能生效。
 settings-secret-set = 已存储——输入新值即可替换
 settings-secret-unset = 未设置

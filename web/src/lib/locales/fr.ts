@@ -2649,6 +2649,7 @@ export const fr: Catalog = {
  "settings-no-backend-body": "La connexion est configurée, mais cette passerelle ne sert aucun modèle avant l'ajout d'un backend. D'ici là, le chat et l'API /v1 refusent les requêtes.",
  "settings-no-backend-cta": "Ajouter un backend dans Modèles et routage →",
  "settings-no-backend-heading": "Aucun backend de modèle",
+ "settings-reset-default": "Rétablir la valeur par défaut",
  "settings-restart-badge": "redémarrage",
  "settings-restart-note": "Les champs marqués « redémarrage » ne sont lus qu'au démarrage ; les modifier exige un redémarrage.",
  "settings-restart-pending-body": "Ces réglages sont enregistrés mais ne prendront effet qu'après un redémarrage de la passerelle :",

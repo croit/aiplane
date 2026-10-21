@@ -2649,6 +2649,7 @@ export const en: Catalog = {
  "settings-no-backend-body": "Setup configured sign-in, but this gateway serves no models until you add a backend. Chat and the /v1 API will refuse requests until then.",
  "settings-no-backend-cta": "Add a backend under Models & routing →",
  "settings-no-backend-heading": "No model backend yet",
+ "settings-reset-default": "Reset to default",
  "settings-restart-badge": "restart",
  "settings-restart-note": "Fields marked \"restart\" are read once when the gateway starts; changing them needs a restart to take effect.",
  "settings-restart-pending-body": "These settings are saved but only take effect after the gateway restarts:",

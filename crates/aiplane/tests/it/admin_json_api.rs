@@ -1358,6 +1358,21 @@ async fn compaction_and_voice_prompt_fields_save_and_clear() {
             .is_empty(),
         "empty means the built-in default"
     );
+    assert!(
+        find_field(&before, "chat.compaction.summary_prompt")["default"]
+            .as_str()
+            .unwrap()
+            .starts_with("You compress the earlier part of a chat conversation"),
+        "the built-in summariser prompt is what the editor shows and resets to"
+    );
+    assert!(
+        find_field(&before, "chat.voice.directive")["default"]
+            .as_str()
+            .unwrap()
+            .starts_with("You are in a live VOICE conversation"),
+        "the built-in voice directive is what the editor shows and resets to"
+    );
+    assert_eq!(find_field(&before, "chat.prompt.text")["default"], "");
 
     let resp = app
         .serve(

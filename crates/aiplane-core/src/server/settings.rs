@@ -225,6 +225,10 @@ pub struct FieldSpec {
     /// How wide the control renders. Defaults from the kind via [`span_for`];
     /// [`f_half`] overrides it for a text field that holds something short.
     pub span: Span,
+    /// The built-in value the gateway falls back to while no value is
+    /// stored, shown in the editor and what its reset button restores.
+    /// Empty for a field with no built-in.
+    pub default: &'static str,
 }
 
 impl FieldSpec {
@@ -409,6 +413,19 @@ const fn f(key: &'static str, kind: Kind) -> FieldSpec {
         kind,
         restart: false,
         span: span_for(kind),
+        default: "",
+    }
+}
+
+/// Same as [`f`], with the built-in value the editor shows while no value is
+/// stored and its reset button restores.
+const fn f_default(key: &'static str, kind: Kind, default: &'static str) -> FieldSpec {
+    FieldSpec {
+        key,
+        kind,
+        restart: false,
+        span: span_for(kind),
+        default,
     }
 }
 
@@ -420,6 +437,7 @@ const fn f_half(key: &'static str, kind: Kind) -> FieldSpec {
         kind,
         restart: false,
         span: Span::Half,
+        default: "",
     }
 }
 
@@ -430,6 +448,7 @@ const fn r(key: &'static str, kind: Kind) -> FieldSpec {
         kind,
         restart: true,
         span: span_for(kind),
+        default: "",
     }
 }
 
@@ -476,7 +495,11 @@ pub static SECTIONS: &[SectionSpec] = &[
         name: "chat.voice",
         category: Category::Chat,
         user_feature: false,
-        fields: &[f("chat.voice.directive", Kind::TextArea)],
+        fields: &[f_default(
+            "chat.voice.directive",
+            Kind::TextArea,
+            super::prompts::VOICE_DIRECTIVE,
+        )],
     },
     SectionSpec {
         name: "chat.ocr",
@@ -507,7 +530,11 @@ pub static SECTIONS: &[SectionSpec] = &[
             f("chat.compaction.keep_recent_turns", Kind::Int),
             f("chat.compaction.min_turns_to_compact", Kind::Int),
             f("chat.compaction.summary_max_tokens", Kind::Int),
-            f("chat.compaction.summary_prompt", Kind::TextArea),
+            f_default(
+                "chat.compaction.summary_prompt",
+                Kind::TextArea,
+                super::prompts::SUMMARY_SYSTEM_PROMPT,
+            ),
         ],
     },
     SectionSpec {
@@ -1661,6 +1688,29 @@ mod tests {
             &mut config,
         );
         assert_eq!(section_is_enabled(&config, section), Some(true));
+    }
+
+    #[test]
+    fn the_prompt_fields_carry_their_built_in_defaults() {
+        assert_eq!(
+            field("chat.voice.directive")
+                .expect("the voice directive field")
+                .default,
+            super::super::prompts::VOICE_DIRECTIVE
+        );
+        assert_eq!(
+            field("chat.compaction.summary_prompt")
+                .expect("the summariser prompt field")
+                .default,
+            super::super::prompts::SUMMARY_SYSTEM_PROMPT
+        );
+        assert_eq!(
+            field("chat.prompt.text")
+                .expect("the chat prompt field")
+                .default,
+            "",
+            "the chat prompt is an addition — it has no built-in"
+        );
     }
 
     #[test]
