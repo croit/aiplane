@@ -29,7 +29,7 @@
 	},
 	"dependencies": {
 		"@zumer/snapdom": "^3.3.4",
-		"dompurify": "^3.4.16",
+		"dompurify": "^3.4.17",
 		"marked": "^18.1.1"
 	},
 	"overrides": {
