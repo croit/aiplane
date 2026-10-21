@@ -5,6 +5,7 @@ export type SettingsFieldKind =
 	| 'int'
 	| 'float'
 	| 'text'
+	| 'textarea'
 	| 'path'
 	| 'model'
 	| 'secret'

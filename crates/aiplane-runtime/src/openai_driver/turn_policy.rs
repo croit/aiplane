@@ -222,9 +222,9 @@ impl<'a> TurnPolicy<'a> {
         let leading = match self {
             Self::Chat => Leading {
                 voice_directive: d.voice_mode.then_some(VOICE_DIRECTIVE),
+                own: chat_own_sections(&d.state.config()),
                 context: build_request_context(d, user_mcp, Audience::Person).await,
                 summary,
-                ..Leading::default()
             },
             Self::Agent(run) => Leading {
                 own: match run.surface() {
@@ -457,6 +457,20 @@ impl<'a> TurnPolicy<'a> {
     }
 }
 
+/// The operator's standing instructions for a person's chat, as the leading
+/// message's own section: one entry while the prompt is enabled and has
+/// text, none otherwise. An agent run never reads it — its system message
+/// comes from its spec — and a `/v1` request carries the client's own.
+fn chat_own_sections(config: &aiplane_core::server::config::Config) -> Vec<String> {
+    let prompt = &config.chat.prompt;
+    prompt
+        .enabled
+        .then(|| prompt.text.clone())
+        .filter(|text| !text.is_empty())
+        .into_iter()
+        .collect()
+}
+
 /// An agent run's offer: its granted spec tools and synthetic tools (every
 /// grant, for a run with no spec), then the run's terminal tool.
 /// Whether an agent run is offered the skill loader without its spec
@@ -520,4 +534,42 @@ thread_local! {
 fn count_chat_only_read() {
     #[cfg(test)]
     CHAT_ONLY_READS.with(|reads| reads.set(reads.get() + 1));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aiplane_core::server::config::{Config, PromptConfig};
+
+    fn config_with(prompt: PromptConfig) -> Config {
+        let mut config = Config::default();
+        config.chat.prompt = prompt;
+        config
+    }
+
+    #[test]
+    fn the_admin_prompt_is_a_chat_section_only_while_enabled_with_text() {
+        assert!(chat_own_sections(&Config::default()).is_empty());
+        assert!(
+            chat_own_sections(&config_with(PromptConfig {
+                enabled: true,
+                text: "".into()
+            }))
+            .is_empty()
+        );
+        assert!(
+            chat_own_sections(&config_with(PromptConfig {
+                enabled: false,
+                text: "Standby.".into()
+            }))
+            .is_empty()
+        );
+        assert_eq!(
+            chat_own_sections(&config_with(PromptConfig {
+                enabled: true,
+                text: "Answer in plain German.".into()
+            })),
+            vec!["Answer in plain German.".to_owned()]
+        );
+    }
 }

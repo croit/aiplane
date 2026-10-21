@@ -1246,6 +1246,71 @@ async fn settings_list_save_clear() {
 }
 
 #[tokio::test]
+async fn chat_prompt_section_saves_and_reports_its_state() {
+    let (state, cookie) = setup().await;
+    let app = router(state);
+
+    let listed = || {
+        let app = &app;
+        let cookie = &cookie;
+        async move {
+            serde_json::from_str::<serde_json::Value>(
+                &body(
+                    app.serve(req(Method::GET, "/api/v0/admin/settings", cookie, None))
+                        .await
+                        .unwrap(),
+                )
+                .await,
+            )
+            .unwrap()
+        }
+    };
+
+    let find_field = |listed: &serde_json::Value, key: &str| {
+        listed["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|section| section["fields"].as_array().unwrap())
+            .find(|field| field["key"] == key)
+            .unwrap()
+            .clone()
+    };
+
+    let before = listed().await;
+    assert_eq!(find_field(&before, "chat.prompt.enabled")["value"], "false");
+    assert_eq!(find_field(&before, "chat.prompt.text")["kind"], "textarea");
+
+    let resp = app
+        .serve(req(
+            Method::POST,
+            "/api/v0/admin/settings",
+            &cookie,
+            Some(
+                r#"{"section":"chat.prompt","values":{"chat.prompt.enabled":"true","chat.prompt.text":"Answer in plain German."}}"#
+                    .into(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let after = listed().await;
+    let section = after["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|section| section["name"] == "chat.prompt")
+        .unwrap();
+    assert_eq!(section["enabled"], true);
+    assert_eq!(find_field(&after, "chat.prompt.enabled")["value"], "true");
+    assert_eq!(
+        find_field(&after, "chat.prompt.text")["value"],
+        "Answer in plain German."
+    );
+}
+
+#[tokio::test]
 async fn settings_list_exposes_system_one_model_compliance() {
     let (state, cookie) = setup().await;
     let app = router(state);

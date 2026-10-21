@@ -630,6 +630,18 @@ pub struct TypstConfig {
     pub templates_dir: PathBuf,
 }
 
+/// The operator's standing instructions for a person's chat.
+///
+/// Written over the in-memory config by the settings layer and read by the
+/// turn driver, which puts it into the leading system message of every
+/// person's chat turn while `enabled` and `text` is non-empty. An agent run
+/// is not affected: its system message comes from its spec.
+#[derive(Debug, Clone, Default)]
+pub struct PromptConfig {
+    pub enabled: bool,
+    pub text: String,
+}
+
 /// Chat-page settings. Attachments go to S3 (object storage) so the
 /// DB doesn't bloat and the OpenAI API can fetch image URLs directly
 /// from the bucket. We don't gate which model gets to receive
@@ -639,6 +651,8 @@ pub struct TypstConfig {
 #[derive(Debug, Clone, Default)]
 pub struct ChatConfig {
     pub s3: Option<S3Config>,
+    /// The deployment-wide system prompt for a person's chat.
+    pub prompt: PromptConfig,
     /// Optional automatic OCR enrichment for image/PDF attachments. The OCR
     /// pool must point at the document-aware OCR sidecar.
     pub ocr: OcrConfig,

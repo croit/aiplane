@@ -22,6 +22,8 @@ settings-restart-pending-body = 以下设置已保存，但需重启网关后才
 
 # ─── 分区卡片 ─────────────────────────────────────────────────────────────────
 
+settings-s-chat-prompt = 聊天提示词
+settings-s-chat-prompt-blurb = 模型在每个人类对话中遵循的固定指令。
 settings-s-chat-ocr = 文档 OCR
 settings-s-chat-ocr-blurb = 把上传的 PDF 与图片转成模型能读的文本。
 settings-s-chat-compaction = 会话压缩
@@ -86,6 +88,10 @@ settings-s-metrics-blurb = GET /metrics 抓取端点。仅在设置了令牌或�
 
 # ─── 字段 ─────────────────────────────────────────────────────────────────────
 
+settings-f-chat-prompt-enabled = 启用聊天提示词
+settings-f-chat-prompt-enabled-help = 全局聊天系统提示词的主开关。
+settings-f-chat-prompt-text = 系统提示词
+settings-f-chat-prompt-text-help = 启用后会加入每个人类对话的系统消息。智能体和 Dot 保留各自的指令。
 settings-f-chat-ocr-enabled = 启用 OCR
 settings-f-chat-ocr-enabled-help = 从上传文档中提取文本的总开关。
 settings-f-chat-ocr-model = OCR 模型

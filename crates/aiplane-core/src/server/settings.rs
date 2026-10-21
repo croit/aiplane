@@ -47,8 +47,8 @@ use crate::server::config::AllowedIps;
 use crate::server::config::{
     ChatConfig, ComfyuiConfig, CompactionConfig, Config, ContentGuardConfig, ContentGuardMode,
     ContentGuardPolicy, DotsConfig, FeedbackConfig, GatewayConfig, GeoipConfig, LimitsConfig,
-    LoopsConfig, MetricsConfig, OcrConfig, PushConfig, RagConfig, S3Config, SandboxConfig,
-    SkillsConfig, TurnsConfig, TypstConfig, UsageConfig,
+    LoopsConfig, MetricsConfig, OcrConfig, PromptConfig, PushConfig, RagConfig, S3Config,
+    SandboxConfig, SkillsConfig, TurnsConfig, TypstConfig, UsageConfig,
 };
 use crate::server::crypto::Crypto;
 use crate::server::db::{DbError, Pool, app_settings};
@@ -70,6 +70,10 @@ pub enum Kind {
     Int,
     Float,
     Text,
+    /// A multi-line text block: stored like [`Kind::Text`], rendered as a
+    /// textarea because a single-line input would make its content
+    /// unreadable.
+    TextArea,
     /// A filesystem path. Same storage as [`Kind::Text`]; rendered with a hint
     /// that it is resolved inside the container, which is the single most
     /// common way these get set wrong.
@@ -176,6 +180,7 @@ const fn span_for(kind: Kind) -> Span {
     match kind {
         Kind::Int | Kind::Float | Kind::Bool | Kind::Choice(_) => Span::Half,
         Kind::Text
+        | Kind::TextArea
         | Kind::Path
         | Kind::Secret
         | Kind::List
@@ -440,6 +445,15 @@ const fn r(key: &'static str, kind: Kind) -> FieldSpec {
 /// Fluent for everyone else — would drift on the first edit, so `en` is just
 /// another locale file and this table stays a table.
 pub static SECTIONS: &[SectionSpec] = &[
+    SectionSpec {
+        name: "chat.prompt",
+        category: Category::Chat,
+        user_feature: false,
+        fields: &[
+            f("chat.prompt.enabled", Kind::Bool),
+            f("chat.prompt.text", Kind::TextArea),
+        ],
+    },
     SectionSpec {
         name: "content_guard",
         category: Category::Access,
@@ -742,6 +756,7 @@ pub async fn clear_restart_pending(pool: &Pool) -> Result<(), DbError> {
 
 pub fn section_is_enabled(config: &Config, section: &SectionSpec) -> Option<bool> {
     Some(match section.name {
+        "chat.prompt" => config.chat.prompt.enabled,
         "chat.ocr" => config.chat.ocr.enabled,
         "chat.compaction" => config.chat.compaction.enabled,
         "chat.s3" => config.chat.s3.is_some(),
@@ -932,6 +947,7 @@ impl Settings {
 /// public URL fallback, the upstream topology — is left as it was.
 pub fn apply(settings: &Settings, config: &mut Config) {
     config.chat = ChatConfig {
+        prompt: prompt(settings),
         ocr: ocr(settings),
         compaction: compaction(settings),
         turns: turns(settings),
@@ -1005,6 +1021,14 @@ pub fn apply(settings: &Settings, config: &mut Config) {
     ))
     .unwrap_or_default();
     g.allow_impersonation = settings.bool("gateway.allow_impersonation", d.allow_impersonation);
+}
+
+fn prompt(s: &Settings) -> PromptConfig {
+    let d = PromptConfig::default();
+    PromptConfig {
+        enabled: s.bool("chat.prompt.enabled", d.enabled),
+        text: s.text_or("chat.prompt.text", ""),
+    }
 }
 
 fn ocr(s: &Settings) -> OcrConfig {
@@ -1286,6 +1310,9 @@ pub fn snapshot(c: &Config) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     let mut put = |key: &str, value: String| out.push((key.to_owned(), value));
 
+    put("chat.prompt.enabled", c.chat.prompt.enabled.to_string());
+    put("chat.prompt.text", c.chat.prompt.text.clone());
+
     put("chat.ocr.enabled", ocr.enabled.to_string());
     put("chat.ocr.model", ocr.model.clone().unwrap_or_default());
     put("chat.ocr.max_tokens", ocr.max_tokens.to_string());
@@ -1558,6 +1585,62 @@ mod tests {
                 .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
                 .collect(),
         )
+    }
+
+    #[test]
+    fn chat_prompt_round_trips_and_stays_off_without_text() {
+        let mut config = Config::default();
+        assert!(!config.chat.prompt.enabled);
+        assert!(config.chat.prompt.text.is_empty());
+        apply(
+            &settings_of(&[
+                ("chat.prompt.enabled", "true"),
+                ("chat.prompt.text", "Answer in plain German."),
+            ]),
+            &mut config,
+        );
+        assert!(config.chat.prompt.enabled);
+        assert_eq!(config.chat.prompt.text, "Answer in plain German.");
+        assert_eq!(
+            snapshot(&config)
+                .into_iter()
+                .find(|(k, _)| k == "chat.prompt.text")
+                .map(|(_, v)| v),
+            Some("Answer in plain German.".to_owned())
+        );
+
+        let mut off = Config::default();
+        apply(&settings_of(&[("chat.prompt.enabled", "true")]), &mut off);
+        assert!(off.chat.prompt.enabled);
+        assert!(off.chat.prompt.text.is_empty());
+
+        let mut cleared = Config::default();
+        apply(
+            &settings_of(&[("chat.prompt.enabled", "true"), ("chat.prompt.text", "   ")]),
+            &mut cleared,
+        );
+        assert!(
+            cleared.chat.prompt.text.is_empty(),
+            "whitespace is not a prompt"
+        );
+    }
+
+    #[test]
+    fn chat_prompt_section_reports_its_master_switch() {
+        let mut config = Config::default();
+        let section = SECTIONS
+            .iter()
+            .find(|s| s.name == "chat.prompt")
+            .expect("the chat.prompt section");
+        assert_eq!(section_is_enabled(&config, section), Some(false));
+        apply(
+            &settings_of(&[
+                ("chat.prompt.enabled", "true"),
+                ("chat.prompt.text", "Be terse."),
+            ]),
+            &mut config,
+        );
+        assert_eq!(section_is_enabled(&config, section), Some(true));
     }
 
     #[test]

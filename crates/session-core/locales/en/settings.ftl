@@ -29,6 +29,8 @@ settings-restart-pending-body = These settings are saved but only take effect af
 
 # ─── Section cards ───────────────────────────────────────────────────────────
 
+settings-s-chat-prompt = Chat prompt
+settings-s-chat-prompt-blurb = Standing instructions the model follows in every chat a person has with the assistant.
 settings-s-chat-ocr = Document OCR
 settings-s-chat-ocr-blurb = Turning uploaded PDFs and images into text the model can read.
 settings-s-chat-compaction = Conversation compaction
@@ -94,6 +96,10 @@ settings-f-content_guard-nda_action-opt-allow = Allow
 settings-f-content_guard-nda_action-opt-confirm = Ask for confirmation
 settings-f-content_guard-nda_action-opt-deny = Deny
 
+settings-f-chat-prompt-enabled = Enable the chat prompt
+settings-f-chat-prompt-enabled-help = Master switch for the deployment-wide system prompt of a person's chat.
+settings-f-chat-prompt-text = System prompt
+settings-f-chat-prompt-text-help = Added to the system message of every person's chat while enabled. Agents and Dots keep their own instructions.
 settings-f-chat-ocr-enabled = Enable OCR
 settings-f-chat-ocr-enabled-help = Master switch for reading text out of uploaded documents.
 settings-f-chat-ocr-model = OCR model

@@ -22,6 +22,8 @@ settings-restart-pending-body = Эти настройки сохранены, н
 
 # ─── Карточки разделов ───────────────────────────────────────────────────────
 
+settings-s-chat-prompt = Системный промпт чата
+settings-s-chat-prompt-blurb = Постоянные инструкции, которые модель выполняет в каждом чате пользователя.
 settings-s-chat-ocr = OCR документов
 settings-s-chat-ocr-blurb = Превращение загруженных PDF и изображений в текст, который может прочитать модель.
 settings-s-chat-compaction = Сжатие переписки
@@ -86,6 +88,10 @@ settings-s-metrics-blurb = Эндпоинт сбора GET /metrics. Он отв
 
 # ─── Поля ────────────────────────────────────────────────────────────────────
 
+settings-f-chat-prompt-enabled = Включить промпт чата
+settings-f-chat-prompt-enabled-help = Главный переключатель общесистемного промпта для чатов пользователей.
+settings-f-chat-prompt-text = Системный промпт
+settings-f-chat-prompt-text-help = Добавляется в системное сообщение каждого чата пользователя, пока включён. Агенты и Dots сохраняют собственные инструкции.
 settings-f-chat-ocr-enabled = Включить OCR
 settings-f-chat-ocr-enabled-help = Главный переключатель извлечения текста из загруженных документов.
 settings-f-chat-ocr-model = Модель OCR

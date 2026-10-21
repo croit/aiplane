@@ -20,6 +20,15 @@ Category: **Access**.
 
 The checks run only for compliance areas not declared covered by the destination chat pool. When both areas are uncovered, both questions are sent to the selected System One model. The model also receives the request messages, so assess its own pool declarations before selecting it. See [content guard setup and behavior](settings.md#access-and-content-guard).
 
+### chat.prompt
+
+Category: **Chat**.
+
+| Key | Input / choices | Meaning | Restart |
+|---|---|---|---|
+| `chat.prompt.enabled` | Boolean | Master switch for the deployment-wide system prompt of a person's chat. | No |
+| `chat.prompt.text` | Text | Standing instructions added to the system message of every person's chat while enabled. Agents and Dots keep their own instructions. | No |
+
 ### chat.ocr
 
 Category: **Chat**.

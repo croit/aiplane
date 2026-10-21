@@ -43,6 +43,8 @@
 	{:else if field.kind === 'model'}
 		{#if field.models.length === 0 && draft === ''}<p class="m-0 text-sm italic text-base-content/60">{t('settings-model-none-configured')}</p>
 		{:else}<SearchableSelect id={field.key} options={modelOptions} value={draft} onchange={(value) => onchange(field.key, value)} ariaLabel={label} class="w-full" />{/if}
+	{:else if field.kind === 'textarea'}
+		<textarea id={field.key} class="textarea w-full min-h-36" class:textarea-error={error} aria-invalid={error ? true : undefined} value={draft} oninput={(event) => onchange(field.key, (event.currentTarget as HTMLTextAreaElement).value)} />
 	{:else}
 		<input id={field.key} class="input w-full" class:input-error={error} aria-invalid={error ? true : undefined} type={field.kind === 'int' || field.kind === 'float' ? 'number' : 'text'} step={field.kind === 'float' ? 'any' : undefined} value={draft} oninput={(event) => onchange(field.key, (event.currentTarget as HTMLInputElement).value)} />
 	{/if}

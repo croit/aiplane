@@ -22,6 +22,8 @@ settings-restart-pending-body = Diese Einstellungen sind gespeichert, greifen ab
 
 # ─── Abschnittskarten ────────────────────────────────────────────────────────
 
+settings-s-chat-prompt = Chat-Prompt
+settings-s-chat-prompt-blurb = Feste Anweisungen, die das Modell in jedem Chat einer Person befolgt.
 settings-s-chat-ocr = Dokumenten-OCR
 settings-s-chat-ocr-blurb = Hochgeladene PDFs und Bilder in Text umwandeln, den das Modell lesen kann.
 settings-s-chat-compaction = Gesprächsverdichtung
@@ -87,6 +89,10 @@ settings-f-content_guard-nda_action-opt-allow = Erlauben
 settings-f-content_guard-nda_action-opt-confirm = Bestätigung anfordern
 settings-f-content_guard-nda_action-opt-deny = Ablehnen
 
+settings-f-chat-prompt-enabled = Chat-Prompt aktivieren
+settings-f-chat-prompt-enabled-help = Hauptschalter für den deployment-weiten System-Prompt der Person-Chats.
+settings-f-chat-prompt-text = System-Prompt
+settings-f-chat-prompt-text-help = Wird bei Aktivierung in die System-Meldung jedes Person-Chats aufgenommen. Agenten und Dots behalten ihre eigenen Anweisungen.
 settings-f-chat-ocr-enabled = OCR aktivieren
 settings-f-chat-ocr-enabled-help = Hauptschalter für das Auslesen von Text aus hochgeladenen Dokumenten.
 settings-f-chat-ocr-model = OCR-Modell

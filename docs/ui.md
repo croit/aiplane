@@ -607,7 +607,10 @@ backend. The category is a bookmarkable `?tab=` value. Disabled feature cards
 keep their master toggle visible and fold the remaining fields; each section
 saves independently through `POST /api/v0/admin/settings`, while write-only
 secrets use the explicit `/api/v0/admin/settings/clear` action to return to the
-built-in default.
+built-in default. The Chat tab's *Chat prompt* card (a `textarea` field over
+`chat.prompt`) is the deployment-wide system prompt of a person's chat: it
+rides in the leading system message while enabled, takes effect on save
+without a restart, and never reaches an agent run or a `/v1` request.
 
 `chat-protocol.ts` is deliberately framework-free — no Svelte, no DOM — so the fold is unit-testable under `node --test` (`chat-protocol.test.ts`, run by `mise run test-web`) and `chat.svelte.ts` stays a thin reactive wrapper around it. Keep it that way: wire behaviour that can only be tested through a browser is wire behaviour nobody tests.
 

@@ -22,6 +22,8 @@ settings-restart-pending-body = Ces réglages sont enregistrés mais ne prendron
 
 # ─── Cartes de section ───────────────────────────────────────────────────────
 
+settings-s-chat-prompt = Prompt de chat
+settings-s-chat-prompt-blurb = Instructions permanentes que le modèle suit dans chaque conversation d'une personne.
 settings-s-chat-ocr = OCR des documents
 settings-s-chat-ocr-blurb = Transformer les PDF et images envoyés en texte que le modèle peut lire.
 settings-s-chat-compaction = Compactage des conversations
@@ -87,6 +89,10 @@ settings-s-metrics-blurb = Le point d'accès de collecte GET /metrics. Il ne ré
 
 # ─── Champs ──────────────────────────────────────────────────────────────────
 
+settings-f-chat-prompt-enabled = Activer le prompt de chat
+settings-f-chat-prompt-enabled-help = Interrupteur principal du prompt système global des conversations des personnes.
+settings-f-chat-prompt-text = Prompt système
+settings-f-chat-prompt-text-help = Ajouté au message système de chaque conversation d'une personne quand activé. Les agents et les Dots conservent leurs propres instructions.
 settings-f-chat-ocr-enabled = Activer l'OCR
 settings-f-chat-ocr-enabled-help = Interrupteur principal pour l'extraction de texte des documents envoyés.
 settings-f-chat-ocr-model = Modèle d'OCR

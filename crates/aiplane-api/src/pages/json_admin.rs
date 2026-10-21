@@ -1604,6 +1604,7 @@ fn settings_kind(kind: settings::Kind) -> &'static str {
         settings::Kind::Int => "int",
         settings::Kind::Float => "float",
         settings::Kind::Text => "text",
+        settings::Kind::TextArea => "textarea",
         settings::Kind::Path => "path",
         settings::Kind::Model(_) => "model",
         settings::Kind::Choice(_) => "choice",
