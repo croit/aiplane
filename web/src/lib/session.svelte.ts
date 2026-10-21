@@ -5,6 +5,7 @@
 // Phase 2 will grow this into the full app store (chat list, toasts);
 // phase 1 only needs the identity proof.
 import { api, ApiError } from '#lib/api.js';
+import { reportLocalTimezone } from '#lib/timezones.js';
 import { browser } from '$app/env';
 
 export const me = $state<{ value: Awaited<ReturnType<typeof api.me>> | null; loaded: boolean }>({
@@ -21,6 +22,9 @@ export function loadMe(): void {
 	api.me()
 		.then((m) => {
 			me.value = m;
+			// Only once we know the session is live: the report is refused
+			// without one, and the signed-out shell must not spend a request.
+			reportLocalTimezone();
 		})
 		.catch((err) => {
 			if (err instanceof ApiError && err.status === 401) {

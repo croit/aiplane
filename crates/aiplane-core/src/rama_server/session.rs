@@ -115,8 +115,9 @@ pub struct Session {
     pub user_id: String,
     pub expires_at: Timestamp,
     /// Browser-reported IANA timezone, set by `POST /api/v0/me/timezone`
-    /// after the first authed page load runs `app.js`. None until the
-    /// browser tells us, or for sessions created before the migration.
+    /// when the SPA reports the browser's zone for this tab session.
+    /// None until the browser tells us, or for sessions created before
+    /// the migration.
     pub timezone: Option<String>,
     /// Set when this session is an admin *impersonating* another user:
     /// `user_id` is the target being acted as, `impersonator_id` is the
@@ -360,9 +361,9 @@ impl SessionStore {
     }
 
     /// Updates the per-session timezone. Called by
-    /// `POST /api/v0/me/timezone` after `app.js` reads
-    /// `Intl.DateTimeFormat().resolvedOptions().timeZone` and posts it
-    /// up on first authed page load. Per-session because the same user
+    /// `POST /api/v0/me/timezone`, which the SPA posts once per tab
+    /// session from `Intl.DateTimeFormat().resolvedOptions().timeZone`.
+    /// Per-session because the same user
     /// might be logged in from a laptop in Berlin and a phone in NYC at
     /// the same time. The user-record copy (`users::set_timezone`) holds
     /// the most recent value as a fallback for bearer-authed callers

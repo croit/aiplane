@@ -739,8 +739,10 @@ pub struct VoiceModels {
 }
 
 /// POST /api/v0/me/timezone — store the caller's IANA timezone on
-/// their session + user row. Posted from `app.js` once per page load
-/// after reading `Intl.DateTimeFormat().resolvedOptions().timeZone`.
+/// their session + user row. Posted once per tab session by the SPA
+/// (`web/src/lib/timezones.ts` `reportLocalTimezone`) after a signed-in
+/// `GET /api/v0/me`, from
+/// `Intl.DateTimeFormat().resolvedOptions().timeZone`.
 /// Body: `{ "timezone": "Europe/Berlin" }`.
 ///
 /// Validates the IANA name via `jiff::tz::TimeZone::get` so we don't

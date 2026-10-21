@@ -1,3 +1,4 @@
+import { api } from './api.ts';
 import type { SearchOption } from './searchable-select';
 
 /**
@@ -41,6 +42,31 @@ export function localTimezone(): string | null {
 		return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
 	} catch {
 		return null;
+	}
+}
+
+/**
+ * Tell the gateway the browser's own zone, once per tab session.
+ *
+ * The stored zone drives the usage windows, schedule defaults and the
+ * `get_current_timestamp` tool — all read it, so a tab reports once. The
+ * `sessionStorage` flag keeps a hard navigation from re-posting what the tab
+ * already sent; a refused report (401 mid sign-out, offline) is swallowed and
+ * the flag stays unset, so the next load retries. A zone the server cannot
+ * store must not disturb the page load — the platform falls back to UTC.
+ */
+export function reportLocalTimezone(): void {
+	try {
+		if (sessionStorage.getItem('tz-reported') === '1') return;
+		const zone = localTimezone();
+		if (!zone) return;
+		api
+			.setTimezone(zone)
+			.then(() => sessionStorage.setItem('tz-reported', '1'))
+			.catch(() => {});
+	} catch {
+		// sessionStorage can throw (private-browsing eviction); nothing here
+		// is worth a page-load crash.
 	}
 }
 

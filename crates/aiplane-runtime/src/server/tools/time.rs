@@ -6,9 +6,10 @@
 //! argument tells us where they are.
 //!
 //! The user's timezone lives in `users.timezone`, populated by
-//! `POST /api/v0/me/timezone` once `app.js` reads
-//! `Intl.DateTimeFormat().resolvedOptions().timeZone` on first authed
-//! page load. The tool queries that row by `ctx.user_id` on each
+//! `POST /api/v0/me/timezone`, which the SPA posts once per tab session
+//! after a signed-in `GET /api/v0/me` from
+//! `Intl.DateTimeFormat().resolvedOptions().timeZone`. The tool queries
+//! that row by `ctx.user_id` on each
 //! invocation — cheap (microseconds against in-process SQLite) and
 //! keeps the `ToolContext` shape free of per-tool scalars.
 //!

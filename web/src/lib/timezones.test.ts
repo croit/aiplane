@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 
 import { filterSearchOptions } from './searchable-select.ts';
-import { timezoneOffset, timezoneOptions } from './timezones.ts';
+import { localTimezone, reportLocalTimezone, timezoneOffset, timezoneOptions } from './timezones.ts';
 
 // Fixed instants either side of the northern DST boundary, so the offsets
 // asserted here are the ones a user would actually see.
@@ -52,4 +52,95 @@ test('a zone is findable by city, by underscore id, and by offset', () => {
 	assert.ok(found('new_york').includes('America/New_York'));
 	assert.ok(found('new york').includes('America/New_York'));
 	assert.ok(found('+09:00').includes('Asia/Tokyo'));
+});
+
+// --- reporting the browser's zone to the gateway ----------------------------
+
+function browserZone(context: TestContext, zone: string | null) {
+	const original = globalThis.Intl;
+	context.after(() => {
+		globalThis.Intl = original;
+	});
+	globalThis.Intl = Object.assign(Object.create(original), {
+		DateTimeFormat: () => ({ resolvedOptions: () => (zone ? { timeZone: zone } : {}) })
+	});
+}
+
+function tabSessionStorage(context: TestContext, initial: Record<string, string> = {}) {
+	const store = new Map<string, string>(Object.entries(initial));
+	const storage = {
+		getItem: (key: string) => store.get(key) ?? null,
+		setItem: (key: string, value: string) => {
+			store.set(key, value);
+		},
+		removeItem: (key: string) => {
+			store.delete(key);
+		},
+		clear: () => store.clear()
+	};
+	const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage');
+	context.after(() => {
+		if (descriptor) Object.defineProperty(globalThis, 'sessionStorage', descriptor);
+		else Reflect.deleteProperty(globalThis, 'sessionStorage');
+	});
+	Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: storage });
+	return storage;
+}
+
+function gatewayFetch(context: TestContext, status: number = 200) {
+	const posted: { path: string; body: { timezone: string } }[] = [];
+	const originalFetch = globalThis.fetch;
+	context.after(() => {
+		globalThis.fetch = originalFetch;
+	});
+	globalThis.fetch = async (path: string | URL | Request, init?: RequestInit) => {
+		posted.push({ path: String(path), body: JSON.parse(String(init?.body)) });
+		return new Response(JSON.stringify({ ok: true, timezone: posted.at(-1)?.body.timezone ?? '' }), { status });
+	};
+	return posted;
+}
+
+test('the browser zone is reported to the gateway once per tab session', async (context) => {
+	browserZone(context, 'Europe/Berlin');
+	const storage = tabSessionStorage(context);
+	const posted = gatewayFetch(context);
+	reportLocalTimezone();
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	assert.equal(posted.length, 1);
+	assert.equal(posted[0].path, '/api/v0/me/timezone');
+	assert.deepEqual(posted[0].body, { timezone: 'Europe/Berlin' });
+	assert.equal(storage.getItem('tz-reported'), '1');
+});
+
+test('a tab session that already reported does not report again', async (context) => {
+	browserZone(context, 'Europe/Berlin');
+	tabSessionStorage(context, { 'tz-reported': '1' });
+	const posted = gatewayFetch(context);
+	reportLocalTimezone();
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	assert.equal(posted.length, 0);
+});
+
+test('a browser that will not name its zone reports nothing', async (context) => {
+	browserZone(context, null);
+	const storage = tabSessionStorage(context);
+	const posted = gatewayFetch(context);
+	reportLocalTimezone();
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	assert.equal(posted.length, 0);
+	assert.equal(storage.getItem('tz-reported'), null);
+});
+
+test('a refused report leaves the tab session unmarked so the next load retries', async (context) => {
+	browserZone(context, 'Europe/Berlin');
+	const storage = tabSessionStorage(context);
+	gatewayFetch(context, 401);
+	reportLocalTimezone();
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	assert.equal(storage.getItem('tz-reported'), null);
+});
+
+test('localTimezone answers null when the browser will not say', (context) => {
+	browserZone(context, null);
+	assert.equal(localTimezone(), null);
 });

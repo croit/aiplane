@@ -577,6 +577,14 @@ export const api = {
 	/** GET /api/v0/me — identity + role grants; 401 when signed out. */
 	me: () => request<Me>('/api/v0/me'),
 
+	/** POST /api/v0/me/timezone — store the caller's IANA timezone. */
+	setTimezone: (timezone: string) =>
+		request<{ ok: boolean; timezone: string }>('/api/v0/me/timezone', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ timezone })
+		}),
+
 	/** POST /auth/logout — clear the session (form-style endpoint). */
 	logout: async () => {
 		const res = await fetch('/auth/logout', {
