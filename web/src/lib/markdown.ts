@@ -80,6 +80,39 @@ export function renderMarkdown(md: string | null | undefined, labels?: CodeCopyL
 }
 
 /**
+ * The markdown to display for a canvas document's content, by its format.
+ *
+ * The panel's whole history was one render path — `marked` on the raw bytes —
+ * and that is right only for markup. JSON, TOML, YAML, Typst and plain text
+ * are source, not markdown: in a paragraph the browser collapses their
+ * indentation to a single space, and a leading `-`, `>` or `=` becomes a list
+ * item, a blockquote or a heading. So everything except `markdown` and
+ * `html` is shown verbatim in a fenced code block, which the existing
+ * `renderer.code` hands out monospaced, with a copy button and horizontal
+ * scrolling.
+ *
+ * A `json` document is pretty-printed with two-space indentation first — the
+ * same shape `serde_json::to_string_pretty` stores it in — and a document
+ * that fails to parse shows its raw text: the panel reports what is stored,
+ * never a repaired guess.
+ */
+export function documentMarkdown(format: string, content: string): string {
+	if (format === 'markdown' || format === 'html') return content;
+	const body = (format === 'json' ? prettyJson(content) : content).replace(/\n+$/, '');
+	const fence = body.includes('```') ? '````' : '```';
+	const language = format === 'text' ? '' : format;
+	return `${fence}${language}\n${body}\n${fence}`;
+}
+
+function prettyJson(content: string): string {
+	try {
+		return JSON.stringify(JSON.parse(content), null, 2);
+	} catch {
+		return content;
+	}
+}
+
+/**
  * Sanitise a model-authored SVG preview for an `ask_user` option.
  *
  * Separate from {@link renderMarkdown} and deliberately much stricter, because

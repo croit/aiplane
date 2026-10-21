@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { markdownMarkup } from './markdown.ts';
+import { documentMarkdown, markdownMarkup } from './markdown.ts';
 
 test('fenced code blocks expose an accessible copy control', () => {
 	const html = markdownMarkup('```json\n{"ok":true}\n```', {
@@ -40,4 +40,29 @@ test('a table scrolls inside its own container instead of widening the message',
 	assert.match(html, /<div class="overflow-x-auto"><table>/);
 	assert.match(html, /<\/table>\s*<\/div>/);
 	assert.match(html, /<th>Probe<\/th>/);
+});
+
+test('a json canvas document renders pretty-printed inside a code block', () => {
+	const html = markdownMarkup(documentMarkdown('json', '{"deck":{"slides":[]}}'));
+	assert.match(html, /<code class="language-json">/);
+	assert.match(html, /\{\n  &quot;deck&quot;: \{\n    &quot;slides&quot;: \[\]\n  \}\n\}/);
+});
+
+test('a json canvas document that fails to parse keeps its raw text', () => {
+	assert.equal(documentMarkdown('json', '{ broken'), '```json\n{ broken\n```');
+});
+
+test('source formats fence their content verbatim', () => {
+	assert.equal(documentMarkdown('typst', '= Hi\n'), '```typst\n= Hi\n```');
+	assert.equal(documentMarkdown('yaml', 'a: 1\n'), '```yaml\na: 1\n```');
+	assert.equal(documentMarkdown('text', 'plain'), '```\nplain\n```');
+});
+
+test('markdown and html canvas documents pass through untouched', () => {
+	assert.equal(documentMarkdown('markdown', '# Hi'), '# Hi');
+	assert.equal(documentMarkdown('html', '<b>Hi</b>'), '<b>Hi</b>');
+});
+
+test('a fence lengthens when the content itself contains triple backticks', () => {
+	assert.equal(documentMarkdown('text', 'a ``` b'), '````\na ``` b\n````');
 });
