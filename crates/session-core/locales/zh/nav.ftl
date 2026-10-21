@@ -23,6 +23,7 @@ nav-group-admin = 管理
 nav-group-toggle-aria = 切换{ $label }分区
 
 nav-conversations-label = 对话
+nav-new-chat = 新聊天
 nav-new-conversation-aria = 开始新对话
 nav-new-conversation-title = 新对话
 nav-untitled-chat = 未命名对话

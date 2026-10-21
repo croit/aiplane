@@ -201,7 +201,12 @@ test("the sidebar keeps navigation compact and gives scrolling to conversations"
     assert.equal(scrollOwners.primary, "visible");
     assert.equal(scrollOwners.conversations, "auto");
 
-    for (const label of ["Chat", "Scheduled", "Webhooks", "Tools"]) {
+    assert.equal(
+        await page.getByRole("button", { name: "New Chat", exact: true }).locator("svg").count(),
+        1,
+        "New Chat keeps its navigation icon",
+    );
+    for (const label of ["Scheduled", "Webhooks", "Tools"]) {
         assert.equal(
             await page.getByRole("link", { name: label, exact: true }).locator("svg").count(),
             1,

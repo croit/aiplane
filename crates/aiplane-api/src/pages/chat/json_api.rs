@@ -168,26 +168,41 @@ pub struct SessionEnvelope {
     pub session: chat::Session,
 }
 
-/// GET /api/v0/chat/landing — resolve the latest conversation, creating the
-/// caller's first conversation when their workspace is empty.
-pub async fn session_landing(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, user) = require_session_json!(state, req);
-    let session = match chat::latest_session(&state.db, &user.id).await {
-        Ok(Some(session)) => session,
-        Ok(None) => match chat::create_session(&state.db, &user.id).await {
-            Ok(session) => session,
-            Err(err) => return internal(err),
-        },
-        Err(err) => return internal(err),
-    };
-    ok_json(StatusCode::OK, SessionEnvelope { session })
+/// The caller's blank conversation, minting one only when none exists, so the
+/// list never fills up with empty duplicates. `true` when it was just created.
+async fn blank_or_new_session(
+    state: &RamaState,
+    user_id: &str,
+) -> Result<(chat::Session, bool), chat::DbError> {
+    match chat::blank_session(&state.db, user_id).await? {
+        Some(session) => Ok((session, false)),
+        None => Ok((chat::create_session(&state.db, user_id).await?, true)),
+    }
 }
 
-/// POST /api/v0/chat/sessions — mint an empty conversation.
+/// GET /api/v0/chat/landing — the conversation the app opens on: the caller's
+/// blank one, created when they have none.
+pub async fn session_landing(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_session, user) = require_session_json!(state, req);
+    match blank_or_new_session(&state, &user.id).await {
+        Ok((session, _)) => ok_json(StatusCode::OK, SessionEnvelope { session }),
+        Err(err) => internal(err),
+    }
+}
+
+/// POST /api/v0/chat/sessions — open the caller's blank conversation (200),
+/// or create one (201) when none exists.
 pub async fn session_create(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    match chat::create_session(&state.db, &user.id).await {
-        Ok(session) => ok_json(StatusCode::CREATED, SessionEnvelope { session }),
+    match blank_or_new_session(&state, &user.id).await {
+        Ok((session, created)) => ok_json(
+            if created {
+                StatusCode::CREATED
+            } else {
+                StatusCode::OK
+            },
+            SessionEnvelope { session },
+        ),
         Err(err) => internal(err),
     }
 }

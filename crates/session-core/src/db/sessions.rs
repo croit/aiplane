@@ -53,6 +53,25 @@ pub async fn list_sessions(pool: &Pool, user_id: &str) -> Result<Vec<Session>, D
     rows.iter().map(map_session).collect()
 }
 
+/// The user's most recent blank conversation: untitled, unshared, without a
+/// parent, with no turn yet. Every flow that opens a
+/// conversation for a purpose (an architect, a Dot, a background run) titles it
+/// at creation, so a blank one is an unused plain chat.
+pub async fn blank_session(pool: &Pool, user_id: &str) -> Result<Option<Session>, DbError> {
+    let row = sqlx::query(
+        r#"SELECT id, user_id, title, created_at, updated_at, shared, pinned
+           FROM chat_sessions s
+           WHERE user_id = ? AND title IS NULL AND shared = 0 AND parent_turn_id IS NULL
+             AND NOT EXISTS (SELECT 1 FROM chat_turns t WHERE t.session_id = s.id)
+           ORDER BY updated_at DESC, id ASC
+           LIMIT 1"#,
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?;
+    row.as_ref().map(map_session).transpose()
+}
+
 /// Look up a session by id, but only if it belongs to this user. Caller
 /// uses the None case to send a 404 / redirect to /chat.
 pub async fn get_session(
@@ -239,22 +258,6 @@ pub async fn turn_in_session(
     Ok(row.is_some())
 }
 
-/// Most-recent session for a user; None when they've never chatted. Used
-/// by `GET /chat` to decide where to redirect.
-pub async fn latest_session(pool: &Pool, user_id: &str) -> Result<Option<Session>, DbError> {
-    let row = sqlx::query(
-        r#"SELECT id, user_id, title, created_at, updated_at, shared, pinned
-           FROM chat_sessions
-           WHERE user_id = ?
-           ORDER BY updated_at DESC, id ASC
-           LIMIT 1"#,
-    )
-    .bind(user_id)
-    .fetch_optional(pool)
-    .await?;
-    row.as_ref().map(map_session).transpose()
-}
-
 /// Which of `ids` still name a session. Lets a page that holds chat ids it did
 /// not create (a schedule's runs, a webhook's fires) tell a deleted chat apart
 /// from a live one in one query rather than one per row.
@@ -338,6 +341,33 @@ mod tests {
         let id = Uuid::new_v4().to_string();
         create_user_turn(pool, session_id, &id, text).await.unwrap();
         id
+    }
+
+    #[tokio::test]
+    async fn blank_session_is_only_an_untitled_unshared_root_conversation_without_turns() {
+        let pool = pool().await;
+        assert!(blank_session(&pool, "u1").await.unwrap().is_none());
+        let blank = create_session(&pool, "u1").await.unwrap();
+        let used = create_session(&pool, "u1").await.unwrap();
+        completed_turn(&pool, &used.id, "hello").await;
+        let titled = create_session(&pool, "u1").await.unwrap();
+        set_session_title(&pool, &titled.id, "Plan support bot")
+            .await
+            .unwrap();
+        let shared = create_session(&pool, "u1").await.unwrap();
+        assert!(set_shared(&pool, "u1", &shared.id, true).await.unwrap());
+        let child = create_session(&pool, "u1").await.unwrap();
+        sqlx::query("UPDATE chat_sessions SET parent_turn_id = 'parent' WHERE id = ?")
+            .bind(&child.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        crate::db::tests::unowned_session(&pool).await;
+
+        assert_eq!(
+            blank_session(&pool, "u1").await.unwrap().map(|s| s.id),
+            Some(blank.id)
+        );
     }
 
     #[tokio::test]
@@ -559,10 +589,6 @@ mod tests {
             .map(|s| s.id)
             .collect();
         assert_eq!(listed, vec![mine.id.clone()]);
-        assert_eq!(
-            latest_session(&pool, "u1").await.unwrap().map(|s| s.id),
-            Some(mine.id.clone())
-        );
         assert!(get_session(&pool, "u1", &other).await.unwrap().is_none());
         assert!(
             get_session_readable(&pool, "u1", &other)

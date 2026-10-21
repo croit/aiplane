@@ -2012,6 +2012,7 @@ export const de: Catalog = {
  "nav-main-aria": "Hauptnavigation",
  "nav-memory": "Speicher",
  "nav-models": "Modelle & Routing",
+ "nav-new-chat": "Neuer Chat",
  "nav-new-conversation-aria": "Neue Unterhaltung starten",
  "nav-new-conversation-title": "Neue Unterhaltung",
  "nav-open-menu": "Menü öffnen",

@@ -24,6 +24,7 @@ nav-group-admin = Admin
 nav-group-toggle-aria = Abschnitt { $label } umschalten
 
 nav-conversations-label = Unterhaltungen
+nav-new-chat = Neuer Chat
 nav-new-conversation-aria = Neue Unterhaltung starten
 nav-new-conversation-title = Neue Unterhaltung
 nav-untitled-chat = Unbenannter Chat

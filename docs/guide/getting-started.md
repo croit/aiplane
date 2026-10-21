@@ -19,7 +19,7 @@ Continue with [Conversations](chat.md) to manage messages, sharing and exports, 
 
 The sidebar contains conversations and navigation to tools, agents, schedules, webhooks, inbox and usage. Administrative sections depend on your permissions. On a narrow screen, open the navigation menu first.
 
-Use the conversation search button to search your history. Pin a conversation using its star button to keep it easy to find. Use the new-conversation button to start a separate topic. Delete a conversation through its delete button and confirm the operation.
+Use the conversation search button to search your history. Pin a conversation using its star button to keep it easy to find. AIplane opens on a new chat. Use **New Chat** at the top of the sidebar, or the new-conversation button, to start a separate topic. Each new chat is listed with your conversations; while it has no messages, pressing **New Chat** again opens that same empty chat instead of adding another. Delete a conversation through its delete button and confirm the operation.
 
 Opening another conversation restores its saved transcript and live state. Closing a browser tab is not the same operation as stopping a turn: use the conversation's **Stop** button when you want to cancel work.
 

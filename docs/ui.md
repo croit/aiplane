@@ -443,9 +443,13 @@ Invariants worth knowing before you touch either side:
 - **The public embed stream speaks the same frames, buffered.** `GET /api/v0/embed/events` (visitor token, read with `fetch` streaming) sends `snapshot`, then either `idle` or — once the running turn is terminal — its whole answer as one `turn_delta` with `full: true` and `turn_finalized`. When the conversation waits for a decision, or the running turn pauses, the stream ends with `suspended` (the visitor view above) instead. A request staff answer has empty `options`: the widget shows that it waits and re-attaches every 10 s until the answer arrives. The visitor answers a `secure_input` with `POST /api/v0/embed/resume {request_id, decision, value?}` (the widget's masked code field) and re-attaches. A host page's signed identity token goes to `POST /api/v0/embed/identity {token}`. A message sent meanwhile is queued (`placement: "queued"`) and shows in the snapshot's `waiting_turn_ids`. Tool calls, reasoning and unfinished answers are stripped from what a visitor receives. See [`agent-visitors.md`](agent-visitors.md) and [agent-run suspend](agent-hil.md#suspend-and-resume).
 - **Markdown is the wire format.** The server sends text; the client renders it (`marked` → `DOMPurify` → `{@html}`). Model output is untrusted input like any other, so the sanitise step is not optional.
 
-The rest of the conversation surface is ordinary JSON. `GET /api/v0/chat/landing`
-resolves the caller's latest conversation and creates one only when the caller
-has none. `GET …/sessions/{id}` returns the session and turns plus
+The rest of the conversation surface is ordinary JSON. The app opens on
+**New Chat**, and both entry points resolve the same conversation: the caller's
+blank one — untitled, unshared, not delegated, with no turn yet — created only
+when none exists, so the list never holds two empty chats. `GET
+/api/v0/chat/landing` (what `/` and `/chat` load) always answers `200`;
+`POST …/sessions` (the **New Chat** button) answers `200` for the existing blank
+conversation and `201` for a new one. `GET …/sessions/{id}` returns the session and turns plus
 `compacted_up_to_seq` and the conversation's attachment-marker-derived
 `assets[]`; the SPA uses those fields for the compaction boundary and canvas
 asset browser. Attachment markers are reconciled with those canonical assets by

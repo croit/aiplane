@@ -1997,6 +1997,7 @@ export const zh: Catalog = {
  "nav-main-aria": "主导航",
  "nav-memory": "记忆",
  "nav-models": "模型与路由",
+ "nav-new-chat": "新聊天",
  "nav-new-conversation-aria": "开始新对话",
  "nav-new-conversation-title": "新对话",
  "nav-open-menu": "打开菜单",
