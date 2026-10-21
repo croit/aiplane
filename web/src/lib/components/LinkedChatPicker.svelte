@@ -9,7 +9,7 @@
 	 * Which chat a reusing schedule or webhook continues in. Shared by both
 	 * forms, so the choice reads and behaves the same on each.
 	 */
-	let { value = $bindable(''), dotId = undefined } = $props<{ value?: string; dotId?: string | null }>();
+	let { value = $bindable(''), dotId = undefined }: { value?: string; dotId?: string | null } = $props();
 	let sessions = $state<ChatSession[]>([]);
 	let options = $derived(linkedChatOptions(sessions, {
 		fresh: t('linked-chat-fresh'),

@@ -5,11 +5,11 @@
 	import { parseSources, refreshIntervalLabel, sourceLabel, type RagCollection, type RagLogEntry, type RagRef } from '#lib/rag.js';
 	import EditModal from '#lib/components/EditModal.svelte';
 
-	let { collection, onchanged, onnotice } = $props<{
+	let { collection, onchanged, onnotice }: {
 		collection: RagCollection;
 		onchanged: () => void | Promise<void>;
 		onnotice: (message: string) => void;
-	}>();
+	} = $props();
 
 	let refs = $state<RagRef[]>([]);
 	let addingSource = $state(false);

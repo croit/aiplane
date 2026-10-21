@@ -5,14 +5,14 @@
 	import IntegrationTools from './IntegrationTools.svelte';
 	import IntegrationCredentialActions from './IntegrationCredentialActions.svelte';
 
-	let { connector, ontoken, ondisconnect, onretry, onmode, onall } = $props<{
+	let { connector, ontoken, ondisconnect, onretry, onmode, onall }: {
 		connector: IntegrationConnector;
 		ontoken: (token: string) => void | Promise<void>;
 		ondisconnect: () => void | Promise<void>;
 		onretry: () => void | Promise<void>;
 		onmode: (tool: string, mode: IntegrationMode) => void | Promise<void>;
 		onall: (mode: IntegrationMode) => void | Promise<void>;
-	}>();
+	} = $props();
 	let token = $state('');
 	let saving = $state(false);
 

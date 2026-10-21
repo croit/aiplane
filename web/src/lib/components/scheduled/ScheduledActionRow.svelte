@@ -14,11 +14,11 @@
 	 * before that was unreachable from here. `scheduleLinks` picks between the
 	 * one conversation and the list of them.
 	 */
-	let { action, onchanged, onnotice } = $props<{
+	let { action, onchanged, onnotice }: {
 		action: ScheduledAction;
 		onchanged: () => void | Promise<void>;
 		onnotice: (message: string) => void;
-	}>();
+	} = $props();
 
 	let links = $derived(runLinks(action, '/scheduled', { principalId: action.principal_id }));
 	let disposed = false;

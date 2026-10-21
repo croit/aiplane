@@ -4,12 +4,12 @@
 	import { t } from '#lib/i18n.svelte.js';
 	import GroupSelect from '#lib/components/GroupSelect.svelte';
 
-	let { connector, redirectUri, groups, onsave } = $props<{
+	let { connector, redirectUri, groups, onsave }: {
 		connector?: AdminConnector;
 		redirectUri: string;
 		groups: string[];
 		onsave: (value: ConnectorFormValue) => void | Promise<void>;
-	}>();
+	} = $props();
 	let form = $state<ConnectorFormValue>(connectorForm());
 	let saving = $state(false);
 	const clientJsonPlaceholder = '{"web":{"client_id":"…","client_secret":"…"}}';

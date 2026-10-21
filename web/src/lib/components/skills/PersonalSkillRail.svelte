@@ -3,14 +3,14 @@
 	import { t } from '#lib/i18n.svelte.js';
 	import type { PersonalSkill } from '#lib/skills.js';
 
-	let { skills, selected, mode, enabled, onupload, onworkflowdraft } = $props<{
+	let { skills, selected, mode, enabled, onupload, onworkflowdraft }: {
 		skills: PersonalSkill[];
 		selected: PersonalSkill | null;
 		mode: 'view' | 'edit' | 'new';
 		enabled: boolean;
 		onupload: (file: File) => void | Promise<void>;
 		onworkflowdraft: () => void;
-	}>();
+	} = $props();
 	let file = $state<File | null>(null);
 	let uploading = $state(false);
 

@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { t } from '#lib/i18n.svelte.js';
 
-	let { name, initial, isNew, onsave } = $props<{
+	let { name, initial, isNew, onsave }: {
 		name: string;
 		initial: string;
 		isNew: boolean;
 		onsave: (name: string, manifest: string, overwrite: boolean) => void | Promise<void>;
-	}>();
+	} = $props();
 	let manifest = $state('');
 	let saving = $state(false);
 	$effect(() => { manifest = initial; });
