@@ -26,8 +26,8 @@ Category: **Chat**.
 
 | Key | Input / choices | Meaning | Restart |
 |---|---|---|---|
-| `chat.prompt.enabled` | Boolean | Master switch for the deployment-wide system prompt of a person's chat. | No |
-| `chat.prompt.text` | Text | Standing instructions added to the system message of every person's chat while enabled. Agents and Dots keep their own instructions. | No |
+| `chat.prompt.enabled` | Boolean | Master switch for the deployment-wide system prompt of a person's chat. Ships on. | No |
+| `chat.prompt.text` | Text | Standing instructions added to the system message of every person's chat while enabled; the field shows the built-in prompt while nothing is stored, and its reset button restores it. Agents and Dots keep their own instructions. | No |
 
 ### chat.voice
 

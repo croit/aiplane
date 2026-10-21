@@ -470,7 +470,11 @@ pub static SECTIONS: &[SectionSpec] = &[
         user_feature: false,
         fields: &[
             f("chat.prompt.enabled", Kind::Bool),
-            f("chat.prompt.text", Kind::TextArea),
+            f_default(
+                "chat.prompt.text",
+                Kind::TextArea,
+                super::prompts::CHAT_PROMPT,
+            ),
         ],
     },
     SectionSpec {
@@ -1635,9 +1639,9 @@ mod tests {
     }
 
     #[test]
-    fn chat_prompt_round_trips_and_stays_off_without_text() {
+    fn chat_prompt_round_trips_and_ships_enabled() {
         let mut config = Config::default();
-        assert!(!config.chat.prompt.enabled);
+        assert!(config.chat.prompt.enabled);
         assert!(config.chat.prompt.text.is_empty());
         apply(
             &settings_of(&[
@@ -1679,15 +1683,19 @@ mod tests {
             .iter()
             .find(|s| s.name == "chat.prompt")
             .expect("the chat.prompt section");
-        assert_eq!(section_is_enabled(&config, section), Some(false));
+        assert_eq!(
+            section_is_enabled(&config, section),
+            Some(true),
+            "the built-in prompt ships enabled"
+        );
         apply(
             &settings_of(&[
-                ("chat.prompt.enabled", "true"),
+                ("chat.prompt.enabled", "false"),
                 ("chat.prompt.text", "Be terse."),
             ]),
             &mut config,
         );
-        assert_eq!(section_is_enabled(&config, section), Some(true));
+        assert_eq!(section_is_enabled(&config, section), Some(false));
     }
 
     #[test]
@@ -1708,8 +1716,7 @@ mod tests {
             field("chat.prompt.text")
                 .expect("the chat prompt field")
                 .default,
-            "",
-            "the chat prompt is an addition — it has no built-in"
+            super::super::prompts::CHAT_PROMPT
         );
     }
 

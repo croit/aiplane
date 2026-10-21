@@ -1278,7 +1278,7 @@ async fn chat_prompt_section_saves_and_reports_its_state() {
     };
 
     let before = listed().await;
-    assert_eq!(find_field(&before, "chat.prompt.enabled")["value"], "false");
+    assert_eq!(find_field(&before, "chat.prompt.enabled")["value"], "true");
     assert_eq!(find_field(&before, "chat.prompt.text")["kind"], "textarea");
 
     let resp = app
@@ -1372,7 +1372,13 @@ async fn compaction_and_voice_prompt_fields_save_and_clear() {
             .starts_with("You are in a live VOICE conversation"),
         "the built-in voice directive is what the editor shows and resets to"
     );
-    assert_eq!(find_field(&before, "chat.prompt.text")["default"], "");
+    assert!(
+        find_field(&before, "chat.prompt.text")["default"]
+            .as_str()
+            .unwrap()
+            .starts_with("Your name is AIplane"),
+        "the built-in chat prompt is what the editor shows and resets to"
+    );
 
     let resp = app
         .serve(

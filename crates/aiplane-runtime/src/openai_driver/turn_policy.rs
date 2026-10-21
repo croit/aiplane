@@ -18,6 +18,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
+use aiplane_core::server::prompts::CHAT_PROMPT;
 use serde_json::Value;
 
 use super::{
@@ -470,17 +471,20 @@ fn voice_directive(config: &aiplane_core::server::config::Config) -> &str {
 }
 
 /// The operator's standing instructions for a person's chat, as the leading
-/// message's own section: one entry while the prompt is enabled and has
-/// text, none otherwise. An agent run never reads it — its system message
+/// message's own section: one entry while the prompt is enabled — the
+/// operator's own text while it has text, the built-in prompt otherwise —
+/// none while it is off. An agent run never reads it — its system message
 /// comes from its spec — and a `/v1` request carries the client's own.
 fn chat_own_sections(config: &aiplane_core::server::config::Config) -> Vec<String> {
     let prompt = &config.chat.prompt;
-    prompt
-        .enabled
-        .then(|| prompt.text.clone())
-        .filter(|text| !text.is_empty())
-        .into_iter()
-        .collect()
+    if !prompt.enabled {
+        return Vec::new();
+    }
+    let text = match prompt.text.trim() {
+        "" => CHAT_PROMPT,
+        _ => &prompt.text,
+    };
+    vec![text.to_string()]
 }
 
 /// An agent run's offer: its granted spec tools and synthetic tools (every
@@ -560,14 +564,17 @@ mod tests {
     }
 
     #[test]
-    fn the_admin_prompt_is_a_chat_section_only_while_enabled_with_text() {
-        assert!(chat_own_sections(&Config::default()).is_empty());
-        assert!(
+    fn the_admin_prompt_is_a_chat_section_while_enabled_with_the_builtin_as_fallback() {
+        assert_eq!(
+            chat_own_sections(&Config::default()),
+            vec![CHAT_PROMPT.to_owned()]
+        );
+        assert_eq!(
             chat_own_sections(&config_with(PromptConfig {
                 enabled: true,
-                text: "".into()
-            }))
-            .is_empty()
+                text: "   ".into()
+            })),
+            vec![CHAT_PROMPT.to_owned()]
         );
         assert!(
             chat_own_sections(&config_with(PromptConfig {

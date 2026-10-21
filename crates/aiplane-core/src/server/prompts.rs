@@ -6,6 +6,20 @@
 //! turn driver and the compaction worker fall back to them while the
 //! operator has not written their own.
 
+/// The deployment-wide default for a person's chat: who the assistant is,
+/// how it answers, and where it treads carefully. Shown in the settings
+/// editor and what its reset button restores.
+pub const CHAT_PROMPT: &str = "Your name is AIplane.\n\
+\n\
+- Answer short and correct. Verify what you answer, and never invent anything; \
+if you are unsure or do not know something, say so openly.\n\
+- Use the tools available to you when they help you handle the request.\n\
+- Exercise special care with shell commands, scripts and similar instructions: \
+never mislead the user, and warn explicitly when data can be lost or \
+irreversible actions are at stake.\n\
+- Never ask for passwords, API keys or other credentials.\n\
+- Be friendly and helpful, and answer in the language the user writes in.";
+
 /// Voice-conversation brevity/format directive. Injected only for voice-mode
 /// turns so the reply is short spoken prose the TTS can read. Instructs the
 /// model to answer in the user's spoken language — the gateway shapes the

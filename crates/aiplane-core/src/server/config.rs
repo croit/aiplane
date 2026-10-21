@@ -634,12 +634,22 @@ pub struct TypstConfig {
 ///
 /// Written over the in-memory config by the settings layer and read by the
 /// turn driver, which puts it into the leading system message of every
-/// person's chat turn while `enabled` and `text` is non-empty. An agent run
-/// is not affected: its system message comes from its spec.
-#[derive(Debug, Clone, Default)]
+/// person's chat turn while `enabled`: the operator's own `text` while it is
+/// non-empty, the built-in prompt otherwise. An agent run is not affected:
+/// its system message comes from its spec.
+#[derive(Debug, Clone)]
 pub struct PromptConfig {
     pub enabled: bool,
     pub text: String,
+}
+
+impl Default for PromptConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            text: String::new(),
+        }
+    }
 }
 
 /// Voice-turn settings.
