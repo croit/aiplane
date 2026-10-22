@@ -26,7 +26,7 @@
 		<div class="flex flex-col gap-1">
 			<div class="flex items-baseline justify-between gap-2 text-sm">
 				<span class="font-medium">{t(dimensionKeys[limit.dimension] ?? limit.dimension)} · {limit.model ?? t('limits-all-models')} · {t(windowKeys[limit.window] ?? limit.window)}</span>
-				<span class="flex items-baseline gap-2"><span class="tabular-nums opacity-70">{amount(limit, limit.used)} / {amount(limit, limit.limit)}</span>{@render action?.(index)}</span>
+				<span class="flex items-baseline gap-2"><span class="font-mono tabular-nums opacity-70">{amount(limit, limit.used)} / {amount(limit, limit.limit)}</span>{@render action?.(index)}</span>
 			</div>
 			<progress class="progress w-full {percent >= 100 ? 'progress-error' : percent >= 90 ? 'progress-warning' : 'progress-primary'}" value={percent} max="100"></progress>
 			{#if limit.refreshes_at}

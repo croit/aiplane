@@ -53,8 +53,8 @@
 			<div class="grid min-w-[710px] grid-cols-[minmax(170px,1.6fr)_82px_108px_84px_128px_minmax(110px,1.1fr)_64px] items-center gap-2.5">
 				<span class="break-all font-mono text-sm font-semibold">{model.name}</span>
 				<span><span class="badge badge-secondary badge-sm">{model.kind}</span></span>
-				<span class="text-xs tabular-nums {priceSummary() === '—' ? 'text-base-content/40' : ''}">{priceSummary()}</span>
-				<span class="text-xs tabular-nums {isChat && defaults?.context_window != null ? '' : 'text-base-content/40'}">{isChat ? contextSummary() : t('admin-value-na')}</span>
+				<span class="text-xs font-mono tabular-nums {priceSummary() === '—' ? 'text-base-content/40' : ''}">{priceSummary()}</span>
+				<span class="text-xs font-mono tabular-nums {isChat && defaults?.context_window != null ? '' : 'text-base-content/40'}">{isChat ? contextSummary() : t('admin-value-na')}</span>
 				<span class="text-xs {isChat ? '' : 'text-base-content/40'}">{isChat ? reasoningSummary() : t('admin-value-na')}</span>
 				<span class="flex flex-wrap gap-1">
 					{#if facets.length === 0}<span class="text-xs text-base-content/40">{t('admin-not-configured')}</span>{/if}

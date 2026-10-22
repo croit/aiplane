@@ -18,7 +18,7 @@
 	{#each cards as card (card.title)}
 		<div class="stat">
 			<div class="stat-title">{card.title}</div>
-			<div class="stat-value text-2xl tabular-nums">{card.value}</div>
+			<div class="stat-value text-2xl font-mono tabular-nums">{card.value}</div>
 			<div class="stat-desc">{card.description}</div>
 		</div>
 	{/each}

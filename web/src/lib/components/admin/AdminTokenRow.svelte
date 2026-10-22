@@ -97,9 +97,9 @@
 			expires: tokenDate(token.expires_at, timezone)
 		})}
 	</td>
-	<td class="w-24 whitespace-nowrap text-right tabular-nums">{usageEnabled ? usageInteger(token.usage_this_month.requests) : '—'}</td>
-	<td class="w-24 whitespace-nowrap text-right tabular-nums">{usageEnabled ? usageInteger(token.usage_this_month.total_tokens) : '—'}</td>
-	<td class="w-28 whitespace-nowrap text-right tabular-nums">{usageEnabled ? usageCost(token.usage_this_month.cost, currency) : '—'}</td>
+	<td class="w-24 whitespace-nowrap text-right font-mono tabular-nums">{usageEnabled ? usageInteger(token.usage_this_month.requests) : '—'}</td>
+	<td class="w-24 whitespace-nowrap text-right font-mono tabular-nums">{usageEnabled ? usageInteger(token.usage_this_month.total_tokens) : '—'}</td>
+	<td class="w-28 whitespace-nowrap text-right font-mono tabular-nums">{usageEnabled ? usageCost(token.usage_this_month.cost, currency) : '—'}</td>
 	<td>
 		<div class="flex min-w-72 flex-col gap-1">
 			<div class="break-all text-xs {ownerModels === null ? 'text-base-content/50' : 'font-mono'}">{ownerModels?.join(', ') || t('limits-all-models')}</div>

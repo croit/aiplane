@@ -27,9 +27,9 @@
 					</tr></thead>
 					<tbody>{#each rows as row (row.key)}<tr>
 						<td class="max-w-xs break-all font-mono">{row.label || emptyLabel}</td>
-						<td class="text-right tabular-nums">{usageInteger(row.requests)}</td><td class="text-right tabular-nums">{usageInteger(row.total_tokens)}</td>
-						{#if showCost}<td class="text-right tabular-nums">{usageCost(row.cost, currency)}</td>{/if}
-						<td class:text-error={row.errors > 0} class="text-right tabular-nums">{usageInteger(row.errors)}</td>
+						<td class="text-right font-mono tabular-nums">{usageInteger(row.requests)}</td><td class="text-right font-mono tabular-nums">{usageInteger(row.total_tokens)}</td>
+						{#if showCost}<td class="text-right font-mono tabular-nums">{usageCost(row.cost, currency)}</td>{/if}
+						<td class:text-error={row.errors > 0} class="text-right font-mono tabular-nums">{usageInteger(row.errors)}</td>
 					</tr>{/each}</tbody>
 				</table>
 			</div>

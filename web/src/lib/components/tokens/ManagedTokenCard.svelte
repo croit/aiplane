@@ -179,7 +179,7 @@
 {#snippet budgetBody()}
 	{#if tightest}
 		{@const percent = limitPercent(tightest.used, tightest.limit)}
-		<div class="font-medium tabular-nums">{amount(tightest, tightest.used)} / {amount(tightest, tightest.limit)}</div>
+		<div class="font-medium font-mono tabular-nums">{amount(tightest, tightest.used)} / {amount(tightest, tightest.limit)}</div>
 		<progress class="progress w-full {percent >= 100 ? 'progress-error' : percent >= 90 ? 'progress-warning' : 'progress-primary'}" value={percent} max="100"></progress>
 		<div class="text-xs text-base-content/60">{t(`limits-win-${tightest.window}`)}{token.quota_status.length > 1 ? ` · ${t('tokens-budget-tile-more', { count: token.quota_status.length - 1 })}` : ''}</div>
 	{:else}

@@ -24,7 +24,7 @@
 <aside class="flex w-full shrink-0 flex-col gap-2 sm:sticky sm:top-6 sm:w-64">
 	<div class="flex items-baseline justify-between gap-2">
 		<h2 class="m-0 text-xs font-medium uppercase tracking-wide text-base-content/50">{t('admin-comfyui-loaded-workflows')}</h2>
-		<span class="text-xs tabular-nums text-base-content/40">{n(total)}</span>
+		<span class="text-xs font-mono tabular-nums text-base-content/40">{n(total)}</span>
 	</div>
 	<label class="input input-sm flex w-full items-center gap-2">
 		<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" class="shrink-0 opacity-60" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
@@ -45,7 +45,7 @@
 			{#each groups as group (group.kind)}
 				<div class="flex items-center justify-between px-2 pb-0.5 pt-2">
 					<span class="text-xs font-medium uppercase tracking-wide text-base-content/50">{group.kind}</span>
-					<span class="text-xs tabular-nums text-base-content/40">{group.workflows.length}</span>
+					<span class="text-xs font-mono tabular-nums text-base-content/40">{group.workflows.length}</span>
 				</div>
 				{#each group.workflows as workflow (workflow.id)}
 					<a

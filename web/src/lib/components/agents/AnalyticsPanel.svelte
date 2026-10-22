@@ -127,7 +127,7 @@
 				<div class="stats border border-base-300 bg-base-100 shadow">
 					<div class="stat p-4">
 						<div class="stat-title">{tile.title}</div>
-						<div class="stat-value text-2xl tabular-nums">{tile.value}</div>
+						<div class="stat-value text-2xl font-mono tabular-nums">{tile.value}</div>
 						{#if tile.desc}<div class="stat-desc whitespace-normal">{tile.desc}</div>{/if}
 					</div>
 				</div>
@@ -150,7 +150,7 @@
 							</rect>
 						{/each}
 					</svg>
-					<div class="flex justify-between text-xs text-base-content/60 tabular-nums">
+					<div class="flex justify-between text-xs font-mono text-base-content/60 tabular-nums">
 						<span>{dt(chart[0].day, { dateStyle: 'medium', timeZone: 'UTC' })}</span>
 						<span>{format(metric, peak)}</span>
 						<span>{dt(chart[chart.length - 1].day, { dateStyle: 'medium', timeZone: 'UTC' })}</span>
@@ -170,7 +170,7 @@
 							<table class="table table-sm">
 								<tbody>
 									{#each table.rows as [name, count] (name)}
-										<tr><td class="break-all font-mono">{name}</td><td class="text-right tabular-nums">{n(count)}</td></tr>
+										<tr><td class="break-all font-mono">{name}</td><td class="text-right font-mono tabular-nums">{n(count)}</td></tr>
 									{/each}
 								</tbody>
 							</table>

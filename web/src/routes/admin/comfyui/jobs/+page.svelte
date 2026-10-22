@@ -87,8 +87,8 @@
 							{#each stats as row (row.workflow_id)}
 								<tr>
 									<td class="font-mono text-xs">{row.workflow_id}</td>
-									<td class="text-right tabular-nums">{n(row.runs)}</td>
-									<td class="text-right tabular-nums {row.failed ? 'font-semibold text-error' : 'text-base-content/40'}">{n(row.failed)}</td>
+									<td class="text-right font-mono tabular-nums">{n(row.runs)}</td>
+									<td class="text-right font-mono tabular-nums {row.failed ? 'font-semibold text-error' : 'text-base-content/40'}">{n(row.failed)}</td>
 									<td class="text-right font-mono text-xs tabular-nums">{formatDuration(row.median_ms)}</td>
 								</tr>
 							{/each}
@@ -107,7 +107,7 @@
 							onclick={() => (filter = option)}
 						>
 							{t(filterLabel[option])}
-							<span class="tabular-nums opacity-60">{n(counts[option])}</span>
+							<span class="font-mono tabular-nums opacity-60">{n(counts[option])}</span>
 						</button>
 					{/each}
 				</div>

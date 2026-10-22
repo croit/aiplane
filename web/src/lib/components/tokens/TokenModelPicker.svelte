@@ -78,7 +78,7 @@
 							<div class="flex flex-wrap items-center justify-end gap-1">
 								<span class="badge badge-sm {model.gdpr ? 'badge-success badge-soft' : 'badge-error'}" title={model.gdpr ? t('tokens-models-gdpr-ok') : t('chat-render-gdpr-banner')}>{model.gdpr ? '✓' : '✕'} {t('searchable-select-model-gdpr')}</span>
 								<span class="badge badge-sm {model.nda ? 'badge-success badge-soft' : 'badge-error'}" title={model.nda ? t('tokens-models-nda-ok') : t('chat-render-nda-banner')}>{model.nda ? '✓' : '✕'} {t('searchable-select-model-nda')}</span>
-								<span class="w-full text-right text-xs tabular-nums text-base-content/60 sm:w-auto sm:min-w-40">{price(model)}</span>
+								<span class="w-full text-right font-mono text-xs tabular-nums text-base-content/60 sm:w-auto sm:min-w-40">{price(model)}</span>
 							</div>
 						</li>
 					{/each}

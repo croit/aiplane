@@ -92,11 +92,11 @@
 					<button type="button" class="btn btn-ghost btn-xs" onclick={() => (editing = true)}>{t('upstreams-edit-backend')}</button>
 				</div>
 				<div class="flex items-center gap-2">
-					<span class="whitespace-nowrap text-xs tabular-nums text-base-content/60">{t('backends-inflight-label', { load: `${n(backend.live?.inflight ?? 0)} / ${n(backend.live?.max_inflight ?? backend.max_inflight)}` })}</span>
+					<span class="whitespace-nowrap text-xs font-mono tabular-nums text-base-content/60">{t('backends-inflight-label', { load: `${n(backend.live?.inflight ?? 0)} / ${n(backend.live?.max_inflight ?? backend.max_inflight)}` })}</span>
 					<progress class={`progress w-24 ${saturated ? 'progress-warning' : 'progress-primary'}`} value={backend.live?.inflight ?? 0} max={backend.live?.max_inflight ?? backend.max_inflight}></progress>
 				</div>
 				<div class="flex items-center gap-2 text-base-content/50">
-					<span class="whitespace-nowrap text-xs tabular-nums">{t('backends-activity-summary', { m15: n(activity.m15), m30: n(activity.m30), m60: n(activity.m60) })}</span>
+					<span class="whitespace-nowrap text-xs font-mono tabular-nums">{t('backends-activity-summary', { m15: n(activity.m15), m30: n(activity.m30), m60: n(activity.m60) })}</span>
 					{#if usage.length > 1}<svg class="h-5 w-24 text-primary" viewBox="0 0 88 20" aria-hidden="true"><polyline fill="none" stroke="currentColor" stroke-width="1.5" points={sparkline}></polyline></svg>{/if}
 				</div>
 			</div>
