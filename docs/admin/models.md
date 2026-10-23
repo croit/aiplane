@@ -78,7 +78,15 @@ Chat overrides include reasoning styles `none`, `qwen`, `openai`, `glm`, `anthro
 
 Token budgets are offered only where they are enforced: always for Anthropic-style models, and for a Qwen-style model only when every backend serving it caps thinking per request — vLLM with its reasoning parser, or SGLang started with `--enable-strict-thinking` (see [thinking budgets](../upstreams.md#thinking-budgets)). Elsewhere a budget would be dropped without an error, so the fields are hidden. A budget must be at least 1024 tokens: an open-weight model cut off sooner tends to carry on thinking in its visible answer.
 
-The context-window hint warns when an override exceeds the detected upstream window: AIplane cannot enlarge the upstream's actual context capacity. The TOML defaults field accepts model request defaults. **Clear overrides** removes a chat model's overrides; non-chat model editors expose pricing only.
+The context-window hint warns when an override exceeds the detected upstream window: AIplane cannot enlarge the upstream's actual context capacity. The TOML defaults field accepts model request defaults: flat keys are the sampling parameters (`temperature`, `top_p`, `max_tokens`, `stop`, …), and one level of table holds a provider extension parameter as a whole. The table is inserted into the request only when the client did not send that top-level key — a client value wins, there is no deep merge. OpenRouter's provider routing is the usual case:
+
+```toml
+[provider]
+only = ["together"]
+allow_fallbacks = false
+```
+
+sends the request to the Together serving of the model and never falls back to another provider. **Clear overrides** removes a chat model's overrides; non-chat model editors expose pricing only.
 
 ## Set feature defaults
 

@@ -10,7 +10,8 @@
 //! [`apply_defaults`], which:
 //!
 //! 1. Looks up the row keyed by the request body's `model` field.
-//! 2. Parses the row's TOML into a flat table of scalars.
+//! 2. Parses the row's TOML into a table of scalars, arrays of scalars,
+//!    and one level of extension tables (e.g. OpenRouter's `provider`).
 //! 3. For each top-level key the *request* didn't already set,
 //!    inserts the stored default.
 //!
@@ -27,11 +28,13 @@ use crate::server::db::{Pool, model_defaults as db};
 pub enum DefaultsError {
     #[error("TOML parse: {0}")]
     TomlParse(#[from] toml::de::Error),
-    /// Top level must be a table of scalars (or arrays of scalars).
-    /// Reject anything that nests further — sampling parameters are
-    /// flat by definition, and a nested table would silently fail to
-    /// merge into the request body.
-    #[error("`{0}` is not a scalar / array-of-scalars; sampling params must be flat")]
+    /// Top level must be a table of scalars, arrays of scalars, or one level
+    /// of such tables (a `provider`-style extension). Reject anything that
+    /// nests further — a deeper table would silently fail to merge into the
+    /// request body.
+    #[error(
+        "`{0}` is not a scalar, an array of scalars, or a table of those; request defaults nest at most one level"
+    )]
     NotScalar(String),
     #[error("db: {0}")]
     Db(#[from] crate::server::db::DbError),
@@ -101,9 +104,9 @@ pub async fn apply_defaults_to_bytes(
     }
 }
 
-/// Parse a TOML blob into a JSON object whose values are all scalars
-/// (or arrays of scalars). Save-time validator + request-time parser
-/// share this implementation so what's saved is exactly what
+/// Parse a TOML blob into a JSON object of scalars, arrays of scalars, and
+/// one level of tables holding those. Save-time validator + request-time
+/// parser share this implementation so what's saved is exactly what
 /// `apply_defaults` will accept later.
 pub fn parse_defaults(toml_text: &str) -> Result<serde_json::Map<String, Value>, DefaultsError> {
     let parsed: toml::Value = toml::from_str(toml_text)?;
@@ -113,15 +116,16 @@ pub fn parse_defaults(toml_text: &str) -> Result<serde_json::Map<String, Value>,
     };
     let mut out = serde_json::Map::with_capacity(table.len());
     for (k, v) in table {
-        let json_value = toml_to_json_scalar(&k, v)?;
+        let json_value = toml_to_json_value(&k, v, 0)?;
         out.insert(k, json_value);
     }
     Ok(out)
 }
 
 /// Top-level merge: any key from `defaults` not already present in
-/// `body` gets inserted. Doesn't recurse into nested structures —
-/// sampling params are flat. Non-object request bodies are
+/// `body` gets inserted. Doesn't recurse into nested structures — a
+/// stored table (e.g. `provider`) is inserted as a whole, and a
+/// client-supplied top-level key wins. Non-object request bodies are
 /// left untouched (the upstream will reject them anyway).
 fn fill_missing_keys(body: &mut Value, defaults: &serde_json::Map<String, Value>) {
     let Some(obj) = body.as_object_mut() else {
@@ -134,7 +138,11 @@ fn fill_missing_keys(body: &mut Value, defaults: &serde_json::Map<String, Value>
     }
 }
 
-fn toml_to_json_scalar(key: &str, v: toml::Value) -> Result<Value, DefaultsError> {
+/// Convert one TOML value to JSON. Tables are allowed one level deep
+/// (a `provider`-style table of scalars); deeper nesting is rejected —
+/// request fields are flat, and one table is the most any upstream
+/// extension (OpenRouter's `provider`) needs.
+fn toml_to_json_value(key: &str, v: toml::Value, depth: usize) -> Result<Value, DefaultsError> {
     Ok(match v {
         toml::Value::String(s) => Value::String(s),
         toml::Value::Integer(i) => Value::Number(i.into()),
@@ -162,6 +170,14 @@ fn toml_to_json_scalar(key: &str, v: toml::Value) -> Result<Value, DefaultsError
                 }
             }
             Value::Array(out)
+        }
+        toml::Value::Table(table) if depth == 0 => {
+            let mut out = serde_json::Map::with_capacity(table.len());
+            for (k, v) in table {
+                let json = toml_to_json_value(&k, v, depth + 1)?;
+                out.insert(k, json);
+            }
+            Value::Object(out)
         }
         _ => return Err(DefaultsError::NotScalar(key.to_string())),
     })
@@ -192,13 +208,75 @@ stop             = ["END", "<|im_end|>"]
     }
 
     #[test]
-    fn parse_rejects_nested_table() {
+    fn parse_accepts_one_level_of_nesting() {
         let toml = r#"
-[sampling]
 temperature = 0.7
+
+[provider]
+only = ["together"]
+allow_fallbacks = false
+        "#;
+        let parsed = parse_defaults(toml).unwrap();
+        assert_eq!(parsed["temperature"], json!(0.7));
+        assert_eq!(
+            parsed["provider"],
+            json!({"only": ["together"], "allow_fallbacks": false})
+        );
+    }
+
+    #[test]
+    fn parse_accepts_dotted_nested_keys() {
+        let toml = r#"
+provider.only = ["together"]
+provider.allow_fallbacks = false
+        "#;
+        let parsed = parse_defaults(toml).unwrap();
+        assert_eq!(
+            parsed["provider"],
+            json!({"only": ["together"], "allow_fallbacks": false})
+        );
+    }
+
+    #[test]
+    fn parse_rejects_two_levels_of_nesting() {
+        let toml = r#"
+[provider.route]
+only = ["together"]
         "#;
         let err = parse_defaults(toml).unwrap_err();
-        assert!(matches!(err, DefaultsError::NotScalar(ref k) if k == "sampling"));
+        assert!(matches!(err, DefaultsError::NotScalar(_)));
+    }
+
+    #[test]
+    fn merge_fills_a_missing_nested_key_and_client_wins() {
+        let mut body = json!({"model": "m", "messages": []});
+        let defaults = parse_defaults("[provider]\nonly = [\"together\"]").unwrap();
+        fill_missing_keys(&mut body, &defaults);
+        assert_eq!(body["provider"], json!({"only": ["together"]}));
+        // A client-supplied top-level key wins wholesale — no deep merge.
+        let mut body = json!({"model": "m", "provider": {"only": ["anthropic"]}});
+        fill_missing_keys(&mut body, &defaults);
+        assert_eq!(body["provider"], json!({"only": ["anthropic"]}));
+    }
+
+    #[tokio::test]
+    async fn apply_defaults_round_trip_nested_against_db() {
+        let pool = crate::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        crate::server::db::model_defaults::upsert(
+            &pool,
+            "m",
+            "[provider]\nonly = [\"together\"]\nallow_fallbacks = false",
+        )
+        .await
+        .unwrap();
+        let mut body = json!({"model": "m", "messages": []});
+        apply_defaults(&pool, &mut body).await.unwrap();
+        assert_eq!(
+            body["provider"],
+            json!({"only": ["together"], "allow_fallbacks": false})
+        );
     }
 
     #[test]

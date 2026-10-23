@@ -125,6 +125,79 @@ async fn v1_chat_completions_relays_through_upstream() {
     );
 }
 
+/// A stored `provider` table (an upstream extension parameter, e.g.
+/// OpenRouter's provider routing) rides along on the forwarded request
+/// body, and a client-supplied `provider` wins over the stored default.
+async fn post_chat(
+    app: &impl common::Service<
+        rama::http::Request,
+        Output = rama::http::Response,
+        Error = std::convert::Infallible,
+    >,
+    bearer: &str,
+    body: serde_json::Value,
+) -> rama::bytes::Bytes {
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/chat/completions")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    common::read_body(resp).await
+}
+
+#[tokio::test]
+async fn v1_chat_completions_forwards_a_stored_provider_table_and_client_wins() {
+    use aiplane_core::server::db::model_defaults;
+
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{"message": {"role": "assistant", "content": "hi"}}]
+        })))
+        .mount(&upstream)
+        .await;
+
+    let state = common::state_with_chat_pool(&upstream.uri()).await;
+    model_defaults::upsert(
+        &state.db,
+        "model-a",
+        "[provider]\nonly = [\"together\"]\nallow_fallbacks = false",
+    )
+    .await
+    .unwrap();
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    // No `provider` in the request → the stored table is inserted.
+    post_chat(&app, &bearer, json!({"model": "model-a", "messages": []})).await;
+    let requests = upstream.received_requests().await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&requests.last().unwrap().body).unwrap();
+    assert_eq!(
+        body["provider"],
+        json!({"only": ["together"], "allow_fallbacks": false})
+    );
+
+    // Client-supplied `provider` wins wholesale — no deep merge.
+    post_chat(
+        &app,
+        &bearer,
+        json!({
+            "model": "model-a",
+            "messages": [],
+            "provider": {"only": ["anthropic"]}
+        }),
+    )
+    .await;
+    let requests = upstream.received_requests().await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&requests.last().unwrap().body).unwrap();
+    assert_eq!(body["provider"], json!({"only": ["anthropic"]}));
+}
+
 #[tokio::test]
 async fn v1_chat_content_guard_denies_before_dispatching_to_a_noncompliant_pool() {
     let upstream = MockServer::start().await;
