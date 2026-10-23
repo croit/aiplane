@@ -110,6 +110,12 @@
 	let editingTurn = $state<{ id: string; content: string } | null>(null);
 	let editDraft = $state('');
 	let editFiles = $state<File[]>([]);
+	// In-UI confirmation, not window.confirm: Chrome auto-dismisses a native
+	// dialog when the window has not (re-)gained OS focus — on macOS the click
+	// that opens it often lands mid focus-transfer, so the dialog flashed and
+	// the destructive action silently no-op'd.
+	let editConfirming = $state(false);
+	let retryConfirming = $state<string | null>(null);
 	let promptChoices = $state<string[]>([]);
 
 	let documents = $state<CanvasDocument[]>([]);
@@ -633,7 +639,11 @@
 	async function retry(turnId: string) {
 		if (!canWrite) return;
 		if (!model.trim() || streaming) return;
-		if (!window.confirm(t('render-retry-confirm'))) return;
+		if (retryConfirming !== turnId) {
+			retryConfirming = turnId;
+			return;
+		}
+		retryConfirming = null;
 		try {
 			await postJson(`/api/v0/chat/sessions/${id}/turns/${turnId}/retry`, {
 				model: model.trim()
@@ -651,10 +661,19 @@
 		editFiles = [];
 	}
 
+	function closeEdit() {
+		editingTurn = null;
+		editConfirming = false;
+	}
+
 	async function saveTurnEdit() {
 		if (!canWrite) return;
 		if (!editingTurn || !editDraft.trim() || !model.trim() || streaming) return;
-		if (!window.confirm(t('render-edit-confirm'))) return;
+		if (!editConfirming) {
+			editConfirming = true;
+			return;
+		}
+		editConfirming = false;
 		try {
 			const form = new FormData();
 			form.append('model', model.trim());
@@ -731,7 +750,6 @@
 
 	async function removeAttachment(turnId: string, filename: string) {
 		if (!canWrite) return;
-		if (!window.confirm(t('render-attachment-remove-confirm', { filename }))) return;
 		try {
 			await api.removeChatAttachment(id, turnId, filename);
 			// The turn's markers changed in the DB. Re-attaching replays a
@@ -1058,7 +1076,7 @@
 						{#if canWrite && entry.turn.status !== 'in_progress' && entry.turn.status !== 'suspended' && !streaming}
 							<div class="flex gap-1 mt-1">
 								<button class="btn btn-ghost btn-xs" onclick={() => retry(entry.turn.id)}>
-									{t('render-retry-button')}
+									{retryConfirming === entry.turn.id ? t('render-retry-confirm') : t('render-retry-button')}
 								</button>
 							</div>
 						{/if}
@@ -1326,11 +1344,11 @@
 					{t('render-composer-attach-aria')}
 					<input type="file" multiple class="hidden" onchange={(event) => { editFiles = [...editFiles, ...Array.from((event.currentTarget as HTMLInputElement).files ?? [])]; (event.currentTarget as HTMLInputElement).value = ''; }} />
 				</label>
-				<button class="btn btn-ghost btn-sm" onclick={() => (editingTurn = null)}>{t('render-edit-cancel')}</button>
-				<button class="btn btn-primary btn-sm" disabled={!editDraft.trim()} onclick={saveTurnEdit}>{t('render-edit-save')}</button>
+				<button class="btn btn-ghost btn-sm" onclick={closeEdit}>{t('render-edit-cancel')}</button>
+				<button class="btn btn-primary btn-sm" disabled={!editDraft.trim()} onclick={saveTurnEdit}>{editConfirming ? t('render-edit-confirm') : t('render-edit-save')}</button>
 			</div>
 		</div>
-		<form method="dialog" class="modal-backdrop"><button onclick={() => (editingTurn = null)}>{t('render-edit-cancel')}</button></form>
+		<form method="dialog" class="modal-backdrop"><button onclick={closeEdit}>{t('render-edit-cancel')}</button></form>
 	</dialog>
 {/if}
 

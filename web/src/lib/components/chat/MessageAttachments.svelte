@@ -8,6 +8,10 @@
 		onremove: (filename: string) => void;
 	} = $props();
 	let unavailable = $state<string[]>([]);
+	// The armed filename, so the destructive removal is an in-UI two-step
+	// (window.confirm is auto-dismissed by Chrome when the window is not
+	// focused, which no-op'd the removal).
+	let armed = $state<string | null>(null);
 	const media = $derived(attachments.filter((attachment: ChatAttachment) => /^(image|video|audio)\//.test(attachment.mime)));
 
 	function mediaKind(attachment: ChatAttachment): 'image' | 'video' | 'audio' | 'other' {
@@ -27,6 +31,15 @@
 
 	function failed(attachment: ChatAttachment) {
 		if (!unavailable.includes(attachment.url)) unavailable = [...unavailable, attachment.url];
+	}
+
+	function handleRemove(filename: string) {
+		if (armed !== filename) {
+			armed = filename;
+			return;
+		}
+		armed = null;
+		onremove(filename);
 	}
 </script>
 
@@ -51,7 +64,13 @@
 				<a href={attachment.url} class="btn btn-sm max-w-full" download={attachment.filename} title={t('render-attachment-title', { filename: attachment.filename, mime: attachment.mime, size: sizeLabel(attachment.size) })}><span class="truncate">{attachment.filename}</span><span class="opacity-60">{sizeLabel(attachment.size)}</span></a>
 			{/if}
 			{#if removable}
-				<button class="btn btn-error btn-xs btn-circle absolute -right-2 -top-2 opacity-0 group-hover:opacity-100 focus:opacity-100" aria-label={t('render-attachment-remove-aria')} title={t('render-attachment-remove-title', { filename: attachment.filename })} onclick={() => onremove(attachment.filename)}>✕</button>
+				<button
+					class="btn btn-xs btn-circle absolute -right-2 -top-2 {armed === attachment.filename
+						? 'btn-warning opacity-100'
+						: 'btn-error opacity-0 group-hover:opacity-100 focus:opacity-100'}"
+					aria-label={armed === attachment.filename ? t('render-attachment-remove-confirm', { filename: attachment.filename }) : t('render-attachment-remove-aria')}
+					title={armed === attachment.filename ? t('render-attachment-remove-confirm', { filename: attachment.filename }) : t('render-attachment-remove-title', { filename: attachment.filename })}
+					onclick={() => handleRemove(attachment.filename)}>✕</button>
 			{/if}
 		</div>
 	{/each}
