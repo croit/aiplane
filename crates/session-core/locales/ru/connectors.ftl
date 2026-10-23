@@ -76,6 +76,7 @@ connectors-field-client-id-placeholder = …apps.googleusercontent.com / id OAut
 connectors-field-client-id-help = Из OAuth-клиента, зарегистрированного у провайдера. Нужен только если сервер не может зарегистрировать шлюз сам.
 connectors-field-client-secret-label = OAuth client secret
 connectors-secret-placeholder-existing = •••••••• (оставьте пустым, чтобы сохранить текущий)
+connectors-secret-stored = Сохранённый секрет: { $hint }
 connectors-secret-placeholder-new = client secret (необязательно)
 connectors-field-client-secret-help = Выдаётся вместе с client id на той же странице. Хранится в зашифрованном виде; оставьте пустым, чтобы сохранить текущий.
 connectors-field-use-dcr-label = Попробовать динамическую регистрацию клиента (RFC 7591)

@@ -3,7 +3,7 @@
 	import { t } from '#lib/i18n.svelte.js';
 
 	let { search, onsave }: {
-		search: { provider: string; searxng_url: string | null; brave_key_set: boolean; tavily_key_set: boolean; tavily_enabled: boolean; tavily_active: boolean };
+		search: { provider: string; searxng_url: string | null; brave_key_set: boolean; brave_key_hint: string | null; tavily_key_set: boolean; tavily_key_hint: string | null; tavily_enabled: boolean; tavily_active: boolean };
 		onsave: (settings: { provider: string; searxng_url: string; brave_api_key: string; clear_brave_key: boolean; tavily_api_key: string; clear_tavily_key: boolean; tavily_enabled: boolean }) => Promise<void>;
 	} = $props();
 
@@ -65,7 +65,11 @@
 					<span class="label-text text-xs">{t('admin-search-tavily-key-label')}</span>
 					<input type="password" autocomplete="off" class="input w-full" aria-label={t('admin-search-tavily-key-label')} bind:value={tavilyKey} placeholder={t('admin-search-tavily-key-placeholder')} />
 				</label>
-				<span class="text-xs text-base-content/60">{t(search.tavily_key_set ? 'admin-search-tavily-key-set' : 'admin-search-tavily-key-unset')}</span>
+				<span class="text-xs text-base-content/60">{search.tavily_key_set
+					? search.tavily_key_hint
+						? t('admin-search-tavily-key-set-hint', { hint: search.tavily_key_hint })
+						: t('admin-search-tavily-key-set')
+					: t('admin-search-tavily-key-unset')}</span>
 				{#if search.tavily_key_set}
 					<label class="label cursor-pointer justify-start gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={clearTavilyKey} /><span>{t('admin-search-tavily-key-clear')}</span></label>
 				{/if}
@@ -75,7 +79,11 @@
 					<span class="label-text text-xs">{t('admin-search-brave-key-label')}</span>
 					<input type="password" autocomplete="off" class="input w-full" aria-label={t('admin-search-brave-key-label')} bind:value={braveKey} placeholder={t('admin-search-brave-key-placeholder')} />
 				</label>
-				<span class="text-xs text-base-content/60">{t(search.brave_key_set ? 'admin-search-brave-key-set' : 'admin-search-brave-key-unset')}</span>
+				<span class="text-xs text-base-content/60">{search.brave_key_set
+					? search.brave_key_hint
+						? t('admin-search-brave-key-set-hint', { hint: search.brave_key_hint })
+						: t('admin-search-brave-key-set')
+					: t('admin-search-brave-key-unset')}</span>
 				{#if search.brave_key_set}
 					<label class="label cursor-pointer justify-start gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={clearBraveKey} /><span>{t('admin-search-brave-key-clear')}</span></label>
 				{/if}

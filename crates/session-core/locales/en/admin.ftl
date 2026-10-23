@@ -260,11 +260,13 @@ admin-cap-fallback-tools = Fallback for tools
 admin-search-intro = Choose the backend for `search_web`. SearXNG needs a base URL; Brave and Tavily need API keys, which are encrypted at rest. If a provider's quota is exhausted, another configured provider is tried.
 
 admin-search-brave-key-set = A key is stored (encrypted).
+admin-search-brave-key-set-hint = A key is stored (encrypted): { $hint }
 
 admin-search-brave-key-unset = No key stored.
 
 admin-search-brave-key-clear = Remove the stored key
 admin-search-tavily-key-set = A Tavily key is stored (encrypted).
+admin-search-tavily-key-set-hint = A Tavily key is stored (encrypted): { $hint }
 admin-search-tavily-key-unset = No Tavily key stored.
 admin-search-tavily-key-clear = Remove the stored Tavily key
 admin-search-tavily-enabled = Enable Tavily

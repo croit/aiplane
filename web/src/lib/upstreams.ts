@@ -56,6 +56,7 @@ export interface Backend {
 	api_key_env: string | null;
 	api_key_env_set: boolean;
 	has_stored_key: boolean;
+	api_key_hint: string | null;
 	weight: number;
 	max_inflight: number;
 	health_path: string;

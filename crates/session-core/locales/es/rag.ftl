@@ -104,6 +104,7 @@ rag-edit-heading = Editando { $name }
 rag-label-description = Descripción
 rag-label-pat = Token de acceso personal
 rag-placeholder-pat-keep = deje en blanco para conservar el existente
+rag-pat-stored = PAT almacenado: { $hint }
 rag-label-clear-pat = Eliminar el PAT guardado (dejar de autenticarse)
 rag-label-include-globs = Patrones de inclusión
 rag-button-save-changes = Guardar cambios

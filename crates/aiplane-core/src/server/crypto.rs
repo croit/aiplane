@@ -295,6 +295,25 @@ pub fn random_hex(n: usize) -> String {
     hex_encode(&bytes)
 }
 
+/// Secrets shorter than this get no fingerprint at all: below this length the
+/// head + tail fragments would together expose most of the secret.
+pub const FINGERPRINT_MIN_LEN: usize = 16;
+
+/// A short, irreversible fragment of a stored secret — enough for an
+/// operator to tell two keys apart ("which key is stored?"), never enough to
+/// reconstruct one. The head and tail are joined with `…`; char-based, so a
+/// multi-byte character is never split. `None` when the secret is too short
+/// for any fragment to be safe ([`FINGERPRINT_MIN_LEN`]).
+pub fn secret_fingerprint(secret: &str) -> Option<String> {
+    let chars: Vec<char> = secret.chars().collect();
+    if chars.len() < FINGERPRINT_MIN_LEN {
+        return None;
+    }
+    let head: String = chars[..4].iter().collect();
+    let tail: String = chars[chars.len() - 4..].iter().collect();
+    Some(format!("{head}…{tail}"))
+}
+
 #[cfg(test)]
 mod activity_key_tests {
     use super::*;
@@ -421,6 +440,48 @@ mod tests {
         let nonce = <[u8; 8]>::generate();
         let ciphertext = <[u8; 32]>::generate();
         assert!(c.open(&nonce, &ciphertext).is_err());
+    }
+
+    mod fingerprint {
+        use super::super::*;
+
+        #[test]
+        fn a_long_key_yields_head_and_tail_around_an_ellipsis() {
+            // Tavily-style key: the operator must be able to tell two keys
+            // apart from the fragment alone.
+            let key = "tvly-1234567890abcdef-6543210987fedcba";
+            assert_eq!(secret_fingerprint(key).as_deref(), Some("tvly…dcba"));
+        }
+
+        #[test]
+        fn the_fingerprint_never_contains_the_whole_secret() {
+            let key = "sk-live-abcdef1234567890-ghijkl";
+            let fp = secret_fingerprint(key).expect("long enough for a fingerprint");
+            assert!(!fp.contains(key), "{fp} must not carry the key");
+            assert_eq!(fp.chars().count(), 9, "4 + ellipsis + 4");
+        }
+
+        #[test]
+        fn the_threshold_is_exactly_sixteen_chars() {
+            assert_eq!(secret_fingerprint(&"a".repeat(15)), None);
+            assert_eq!(
+                secret_fingerprint(&"a".repeat(16)).as_deref(),
+                Some("aaaa…aaaa")
+            );
+        }
+
+        #[test]
+        fn short_secrets_get_no_fingerprint_at_all() {
+            assert_eq!(secret_fingerprint("abc"), None);
+            assert_eq!(secret_fingerprint(""), None);
+        }
+
+        #[test]
+        fn multibyte_chars_are_never_split() {
+            // 16 chars: 15 × "a" + one "ß" at the tail.
+            let key = "aaaaaaaaaaaaaaaß";
+            assert_eq!(secret_fingerprint(key).as_deref(), Some("aaaa…aaaß"));
+        }
     }
 
     /// Known-answer tests: the exact bytes an existing database depends on.

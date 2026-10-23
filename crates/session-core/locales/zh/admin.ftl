@@ -250,11 +250,13 @@ admin-cap-fallback-tools = 工具回退
 admin-search-intro = 选择 `search_web` 的搜索后端。SearXNG 需要基础 URL；Brave 和 Tavily 需要 API 密钥，密钥会加密存储。如果某个服务商的额度已用尽，系统会尝试其他已配置的服务商。
 
 admin-search-brave-key-set = 已存储密钥（加密）。
+admin-search-brave-key-set-hint = 已存储密钥（加密）：{ $hint }
 
 admin-search-brave-key-unset = 未存储密钥。
 
 admin-search-brave-key-clear = 删除已存储的密钥
 admin-search-tavily-key-set = 已存储 Tavily 密钥（已加密）。
+admin-search-tavily-key-set-hint = 已存储 Tavily 密钥（已加密）：{ $hint }
 admin-search-tavily-key-unset = 未存储 Tavily 密钥。
 admin-search-tavily-key-clear = 删除已存储的 Tavily 密钥
 admin-search-tavily-enabled = 启用 Tavily

@@ -7,8 +7,9 @@
 //! Wire shapes are kept inline rather than in `shared::api` because they
 //! are admin-only (the CLI doesn't speak them) and likely to evolve as
 //! the indexer gains knobs. The PAT field is treated as a one-way
-//! secret: it can be *set* on create/update, but every response
-//! surfaces `pat_set: bool` instead of the plaintext.
+//! secret: it can be *set* on create/update, sealed at rest like every
+//! other gateway secret, and every response surfaces `pat_set: bool`
+//! plus a head/tail `pat_hint` — never the plaintext.
 
 use std::sync::Arc;
 
@@ -33,6 +34,9 @@ pub(crate) struct CollectionView {
     git_url: String,
     git_ref: String,
     pat_set: bool,
+    /// Head/tail fragment of the stored PAT (`crypto::secret_fingerprint`),
+    /// so the operator can tell which PAT is stored without it being echoed.
+    pat_hint: Option<String>,
     /// Which provider reaches this collection's files: `git`, or a
     /// registered remote source. See `GET /api/v0/rag/providers`.
     source_kind: String,
@@ -66,7 +70,11 @@ pub(crate) struct CollectionView {
 }
 
 impl CollectionView {
-    fn from_collection(c: rag_db::Collection, search_ref: Option<rag_db::CollectionRef>) -> Self {
+    fn from_collection(
+        c: rag_db::Collection,
+        search_ref: Option<rag_db::CollectionRef>,
+        pat_hint: Option<String>,
+    ) -> Self {
         let status = search_ref
             .as_ref()
             .map(|r| r.status.as_str().to_string())
@@ -86,6 +94,7 @@ impl CollectionView {
             git_url: c.git_url,
             git_ref: c.git_ref,
             pat_set: c.pat.is_some(),
+            pat_hint,
             source_kind: c.source.kind,
             source_config: c.source.config,
             source_secrets_set: c.source.secrets.is_some(),
@@ -115,10 +124,67 @@ impl CollectionView {
 
 async fn collection_view(
     pool: &aiplane_core::server::db::Pool,
+    crypto: &aiplane_core::server::crypto::Crypto,
     collection: rag_db::Collection,
 ) -> Result<CollectionView, aiplane_core::server::db::DbError> {
     let search_ref = rag_db::primary_ref(pool, collection.id).await?;
-    Ok(CollectionView::from_collection(collection, search_ref))
+    let pat_hint = collection
+        .pat
+        .as_deref()
+        .and_then(|stored| crypto.open_from_string(stored))
+        .and_then(|pat| aiplane_core::server::crypto::secret_fingerprint(&pat));
+    Ok(CollectionView::from_collection(
+        collection, search_ref, pat_hint,
+    ))
+}
+
+/// Seal an operator-supplied PAT for at-rest storage. `None` and a blank
+/// string mean "no PAT" (a trimmed value is what gets sealed, so a stray
+/// space cannot ride along into the clone URL); a sealing failure is an
+/// error, because silently dropping the credential the operator just typed
+/// is worse than a 400.
+fn seal_pat(
+    crypto: &aiplane_core::server::crypto::Crypto,
+    pat: Option<&str>,
+) -> Result<Option<String>, String> {
+    let pat = pat.map(str::trim).filter(|s| !s.is_empty());
+    match pat {
+        None => Ok(None),
+        Some(pat) => crypto
+            .seal_to_string(pat)
+            .map(Some)
+            .map_err(|e| e.to_string()),
+    }
+}
+
+/// Seal the PATs of collections written before PATs were sealed at rest.
+///
+/// A stored value that opens under the current at-rest key is already sealed
+/// and is left alone; anything else is treated as plaintext and sealed in
+/// place. Idempotent — a second run finds nothing to do. Returns the number
+/// of rows sealed, for the boot log.
+pub async fn seal_unsealed_pats(
+    pool: &aiplane_core::server::db::Pool,
+    crypto: &aiplane_core::server::crypto::Crypto,
+) -> anyhow::Result<usize> {
+    let collections = rag_db::list_collections(pool).await?;
+    let mut sealed = 0usize;
+    for c in collections {
+        let Some(stored) = c.pat else {
+            continue;
+        };
+        if crypto.open_from_string(&stored).is_some() {
+            continue;
+        }
+        let sealed_value = crypto.seal_to_string(&stored)?;
+        sqlx::query("UPDATE rag_collections SET pat = ? WHERE id = ?")
+            .bind(&sealed_value)
+            .bind(c.id)
+            .execute(pool)
+            .await?;
+        sealed += 1;
+    }
+    Ok(sealed)
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -246,7 +312,7 @@ pub async fn list_collections(State(state): State<Arc<RamaState>>, req: Request)
     };
     let mut view = Vec::with_capacity(rows.len());
     for collection in rows {
-        match collection_view(&state.db, collection).await {
+        match collection_view(&state.db, &state.crypto, collection).await {
             Ok(collection) => view.push(collection),
             Err(err) => {
                 tracing::warn!(error = %err, "deriving rag collection status");
@@ -271,7 +337,7 @@ pub async fn get_collection(
         return resp;
     }
     match rag_db::find_collection_by_id(&state.db, id).await {
-        Ok(Some(c)) => match collection_view(&state.db, c).await {
+        Ok(Some(c)) => match collection_view(&state.db, &state.crypto, c).await {
             Ok(view) => json_ok(&view),
             Err(err) => {
                 tracing::warn!(error = %err, %id, "deriving rag collection status");
@@ -333,12 +399,16 @@ pub async fn create_collection(State(state): State<Arc<RamaState>>, req: Request
     if let Some(msg) = refresh_interval_error(body.refresh_interval_mins) {
         return invalid_request(msg);
     }
+    let pat = match seal_pat(&state.crypto, body.pat.as_deref()) {
+        Ok(pat) => pat,
+        Err(msg) => return invalid_request(&msg),
+    };
     let new = rag_db::NewCollection {
         name: body.name.trim().to_string(),
         description: body.description.map(|s| s.trim().to_string()),
         git_url: body.git_url.trim().to_string(),
         git_ref: body.git_ref,
-        pat: body.pat.filter(|s| !s.is_empty()),
+        pat,
         source,
         profile_id,
         extraction_model: body.extraction_model.filter(|s| !s.is_empty()),
@@ -376,7 +446,7 @@ pub async fn create_collection(State(state): State<Arc<RamaState>>, req: Request
                     }
                 }
             }
-            match collection_view(&state.db, c).await {
+            match collection_view(&state.db, &state.crypto, c).await {
                 Ok(view) => (
                     StatusCode::CREATED,
                     [(header::CONTENT_TYPE, "application/json")],
@@ -1324,8 +1394,12 @@ pub async fn update_collection(
         bindings.push(UpdateBinding::Str(git_url.trim().to_string()));
     }
     if let Some(pat) = body.pat {
+        let sealed = match seal_pat(&state.crypto, pat.as_deref()) {
+            Ok(sealed) => sealed,
+            Err(msg) => return invalid_request(&msg),
+        };
         sets.push("pat = ?");
-        bindings.push(UpdateBinding::OptStr(pat.filter(|s| !s.is_empty())));
+        bindings.push(UpdateBinding::OptStr(sealed));
     }
     match (body.source_kind, body.source_config) {
         (Some(kind), Some(config)) => {
@@ -1444,7 +1518,7 @@ pub async fn update_collection(
         // Nothing to do — still surface the current row so the caller
         // can write a UI that doesn't special-case the empty diff.
         return match rag_db::find_collection_by_id(&state.db, id).await {
-            Ok(Some(c)) => match collection_view(&state.db, c).await {
+            Ok(Some(c)) => match collection_view(&state.db, &state.crypto, c).await {
                 Ok(view) => json_ok(&view),
                 Err(err) => {
                     tracing::warn!(error = %err, %id, "deriving rag collection status");
@@ -1509,7 +1583,7 @@ pub async fn update_collection(
             let _ = request_full_rebuild(&state, r.id).await;
         }
     }
-    match collection_view(&state.db, after).await {
+    match collection_view(&state.db, &state.crypto, after).await {
         Ok(view) => json_ok(&view),
         Err(err) => {
             tracing::warn!(error = %err, %id, "deriving rag collection status");
@@ -1580,7 +1654,7 @@ pub async fn reindex_collection(
                     return internal_error("queueing collection source failed");
                 }
             }
-            match collection_view(&state.db, c).await {
+            match collection_view(&state.db, &state.crypto, c).await {
                 Ok(view) => json_ok(&view),
                 Err(err) => {
                     tracing::warn!(error = %err, %id, "deriving rag collection status");
@@ -2033,5 +2107,121 @@ pub async fn clear_sync_token(
             tracing::warn!(error = %err, %id, "clearing rag sync token");
             internal_error("clearing the token failed")
         }
+    }
+}
+
+#[cfg(test)]
+mod pat_sealing_tests {
+    use super::*;
+    use aiplane_core::server::crypto::Crypto;
+    use aiplane_core::server::db::open;
+    use std::path::Path;
+
+    async fn fresh() -> (aiplane_core::server::db::Pool, Crypto) {
+        (
+            open(Path::new(":memory:")).await.unwrap(),
+            Crypto::ephemeral(),
+        )
+    }
+
+    fn new_collection(name: &str, pat: Option<String>) -> rag_db::NewCollection {
+        rag_db::NewCollection {
+            name: name.to_string(),
+            description: None,
+            git_url: "https://example.invalid/repo.git".to_string(),
+            git_ref: "main".into(),
+            pat,
+            source: Default::default(),
+            profile_id: None,
+            extraction_model: None,
+            embedding_model: "embed-1".into(),
+            include_globs: vec![],
+            exclude_globs: vec![],
+            chunk_size: 800,
+            chunk_overlap: 100,
+            search_mode: rag_db::SearchMode::Versioned,
+            refresh_interval_mins: 0,
+        }
+    }
+
+    #[test]
+    fn seal_pat_maps_absence_to_none_and_seals_a_value() {
+        let crypto = Crypto::ephemeral();
+        assert_eq!(seal_pat(&crypto, None).unwrap(), None);
+        assert_eq!(seal_pat(&crypto, Some("   ")).unwrap(), None);
+        let sealed = seal_pat(&crypto, Some("ghp_secretvalue-1234567890"))
+            .unwrap()
+            .expect("a non-empty PAT seals");
+        assert!(
+            !sealed.contains("ghp_secretvalue-1234567890"),
+            "sealed: {sealed}"
+        );
+        assert_eq!(
+            crypto.open_from_string(&sealed).as_deref(),
+            Some("ghp_secretvalue-1234567890")
+        );
+    }
+
+    #[tokio::test]
+    async fn boot_sealing_seals_a_plaintext_pat_in_place() {
+        let (pool, crypto) = fresh().await;
+        // A row written before at-rest sealing: the PAT sits in plaintext.
+        let c = rag_db::create_collection(
+            &pool,
+            &new_collection("legacy", Some("ghp_secretvalue-1234567890".into())),
+        )
+        .await
+        .unwrap();
+
+        let sealed = seal_unsealed_pats(&pool, &crypto).await.unwrap();
+        assert_eq!(sealed, 1, "the plaintext row must be sealed");
+
+        let stored = rag_db::find_collection_by_id(&pool, c.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .pat
+            .expect("PAT still stored");
+        assert!(
+            !stored.contains("ghp_secretvalue-1234567890"),
+            "plaintext left at rest: {stored}"
+        );
+        assert_eq!(
+            crypto.open_from_string(&stored).as_deref(),
+            Some("ghp_secretvalue-1234567890"),
+            "the sealed value must open back to the original PAT"
+        );
+    }
+
+    #[tokio::test]
+    async fn boot_sealing_leaves_sealed_rows_alone_and_is_idempotent() {
+        let (pool, crypto) = fresh().await;
+        let sealed_value = crypto.seal_to_string("ghp_secretvalue-1234567890").unwrap();
+        let c =
+            rag_db::create_collection(&pool, &new_collection("modern", Some(sealed_value.clone())))
+                .await
+                .unwrap();
+
+        assert_eq!(seal_unsealed_pats(&pool, &crypto).await.unwrap(), 0);
+        assert_eq!(
+            rag_db::find_collection_by_id(&pool, c.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .pat,
+            Some(sealed_value),
+            "an already-sealed value must not be re-sealed"
+        );
+        // A second run finds nothing to do.
+        assert_eq!(seal_unsealed_pats(&pool, &crypto).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn boot_sealing_skips_collections_without_a_pat() {
+        let (pool, crypto) = fresh().await;
+        rag_db::create_collection(&pool, &new_collection("no-pat", None))
+            .await
+            .unwrap();
+        assert_eq!(seal_unsealed_pats(&pool, &crypto).await.unwrap(), 0);
     }
 }

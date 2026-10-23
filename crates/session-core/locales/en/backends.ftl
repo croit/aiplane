@@ -13,6 +13,7 @@ backends-field-name = Name
 backends-field-base-url = Base URL
 backends-field-api-key = API key
 backends-field-api-key-keep = leave blank to keep current key
+backends-field-api-key-stored = Stored key: { $hint }
 backends-field-pool = Pool
 backends-field-pool-none = (none)
 backends-save-backend = Save backend

@@ -772,27 +772,40 @@ pub async fn admin_connectors_list(State(state): State<Arc<RamaState>>, req: Req
         .unwrap_or_default();
     let out = connectors
         .iter()
-        .map(|c| ConnectorView {
-            key: c.key.clone(),
-            title: c.name.clone(),
-            description: c.description.clone(),
-            icon: c.icon.clone(),
-            category: c.category.clone(),
-            base_url: c.url.clone(),
-            auth_type: c.auth.as_str(),
-            scope: c.scope.as_str(),
-            scopes: c.scopes.clone(),
-            enabled: c.enabled,
-            audit: c.audit,
-            use_dcr: c.use_dcr,
-            client_id: c.client_id.clone(),
-            has_secret: c.client_secret_ct.is_some(),
-            authorize_url: c.authorize_url.clone(),
-            token_url: c.token_url.clone(),
-            registration_url: c.registration_url.clone(),
-            groups: c.allowed_groups.clone(),
-            seeded: c.seeded,
-            needs_setup: c.needs_setup(),
+        .map(|c| {
+            let client_secret = match (&c.client_secret_ct, &c.client_secret_nonce) {
+                (Some(ct), Some(nonce)) => state
+                    .crypto
+                    .open(nonce, ct)
+                    .ok()
+                    .and_then(|bytes| String::from_utf8(bytes).ok()),
+                _ => None,
+            };
+            ConnectorView {
+                key: c.key.clone(),
+                title: c.name.clone(),
+                description: c.description.clone(),
+                icon: c.icon.clone(),
+                category: c.category.clone(),
+                base_url: c.url.clone(),
+                auth_type: c.auth.as_str(),
+                scope: c.scope.as_str(),
+                scopes: c.scopes.clone(),
+                enabled: c.enabled,
+                audit: c.audit,
+                use_dcr: c.use_dcr,
+                client_id: c.client_id.clone(),
+                has_secret: c.client_secret_ct.is_some(),
+                client_secret_hint: client_secret
+                    .as_deref()
+                    .and_then(aiplane_core::server::crypto::secret_fingerprint),
+                authorize_url: c.authorize_url.clone(),
+                token_url: c.token_url.clone(),
+                registration_url: c.registration_url.clone(),
+                groups: c.allowed_groups.clone(),
+                seeded: c.seeded,
+                needs_setup: c.needs_setup(),
+            }
         })
         .collect();
     let groups = db::gateway_groups::list_group_names(&state.db)
@@ -817,7 +830,8 @@ pub struct ConnectorList {
     pub redirect_uri: String,
 }
 
-/// One MCP catalog entry. The client secret itself is never returned.
+/// One MCP catalog entry. The client secret itself is never returned;
+/// `client_secret_hint` carries only a head/tail fragment.
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct ConnectorView {
     pub key: String,
@@ -838,6 +852,8 @@ pub struct ConnectorView {
     pub use_dcr: bool,
     pub client_id: Option<String>,
     pub has_secret: bool,
+    /// Head/tail fragment of the stored client secret (`crypto::secret_fingerprint`).
+    pub client_secret_hint: Option<String>,
     pub authorize_url: Option<String>,
     pub token_url: Option<String>,
     pub registration_url: Option<String>,

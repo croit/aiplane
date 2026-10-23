@@ -139,6 +139,10 @@ pub struct Collection {
     pub description: Option<String>,
     pub git_url: String,
     pub git_ref: String,
+    /// The git PAT, sealed with the at-rest key in the single-column
+    /// `nonce.ciphertext` form (`Crypto::seal_to_string`) — the db layer
+    /// never sees it in plaintext; callers open it with `Crypto`, as
+    /// `backends.api_key_ct` works.
     pub pat: Option<String>,
     /// Which provider reaches this collection's files, and how.
     pub source: SourceSpec,
@@ -190,6 +194,10 @@ pub struct NewCollection {
     pub description: Option<String>,
     pub git_url: String,
     pub git_ref: String,
+    /// The git PAT, sealed with the at-rest key in the single-column
+    /// `nonce.ciphertext` form (`Crypto::seal_to_string`) — the db layer
+    /// never sees it in plaintext; callers open it with `Crypto`, as
+    /// `backends.api_key_ct` works.
     pub pat: Option<String>,
     pub source: SourceSpec,
     pub profile_id: Option<i64>,

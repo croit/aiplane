@@ -12,7 +12,7 @@ Open **Administration → Settings** (`/admin/settings`) with the `admin` role. 
 
 Most fields reload without restart. The declared restart fields are `comfyui.base_url`, `comfyui.content_dir`, `rag.enabled`, `rag.data_dir` and `rag.clone_concurrency`. The UI also reports its pending list explicitly. A disabled feature does not become usable merely because its service URL is filled in.
 
-Settings are stored in the database. Secrets are write-only: the UI shows whether one is set, not its plaintext. Leaving a secret input blank during Save preserves the stored value. Use its explicit Clear action, with confirmation, to remove it. Clearing a stored setting uses its built-in fallback; it does not re-import an arbitrary value from a configuration file.
+Settings are stored in the database. Secrets are write-only: the UI shows whether one is set, not its plaintext. Where a stored secret is long enough for a fragment to be safe, the UI shows a head/tail fingerprint (for example `tvly-…f99`) so you can tell which key is stored. Leaving a secret input blank during Save preserves the stored value. Use its explicit Clear action, with confirmation, to remove it. Clearing a stored setting uses its built-in fallback; it does not re-import an arbitrary value from a configuration file.
 
 Save validates typed settings before storing them. Invalid whole numbers, negative integer values, non-numeric or non-finite values, unlisted choice values, and IP-list entries that are not an address or a CIDR network show an inline error and leave the stored setting unchanged. Decimal settings accept either a period or a comma as the decimal separator.
 
@@ -102,7 +102,7 @@ The Web search category has its own provider card. Choose the provider, set the 
 | Model menu empty | Backend health and correct pool kind |
 | Feature enabled but unavailable | Feature prerequisites, process-readable directory and tool grants |
 | Old worker or index path still in use | Restart-pending list and deployment restart |
-| Secret seems blank | Set/unset indicator; write-only values are intentionally not returned |
+| Secret seems blank | Set/unset indicator plus a head/tail fingerprint; write-only values are intentionally not returned in full |
 | Content guard rejects everything | Guard service error, enforce mode and System One availability |
 | Confirm action fails without a prompt | Connected browser chat versus API caller; three-minute deadline |
 | New RAG path has no indexed data | Indexes do not move with a settings change |

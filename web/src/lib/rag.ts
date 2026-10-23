@@ -5,6 +5,7 @@ export interface RagCollection {
 	git_url: string;
 	git_ref: string;
 	pat_set: boolean;
+	pat_hint: string | null;
 	source_kind: string;
 	source_config: Record<string, string>;
 	source_secrets_set: boolean;

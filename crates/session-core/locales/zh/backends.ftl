@@ -17,6 +17,7 @@ backends-delete-backend = 删除
 
 backends-field-api-key = API 密钥
 backends-field-api-key-keep = 留空以保留当前密钥
+backends-field-api-key-stored = 已存储密钥：{ $hint }
 
 # An alias that is configured but would not route.
 # Save-time check on the aliases textarea.

@@ -18,6 +18,7 @@ export interface AdminConnector {
 	use_dcr: boolean;
 	client_id: string | null;
 	has_secret: boolean;
+	client_secret_hint: string | null;
 	authorize_url: string | null;
 	token_url: string | null;
 	registration_url: string | null;

@@ -104,6 +104,7 @@ rag-edit-heading = Modification de { $name }
 rag-label-description = Description
 rag-label-pat = Jeton d'accès personnel
 rag-placeholder-pat-keep = laisser vide pour conserver l'existant
+rag-pat-stored = PAT enregistré : { $hint }
 rag-label-clear-pat = Supprimer le PAT enregistré (ne plus s'authentifier)
 rag-label-include-globs = Inclusions (globs)
 rag-button-save-changes = Enregistrer les modifications

@@ -104,6 +104,7 @@ rag-edit-heading = Редактирование { $name }
 rag-label-description = Описание
 rag-label-pat = Персональный токен доступа
 rag-placeholder-pat-keep = оставьте пустым, чтобы сохранить текущий
+rag-pat-stored = Сохранённый PAT: { $hint }
 rag-label-clear-pat = Удалить сохранённый PAT (прекратить аутентификацию)
 rag-label-include-globs = Include-шаблоны
 rag-button-save-changes = Сохранить изменения

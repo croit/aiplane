@@ -174,7 +174,7 @@ async fn full_create_get_list_update_reindex_delete_round_trip() {
             Method::PATCH,
             &format!("/api/v0/rag/collections/{id}"),
             &cookie,
-            Some(r#"{"pat": "ghp_secretvalue", "embedding_model": "embed-2"}"#),
+            Some(r#"{"pat": "ghp_secretvalue-1234567890", "embedding_model": "embed-2"}"#),
         ))
         .await
         .unwrap();
@@ -185,6 +185,29 @@ async fn full_create_get_list_update_reindex_delete_round_trip() {
         updated.get("pat").is_none(),
         "raw PAT must NEVER appear in the response shape"
     );
+    // The hint identifies the stored PAT by head + tail …
+    assert_eq!(
+        updated["pat_hint"], "ghp_…7890",
+        "the hint must let the operator tell which PAT is stored"
+    );
+    // … while the stored value is sealed, never the plaintext.
+    {
+        use aiplane_core::server::db::rag as rag_db;
+        let stored = rag_db::find_collection_by_id(&db, id)
+            .await
+            .unwrap()
+            .unwrap()
+            .pat
+            .expect("PAT stored");
+        assert!(
+            !stored.contains("ghp_secretvalue-1234567890"),
+            "plaintext PAT at rest: {stored}"
+        );
+        assert!(
+            stored.contains('.'),
+            "sealed nonce.ciphertext shape: {stored}"
+        );
+    }
     assert_eq!(updated["embedding_model"], "embed-2");
 
     // Move the primary source the create queued to error. Collection status must

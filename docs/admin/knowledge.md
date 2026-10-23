@@ -28,7 +28,7 @@ The collection card shows each collection's refresh schedule. A collection on **
 
 | Source | What to configure and verify |
 |---|---|
-| Git | Clone URL, branch/tag/commit and optional personal access token |
+| Git | Clone URL, branch/tag/commit and optional personal access token (write-only; the form shows a head/tail fingerprint of the stored token) |
 | WebDAV | Provider's server/root/credential fields; test the account's access to the chosen tree |
 | Google Drive | Provider configuration and the collection's OAuth connection; check connected account metadata |
 | HyperKitty | Archive settings offered by the provider; verify readable archive content |

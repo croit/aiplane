@@ -76,6 +76,7 @@ connectors-field-client-id-placeholder = …apps.googleusercontent.com / id de a
 connectors-field-client-id-help = Del cliente OAuth que registraste con el proveedor. Solo es necesario si el servidor no puede registrar esta pasarela por sí mismo.
 connectors-field-client-secret-label = Secreto de cliente OAuth
 connectors-secret-placeholder-existing = •••••••• (deja en blanco para conservarlo)
+connectors-secret-stored = Secreto almacenado: { $hint }
 connectors-secret-placeholder-new = secreto de cliente (opcional)
 connectors-field-client-secret-help = Se emite junto con el id de cliente en la misma página. Se almacena cifrado; déjalo en blanco para conservar el existente.
 connectors-field-use-dcr-label = Probar el registro dinámico de clientes (RFC 7591)

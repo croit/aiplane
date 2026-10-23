@@ -256,4 +256,4 @@ Web search uses a separate settings card and API. It is not a section of the reg
 
 ## Interpretation and limits
 
-The registry describes input types and closed choice sets. The settings endpoint accepting a number does not establish that every number is useful for its consumer. Read the field help, check prerequisites and verify the resulting operation. Secrets are sealed at rest and never returned as plaintext by the settings list endpoint.
+The registry describes input types and closed choice sets. The settings endpoint accepting a number does not establish that every number is useful for its consumer. Read the field help, check prerequisites and verify the resulting operation. Secrets are sealed at rest and never returned as plaintext by the settings list endpoint. Where a stored secret is long enough for a fragment to be safe, the response carries a head/tail fingerprint (for example `tvly-…f99`) so the operator can tell which key is stored; shorter secrets get no fingerprint at all.

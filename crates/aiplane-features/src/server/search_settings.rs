@@ -86,14 +86,19 @@ pub struct SearchSettings {
     pub tavily_enabled: bool,
 }
 
-/// What the admin page shows. Never carries the Brave key itself — a secret
+/// What the admin page shows. Never carries a stored key itself — a secret
 /// that has been written is write-only from then on, same as backend keys.
+/// The `*_key_hint` fields carry only a head/tail fragment
+/// (`crypto::secret_fingerprint`), so the operator can tell which key is
+/// stored without the secret ever leaving the server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchSettingsView {
     pub provider: SearchProvider,
     pub searxng_url: Option<String>,
     pub brave_key_set: bool,
+    pub brave_key_hint: Option<String>,
     pub tavily_key_set: bool,
+    pub tavily_key_hint: Option<String>,
     pub tavily_enabled: bool,
     pub tavily_active: bool,
 }
@@ -119,22 +124,22 @@ pub async fn view(pool: &Pool, crypto: &Crypto) -> Result<SearchSettingsView, Db
         .await?
         .and_then(|v| SearchProvider::from_wire(&v))
         .unwrap_or_default();
-    let tavily_key_set = app_settings::get(pool, TAVILY_KEY_KEY)
-        .await?
-        .is_some_and(|v| !v.trim().is_empty());
+    let brave_api_key = open_key(pool, crypto, BRAVE_KEY_KEY, "Brave").await?;
+    let tavily_api_key = open_key(pool, crypto, TAVILY_KEY_KEY, "Tavily").await?;
     let tavily_enabled = tavily_enabled(pool).await?;
     Ok(SearchSettingsView {
         provider,
         searxng_url: normalized_url(app_settings::get(pool, SEARXNG_URL_KEY).await?),
-        brave_key_set: app_settings::get(pool, BRAVE_KEY_KEY)
-            .await?
-            .is_some_and(|v| !v.trim().is_empty()),
-        tavily_key_set,
+        brave_key_set: brave_api_key.is_some(),
+        brave_key_hint: brave_api_key
+            .as_deref()
+            .and_then(aiplane_core::server::crypto::secret_fingerprint),
+        tavily_key_set: tavily_api_key.is_some(),
+        tavily_key_hint: tavily_api_key
+            .as_deref()
+            .and_then(aiplane_core::server::crypto::secret_fingerprint),
         tavily_enabled,
-        tavily_active: tavily_enabled
-            && open_key(pool, crypto, TAVILY_KEY_KEY, "Tavily")
-                .await?
-                .is_some(),
+        tavily_active: tavily_enabled && tavily_api_key.is_some(),
     })
 }
 
@@ -464,13 +469,55 @@ mod tests {
     #[tokio::test]
     async fn view_never_exposes_the_key_but_reports_whether_it_is_set() {
         let (pool, crypto) = fresh().await;
-        assert!(!view(&pool, &crypto).await.unwrap().brave_key_set);
-        set_brave_key(&pool, &crypto, "token").await.unwrap();
+        let v = view(&pool, &crypto).await.unwrap();
+        assert!(!v.brave_key_set);
+        assert!(v.brave_key_hint.is_none());
+        assert!(!v.tavily_key_set);
+        assert!(v.tavily_key_hint.is_none());
+
+        set_brave_key(&pool, &crypto, "BSA-super-secret-token-42")
+            .await
+            .unwrap();
+        set_tavily_key(&pool, &crypto, "tvly-1234567890abcdef-99")
+            .await
+            .unwrap();
         let v = view(&pool, &crypto).await.unwrap();
         assert!(v.brave_key_set);
-        // Nothing on the view type can carry the secret — checked structurally
-        // by the absence of a field, and here by the debug output.
-        assert!(!format!("{v:?}").contains("token"));
+        assert!(v.tavily_key_set);
+        // The hint identifies the stored key by head + tail …
+        assert_eq!(v.brave_key_hint.as_deref(), Some("BSA-…n-42"));
+        assert_eq!(v.tavily_key_hint.as_deref(), Some("tvly…f-99"));
+        // … and nothing on the view carries the secret itself — checked by
+        // the debug output of the whole view.
+        let rendered = format!("{v:?}");
+        assert!(!rendered.contains("super-secret"), "{rendered}");
+        assert!(!rendered.contains("1234567890abcdef"), "{rendered}");
+    }
+
+    #[tokio::test]
+    async fn a_short_stored_key_gets_no_fingerprint() {
+        let (pool, crypto) = fresh().await;
+        set_tavily_key(&pool, &crypto, "short-key").await.unwrap();
+        let v = view(&pool, &crypto).await.unwrap();
+        assert!(v.tavily_key_set);
+        assert!(
+            v.tavily_key_hint.is_none(),
+            "a key under the fingerprint threshold must not be fragmentable"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_key_that_cannot_be_decrypted_reads_as_unset_with_no_hint() {
+        let (pool, crypto) = fresh().await;
+        set_tavily_key(&pool, &crypto, "tvly-1234567890abcdef-99")
+            .await
+            .unwrap();
+        // The at-rest key changed: the row exists but is unreadable. The view
+        // must say "not set" (the actionable truth — re-enter it), not "set
+        // but unknown", and it must not leak a fragment of what it can't open.
+        let v = view(&pool, &Crypto::ephemeral()).await.unwrap();
+        assert!(!v.tavily_key_set);
+        assert!(v.tavily_key_hint.is_none());
     }
 
     fn env(provider: Option<&str>, url: Option<&str>, key: Option<&str>) -> EnvSearchConfig {

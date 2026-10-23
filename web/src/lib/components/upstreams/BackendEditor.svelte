@@ -185,6 +185,7 @@
 		<label class="flex flex-col gap-1">
 			<span class="text-xs text-base-content/70">{t('backends-field-api-key')}</span>
 			<input class="input font-mono w-full" type="password" autocomplete="off" bind:value={apiKey} placeholder={backend?.has_stored_key ? t('backends-field-api-key-keep') : t('backends-field-api-key-placeholder')} />
+			{#if backend?.api_key_hint}<span class="text-xs text-base-content/50">{t('backends-field-api-key-stored', { hint: backend.api_key_hint })}</span>{/if}
 		</label>
 		<label class="flex flex-col gap-1">
 			<span class="text-xs text-base-content/70">{t('backends-field-api-key-env')}</span>

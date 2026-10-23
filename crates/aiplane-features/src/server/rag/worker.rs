@@ -1014,7 +1014,7 @@ impl Indexer {
                 let sub = clone_dir.join(&label);
                 let url = src.effective_git_url(collection).to_string();
                 let git_ref = src.git_ref.clone();
-                let pat = collection.pat.clone();
+                let pat = self.collection_pat(collection);
                 let sem = Arc::clone(&self.inner.clone_sem);
                 set.spawn(async move {
                     // Permit frees a clone slot the moment this clone finishes.
@@ -1110,7 +1110,7 @@ impl Indexer {
                 git::clone_or_update(
                     rref.effective_git_url(collection),
                     &rref.git_ref,
-                    collection.pat.as_deref(),
+                    self.collection_pat(collection).as_deref(),
                     &clone_dir,
                 )
                 .await?
@@ -1752,6 +1752,31 @@ impl Indexer {
         let removed = self.drop_chunks(store, index, file_id).await?;
         rag_db::delete_file(store, file_id).await?;
         Ok(removed)
+    }
+
+    /// The collection's PAT in plaintext, for the git clone. `None` when
+    /// unset, or when the stored value cannot be opened (at-rest key
+    /// changed): the clone of a private repo then fails with an auth error —
+    /// the actionable state — instead of a decryption error deep in the build.
+    fn collection_pat(&self, collection: &rag_db::Collection) -> Option<String> {
+        let stored = collection.pat.as_deref()?;
+        let Some(crypto) = self.inner.crypto.as_ref() else {
+            tracing::warn!(
+                collection = collection.id,
+                "collection has a stored PAT but the gateway has no at-rest key to open it"
+            );
+            return None;
+        };
+        match crypto.open_from_string(stored) {
+            Some(pat) => Some(pat),
+            None => {
+                tracing::warn!(
+                    collection = collection.id,
+                    "stored PAT could not be decrypted (at-rest key changed?); re-enter it in the admin UI"
+                );
+                None
+            }
+        }
     }
 
     /// Instantiate the collection's provider, opening its sealed secrets.

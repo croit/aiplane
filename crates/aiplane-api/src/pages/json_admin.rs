@@ -649,7 +649,9 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
                 provider: search.provider.as_str(),
                 searxng_url: search.searxng_url,
                 brave_key_set: search.brave_key_set,
+                brave_key_hint: search.brave_key_hint,
                 tavily_key_set: search.tavily_key_set,
+                tavily_key_hint: search.tavily_key_hint,
                 tavily_enabled: search.tavily_enabled,
                 tavily_active: search.tavily_active,
             },
@@ -731,13 +733,16 @@ pub struct FeatureDefaultView {
     pub available: Vec<String>,
 }
 
-/// The web-search settings. Stored keys are never returned, only whether one is set.
+/// The web-search settings. Stored keys are never returned; the hint fields
+/// carry only a head/tail fragment so the operator can identify the key.
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct SearchSettingsView {
     pub provider: &'static str,
     pub searxng_url: Option<String>,
     pub brave_key_set: bool,
+    pub brave_key_hint: Option<String>,
     pub tavily_key_set: bool,
+    pub tavily_key_hint: Option<String>,
     pub tavily_enabled: bool,
     pub tavily_active: bool,
 }
@@ -2111,32 +2116,45 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
     let backends = snapshot
         .backends
         .values()
-        .map(|b| BackendView {
-            priority: b.priority.clone(),
-            name: b.name.clone(),
-            base_url: b.base_url.clone(),
-            api_key_env: b.api_key_env.clone(),
-            api_key_env_set: b
-                .api_key_env
-                .as_ref()
-                .is_some_and(|name| std::env::var(name).is_ok_and(|value| !value.is_empty())),
-            has_stored_key: b.api_key_ct.is_some(),
-            weight: b.weight,
-            max_inflight: b.max_inflight,
-            health_path: b.health_path.clone(),
-            supports_edit: b.supports_edit,
-            enabled: b.enabled,
-            extra_headers: b.extra_headers.clone(),
-            models: b.models.clone(),
-            aliases: b
-                .aliases
-                .iter()
-                .map(|a| BackendAliasView {
-                    alias: a.alias.clone(),
-                    target: a.target.clone(),
-                })
-                .collect(),
-            live: live.get(&b.name).cloned(),
+        .map(|b| {
+            let api_key = match (&b.api_key_ct, &b.api_key_nonce) {
+                (Some(ct), Some(nonce)) => state
+                    .crypto
+                    .open(nonce, ct)
+                    .ok()
+                    .and_then(|bytes| String::from_utf8(bytes).ok()),
+                _ => None,
+            };
+            BackendView {
+                priority: b.priority.clone(),
+                name: b.name.clone(),
+                base_url: b.base_url.clone(),
+                api_key_env: b.api_key_env.clone(),
+                api_key_env_set: b
+                    .api_key_env
+                    .as_ref()
+                    .is_some_and(|name| std::env::var(name).is_ok_and(|value| !value.is_empty())),
+                has_stored_key: b.api_key_ct.is_some(),
+                api_key_hint: api_key
+                    .as_deref()
+                    .and_then(aiplane_core::server::crypto::secret_fingerprint),
+                weight: b.weight,
+                max_inflight: b.max_inflight,
+                health_path: b.health_path.clone(),
+                supports_edit: b.supports_edit,
+                enabled: b.enabled,
+                extra_headers: b.extra_headers.clone(),
+                models: b.models.clone(),
+                aliases: b
+                    .aliases
+                    .iter()
+                    .map(|a| BackendAliasView {
+                        alias: a.alias.clone(),
+                        target: a.target.clone(),
+                    })
+                    .collect(),
+                live: live.get(&b.name).cloned(),
+            }
         })
         .collect();
     json_ok(
@@ -2222,7 +2240,8 @@ pub struct PoolVoiceView {
     pub voice: String,
 }
 
-/// A stored backend. Its API key is never returned.
+/// A stored backend. Its API key is never returned; `api_key_hint` carries
+/// only a head/tail fragment so the operator can identify the key.
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct BackendView {
     pub priority: BackendPriority,
@@ -2233,6 +2252,8 @@ pub struct BackendView {
     /// That variable is set and not empty.
     pub api_key_env_set: bool,
     pub has_stored_key: bool,
+    /// Head/tail fragment of the stored API key (`crypto::secret_fingerprint`).
+    pub api_key_hint: Option<String>,
     pub weight: u32,
     pub max_inflight: u32,
     pub health_path: String,

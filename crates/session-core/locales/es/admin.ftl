@@ -253,11 +253,13 @@ admin-cap-fallback-tools = Reserva para herramientas
 admin-search-intro = Elige el backend para `search_web`. SearXNG necesita una URL base; Brave y Tavily necesitan claves de API cifradas al almacenarse. Si se agota la cuota de un proveedor, se intenta con otro proveedor configurado.
 
 admin-search-brave-key-set = Hay una clave almacenada (cifrada).
+admin-search-brave-key-set-hint = Hay una clave almacenada (cifrada): { $hint }
 
 admin-search-brave-key-unset = No hay clave almacenada.
 
 admin-search-brave-key-clear = Eliminar la clave almacenada
 admin-search-tavily-key-set = Hay una clave de Tavily almacenada (cifrada).
+admin-search-tavily-key-set-hint = Hay una clave de Tavily almacenada (cifrada): { $hint }
 admin-search-tavily-key-unset = No hay clave de Tavily almacenada.
 admin-search-tavily-key-clear = Eliminar la clave de Tavily almacenada
 admin-search-tavily-enabled = Activar Tavily

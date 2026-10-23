@@ -6,7 +6,7 @@ import type { AdminConnector } from './admin-connectors.ts';
 const connector: AdminConnector = {
 	key: 'discord', title: 'Discord', description: 'Chat', icon: null, category: null,
 	base_url: 'http://discord/mcp', auth_type: 'none', scope: 'global', scopes: [],
-	enabled: true, audit: true, use_dcr: true, client_id: null, has_secret: false,
+	enabled: true, audit: true, use_dcr: true, client_id: null, has_secret: false, client_secret_hint: null,
 	authorize_url: null, token_url: null, registration_url: null, groups: [],
 	seeded: true, needs_setup: false
 };

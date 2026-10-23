@@ -966,7 +966,7 @@ async fn feature_defaults_and_search_settings_round_trip() {
             Method::PUT,
             "/api/v0/admin/search-settings",
             &cookie,
-            Some(r#"{"provider":"tavily","searxng_url":"https://search.example.test","tavily_api_key":"tvly-test","tavily_enabled":true}"#.into()),
+            Some(r#"{"provider":"tavily","searxng_url":"https://search.example.test","tavily_api_key":"tvly-1234567890abcdef-99","tavily_enabled":true}"#.into()),
         ))
         .await
         .unwrap();
@@ -978,9 +978,13 @@ async fn feature_defaults_and_search_settings_round_trip() {
     let listed: serde_json::Value = serde_json::from_str(&body(listed).await).unwrap();
     assert_eq!(listed["search"]["provider"], "tavily");
     assert_eq!(listed["search"]["tavily_key_set"], true);
+    assert_eq!(
+        listed["search"]["tavily_key_hint"], "tvly…f-99",
+        "the hint must let the operator identify the stored key"
+    );
     assert_eq!(listed["search"]["tavily_enabled"], true);
     assert_eq!(listed["search"]["tavily_active"], true);
-    assert!(!listed.to_string().contains("tvly-test"));
+    assert!(!listed.to_string().contains("1234567890abcdef"));
 
     let cleared = app
         .serve(req(
@@ -1477,7 +1481,7 @@ async fn topology_save_apply_and_stream() {
             "/api/v0/admin/backends",
             &cookie,
             Some(
-                r#"{"name":"b1","base_url":"http://upstream.invalid","api_key":"sk-test"}"#.into(),
+                r#"{"name":"b1","base_url":"http://upstream.invalid","api_key":"sk-test-1234567890-abcd"}"#.into(),
             ),
         ))
         .await
@@ -1563,7 +1567,13 @@ async fn topology_save_apply_and_stream() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|b| b["name"] == "b1" && b["has_stored_key"] == serde_json::json!(true))
+            .any(|b| b["name"] == "b1"
+                && b["has_stored_key"] == serde_json::json!(true)
+                && b["api_key_hint"] == serde_json::json!("sk-t…abcd"))
+    );
+    assert!(
+        !listed.to_string().contains("1234567890"),
+        "the stored key must never appear in the topology listing"
     );
     assert_eq!(listed["pools"][0]["backends"], serde_json::json!(["b1"]));
     assert_eq!(listed["pools"][0]["kind"], "system_one");
@@ -2071,7 +2081,7 @@ async fn skills_and_connectors_surfaces() {
             rama::http::Method::PUT,
             "/api/v0/admin/connectors",
             &cookie,
-			Some(r#"{"key":"probe","title":"Probe","description":"Searches a private service.","icon":"🔎","category":"Search","base_url":"https://mcp.invalid/mcp","scope":"per_user","auth_type":"static_bearer","client_secret":"tok","scopes":["search.read"],"groups":[],"audit":true}"#.into()),
+			Some(r#"{"key":"probe","title":"Probe","description":"Searches a private service.","icon":"🔎","category":"Search","base_url":"https://mcp.invalid/mcp","scope":"per_user","auth_type":"static_bearer","client_secret":"tok-1234567890-abcd-99","scopes":["search.read"],"groups":[],"audit":true}"#.into()),
         ))
         .await
         .unwrap();
@@ -2095,6 +2105,10 @@ async fn skills_and_connectors_surfaces() {
     assert_eq!(connector["scope"], "per_user");
     assert_eq!(connector["audit"], true);
     assert_eq!(connector["has_secret"], true);
+    assert_eq!(
+        connector["client_secret_hint"], "tok-…d-99",
+        "the hint must let the operator identify the stored secret"
+    );
     assert_eq!(connector["needs_setup"], false);
     assert_eq!(connector["seeded"], false);
 

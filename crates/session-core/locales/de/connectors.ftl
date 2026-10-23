@@ -76,6 +76,7 @@ connectors-field-client-id-placeholder = …apps.googleusercontent.com / GitHub-
 connectors-field-client-id-help = Aus dem beim Anbieter registrierten OAuth-Client. Nur nötig, wenn der Server dieses Gateway nicht selbst registrieren kann.
 connectors-field-client-secret-label = OAuth-Client-Secret
 connectors-secret-placeholder-existing = •••••••• (leer lassen, um es beizubehalten)
+connectors-secret-stored = Gespeicherter Secret: { $hint }
 connectors-secret-placeholder-new = Client-Secret (optional)
 connectors-field-client-secret-help = Wird zusammen mit der Client-ID auf derselben Seite ausgestellt. Verschlüsselt gespeichert; leer lassen, um das bestehende beizubehalten.
 connectors-field-use-dcr-label = Dynamische Client-Registrierung versuchen (RFC 7591)

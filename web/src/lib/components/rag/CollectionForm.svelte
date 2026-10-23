@@ -206,6 +206,7 @@
 				<fieldset class="fieldset md:col-span-2">
 					<legend class="fieldset-legend">{collection ? t('rag-label-pat') : t('rag-label-pat-optional')}</legend>
 					<input class="input w-full" type="password" bind:value={form.pat} placeholder={collection ? t('rag-placeholder-pat-keep') : t('rag-placeholder-pat')} />
+					{#if collection?.pat_hint}<p class="text-xs text-base-content/50">{t('rag-pat-stored', { hint: collection.pat_hint })}</p>{/if}
 					{#if collection?.pat_set}
 						<label class="label cursor-pointer justify-start gap-2"><input class="checkbox checkbox-sm" type="checkbox" bind:checked={form.clear_pat} /> {t('rag-label-clear-pat')}</label>
 					{/if}

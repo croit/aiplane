@@ -24,7 +24,7 @@ Open `/admin/connectors`, then add a connector at `/admin/connectors/new`.
 | `static_bearer` authentication | Bearer token supplied according to the selected scope |
 | `none` authentication | No token authentication for this connector |
 
-OAuth fields include client JSON, client ID, write-only client secret, dynamic client registration, scopes and advanced authorization/token/registration URL overrides. Register the exact displayed redirect URI with the provider. For static bearer authentication, the global scope exposes the shared-token field; other scopes direct users to supply their token through their connection flow.
+OAuth fields include client JSON, client ID, write-only client secret (the form shows a head/tail fingerprint of the stored secret), dynamic client registration, scopes and advanced authorization/token/registration URL overrides. Register the exact displayed redirect URI with the provider. For static bearer authentication, the global scope exposes the shared-token field; other scopes direct users to supply their token through their connection flow.
 
 Allowed groups restrict connector availability. Audit logging is a separate checkbox. The enable action is disabled while a connector needs setup. Edit changes its configuration; Disable stops offering it; Delete requires confirmation. **Restore defaults** has a confirmation and restores the built-in connector definitions—review your configuration before using it.
 

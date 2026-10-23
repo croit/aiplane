@@ -252,11 +252,13 @@ admin-cap-fallback-tools = Резерв для инструментов
 admin-search-intro = Выберите бэкенд для `search_web`. SearXNG требует базовый URL; Brave и Tavily требуют ключи API, которые шифруются при хранении. Если квота провайдера исчерпана, используется другой настроенный провайдер.
 
 admin-search-brave-key-set = Ключ сохранён (в зашифрованном виде).
+admin-search-brave-key-set-hint = Ключ сохранён (в зашифрованном виде): { $hint }
 
 admin-search-brave-key-unset = Ключ не сохранён.
 
 admin-search-brave-key-clear = Удалить сохранённый ключ
 admin-search-tavily-key-set = Ключ Tavily сохранён (в зашифрованном виде).
+admin-search-tavily-key-set-hint = Ключ Tavily сохранён (в зашифрованном виде): { $hint }
 admin-search-tavily-key-unset = Ключ Tavily не сохранён.
 admin-search-tavily-key-clear = Удалить сохранённый ключ Tavily
 admin-search-tavily-enabled = Включить Tavily

@@ -22,7 +22,7 @@ The saved topology and the running topology are distinct. Editing a URL, pool me
 | Field | Why configure it? |
 |---|---|
 | Base URL | Address of the upstream API, including its API prefix where required |
-| API key / environment variable | Authentication for that upstream; a stored key is not displayed back as plaintext |
+| API key / environment variable | Authentication for that upstream; a stored key is not displayed back as plaintext — only a head/tail fingerprint where the key is long enough for one |
 | Health path | Endpoint used to check availability; the new-backend form proposes `/models` |
 | Weight | Relative weighting used by strategies that consider weight |
 | Maximum in-flight | Concurrent requests admitted to this backend; the form proposes 16 |

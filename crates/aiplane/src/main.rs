@@ -531,6 +531,15 @@ async fn main() -> anyhow::Result<()> {
     // image runs with a read-only rootfs (see deploy/quadlet/gateway.container),
     // so the default `data/rag` works for local dev only — operators
     // point this at a subdirectory of the named volume.
+    // PATs stored in plaintext before at-rest sealing are sealed in place
+    // here, once, before the indexer can read them. Non-fatal: a failure
+    // leaves the affected collections' clones failing with an auth error,
+    // which names the fix (re-enter the PAT) — it must not stop boot.
+    match aiplane::rama_server::rag_api::seal_unsealed_pats(&state.db, &state.crypto).await {
+        Ok(0) => {}
+        Ok(sealed) => tracing::info!(sealed, "sealed pre-existing RAG collection PATs at rest"),
+        Err(err) => tracing::warn!(error = %err, "sealing pre-existing RAG collection PATs"),
+    }
     let rag_config = state.config().rag.clone().unwrap_or_default();
     let indexer_config = feat::rag::worker::IndexerConfig {
         data_dir: rag_config.data_dir,

@@ -104,6 +104,7 @@ rag-edit-heading = 正在编辑 { $name }
 rag-label-description = 描述
 rag-label-pat = 个人访问令牌
 rag-placeholder-pat-keep = 留空以保留现有值
+rag-pat-stored = 已存储 PAT：{ $hint }
 rag-label-clear-pat = 移除已存储的 PAT（不再进行身份验证）
 rag-label-include-globs = 包含通配符
 rag-button-save-changes = 保存更改

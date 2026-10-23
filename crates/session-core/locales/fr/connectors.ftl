@@ -76,6 +76,7 @@ connectors-field-client-id-placeholder = …apps.googleusercontent.com / identif
 connectors-field-client-id-help = Issu du client OAuth enregistré auprès du fournisseur. Nécessaire uniquement si le serveur ne peut pas enregistrer cette passerelle lui-même.
 connectors-field-client-secret-label = Secret client OAuth
 connectors-secret-placeholder-existing = •••••••• (laisser vide pour conserver)
+connectors-secret-stored = Secret enregistré : { $hint }
 connectors-secret-placeholder-new = secret client (optionnel)
 connectors-field-client-secret-help = Délivré en même temps que l'identifiant client sur la même page. Stocké chiffré ; laissez vide pour conserver celui existant.
 connectors-field-use-dcr-label = Essayer l'enregistrement dynamique de client (RFC 7591)

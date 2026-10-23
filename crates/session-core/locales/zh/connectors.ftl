@@ -76,6 +76,7 @@ connectors-field-client-id-placeholder = …apps.googleusercontent.com / GitHub 
 connectors-field-client-id-help = 来自你在服务商处注册的 OAuth 客户端。仅当服务器无法自行注册本网关时才需要。
 connectors-field-client-secret-label = OAuth 客户端密钥
 connectors-secret-placeholder-existing = ••••••••(留空以保留)
+connectors-secret-stored = 已存储密钥：{ $hint }
 connectors-secret-placeholder-new = 客户端密钥(可选)
 connectors-field-client-secret-help = 与客户端 ID 在同一页面签发。以加密方式存储;留空以保留现有密钥。
 connectors-field-use-dcr-label = 尝试动态客户端注册(RFC 7591)
