@@ -13,7 +13,9 @@
 //!
 //! If the chosen backend isn't configured the tool fails with a clear
 //! message. A provider's confirmed exhausted quota can use another configured
-//! provider; the result names the one that answered.
+//! provider; the result names the one that answered. When every configured
+//! provider is exhausted, the error lists each one's quota failure and marks
+//! the configured provider.
 //!
 //! The legacy `SEARCH_PROVIDER` / `SEARXNG_URL` / `BRAVE_SEARCH_API_KEY`
 //! environment variables are imported into the database once at boot and
@@ -279,7 +281,7 @@ async fn search_selected(
                 .into(),
         ));
     }
-    let mut last_quota_error = None;
+    let mut quota_errors: Vec<(SearchProvider, ToolError)> = Vec::new();
     let order = [
         settings.provider,
         SearchProvider::Tavily,
@@ -318,11 +320,31 @@ async fn search_selected(
         };
         match result {
             Ok(results) => return Ok((provider, results)),
-            Err(SearchFailure::Quota(error)) => last_quota_error = Some(error),
+            Err(SearchFailure::Quota(error)) => quota_errors.push((provider, error)),
             Err(SearchFailure::Other(error)) => return Err(error),
         }
     }
-    Err(last_quota_error.expect("at least the selected provider was attempted"))
+    // Every attempted provider hit its quota. A single failure keeps its own
+    // message; several are combined so the selected provider's exhaustion is
+    // not hidden behind the fallback's.
+    if quota_errors.len() == 1 {
+        return Err(quota_errors.pop().expect("len == 1").1);
+    }
+    let detail = quota_errors
+        .iter()
+        .map(|(provider, error)| {
+            let message = error.to_string();
+            if *provider == settings.provider {
+                format!("{message} (selected)")
+            } else {
+                message
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    Err(ToolError::Failed(format!(
+        "every configured search provider is out of quota: {detail}. Check the provider quotas under Web search on /admin/settings?tab=web-search."
+    )))
 }
 
 fn provider_configured(settings: &SearchSettings, provider: SearchProvider) -> bool {
@@ -854,6 +876,61 @@ mod tests {
         .await
         .unwrap_err();
         assert!(format!("{err}").contains("inactive"));
+    }
+
+    #[tokio::test]
+    async fn every_provider_out_of_quota_names_all_of_them() {
+        // The selected provider's exhaustion must not hide behind the
+        // fallback's error: both are out, so both are named.
+        let tavily_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/search"))
+            .respond_with(ResponseTemplate::new(432).set_body_json(json!({
+                "detail": {"error": "This request exceeds your plan's set usage limit."}
+            })))
+            .mount(&tavily_server)
+            .await;
+        let brave_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/search"))
+            .respond_with(ResponseTemplate::new(402).set_body_json(json!({
+                "error": {"code": "USAGE_LIMIT_EXCEEDED", "meta": {"usage_limit_type": "monthly"}}
+            })))
+            .mount(&brave_server)
+            .await;
+        let settings = SearchSettings {
+            provider: SearchProvider::Tavily,
+            searxng_url: None,
+            brave_api_key: Some("brave-test".into()),
+            tavily_api_key: Some("tavily-test".into()),
+            tavily_enabled: true,
+        };
+        let query = Query {
+            text: "rust",
+            n: 5,
+            sites: &[],
+            freshness: None,
+        };
+        let err = search_selected(
+            &reqwest::Client::new(),
+            &settings,
+            query,
+            &format!("{}/search", brave_server.uri()),
+            &format!("{}/search", tavily_server.uri()),
+        )
+        .await
+        .unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("432"),
+            "the selected provider's failure: {msg}"
+        );
+        assert!(msg.contains("402"), "the fallback's failure: {msg}");
+        assert!(msg.contains("selected"), "which one was configured: {msg}");
+        assert!(
+            msg.contains("every configured search provider is out of quota"),
+            "the combined verdict: {msg}"
+        );
     }
 
     #[tokio::test]
