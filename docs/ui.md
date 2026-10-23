@@ -122,6 +122,12 @@ scrolls and the composer stays in view whatever the header above it takes.
 No page guesses the space above it with a `calc(100dvh - …)`.
 `chat-viewport-layout.test.ts` pins the chain.
 
+A conversation page opens ready to type: when the composer is first rendered
+(the write access is known and no prompt card stands in for it), the cursor
+lands in its textarea — once per mount, and only where
+`matchMedia('(pointer: fine)')` holds, so a touch screen does not pop its
+on-screen keyboard up over the page that was just opened.
+
 The personal pages use one shared `SectionTabs` navigation component with
 path-backed tabs. `/tools` contains built-in tool controls (including location
 sharing), `/tools/integrations` the user's MCP connections, `/tools/skills`

@@ -194,6 +194,22 @@
 	const isOwner = $derived(access.isOwner);
 	const canWrite = $derived(access.canWrite);
 	const canFork = $derived(access.canFork);
+
+	// A conversation page exists to be typed in: the moment the composer is
+	// on screen, the cursor goes with it, so opening a chat costs no extra
+	// click. Once per mount — later refocuses stay the actions' own — and
+	// only where a physical keyboard is reachable: on a touch device the
+	// focus would pop the on-screen keyboard up over the page the user just
+	// opened.
+	let composerAutoFocused = false;
+
+	$effect(() => {
+		if (composerAutoFocused) return;
+		if (!canWrite || composerInput === null) return;
+		if (!window.matchMedia('(pointer: fine)').matches) return;
+		composerAutoFocused = true;
+		composerInput.focus();
+	});
 	/**
 	 * User turns the server has accepted but not started answering.
 	 *

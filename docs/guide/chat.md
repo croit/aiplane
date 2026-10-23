@@ -22,7 +22,7 @@ Changing a conversation's capability state does not grant a capability your acco
 
 ## Send, redirect and stop work
 
-Write text, add any attachments, then press Enter or Send. Shift+Enter inserts a newline. Replies stream into the transcript. You can expand tool-call details to inspect what the assistant did and what the tool returned. Reasoning displays depend on what the upstream provides.
+When a conversation opens, the cursor is already in the message field, so you can start typing at once. Write text, add any attachments, then press Enter or Send. Shift+Enter inserts a newline. Replies stream into the transcript. You can expand tool-call details to inspect what the assistant did and what the tool returned. Reasoning displays depend on what the upstream provides.
 
 While a reply is running, you can still send another message. The server decides whether it joins the running work or waits as a later turn. A queued message is shown as waiting and can be cancelled before it starts.
 

@@ -199,3 +199,23 @@ test('the transcript draws interjections from the turn they belong to', () => {
 		'keyed on the row id so a status change re-labels rather than re-adds'
 	);
 });
+
+// A conversation page exists to be typed in: opening one should not cost an
+// extra click to land the cursor in the composer.
+test('the composer takes the cursor as soon as it is on screen', () => {
+	const autoFocus = /let composerAutoFocused = false;[\s\S]*?\}\);/.exec(conversation)?.[0] ?? '';
+	assert.ok(autoFocus.length > 0, 'an effect focuses the composer');
+	assert.ok(autoFocus.includes('composerInput.focus()'), 'it focuses the composer textarea');
+	assert.ok(
+		autoFocus.includes('if (composerAutoFocused) return;'),
+		'once per mount — refocuses after a send stay the actions\' own'
+	);
+	assert.ok(
+		autoFocus.includes('!canWrite || composerInput === null'),
+		'and only when the composer is rendered — a prompt card standing in for it has no textarea'
+	);
+	assert.ok(
+		autoFocus.includes("matchMedia('(pointer: fine)')"),
+		'touch devices keep the on-screen keyboard down until the user asks for it'
+	);
+});
