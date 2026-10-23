@@ -17,6 +17,7 @@ render-thinking-spinner = Denkt nach…
 render-thinking-finalized = { $secs }s nachgedacht
 
 render-tool-status-used = Verwendet
+render-tool-search-provider-title = Gesucht über { $provider }
 
 render-canvas-edit-button = ✎ Bearbeiten
 render-canvas-save = Als neue Version speichern

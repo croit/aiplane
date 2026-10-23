@@ -2338,6 +2338,7 @@ export const es: Catalog = {
  "render-tool-input-label": "Entrada",
  "render-tool-output-label": "Salida",
  "render-tool-output-truncated": "truncado para su visualización — los {bytes} bytes completos siguen disponibles para el modelo y almacenados en la base de datos; mostrando los primeros {chars} caracteres",
+ "render-tool-search-provider-title": "Búsqueda con {provider}",
  "render-tool-status-calling": "Llamando",
  "render-tool-status-error": "Error de herramienta",
  "render-tool-status-used": "Utilizada",

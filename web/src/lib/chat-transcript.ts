@@ -32,3 +32,22 @@ export function summarizeToolCalls(calls: { name: string }[], label: (name: stri
 	for (const call of calls) counts.set(label(call.name), (counts.get(label(call.name)) ?? 0) + 1);
 	return [...counts].map(([name, count]) => (count > 1 ? `${name} ×${count}` : name)).join(', ');
 }
+
+/**
+ * The search engine a `search_web` call ran on, from its result JSON.
+ *
+ * The tool reports `provider` in every successful result, and the row is the
+ * one place where "which engine answered" is a question: the same tool can
+ * serve one turn from Tavily and the next from a fallback, and the expanded
+ * output buries the field in a JSON block. An errored call has no result, so
+ * nothing to read.
+ */
+export function searchProviderFromOutput(outputJson: string | null): string | null {
+	if (outputJson === null) return null;
+	try {
+		const provider = (JSON.parse(outputJson) as { provider?: unknown }).provider;
+		return typeof provider === 'string' && provider.length > 0 ? provider : null;
+	} catch {
+		return null;
+	}
+}

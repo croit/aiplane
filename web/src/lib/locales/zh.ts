@@ -2323,6 +2323,7 @@ export const zh: Catalog = {
  "render-tool-input-label": "输入",
  "render-tool-output-label": "输出",
  "render-tool-output-truncated": "显示已截断 — 完整的 {bytes} 字节仍可供模型使用并保存在数据库中；此处显示前 {chars} 个字符",
+ "render-tool-search-provider-title": "通过 {provider} 搜索",
  "render-tool-status-calling": "调用中",
  "render-tool-status-error": "工具错误",
  "render-tool-status-used": "已使用",

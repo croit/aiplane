@@ -16,6 +16,7 @@ render-thinking-spinner = 思考中…
 render-thinking-finalized = 思考了 { $secs } 秒
 
 render-tool-status-used = 已使用
+render-tool-search-provider-title = 通过 { $provider } 搜索
 
 render-canvas-edit-button = ✎ 编辑
 render-canvas-save = 另存为新版本

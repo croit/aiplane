@@ -1825,7 +1825,7 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
         &state.db,
         &a,
         "call_search",
-        r#"{"results":[{"title":"Module ngx_http_gzip_module","url":"https://nginx.org/en/docs/http/ngx_http_gzip_module.html","snippet":"A filter that compresses responses with the gzip method. Directives: gzip, gzip_types, gzip_min_length, gzip_comp_level."}]}"#,
+        r#"{"provider":"searxng","results":[{"title":"Module ngx_http_gzip_module","url":"https://nginx.org/en/docs/http/ngx_http_gzip_module.html","snippet":"A filter that compresses responses with the gzip method. Directives: gzip, gzip_types, gzip_min_length, gzip_comp_level."}]}"#,
         ToolCallStatus::Completed,
     )
     .await?;

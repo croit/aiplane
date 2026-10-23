@@ -2356,6 +2356,7 @@ export const ru: Catalog = {
  "render-tool-input-label": "Входные данные",
  "render-tool-output-label": "Результат",
  "render-tool-output-truncated": "усечено для отображения — все {bytes} байт по-прежнему доступны модели и сохранены в базе данных; отображаются первые {chars} симв.",
+ "render-tool-search-provider-title": "Поиск через {provider}",
  "render-tool-status-calling": "Вызывается",
  "render-tool-status-error": "Ошибка инструмента",
  "render-tool-status-used": "Использован",

@@ -2338,6 +2338,7 @@ export const en: Catalog = {
  "render-tool-input-label": "Input",
  "render-tool-output-label": "Output",
  "render-tool-output-truncated": "truncated for display — full {bytes} bytes still available to the model + persisted in the DB; displaying first {chars} chars",
+ "render-tool-search-provider-title": "Searched with {provider}",
  "render-tool-status-calling": "Calling",
  "render-tool-status-error": "Tool error",
  "render-tool-status-used": "Used",

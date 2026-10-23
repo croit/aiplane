@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { ToolCall, Turn } from '#lib/chat-protocol.js';
-	import { prettyToolPayload, summarizeToolCalls, presentedToolCallStatus, TOOL_GROUP_THRESHOLD } from '#lib/chat-transcript.js';
+	import { prettyToolPayload, summarizeToolCalls, presentedToolCallStatus, searchProviderFromOutput, TOOL_GROUP_THRESHOLD } from '#lib/chat-transcript.js';
 	import { n, t } from '#lib/i18n.svelte.js';
 
 	let { calls, turnStatus, label = (name: string) => name }: { calls: ToolCall[]; turnStatus: Turn['status']; label?: (name: string) => string } = $props();
@@ -27,6 +27,7 @@
 	{@const input = prettyToolPayload(call.arguments_json)}
 	{@const output = call.output_json ? prettyToolPayload(call.output_json) : null}
 	{@const status = presentedToolCallStatus(call.status, turnStatus)}
+	{@const provider = call.name === 'search_web' ? searchProviderFromOutput(call.output_json) : null}
 	<details class="collapse collapse-arrow rounded-lg bg-base-200/60">
 		<summary class="collapse-title flex min-h-8 items-center gap-2 py-1.5 text-sm">
 			{#if call.status === 'completed'}
@@ -40,6 +41,9 @@
 			{/if}
 			<span class="text-base-content/60">{statusLabel(call)}</span>
 			<span class="font-medium">{label(call.name)}</span>
+			{#if provider}
+				<span class="badge badge-outline badge-xs font-mono" title={t('render-tool-search-provider-title', { provider })}>{provider}</span>
+			{/if}
 		</summary>
 		<div class="collapse-content flex flex-col gap-2 text-xs text-base-content/70">
 			<div>

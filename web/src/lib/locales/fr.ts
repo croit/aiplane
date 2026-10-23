@@ -2338,6 +2338,7 @@ export const fr: Catalog = {
  "render-tool-input-label": "Entrée",
  "render-tool-output-label": "Sortie",
  "render-tool-output-truncated": "tronqué pour l'affichage — les {bytes} octets complets restent disponibles pour le modèle et persistés dans la base de données ; affichage des {chars} premiers caractères",
+ "render-tool-search-provider-title": "Recherche via {provider}",
  "render-tool-status-calling": "Appel en cours",
  "render-tool-status-error": "Erreur d'outil",
  "render-tool-status-used": "Utilisé",

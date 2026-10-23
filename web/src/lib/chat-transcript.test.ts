@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { prettyToolPayload, summarizeToolCalls, presentedToolCallStatus } from './chat-transcript.ts';
+import { prettyToolPayload, summarizeToolCalls, presentedToolCallStatus, searchProviderFromOutput } from './chat-transcript.ts';
 import type { Turn } from './chat-protocol.ts';
 
 test('suspended turns present unfinished tool calls as waiting', () => {
@@ -34,4 +34,14 @@ test('tool call summaries preserve first-seen order and tally repeats', () => {
 		summarizeToolCalls([{ name: 'rag_search' }, { name: 'fetch_url' }, { name: 'rag_search' }]),
 		'rag_search ×2, fetch_url'
 	);
+});
+
+test('the search provider is read from a search_web result, or absent', () => {
+	assert.equal(searchProviderFromOutput(JSON.stringify({ provider: 'tavily', results: [] })), 'tavily');
+	assert.equal(searchProviderFromOutput(JSON.stringify({ provider: 'brave', results: [] })), 'brave');
+	assert.equal(searchProviderFromOutput(JSON.stringify({ provider: 'searxng', results: [] })), 'searxng');
+	assert.equal(searchProviderFromOutput(null), null);
+	assert.equal(searchProviderFromOutput(JSON.stringify({ results: [] })), null);
+	assert.equal(searchProviderFromOutput(JSON.stringify({ provider: '' })), null);
+	assert.equal(searchProviderFromOutput('not json'), null);
 });
