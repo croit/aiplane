@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { formatModelPrice } from './model-price.ts';
+import { currencySymbol, formatModelPrice } from './model-price.ts';
 
 const n = (value: number, options?: Intl.NumberFormatOptions) =>
 	new Intl.NumberFormat('en', options).format(value);
@@ -26,17 +26,27 @@ test('an unpriced model reads as free', () => {
 	assert.equal(calls[0][0], 'tokens-models-price-free');
 });
 
-test('a token-priced model formats in and out per million', () => {
+test('a token-priced model reads as in/out with a currency symbol', () => {
 	const { t, calls } = mockT();
 	formatModelPrice({ input: 3, output: 15, unit: 'tokens' }, 'USD', t, n);
 	assert.equal(calls[0][0], 'tokens-models-price-tokens');
-	assert.equal(calls[0][1]?.input, '3 USD');
-	assert.equal(calls[0][1]?.output, '15 USD');
+	assert.equal(calls[0][1]?.input, '3');
+	assert.equal(calls[0][1]?.output, '15');
+	assert.equal(calls[0][1]?.symbol, '$');
 });
 
 test('a non-token unit prices per unit from the output side', () => {
 	const { t, calls } = mockT();
 	formatModelPrice({ input: null, output: 0.04, unit: 'images' }, 'USD', t, n);
 	assert.equal(calls[0][0], 'tokens-models-price-per-images');
-	assert.equal(calls[0][1]?.price, '0.04 USD');
+	assert.equal(calls[0][1]?.price, '0.04$');
+});
+
+test('the currency symbol of a known ISO code is its narrow symbol', () => {
+	assert.equal(currencySymbol('USD'), '$');
+	assert.equal(currencySymbol('EUR'), '€');
+});
+
+test('an unknown currency code keeps the code as its symbol', () => {
+	assert.equal(currencySymbol('XXX'), 'XXX');
 });

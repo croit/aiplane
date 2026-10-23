@@ -32,7 +32,7 @@ test('model options expose GDPR and NDA status badges for every model', () => {
 	);
 });
 
-test('a supplied price formatter appends a neutral price badge', () => {
+test('a supplied price formatter prepends a neutral price badge', () => {
 	const format = (price: { input: number | null; output: number | null; unit: string } | null | undefined) =>
 		price == null ? null : price.input || price.output ? `${price.input}/${price.output}` : 'free';
 	assert.deepEqual(
@@ -50,18 +50,18 @@ test('a supplied price formatter appends a neutral price badge', () => {
 				value: 'priced',
 				label: 'priced',
 				badges: [
+					{ label: '3/15', tone: 'neutral' },
 					{ label: 'GDPR', tone: 'success' },
-					{ label: 'NDA', tone: 'success' },
-					{ label: '3/15', tone: 'neutral' }
+					{ label: 'NDA', tone: 'success' }
 				]
 			},
 			{
 				value: 'free',
 				label: 'free',
 				badges: [
+					{ label: 'free', tone: 'neutral' },
 					{ label: 'GDPR', tone: 'success' },
-					{ label: 'NDA', tone: 'success' },
-					{ label: 'free', tone: 'neutral' }
+					{ label: 'NDA', tone: 'success' }
 				]
 			},
 			{

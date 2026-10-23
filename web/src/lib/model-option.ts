@@ -18,19 +18,20 @@ export function modelSelectOptions(
 	models: ChatModelOption[],
 	labels: { gdpr: string; nda: string },
 	/**
-	 * Optional price line, appended as a neutral badge beside the GDPR/NDA
+	 * Optional price line, shown as a neutral badge ahead of the GDPR/NDA
 	 * badges. Supplied only by pickers whose source carries prices (the chat
 	 * picker); it returns `null` to omit the line (a route has no price).
 	 */
 	formatPrice?: (price: ChatModelOption['price']) => string | null
 ): SearchOption[] {
 	return models.map((model) => {
-		const badges: SearchOptionBadge[] = [
-			{ label: labels.gdpr, tone: model.gdpr ? 'success' : 'error' },
-			{ label: labels.nda, tone: model.nda ? 'success' : 'error' }
-		];
+		const badges: SearchOptionBadge[] = [];
 		const price = formatPrice?.(model.price);
 		if (price) badges.push({ label: price, tone: 'neutral' });
+		badges.push(
+			{ label: labels.gdpr, tone: model.gdpr ? 'success' : 'error' },
+			{ label: labels.nda, tone: model.nda ? 'success' : 'error' }
+		);
 		return { value: model.id, label: model.id, badges };
 	});
 }

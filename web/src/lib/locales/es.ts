@@ -2898,7 +2898,7 @@ export const es: Catalog = {
  "tokens-models-price-per-characters": "{price} por carácter",
  "tokens-models-price-per-images": "{price} por imagen",
  "tokens-models-price-per-seconds": "{price} por segundo",
- "tokens-models-price-tokens": "{input} entrada / {output} salida por millón",
+ "tokens-models-price-tokens": "{input}/{output}{symbol}",
  "tokens-models-restrict-label": "Limitar este token a modelos concretos",
  "tokens-models-saved-toast": "Token limitado a {count} modelos.",
  "tokens-models-search": "Buscar modelos",
