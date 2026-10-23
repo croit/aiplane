@@ -1099,7 +1099,7 @@ async fn admin_skills_preserve_detail_download_and_effective_grants() {
     assert_eq!(archive.headers()[header::CONTENT_TYPE], "application/zip");
     assert_eq!(
         archive.headers()[header::CONTENT_DISPOSITION],
-        "attachment; filename=\"release-helper.skill\""
+        "attachment; filename=\"Release-Helper.skill\""
     );
 
     let saved = app

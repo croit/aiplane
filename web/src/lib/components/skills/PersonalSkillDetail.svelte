@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { renderMarkdown } from '#lib/markdown.js';
 	import { t } from '#lib/i18n.svelte.js';
-	import type { PersonalSkill } from '#lib/skills.js';
+	import { skillArchiveFilename, type PersonalSkill } from '#lib/skills.js';
 
 	let { skill, body, ondelete }: { skill: PersonalSkill; body: string; ondelete: () => void | Promise<void> } = $props();
 </script>
@@ -11,7 +11,7 @@
 		<h2 class="m-0 text-xl font-semibold">{skill.title}</h2>
 		<div class="flex shrink-0 flex-wrap items-center gap-1">
 			<a href={`/tools/skills?skill=${encodeURIComponent(skill.name)}&edit=1`} class="btn btn-ghost btn-sm">{t('my-skills-edit-button')}</a>
-			<a href={`/api/v0/skills/${encodeURIComponent(skill.name)}/archive`} download={`${skill.name}.skill`} class="btn btn-ghost btn-sm" title={t('my-skills-download-title')}>{t('my-skills-download-button')}</a>
+			<a href={`/api/v0/skills/${encodeURIComponent(skill.name)}/archive`} download={skillArchiveFilename(skill)} class="btn btn-ghost btn-sm" title={t('my-skills-download-title')}>{t('my-skills-download-button')}</a>
 			<button type="button" class="btn btn-ghost btn-sm text-error" title={t('my-skills-delete-title')} onclick={ondelete}>{t('my-skills-delete-button')}</button>
 		</div>
 	</div>

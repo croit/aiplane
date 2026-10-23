@@ -338,7 +338,7 @@ fn skill_archive_response(name: &str, skill: &aiplane_features::server::skills::
             .header(rama::http::header::CONTENT_LENGTH, bytes.len())
             .header(
                 rama::http::header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{name}.skill\""),
+                format!("attachment; filename=\"{}\"", skill.archive_filename()),
             )
             .header(rama::http::header::CACHE_CONTROL, "no-store")
             .body(bytes.into())

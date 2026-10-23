@@ -5,6 +5,27 @@ export interface PersonalSkill {
 	files: string[];
 }
 
+/**
+ * The download name of a skill's archive: its title made filename-safe,
+ * falling back to its name when the title is non-ASCII (a header-safe
+ * filename cannot spell it) or has no usable content. Mirrors the server's
+ * `Skill::archive_filename`, so the browser-suggested name matches the
+ * Content-Disposition in every browser.
+ */
+export function skillArchiveFilename(skill: { name: string; title: string }): string {
+	const fromTitle = /^[\x00-\x7F]*$/.test(skill.title) ? sanitizeFilename(skill.title) : null;
+	const base = fromTitle ?? sanitizeFilename(skill.name) ?? skill.name;
+	return `${base}.skill`;
+}
+
+function sanitizeFilename(text: string): string | null {
+	const collapsed = text
+		.replace(/[^A-Za-z0-9.-]+/g, '-')
+		.replace(/^[-.]+|[-.]+$/g, '')
+		.slice(0, 100);
+	return collapsed.length > 0 ? collapsed : null;
+}
+
 export const NEW_SKILL_TEMPLATE = `---
 name: my-skill
 title: My Skill

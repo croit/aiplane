@@ -151,6 +151,45 @@ impl Skill {
         }
         Ok(cursor.into_inner())
     }
+
+    /// The download name of this skill's `.skill` archive: the title made
+    /// filename-safe, falling back to `name` when the title is non-ASCII (a
+    /// header-safe filename cannot spell it) or yields nothing usable.
+    /// Always ends in `.skill`.
+    pub fn archive_filename(&self) -> String {
+        let base = self
+            .title
+            .is_ascii()
+            .then(|| sanitize_filename(&self.title))
+            .flatten()
+            .or_else(|| sanitize_filename(&self.name))
+            .unwrap_or_else(|| self.name.clone());
+        format!("{base}.skill")
+    }
+}
+
+/// A filename-safe form of `text`: ASCII letters, digits, dots and hyphens
+/// are kept; everything else (spaces, path and other separators, non-ASCII)
+/// becomes a hyphen. Hyphen runs collapse, edge hyphens and dots are trimmed,
+/// and the result is capped at 100 characters. `None` when nothing usable
+/// survives — the caller then falls back to another source.
+fn sanitize_filename(text: &str) -> Option<String> {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+            out.push(c);
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    // Everything is ASCII here, so byte slicing at the cap is boundary-safe.
+    let trimmed = out.trim_matches(|c| c == '-' || c == '.');
+    let trimmed = &trimmed[..trimmed.len().min(100)];
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 /// Failure reading a bundled file via [`Skill::read_file`]. All variants
@@ -1036,6 +1075,29 @@ mod tests {
         )
         .unwrap();
         assert_eq!(load_skill(&d2).unwrap().title, "My Fancy Skill");
+    }
+
+    fn skill_with(name: &str, title: &str) -> Skill {
+        Skill {
+            name: name.to_string(),
+            title: title.to_string(),
+            description: String::new(),
+            root: PathBuf::from("/nonexistent"),
+        }
+    }
+
+    #[test]
+    fn archive_filename_uses_the_title_sanitized_for_a_filename() {
+        let skill = skill_with("6f1e2c3d-aaaa-bbbb-cccc-000011112222", "Invoice Export");
+        assert_eq!(skill.archive_filename(), "Invoice-Export.skill");
+    }
+
+    #[test]
+    fn archive_filename_falls_back_to_the_name_when_the_title_has_no_usable_content() {
+        let symbols = skill_with("uuid-name", "!!!");
+        assert_eq!(symbols.archive_filename(), "uuid-name.skill");
+        let non_ascii = skill_with("uuid-name", "Überprüfung");
+        assert_eq!(non_ascii.archive_filename(), "uuid-name.skill");
     }
 
     #[test]

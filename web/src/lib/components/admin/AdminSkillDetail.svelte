@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { renderMarkdown } from '#lib/markdown.js';
 	import { t } from '#lib/i18n.svelte.js';
+	import { skillArchiveFilename } from '#lib/skills.js';
 	import { effectiveSkillGroups, type AdminSkill } from '#lib/admin-skills.js';
 
 	let { skill, groups, ondelete, onsavegrants }: {
@@ -39,7 +40,7 @@
 	<div class="flex flex-wrap items-start justify-between gap-3">
 		<h2 class="m-0 break-all font-mono text-xl font-semibold">{skill.name}</h2>
 		<div class="flex shrink-0 flex-wrap items-center gap-1">
-			<a href={`/api/v0/admin/skills/${encodeURIComponent(skill.name)}/archive`} download={`${skill.name}.skill`} class="btn btn-ghost btn-sm" title={t('skills-download-title')}>{t('skills-download-button')}</a>
+			<a href={`/api/v0/admin/skills/${encodeURIComponent(skill.name)}/archive`} download={skillArchiveFilename(skill)} class="btn btn-ghost btn-sm" title={t('skills-download-title')}>{t('skills-download-button')}</a>
 			<button type="button" class="btn btn-ghost btn-sm text-error" title={t('skills-delete-title')} onclick={ondelete}>{t('skills-delete-button')}</button>
 		</div>
 	</div>
