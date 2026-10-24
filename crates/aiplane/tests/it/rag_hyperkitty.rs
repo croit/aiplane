@@ -559,3 +559,43 @@ async fn a_list_url_that_does_not_exist_fails_the_ref_with_the_url_in_it() {
         "the message names the URL that was tried: {msg}"
     );
 }
+
+/// The card's download line, from the cache directory alone: while a segment
+/// is streaming it reports the bytes received, and once the archive has
+/// landed it reports the window the local copy covers.
+#[tokio::test]
+async fn the_source_status_reports_the_download_and_the_covered_window() {
+    let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
+    let data_dir = tempdir().unwrap();
+    let upstream = start_embedding_upstream().await;
+    let indexer = indexer(&pool, registry_pointed_at(&upstream.uri()), data_dir.path());
+
+    let (collection, _) = seed(&pool, hyperkitty_source("https://lists.example.com")).await;
+    let cache = data_dir
+        .path()
+        .join("source-cache")
+        .join(collection.id.to_string());
+
+    std::fs::create_dir_all(&cache).unwrap();
+    std::fs::write(
+        cache.join("000000-full.mbox.gz.part"),
+        vec![0u8; 3 * 1024 * 1024],
+    )
+    .unwrap();
+    let status = indexer
+        .source_status(&collection)
+        .expect("a download in flight is worth a line");
+    assert!(status.contains("Downloading the archive"), "{status}");
+    assert!(status.contains("3.0 MB"), "{status}");
+
+    std::fs::remove_file(cache.join("000000-full.mbox.gz.part")).unwrap();
+    std::fs::write(
+        cache.join("state.json"),
+        r#"{"version":1,"list_url":"https://lists.example.com/hyperkitty/list/users@example.com","full_fetched_at":"2026-10-01T00:00:00Z","covered_through":"2026-10-20"}"#,
+    )
+    .unwrap();
+    let status = indexer
+        .source_status(&collection)
+        .expect("a cached archive is worth a line");
+    assert!(status.contains("2026-10-20"), "{status}");
+}

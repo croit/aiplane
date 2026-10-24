@@ -31,7 +31,7 @@ The collection card shows each collection's refresh schedule. A collection on **
 | Git | Clone URL, branch/tag/commit and optional personal access token (write-only; the form shows a head/tail fingerprint of the stored token) |
 | WebDAV | Provider's server/root/credential fields; test the account's access to the chosen tree |
 | Google Drive | Provider configuration and the collection's OAuth connection; check connected account metadata |
-| HyperKitty | Archive settings offered by the provider; verify readable archive content |
+| HyperKitty | List URL; the local-copy switch decides whether later syncs fetch only new mail. The source row shows the in-flight download and the window the local archive covers |
 
 The provider registry supplies the source form's own fields and descriptions. Do not treat mentions of other storage providers in architectural examples as evidence that they are installed. Use the actual source menu.
 
@@ -55,7 +55,7 @@ The collection card shows source/model/access metadata, refresh schedule, status
 - **Set primary:** Change the default ref for a versioned collection.
 - **Remove source / Delete collection:** Confirm removal before deleting the corresponding resource.
 
-Statuses distinguish pending, cloning, indexing, ready and error. Read the recorded last error and log before retrying. A ready index proves that an indexing pass completed; verify answer quality against the source separately.
+Statuses distinguish pending, cloning, indexing, ready and error; non-Git sources show fetching instead of cloning. A non-Git source row also carries the source's download state: an in-flight download with the bytes received so far, and once the local copy exists, the date window it covers. Read the recorded last error and log before retrying. A ready index proves that an indexing pass completed; verify answer quality against the source separately.
 
 ### Trigger synchronization externally
 

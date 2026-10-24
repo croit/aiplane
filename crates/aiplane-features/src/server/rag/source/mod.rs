@@ -281,6 +281,17 @@ pub trait FileProvider: Send + Sync + 'static {
         None
     }
 
+    /// What a sync is doing right now that the operator should see on the
+    /// collection card: an in-flight download, how far a local copy is
+    /// covered. `None` when there is nothing worth a line of its own — the
+    /// status badge and the index log already say the rest.
+    ///
+    /// Read-only and cheap: the card asks on every poll, so this must be a
+    /// local file read, never a network round-trip.
+    fn status(&self) -> Option<String> {
+        None
+    }
+
     /// Credential + reachability check for the admin UI.
     async fn probe(&self) -> Result<ProbeReport, ProviderError>;
 

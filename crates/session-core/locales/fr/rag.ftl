@@ -21,6 +21,7 @@ rag-toast-source-updated = Source mise à jour.
 rag-status-pending = en attente
 rag-status-unconfigured = aucune source
 rag-status-cloning = clonage
+rag-status-fetching = téléchargement
 rag-status-indexing = indexation
 rag-status-ready = prêt
 rag-status-error = erreur

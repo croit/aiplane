@@ -2299,6 +2299,7 @@ export const ru: Catalog = {
  "rag-source-unknown-kind": "Неизвестный тип источника.",
  "rag-status-cloning": "клонирование",
  "rag-status-error": "ошибка",
+ "rag-status-fetching": "загрузка",
  "rag-status-indexing": "индексация",
  "rag-status-pending": "в ожидании",
  "rag-status-ready": "готово",

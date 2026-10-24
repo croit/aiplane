@@ -913,7 +913,7 @@ impl Indexer {
             level: rag_db::LogLevel::Info,
             phase: "cloning".into(),
             message: if !collection.source.is_git() {
-                format!("Listing files from the {} source…", collection.source.kind)
+                format!("Fetching files from the {} source…", collection.source.kind)
             } else if collection.search_mode == rag_db::SearchMode::Aggregate {
                 "Cloning sources…".to_string()
             } else {
@@ -1777,6 +1777,19 @@ impl Indexer {
                 None
             }
         }
+    }
+
+    /// What the collection's source is doing right now that the card should
+    /// show as its own line: an in-flight download, how far a local copy is
+    /// covered. `None` for git sources — a clone's progress is the status
+    /// badge — and for providers with nothing to report.
+    pub fn source_status(&self, collection: &rag_db::Collection) -> Option<String> {
+        if collection.source.is_git() {
+            return None;
+        }
+        self.build_provider(collection)
+            .ok()
+            .and_then(|provider| provider.status())
     }
 
     /// Instantiate the collection's provider, opening its sealed secrets.

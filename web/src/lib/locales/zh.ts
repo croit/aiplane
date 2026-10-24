@@ -2266,6 +2266,7 @@ export const zh: Catalog = {
  "rag-source-unknown-kind": "未知的来源类型。",
  "rag-status-cloning": "克隆中",
  "rag-status-error": "错误",
+ "rag-status-fetching": "下载中",
  "rag-status-indexing": "索引中",
  "rag-status-pending": "待处理",
  "rag-status-ready": "就绪",

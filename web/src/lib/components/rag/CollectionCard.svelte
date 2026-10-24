@@ -29,7 +29,9 @@
 	}
 
 	function label(status: string): string {
-		const key = `rag-status-${status}`;
+		// "cloning" is a git word; a remote source fetches, it does not clone.
+		const effective = collection.source_kind !== 'git' && status === 'cloning' ? 'fetching' : status;
+		const key = `rag-status-${effective}`;
 		const translated = t(key);
 		return translated === key ? status : translated;
 	}
@@ -204,10 +206,11 @@
 						<div class="flex flex-wrap items-center gap-2">
 							<span class="badge badge-sm {badge(statusSource.status)}">{label(statusSource.status)}</span>
 							{#if source.is_primary && collection.search_mode !== 'aggregate'}<span class="badge badge-sm">{t('rag-badge-primary')}</span>{/if}
-							<strong class="font-mono text-sm">{collection.search_mode === 'aggregate' && source.git_url ? `${sourceLabel(source.git_url)} @ ${source.git_ref}` : source.git_ref}</strong>
+							{#if collection.source_kind === 'git'}<strong class="font-mono text-sm">{collection.search_mode === 'aggregate' && source.git_url ? `${sourceLabel(source.git_url)} @ ${source.git_ref}` : source.git_ref}</strong>{/if}
 							<span class="badge badge-ghost badge-sm">{source.document_count ? t('rag-ref-files', { files: source.document_count }) : t('rag-badge-no-files')}</span>
 						</div>
 						{#if source.git_url}<p class="mt-1 break-all font-mono text-xs text-base-content/60">{source.git_url}</p>{/if}
+						{#if source.source_status}<p class="mt-1 text-xs text-base-content/60">{source.source_status}</p>{/if}
 						<p class="mt-1 text-xs text-base-content/60">{statusSource.last_indexed_at ? t('rag-ref-indexed-line', { date: dt(statusSource.last_indexed_at), commit: statusSource.last_indexed_commit?.slice(0, 12) ?? '—' }) : t('rag-never')}</p>
 						{#if statusSource.last_error}<p class="mt-1 text-sm text-error">{statusSource.last_error}</p>{/if}
 					</div>

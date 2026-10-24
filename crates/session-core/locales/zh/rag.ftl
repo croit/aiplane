@@ -21,6 +21,7 @@ rag-toast-source-updated = 源已更新。
 rag-status-pending = 待处理
 rag-status-unconfigured = 无来源
 rag-status-cloning = 克隆中
+rag-status-fetching = 下载中
 rag-status-indexing = 索引中
 rag-status-ready = 就绪
 rag-status-error = 错误

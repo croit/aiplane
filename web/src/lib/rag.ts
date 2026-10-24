@@ -42,6 +42,7 @@ export interface RagRef {
 	last_error: string | null;
 	chunk_count: number;
 	document_count: number;
+	source_status: string | null;
 }
 
 export interface RagLogEntry {

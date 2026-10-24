@@ -602,6 +602,16 @@ fn wipe_cache(dir: &Path) {
     }
 }
 
+/// Bytes the way an operator reads them: a full export in megabytes with one
+/// decimal, a day's window in kilobytes.
+fn human_size(bytes: u64) -> String {
+    if bytes >= 1_048_576 {
+        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+    } else {
+        format!("{} KB", bytes / 1024)
+    }
+}
+
 /// A `Read` that fails rather than ending early once `limit` bytes are through.
 ///
 /// `Read::take` would do the length check, but it reports the cap as
@@ -797,6 +807,38 @@ impl FileProvider for Hyperkitty {
         Some(mail::permalink(&self.list_url, &entry.id))
     }
 
+    /// The card's download line, straight from the cache directory: a
+    /// `.part` segment growing while the export streams in, or the window
+    /// the cached archive covers once it has landed.
+    fn status(&self) -> Option<String> {
+        let dir = self.cache_dir.as_deref()?;
+        let mut received = 0u64;
+        let mut downloading = false;
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                // `.mbox.gz.part`, not `.part` in general: the cache state
+                // file also lands through a `.part` rename, for a
+                // millisecond, and is not a download.
+                if path.to_string_lossy().ends_with(".mbox.gz.part")
+                    && let Ok(meta) = std::fs::metadata(&path)
+                {
+                    downloading = true;
+                    received += meta.len();
+                }
+            }
+        }
+        if downloading {
+            // The export carries no `Content-Length`, so there is no total
+            // to make a percentage of — the received bytes are the status.
+            return Some(format!(
+                "Downloading the archive — {} received",
+                human_size(received)
+            ));
+        }
+        CacheState::read(dir).map(|s| format!("Archive up to date through {}", s.covered_through))
+    }
+
     /// Reads the first [`PROBE_BYTES`] of the export and reports what parsed.
     ///
     /// A truncated gzip is *expected* here and is not an error — the point is
@@ -871,6 +913,70 @@ mod tests {
             &ProviderContext::new(reqwest::Client::new()),
         )
         .expect("a well-formed list URL builds")
+    }
+
+    fn cached_provider(list_url: &str, dir: &Path) -> Hyperkitty {
+        Hyperkitty::from_config(
+            &cfg(list_url),
+            &ProviderContext::new(reqwest::Client::new()).with_cache_dir(dir),
+        )
+        .expect("a well-formed list URL builds")
+    }
+
+    #[test]
+    fn status_reports_an_in_flight_download() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let p = cached_provider(
+            "https://lists.example.com/hyperkitty/list/users@example.com",
+            dir.path(),
+        );
+        std::fs::write(
+            dir.path().join("000000-full.mbox.gz.part"),
+            vec![0u8; 2 * 1024 * 1024],
+        )
+        .unwrap();
+        let status = p.status().expect("a download in flight is worth a line");
+        assert!(status.contains("Downloading the archive"), "{status}");
+        assert!(status.contains("2.0 MB"), "{status}");
+    }
+
+    #[test]
+    fn status_ignores_the_state_file_part_rename() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let p = cached_provider(
+            "https://lists.example.com/hyperkitty/list/users@example.com",
+            dir.path(),
+        );
+        std::fs::write(dir.path().join("state.json.part"), b"{}").unwrap();
+        assert!(
+            p.status().is_none(),
+            "a state file mid-rename is not a download in flight"
+        );
+    }
+
+    #[test]
+    fn status_reports_the_covered_window_of_a_cached_archive() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let p = cached_provider(
+            "https://lists.example.com/hyperkitty/list/users@example.com",
+            dir.path(),
+        );
+        CacheState {
+            version: CACHE_VERSION,
+            list_url: "https://lists.example.com/hyperkitty/list/users@example.com".into(),
+            full_fetched_at: Timestamp::now(),
+            covered_through: Date::new(2026, 10, 20).expect("a real date"),
+        }
+        .write(dir.path())
+        .unwrap();
+        let status = p.status().expect("a cached archive is worth a line");
+        assert!(status.contains("2026-10-20"), "{status}");
+    }
+
+    #[test]
+    fn status_is_silent_without_a_cache_dir() {
+        let p = provider("https://lists.example.com/hyperkitty/list/users@example.com");
+        assert!(p.status().is_none(), "nothing on disk to report");
     }
 
     #[test]

@@ -2281,6 +2281,7 @@ export const fr: Catalog = {
  "rag-source-unknown-kind": "Type de source inconnu.",
  "rag-status-cloning": "clonage",
  "rag-status-error": "erreur",
+ "rag-status-fetching": "téléchargement",
  "rag-status-indexing": "indexation",
  "rag-status-pending": "en attente",
  "rag-status-ready": "prêt",

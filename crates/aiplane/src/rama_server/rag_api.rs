@@ -1759,6 +1759,9 @@ pub(crate) struct RefView {
     last_error: Option<String>,
     chunk_count: i64,
     document_count: i64,
+    /// The source's own account of what a sync is doing — an in-flight
+    /// download, how far a local copy is covered. `None` for git sources.
+    source_status: Option<String>,
 }
 
 /// GET /api/v0/rag/collections/{id}/refs — the collection's sources/refs
@@ -1771,14 +1774,14 @@ pub async fn list_refs(
     if let Err(resp) = require_admin(&state, &req).await {
         return resp;
     }
-    match rag_db::find_collection_by_id(&state.db, id).await {
-        Ok(Some(_)) => {}
+    let collection = match rag_db::find_collection_by_id(&state.db, id).await {
+        Ok(Some(c)) => c,
         Ok(None) => return not_found(&format!("no collection with id {id}")),
         Err(err) => {
             tracing::warn!(error = %err, %id, "listing rag refs: collection lookup");
             return internal_error("listing refs failed");
         }
-    }
+    };
     let refs = match rag_db::list_refs(&state.db, id).await {
         Ok(r) => r,
         Err(err) => {
@@ -1789,6 +1792,10 @@ pub async fn list_refs(
     let files = rag_db::latest_source_files(&state.db, id)
         .await
         .unwrap_or_default();
+    let source_status = state
+        .indexer
+        .as_ref()
+        .and_then(|indexer| indexer.source_status(&collection));
     let mut views = Vec::with_capacity(refs.len());
     for r in refs {
         let documents = files.get(&r.id).copied().unwrap_or_default();
@@ -1805,6 +1812,7 @@ pub async fn list_refs(
             last_error: r.last_error.clone(),
             chunk_count: chunks,
             document_count: documents,
+            source_status: source_status.clone(),
         });
     }
     json_ok(&RefList { data: views })
