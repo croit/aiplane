@@ -130,6 +130,8 @@ admin-no-models = Пока нет доступных моделей. Как то
 
 admin-filter-placeholder = Фильтр моделей…
 
+admin-filter-active = активные
+
 admin-filter-all = Все
 
 admin-filter-chat = чат
@@ -138,11 +140,15 @@ admin-filter-other = другие виды
 
 admin-filter-aliases = псевдонимы
 
+admin-filter-inactive = неактивные
+
 admin-filter-configured = только настроенные
+
+admin-no-models-match = Ни одна модель не соответствует текущему фильтру.
 
 admin-col-kind = Вид
 
-admin-col-price = Цена вх/вых
+admin-col-price = Цена вх/вых/кэш
 
 admin-col-context = Контекст
 

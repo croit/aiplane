@@ -586,6 +586,7 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
                 name,
                 kind: kind_label,
                 alias_target,
+                served: true,
                 configured: defaults.is_some(),
                 resolved_reasoning_style: reasoning.as_str(),
                 uses_token_budget: reasoning.budget_enforced(serving.thinking_budget),
@@ -608,6 +609,9 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
             name: defaults.model_name.clone(),
             kind: "chat",
             alias_target: None,
+            // Nothing advertises this model any more — the page files the row
+            // under *inactive* so the operator can clear it.
+            served: false,
             configured: true,
             resolved_reasoning_style: reasoning.as_str(),
             // Nothing serves this model, so only a budget in the model's own
@@ -678,6 +682,9 @@ pub struct ModelView {
     pub kind: &'static str,
     /// The model this name is an alias of.
     pub alias_target: Option<String>,
+    /// An upstream pool currently advertises this model. `false` only for
+    /// stored overrides of a model nothing serves any more.
+    pub served: bool,
     /// The model has stored overrides.
     pub configured: bool,
     pub resolved_reasoning_style: &'static str,

@@ -16,8 +16,9 @@
 	}
 
 	function priceSummary() {
-		if (!defaults || (defaults.input_price === null && defaults.output_price === null)) return '—';
-		return `${defaults?.input_price ?? '—'} / ${defaults?.output_price ?? '—'} ${unitLabel(pricingUnitFor(model))}`;
+		const price = defaults;
+		if (!price || (price.input_price === null && price.output_price === null && price.cache_read_price === null)) return '—';
+		return `${price.input_price ?? '—'} / ${price.output_price ?? '—'} / ${price.cache_read_price ?? '—'} ${unitLabel(pricingUnitFor(model))}`;
 	}
 
 	function contextSummary() {
@@ -40,7 +41,7 @@
 
 {#if model.alias_target}
 	<div class="border-b border-base-300 py-2 opacity-70" data-testid={`model-row-${model.name}`}>
-		<div class="grid min-w-[710px] grid-cols-[minmax(170px,1.6fr)_82px_108px_84px_128px_minmax(110px,1.1fr)_64px] items-center gap-2.5">
+		<div class="grid min-w-[752px] grid-cols-[minmax(170px,1.6fr)_82px_150px_84px_128px_minmax(110px,1.1fr)_64px] items-center gap-2.5">
 			<span class="break-all font-mono text-sm text-base-content/70">{model.name} <span class="text-base-content/40">→ {model.alias_target}</span></span>
 			<span><span class="badge badge-info badge-sm">{t('admin-alias-chip')}</span></span>
 			<span class="text-xs text-base-content/40">{model.kind}</span><span></span><span></span>
@@ -50,7 +51,7 @@
 {:else}
 	<div class="border-b border-base-300" data-testid={`model-row-${model.name}`}>
 		<div class="py-2">
-			<div class="grid min-w-[710px] grid-cols-[minmax(170px,1.6fr)_82px_108px_84px_128px_minmax(110px,1.1fr)_64px] items-center gap-2.5">
+			<div class="grid min-w-[752px] grid-cols-[minmax(170px,1.6fr)_82px_150px_84px_128px_minmax(110px,1.1fr)_64px] items-center gap-2.5">
 				<span class="break-all font-mono text-sm font-semibold">{model.name}</span>
 				<span><span class="badge badge-secondary badge-sm">{model.kind}</span></span>
 				<span class="text-xs font-mono tabular-nums {priceSummary() === '—' ? 'text-base-content/40' : ''}">{priceSummary()}</span>

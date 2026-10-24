@@ -1,5 +1,5 @@
 export type ModelKind = 'chat' | 'embedding' | 'image' | 'speech' | 'transcription' | 'ocr' | 'rerank' | 'system_one';
-export type ModelFilter = 'all' | 'chat' | 'other' | 'alias' | 'configured';
+export type ModelFilter = 'active' | 'all' | 'chat' | 'other' | 'alias' | 'inactive' | 'configured';
 export type PricingUnit = 'tokens' | 'images' | 'characters' | 'seconds';
 export const MODEL_ADMIN_TABS = ['upstreams', 'catalog', 'defaults', 'routing'] as const;
 export type ModelAdminTab = (typeof MODEL_ADMIN_TABS)[number];
@@ -50,6 +50,8 @@ export interface AdminModel {
 	name: string;
 	kind: ModelKind;
 	alias_target: string | null;
+	/** An upstream pool currently advertises this model. */
+	served: boolean;
 	configured: boolean;
 	resolved_reasoning_style: string;
 	uses_token_budget: boolean;
@@ -132,9 +134,63 @@ export interface AdminModelsData {
 }
 
 export function matchesModelFilter(model: AdminModel, filter: ModelFilter, query: string): boolean {
-	const group = model.alias_target !== null ? 'alias' : model.kind === 'chat' ? 'chat' : 'other';
-	const matchesKind = filter === 'all' || filter === group || (filter === 'configured' && model.configured);
-	return matchesKind && model.name.toLowerCase().includes(query.trim().toLowerCase());
+	const real = model.alias_target === null;
+	const matchesFilter =
+		filter === 'all' ||
+		(filter === 'active' && model.served && real) ||
+		(filter === 'chat' && real && model.kind === 'chat') ||
+		(filter === 'other' && real && model.kind !== 'chat') ||
+		(filter === 'alias' && !real) ||
+		(filter === 'inactive' && !model.served) ||
+		(filter === 'configured' && model.configured);
+	return matchesFilter && model.name.toLowerCase().includes(query.trim().toLowerCase());
+}
+
+/**
+ * Case-insensitive natural comparison: digit runs compare numerically, so
+ * `gpt-4` < `gpt-4.1` < `gpt-4o` < `gpt-5` and `legacy-2` < `legacy-10`.
+ */
+export function naturalCompare(left: string, right: string): number {
+	let i = 0;
+	let j = 0;
+	while (i < left.length && j < right.length) {
+		const a = left[i];
+		const b = right[j];
+		if (a >= '0' && a <= '9' && b >= '0' && b <= '9') {
+			let endI = i;
+			while (endI < left.length && left[endI] >= '0' && left[endI] <= '9') endI++;
+			let endJ = j;
+			while (endJ < right.length && right[endJ] >= '0' && right[endJ] <= '9') endJ++;
+			const difference = Number(left.slice(i, endI)) - Number(right.slice(j, endJ));
+			if (difference !== 0) return difference;
+			i = endI;
+			j = endJ;
+		} else {
+			const lowA = a.toLowerCase();
+			const lowB = b.toLowerCase();
+			if (lowA !== lowB) return lowA < lowB ? -1 : 1;
+			i++;
+			j++;
+		}
+	}
+	return left.length - right.length;
+}
+
+/** The catalog's three sections, each natsorted by name. */
+export interface CatalogSections {
+	active: AdminModel[];
+	aliases: AdminModel[];
+	inactive: AdminModel[];
+}
+
+export function catalogSections(models: AdminModel[]): CatalogSections {
+	const byName = (entries: AdminModel[]) =>
+		entries.slice().sort((left, right) => naturalCompare(left.name, right.name));
+	return {
+		active: byName(models.filter((entry) => entry.served && entry.alias_target === null)),
+		aliases: byName(models.filter((entry) => entry.served && entry.alias_target !== null)),
+		inactive: byName(models.filter((entry) => !entry.served))
+	};
 }
 
 export function configuredFacets(model: AdminModel): string[] {

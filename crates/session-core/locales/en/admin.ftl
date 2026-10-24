@@ -138,6 +138,8 @@ admin-no-models = No models advertised yet. Once an upstream backend is reachabl
 
 admin-filter-placeholder = Filter models…
 
+admin-filter-active = active
+
 admin-filter-all = All
 
 admin-filter-chat = chat
@@ -146,11 +148,15 @@ admin-filter-other = other kinds
 
 admin-filter-aliases = aliases
 
+admin-filter-inactive = inactive
+
 admin-filter-configured = configured only
+
+admin-no-models-match = No models match the current filter.
 
 admin-col-kind = Kind
 
-admin-col-price = Price in/out
+admin-col-price = Price in/out/cached
 
 admin-col-context = Context
 

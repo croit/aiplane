@@ -885,6 +885,7 @@ async fn model_overrides_validate_and_save() {
         .expect("offered model is represented");
     assert_eq!(offered["kind"], "chat");
     assert_eq!(offered["alias_target"], serde_json::Value::Null);
+    assert_eq!(offered["served"], true);
     assert_eq!(offered["resolved_reasoning_style"], "none");
     assert_eq!(offered["uses_token_budget"], false);
     assert_eq!(offered["effort_levels"], serde_json::json!([]));
@@ -902,6 +903,10 @@ async fn model_overrides_validate_and_save() {
         .iter()
         .find(|model| model["name"] == "m")
         .expect("configured but unadvertised model remains editable");
+    assert_eq!(
+        configured["served"], false,
+        "nothing advertises `m` any more, so the page files it as inactive"
+    );
     assert_eq!(configured["resolved_reasoning_style"], "qwen");
     // Nothing serves `m`, so no server would enforce a Qwen budget: the
     // fields are not offered, though the stored value is still reported.

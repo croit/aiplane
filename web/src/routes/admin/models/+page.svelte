@@ -2,8 +2,8 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { adminJson, adminPut } from '#lib/admin-client.js';
-	import { matchesModelFilter, selectedModelAdminTab } from '#lib/admin-models.js';
-	import type { AdminModelsData, ModelFilter } from '#lib/admin-models.js';
+	import { catalogSections, matchesModelFilter, selectedModelAdminTab } from '#lib/admin-models.js';
+	import type { AdminModel, AdminModelsData, CatalogSections, ModelFilter } from '#lib/admin-models.js';
 	import AdminModelRow from '#lib/components/admin/AdminModelRow.svelte';
 	import DefaultModelsCard from '#lib/components/admin/DefaultModelsCard.svelte';
 	import AutomaticRoutesCard from '#lib/components/admin/AutomaticRoutesCard.svelte';
@@ -22,8 +22,11 @@
 		if (kind === 'saved') notice = t('admin-saved-model', { model });
 		else if (kind === 'cleared') notice = t('admin-cleared-defaults', { model });
 	});
+
 	let query = $state('');
-	let filter = $state<ModelFilter>('all');
+	// The catalog opens on the models that are actually served; aliases and
+	// dead overrides are one click away.
+	let filter = $state<ModelFilter>('active');
 
 	async function refresh() {
 		try {
@@ -40,7 +43,16 @@
 		await refresh();
 	}
 
-	let visibleModels = $derived(data?.models.filter((model) => matchesModelFilter(model, filter, query)) ?? []);
+	// The catalog's three sections in operator order — what is running, what
+	// points at it, what nothing serves any more. The filter applies within
+	// the sections; a section whose rows all fall out is hidden.
+	let visibleSections = $derived(
+		data
+			? (Object.entries(catalogSections(data.models)) as [keyof CatalogSections, AdminModel[]][])
+					.map(([key, models]) => ({ key, models: models.filter((model) => matchesModelFilter(model, filter, query)) }))
+					.filter((section) => section.models.length > 0)
+			: []
+	);
 	let selected = $derived(selectedModelAdminTab(page.url.search));
 	onMount(refresh);
 </script>
@@ -78,20 +90,27 @@
 				<div class="card-body gap-3 pb-0">
 					<div class="flex flex-wrap items-center gap-2">
 						<input type="search" class="input input-sm w-60 max-w-full" bind:value={query} placeholder={t('admin-filter-placeholder')} aria-label={t('admin-filter-placeholder')} />
-						{#each [['all', 'admin-filter-all'], ['chat', 'admin-filter-chat'], ['other', 'admin-filter-other'], ['alias', 'admin-filter-aliases'], ['configured', 'admin-filter-configured']] as option}
-							<button type="button" class="btn btn-xs {filter === option[0] ? 'btn-active' : ''}" onclick={() => (filter = option[0] as ModelFilter)}>{t(option[1])}</button>
+						{#each [['active', 'admin-filter-active'], ['all', 'admin-filter-all'], ['alias', 'admin-filter-aliases'], ['inactive', 'admin-filter-inactive'], ['chat', 'admin-filter-chat'], ['other', 'admin-filter-other'], ['configured', 'admin-filter-configured']] as option}
+							<button type="button" class="btn btn-xs {filter === option[0] ? 'btn-primary' : 'btn-ghost'}" onclick={() => (filter = option[0] as ModelFilter)}>{t(option[1])}</button>
 						{/each}
 					</div>
 				</div>
 				<div class="card-body gap-0 overflow-x-auto pt-3">
-					<div class="grid min-w-[710px] grid-cols-[minmax(170px,1.6fr)_82px_108px_84px_128px_minmax(110px,1.1fr)_64px] items-center gap-2.5 border-b border-base-300 pb-2 text-[11px] uppercase tracking-wide text-base-content/50">
+					<div class="grid min-w-[752px] grid-cols-[minmax(170px,1.6fr)_82px_150px_84px_128px_minmax(110px,1.1fr)_64px] items-center gap-2.5 border-b border-base-300 pb-2 text-[11px] uppercase tracking-wide text-base-content/50">
 						<span>{t('admin-col-model')}</span><span>{t('admin-col-kind')}</span><span>{t('admin-col-price')}</span><span>{t('admin-col-context')}</span><span>{t('admin-col-reasoning')}</span><span>{t('admin-col-configured')}</span><span></span>
 					</div>
-					{#each visibleModels as model (model.name)}
-						{#key JSON.stringify(model)}
-							<AdminModelRow {model} currency={data.currency} />
-						{/key}
-					{/each}
+					{#if visibleSections.length === 0}
+						<div class="py-8 text-center text-sm text-base-content/50">{t('admin-no-models-match')}</div>
+					{:else}
+						{#each visibleSections as section (section.key)}
+							<div class="border-b border-base-300 bg-base-200/50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-base-content/60">{t(`admin-filter-${section.key}`)}</div>
+							{#each section.models as model (model.name)}
+								{#key JSON.stringify(model)}
+									<AdminModelRow {model} currency={data.currency} />
+								{/key}
+							{/each}
+						{/each}
+					{/if}
 				</div>
 			</article>
 		{/if}

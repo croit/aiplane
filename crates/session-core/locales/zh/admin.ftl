@@ -128,6 +128,8 @@ admin-no-models = 尚未发现任何模型。一旦有可用的上游后端，�
 
 admin-filter-placeholder = 筛选模型…
 
+admin-filter-active = 已启用
+
 admin-filter-all = 全部
 
 admin-filter-chat = 聊天
@@ -136,11 +138,15 @@ admin-filter-other = 其他类型
 
 admin-filter-aliases = 别名
 
+admin-filter-inactive = 未启用
+
 admin-filter-configured = 仅已配置
+
+admin-no-models-match = 没有模型符合当前筛选。
 
 admin-col-kind = 类型
 
-admin-col-price = 价格 入/出
+admin-col-price = 价格 入/出/缓存
 
 admin-col-context = 上下文
 

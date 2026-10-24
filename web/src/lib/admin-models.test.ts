@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { configuredFacets, contextWindowHint, matchesModelFilter, pricingUnitFor, selectedModelAdminTab } from './admin-models.ts';
+import { catalogSections, configuredFacets, contextWindowHint, matchesModelFilter, naturalCompare, pricingUnitFor, selectedModelAdminTab } from './admin-models.ts';
 import type { AdminModel } from './admin-models.ts';
 
 const model: AdminModel = {
 	name: 'Qwen/Qwen3',
 	kind: 'chat',
 	alias_target: null,
+	served: true,
 	configured: true,
 	resolved_reasoning_style: 'qwen',
 	uses_token_budget: true,
@@ -40,11 +41,45 @@ test('model administration defaults to the catalog and accepts only known tabs',
 	assert.equal(selectedModelAdminTab('?tab=unknown'), 'catalog');
 });
 
-test('model filters combine kind, alias, configuration, and name', () => {
+test('model filters combine section, kind, configuration, and name', () => {
+	assert.equal(matchesModelFilter(model, 'active', 'qwen3'), true);
 	assert.equal(matchesModelFilter(model, 'chat', 'qwen3'), true);
 	assert.equal(matchesModelFilter(model, 'other', ''), false);
 	assert.equal(matchesModelFilter({ ...model, alias_target: 'target', configured: false }, 'alias', 'qwen'), true);
+	assert.equal(matchesModelFilter({ ...model, served: false }, 'inactive', ''), true);
+	assert.equal(matchesModelFilter(model, 'inactive', ''), false);
+	assert.equal(matchesModelFilter({ ...model, alias_target: 'target', served: false }, 'active', ''), false);
 	assert.equal(matchesModelFilter(model, 'configured', ''), true);
+	// The kind filters reach real models only — an alias is found by `alias`,
+	// a stored override of a dead model stays visible under its own kind.
+	assert.equal(matchesModelFilter({ ...model, alias_target: 'target' }, 'chat', ''), false);
+	assert.equal(matchesModelFilter({ ...model, served: false }, 'chat', ''), true);
+});
+
+test('catalog sections split served real models, aliases, and dead overrides — each natsorted by name', () => {
+	const sections = catalogSections([
+		{ ...model, name: 'gpt-5' },
+		{ ...model, name: 'gpt-4.1' },
+		{ ...model, name: 'gpt-4' },
+		{ ...model, name: 'gpt-4o' },
+		{ ...model, name: 'fast', alias_target: 'gpt-4o', served: true, configured: false },
+		{ ...model, name: 'big', alias_target: 'gpt-4', served: true, configured: false },
+		{ ...model, name: 'legacy-10', served: false },
+		{ ...model, name: 'legacy-2', served: false }
+	]);
+	assert.deepEqual(sections.active.map((entry) => entry.name), ['gpt-4', 'gpt-4.1', 'gpt-4o', 'gpt-5']);
+	assert.deepEqual(sections.aliases.map((entry) => entry.name), ['big', 'fast']);
+	assert.deepEqual(sections.inactive.map((entry) => entry.name), ['legacy-2', 'legacy-10']);
+});
+
+test('natural compare orders digit runs numerically, not lexicographically', () => {
+	const names = ['qwen3-80', 'qwen3-8', 'qwen3-8a', 'qwen3-9', 'qwen3'];
+	names.sort(naturalCompare);
+	// Digit runs compare as numbers: 8 < 80, so `qwen3-8a` (8, then "a")
+	// precedes `qwen3-80` (80), and both precede `qwen3-9`.
+	assert.deepEqual(names, ['qwen3', 'qwen3-8', 'qwen3-8a', 'qwen3-9', 'qwen3-80']);
+	assert.equal(naturalCompare('a', 'a'), 0);
+	assert.equal(naturalCompare('a', 'ab') < 0, true);
 });
 
 test('configured facets retain every production summary badge', () => {

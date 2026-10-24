@@ -130,6 +130,8 @@ admin-no-models = Aucun modèle annoncé pour l'instant. Dès qu'un backend en a
 
 admin-filter-placeholder = Filtrer les modèles…
 
+admin-filter-active = actifs
+
 admin-filter-all = Tous
 
 admin-filter-chat = chat
@@ -138,11 +140,15 @@ admin-filter-other = autres types
 
 admin-filter-aliases = alias
 
+admin-filter-inactive = inactifs
+
 admin-filter-configured = configurés uniquement
+
+admin-no-models-match = Aucun modèle ne correspond au filtre actuel.
 
 admin-col-kind = Type
 
-admin-col-price = Prix ent/sor
+admin-col-price = Prix ent/sor/cache
 
 admin-col-context = Contexte
 
