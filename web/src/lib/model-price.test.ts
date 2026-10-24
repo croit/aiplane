@@ -30,9 +30,16 @@ test('a token-priced model reads as in/out with a currency symbol', () => {
 	const { t, calls } = mockT();
 	formatModelPrice({ input: 3, output: 15, unit: 'tokens' }, 'USD', t, n);
 	assert.equal(calls[0][0], 'tokens-models-price-tokens');
-	assert.equal(calls[0][1]?.input, '3');
-	assert.equal(calls[0][1]?.output, '15');
+	assert.equal(calls[0][1]?.input, '3.00');
+	assert.equal(calls[0][1]?.output, '15.00');
 	assert.equal(calls[0][1]?.symbol, '$');
+});
+
+test('price figures keep two decimals and never round a sub-cent price to zero', () => {
+	const { t, calls } = mockT();
+	formatModelPrice({ input: 0.075, output: 0.5, unit: 'tokens' }, 'USD', t, n);
+	assert.equal(calls[0][1]?.input, '0.075');
+	assert.equal(calls[0][1]?.output, '0.50');
 });
 
 test('a non-token unit prices per unit from the output side', () => {

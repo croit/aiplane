@@ -50,7 +50,7 @@ test('a supplied price formatter prepends a neutral price badge', () => {
 				value: 'priced',
 				label: 'priced',
 				badges: [
-					{ label: '3/15', tone: 'neutral' },
+					{ label: '3/15', tone: 'neutral', mono: true },
 					{ label: 'GDPR', tone: 'success' },
 					{ label: 'NDA', tone: 'success' }
 				]
@@ -59,7 +59,7 @@ test('a supplied price formatter prepends a neutral price badge', () => {
 				value: 'free',
 				label: 'free',
 				badges: [
-					{ label: 'free', tone: 'neutral' },
+					{ label: 'free', tone: 'neutral', mono: true },
 					{ label: 'GDPR', tone: 'success' },
 					{ label: 'NDA', tone: 'success' }
 				]

@@ -1,6 +1,8 @@
 export interface SearchOptionBadge {
 	label: string;
 	tone: 'success' | 'error' | 'neutral';
+	/** Render the label in a monospace face (price figures). */
+	mono?: boolean;
 }
 
 export interface SearchOption {

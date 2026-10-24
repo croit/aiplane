@@ -275,7 +275,7 @@
 														{:else if badge.tone === 'error'}
 															<span class="badge badge-error badge-xs gap-0.5 font-normal line-through"><span aria-hidden="true">✕</span>{badge.label}</span>
 														{:else}
-															<span class="badge badge-outline badge-xs font-normal tabular-nums">{badge.label}</span>
+															<span class="badge badge-outline badge-xs font-normal {badge.mono ? 'font-mono' : ''}">{badge.label}</span>
 														{/if}
 													{/each}
 												</span>

@@ -2871,7 +2871,7 @@ export const zh: Catalog = {
  "tokens-models-price-per-characters": "每字符 {price}",
  "tokens-models-price-per-images": "每张图片 {price}",
  "tokens-models-price-per-seconds": "每秒 {price}",
- "tokens-models-price-tokens": "{input}/{output}{symbol}",
+ "tokens-models-price-tokens": "{input} / {output} {symbol}",
  "tokens-models-restrict-label": "将此令牌限制为特定模型",
  "tokens-models-saved-toast": "令牌已限制为 {count} 个模型。",
  "tokens-models-search": "搜索模型",

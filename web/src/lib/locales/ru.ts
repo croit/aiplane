@@ -2918,7 +2918,7 @@ export const ru: Catalog = {
  "tokens-models-price-per-characters": "{price} за символ",
  "tokens-models-price-per-images": "{price} за изображение",
  "tokens-models-price-per-seconds": "{price} за секунду",
- "tokens-models-price-tokens": "{input}/{output}{symbol}",
+ "tokens-models-price-tokens": "{input} / {output} {symbol}",
  "tokens-models-restrict-label": "Ограничить этот токен определёнными моделями",
  "tokens-models-saved-toast": "Токен ограничен {count} моделями.",
  "tokens-models-search": "Поиск моделей",

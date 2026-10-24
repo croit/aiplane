@@ -27,7 +27,7 @@ export function modelSelectOptions(
 	return models.map((model) => {
 		const badges: SearchOptionBadge[] = [];
 		const price = formatPrice?.(model.price);
-		if (price) badges.push({ label: price, tone: 'neutral' });
+		if (price) badges.push({ label: price, tone: 'neutral', mono: true });
 		badges.push(
 			{ label: labels.gdpr, tone: model.gdpr ? 'success' : 'error' },
 			{ label: labels.nda, tone: model.nda ? 'success' : 'error' }

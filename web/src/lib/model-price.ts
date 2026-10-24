@@ -16,12 +16,15 @@ export function formatModelPrice(
 ): string | null {
 	if (price === null || price === undefined) return null;
 	const symbol = currencySymbol(currency);
-	const money = (value: number) => `${n(value, { maximumFractionDigits: 4 })}${symbol}`;
+	// Always two decimals ("10.00 / 20.00 $") so picker rows align; the extra
+	// digits up to four keep sub-cent prices honest instead of rounding them
+	// to a misleading 0.00.
+	const money = (value: number) => `${n(value, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}${symbol}`;
 	if (!price.input && !price.output) return t('tokens-models-price-free');
 	if (price.unit === 'tokens')
 		return t('tokens-models-price-tokens', {
-			input: n(price.input ?? 0, { maximumFractionDigits: 4 }),
-			output: n(price.output ?? 0, { maximumFractionDigits: 4 }),
+			input: n(price.input ?? 0, { minimumFractionDigits: 2, maximumFractionDigits: 4 }),
+			output: n(price.output ?? 0, { minimumFractionDigits: 2, maximumFractionDigits: 4 }),
 			symbol
 		});
 	return t(`tokens-models-price-per-${price.unit}`, { price: money(price.output ?? price.input ?? 0) });
