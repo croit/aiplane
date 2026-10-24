@@ -85,6 +85,14 @@ pub struct IndexerConfig {
     /// Poll cadence of the background loop — how often it scans for
     /// `status='pending'` rows.
     pub poll_interval: Duration,
+    /// Upper bound on one ref's build. A build that never finishes — a
+    /// stuck embedding upstream, a wedged clone — would otherwise hold its
+    /// queue slot forever, and because a drain pass finishes before the
+    /// next one starts, every ref queued behind it starves until the next
+    /// restart. Sized an order of magnitude past the slowest legitimate
+    /// build (hours for a big kernel repo), so it is a watchdog, not a
+    /// budget.
+    pub build_timeout: Duration,
     /// Upper bound on concurrent git clones *and* on collections indexed in
     /// parallel. Lets independent repos/collections make progress instead of
     /// serializing behind one slow clone. `0` is clamped to `1` (fully
@@ -100,6 +108,7 @@ impl Default for IndexerConfig {
             embed_batch_size: 32,
             poll_interval: Duration::from_secs(30),
             clone_concurrency: 4,
+            build_timeout: Duration::from_secs(6 * 3600),
             rerank_model: None,
             rerank_candidates: 50,
             extraction_max_input_chars: 24_000,
@@ -121,6 +130,12 @@ pub enum WorkerError {
     Io(#[from] std::io::Error),
     #[error("source: {0}")]
     Source(#[from] source::ProviderError),
+    /// The build did not finish within [`IndexerConfig::build_timeout`].
+    /// Watchdog, not a source complaint: a stuck build must fail so its
+    /// queue slot frees and the refs behind it are not starved until the
+    /// next restart.
+    #[error("build timed out after {0:?}")]
+    Timeout(Duration),
     #[error("collection {id} not found")]
     NotFound { id: i64 },
 }
@@ -135,6 +150,17 @@ fn failure_phase(err: &WorkerError) -> &'static str {
         // thing to an operator reading the timeline.
         WorkerError::Git(_) | WorkerError::Source(_) => "cloning",
         _ => "indexing",
+    }
+}
+
+/// A duration the way an operator reads one in an error message: whole
+/// hours, whole minutes below that.
+fn human_duration(d: Duration) -> String {
+    let secs = d.as_secs();
+    if secs >= 3600 {
+        format!("{}h", secs / 3600)
+    } else {
+        format!("{}m", secs / 60)
     }
 }
 
@@ -159,6 +185,12 @@ fn friendly_error(
         // and would drag provider-specific knowledge into the worker, which
         // is precisely what the source abstraction exists to prevent.
         WorkerError::Source(err) => err.to_string(),
+        WorkerError::Timeout(d) => format!(
+            "Build timed out after {} — the source did not finish in time. \
+             The previous index is untouched. Fix the cause (usually a stuck \
+             embedding upstream or network path) and re-index.",
+            human_duration(*d)
+        ),
         WorkerError::Git(GitError::NonZero { stderr, .. }) => {
             let lower = stderr.to_lowercase();
             // Order matters: "remote branch X not found" also contains the
@@ -771,10 +803,20 @@ impl Indexer {
     /// the ref keeps serving its previous index until the swap. Failures
     /// are recorded against the ref (guarded so a concurrent re-queue isn't
     /// clobbered) and appended to the ref's indexing log.
+    ///
+    /// The whole build runs under a watchdog
+    /// ([`IndexerConfig::build_timeout`]): a build that never finishes
+    /// fails like any other, which is what frees its queue slot for the
+    /// refs behind it.
     pub async fn index_ref(&self, ref_id: i64) -> Result<(), WorkerError> {
-        match self.index_ref_inner(ref_id).await {
-            Ok(()) => Ok(()),
-            Err(err) => {
+        match tokio::time::timeout(
+            self.inner.config.build_timeout,
+            self.index_ref_inner(ref_id),
+        )
+        .await
+        {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(err)) => {
                 // `index_ref_inner` already recorded a context-aware failure
                 // (friendly message + log entry) when it had the ref loaded.
                 // This is the fallback for errors raised *before* that point
@@ -786,7 +828,45 @@ impl Indexer {
                 tracing::warn!(ref_id, error = %err, "rag: indexing ref failed");
                 Err(err)
             }
+            Err(_) => self.ref_timed_out(ref_id).await,
         }
+    }
+
+    /// The watchdog fired: the build did not finish in time. Record it
+    /// exactly like any other failure — a friendly message on the ref and
+    /// an entry on its log — so the card and the timeline say what happened
+    /// and the queue moves on. The dropped build wrote into a fresh folder,
+    /// so the live index is untouched; the orphaned build folder is reaped
+    /// at the next startup.
+    async fn ref_timed_out(&self, ref_id: i64) -> Result<(), WorkerError> {
+        let timeout = self.inner.config.build_timeout;
+        let msg = format!(
+            "Build timed out after {} — the source did not finish in time. \
+             The previous index is untouched. Fix the cause (usually a stuck \
+             embedding upstream or network path) and re-index.",
+            human_duration(timeout)
+        );
+        if let Ok(Some(rref)) = rag_db::find_ref_by_id(&self.inner.db, ref_id).await {
+            self.log_event(rag_db::NewLogEntry {
+                ref_id,
+                collection_id: rref.collection_id,
+                level: rag_db::LogLevel::Error,
+                phase: "indexing".into(),
+                message: msg.clone(),
+                commit_sha: None,
+                files: None,
+                chunks: None,
+                duration_ms: Some(timeout.as_millis() as i64),
+            })
+            .await;
+        }
+        let _ = rag_db::mark_ref_failed(&self.inner.db, ref_id, &msg).await;
+        tracing::warn!(
+            ref_id,
+            timeout = %human_duration(timeout),
+            "rag: build timed out; marked failed so the queue can move on"
+        );
+        Err(WorkerError::Timeout(timeout))
     }
 
     async fn index_ref_inner(&self, ref_id: i64) -> Result<(), WorkerError> {
@@ -2871,5 +2951,141 @@ mod tests {
                 "ref {id} was not processed by the drain pass"
             );
         }
+    }
+
+    /// A build that never finishes must time out, be marked `error`, and free
+    /// the queue: the healthy collection queued behind it is indexed in the
+    /// same drain pass. Regression for a stuck build holding its pass open
+    /// and starving every ref behind it until the next gateway restart.
+    #[tokio::test]
+    async fn a_stuck_build_times_out_and_the_queue_moves_on() {
+        use aiplane_core::server::upstreams::UpstreamRegistry;
+        use std::collections::HashMap;
+
+        let Some(src) = fixture_repo() else {
+            eprintln!("git not on PATH — skipping");
+            return;
+        };
+        let url = src.path().to_string_lossy().to_string();
+
+        // A list server that accepts the export request and never answers it.
+        let stuck = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_delay(Duration::from_secs(30)))
+            .mount(&stuck)
+            .await;
+
+        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let indexer = Indexer::new(
+            db.clone(),
+            UpstreamRegistry::new(&HashMap::new()).unwrap(),
+            reqwest::Client::new(),
+            IndexerConfig {
+                data_dir: dir.path().to_path_buf(),
+                build_timeout: Duration::from_millis(300),
+                ..IndexerConfig::default()
+            },
+            None,
+        );
+
+        // First in the queue: the source that hangs.
+        let stuck_source = rag_db::SourceSpec {
+            kind: "hyperkitty".into(),
+            config: [
+                (
+                    "list_url".to_string(),
+                    format!("{}/hyperkitty/list/users@example.com/", stuck.uri()),
+                ),
+                ("cache_archive".to_string(), "false".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            secrets: None,
+        };
+        let stuck_new = rag_db::NewCollection {
+            name: "stuck-list".into(),
+            description: None,
+            git_url: String::new(),
+            git_ref: "main".into(),
+            pat: None,
+            source: stuck_source,
+            profile_id: None,
+            extraction_model: None,
+            embedding_model: "embed-model".into(),
+            include_globs: vec![],
+            exclude_globs: vec![],
+            chunk_size: 800,
+            chunk_overlap: 100,
+            search_mode: rag_db::SearchMode::Versioned,
+            refresh_interval_mins: 0,
+        };
+        let c1 = rag_db::create_collection(&db, &stuck_new).await.unwrap();
+        let r1 = rag_db::add_ref(&db, c1.id, "main", None, true)
+            .await
+            .unwrap();
+
+        // Behind it: a healthy, embedding-free collection.
+        let ok_new = rag_db::NewCollection {
+            name: "healthy".into(),
+            description: None,
+            git_url: url,
+            git_ref: "main".into(),
+            pat: None,
+            source: Default::default(),
+            profile_id: None,
+            extraction_model: None,
+            embedding_model: "embed-model".into(),
+            include_globs: vec!["*.nomatch".into()],
+            exclude_globs: vec![],
+            chunk_size: 800,
+            chunk_overlap: 100,
+            search_mode: rag_db::SearchMode::Versioned,
+            refresh_interval_mins: 0,
+        };
+        let c2 = rag_db::create_collection(&db, &ok_new).await.unwrap();
+        let r2 = rag_db::add_ref(&db, c2.id, "main", None, true)
+            .await
+            .unwrap();
+
+        let started = Instant::now();
+        drain_once(&indexer).await.unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the pass must not await the stuck build out its 30 s delay"
+        );
+
+        let stuck_after = rag_db::find_ref_by_id(&db, r1.id).await.unwrap().unwrap();
+        assert_eq!(
+            stuck_after.status,
+            rag_db::CollectionStatus::Error,
+            "the stuck build fails, it does not hang: {:?}",
+            stuck_after.last_error
+        );
+        assert!(
+            stuck_after
+                .last_error
+                .as_deref()
+                .unwrap_or("")
+                .contains("timed out"),
+            "the failure names the watchdog: {:?}",
+            stuck_after.last_error
+        );
+        let log = rag_db::list_log_entries(&db, r1.id, 10).await.unwrap();
+        assert!(
+            log.iter()
+                .any(|e| e.level == rag_db::LogLevel::Error && e.message.contains("timed out")),
+            "the timeout lands on the timeline: {log:?}"
+        );
+
+        let ok_after = rag_db::find_ref_by_id(&db, r2.id).await.unwrap().unwrap();
+        assert_eq!(
+            ok_after.status,
+            rag_db::CollectionStatus::Ready,
+            "the queue moved on past the stuck build: {:?}",
+            ok_after.last_error
+        );
     }
 }

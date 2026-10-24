@@ -578,6 +578,12 @@ pub struct RagConfig {
     /// network + embedding load. `0` is treated as `1` (fully serial).
     /// Default `4`.
     pub clone_concurrency: usize,
+    /// Upper bound on one ref's build, in minutes. A build that never
+    /// finishes (a stuck embedding upstream, a wedged clone) is aborted
+    /// and marked `error` after this long, so it cannot hold its queue slot
+    /// and starve every ref queued behind it until the next restart.
+    /// Restart-only: the worker reads it when it starts. Default `360`.
+    pub build_timeout_mins: u32,
 }
 
 impl Default for RagConfig {
@@ -585,6 +591,7 @@ impl Default for RagConfig {
         Self {
             data_dir: default_rag_data_dir(),
             clone_concurrency: default_clone_concurrency(),
+            build_timeout_mins: default_build_timeout_mins(),
         }
     }
 }
@@ -595,6 +602,10 @@ fn default_rag_data_dir() -> PathBuf {
 
 fn default_clone_concurrency() -> usize {
     4
+}
+
+fn default_build_timeout_mins() -> u32 {
+    360
 }
 
 /// GeoIP settings. Points at an IP2Location LITE DB11 `.BIN` and,

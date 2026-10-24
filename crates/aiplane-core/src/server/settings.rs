@@ -611,6 +611,9 @@ pub static SECTIONS: &[SectionSpec] = &[
             // Restart-only: the worker pool is sized once, when the indexer
             // starts.
             r("rag.clone_concurrency", Kind::Int),
+            // Restart-only: the worker reads the watchdog once, when it
+            // starts.
+            r("rag.build_timeout_mins", Kind::Int),
         ],
     },
     SectionSpec {
@@ -1168,6 +1171,7 @@ fn rag(s: &Settings) -> RagConfig {
     RagConfig {
         data_dir: s.path_or("rag.data_dir", d.data_dir),
         clone_concurrency: s.int("rag.clone_concurrency", d.clone_concurrency),
+        build_timeout_mins: s.int("rag.build_timeout_mins", d.build_timeout_mins),
     }
 }
 
@@ -1460,6 +1464,16 @@ pub fn snapshot(c: &Config) -> Vec<(String, String)> {
                     .unwrap_or(rag_default.clone_concurrency) as u64,
             ),
             4,
+        ),
+    );
+    put(
+        "rag.build_timeout_mins",
+        num(
+            Some(
+                rag.map(|v| v.build_timeout_mins)
+                    .unwrap_or(rag_default.build_timeout_mins) as u64,
+            ),
+            360,
         ),
     );
 

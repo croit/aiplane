@@ -55,7 +55,7 @@ The collection card shows source/model/access metadata, refresh schedule, status
 - **Set primary:** Change the default ref for a versioned collection.
 - **Remove source / Delete collection:** Confirm removal before deleting the corresponding resource.
 
-Statuses distinguish pending, cloning, indexing, ready and error; non-Git sources show fetching instead of cloning. A non-Git source row also carries the source's download state: an in-flight download with the bytes received so far, and once the local copy exists, the date window it covers. Read the recorded last error and log before retrying. A ready index proves that an indexing pass completed; verify answer quality against the source separately.
+Statuses distinguish pending, cloning, indexing, ready and error; non-Git sources show fetching instead of cloning. A non-Git source row also carries the source's download state: an in-flight download with the bytes received so far, and once the local copy exists, the date window it covers. A build that does not finish within `rag.build_timeout_mins` (default 360) is aborted and marked error with a timeout message, so one stuck build cannot hold the queue and starve the collections behind it. Read the recorded last error and log before retrying. A ready index proves that an indexing pass completed; verify answer quality against the source separately.
 
 ### Trigger synchronization externally
 

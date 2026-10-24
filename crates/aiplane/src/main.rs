@@ -544,6 +544,7 @@ async fn main() -> anyhow::Result<()> {
     let indexer_config = feat::rag::worker::IndexerConfig {
         data_dir: rag_config.data_dir,
         clone_concurrency: rag_config.clone_concurrency,
+        build_timeout: std::time::Duration::from_secs(rag_config.build_timeout_mins as u64 * 60),
         ..feat::rag::worker::IndexerConfig::default()
     };
     // One OCR service for the whole process. Built here rather than letting

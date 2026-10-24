@@ -132,6 +132,7 @@ Category: **Data**.
 | `rag.enabled` | Boolean | Master switch for RAG indexing and retrieval. | Yes |
 | `rag.data_dir` | Path | Where indexes are stored. Must be on the persistent volume, or every restart reindexes. Existing indexes do not move with it — point this somewhere new and everything is reindexed from scratch. | Yes |
 | `rag.clone_concurrency` | Integer | How many git clones and indexing jobs run at once. | Yes |
+| `rag.build_timeout_mins` | Integer | How long one ref's build may run before the watchdog aborts it and marks the ref `error`. A build that never finishes (a stuck embedding upstream, a wedged clone) would otherwise hold its queue slot and starve every ref queued behind it until the next restart. | Yes |
 
 ### skills
 
