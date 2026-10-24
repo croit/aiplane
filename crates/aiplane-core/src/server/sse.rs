@@ -33,11 +33,11 @@ pub fn data_payload(line: &str) -> Option<&str> {
     (payload != "[DONE]").then_some(payload)
 }
 
-/// Token counts `(prompt, completion, total)` from a chat-completion chunk
-/// that carries a non-null `usage` object, else `None`. OpenAI sends this on a
-/// trailing choice-less frame; some backends ride it on the final content
-/// chunk — the caller decides what to do with any accompanying choice.
-pub fn usage_tokens(v: &Value) -> Option<(Option<i64>, Option<i64>, Option<i64>)> {
+/// Token counts from a chat-completion chunk that carries a non-null `usage`
+/// object, else `None`. OpenAI sends this on a trailing choice-less frame;
+/// some backends ride it on the final content chunk — the caller decides what
+/// to do with any accompanying choice.
+pub fn usage_tokens(v: &Value) -> Option<crate::server::db::usage::TokenCounts> {
     v.get("usage")
         .is_some_and(|u| !u.is_null())
         .then(|| crate::server::db::usage::usage_from_value(v))

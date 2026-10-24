@@ -2572,6 +2572,7 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
             prompt_tokens: (prompt > 0).then_some(prompt),
             completion_tokens: (completion > 0).then_some(completion),
             total_tokens: (prompt + completion > 0).then_some(prompt + completion),
+            cached_tokens: None,
             input_units: None,
             output_units: None,
             enforce_limits: true,
@@ -2602,6 +2603,7 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
             prompt_tokens: Some(900),
             completion_tokens: Some(280),
             total_tokens: Some(1180),
+            cached_tokens: None,
             input_units: None,
             output_units: None,
             enforce_limits: true,
@@ -2615,8 +2617,8 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
     // writer computes a real `cost` on each seeded row (→ the /usage cost
     // column + the cost limit bar show non-zero spend).
     use aiplane_core::server::db::model_defaults;
-    model_defaults::set_pricing(&state.db, "demo-model", Some(0.5), Some(1.5)).await?;
-    model_defaults::set_pricing(&state.db, "demo-model-pro", Some(3.0), Some(15.0)).await?;
+    model_defaults::set_pricing(&state.db, "demo-model", Some(0.5), Some(1.5), None).await?;
+    model_defaults::set_pricing(&state.db, "demo-model-pro", Some(3.0), Some(15.0), None).await?;
 
     usage_db::insert_batch(&state.db, &usage_rows).await?;
 

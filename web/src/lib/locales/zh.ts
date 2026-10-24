@@ -145,6 +145,8 @@ export const zh: Catalog = {
  "admin-other-price-note": "采样、推理和上下文不适用于此类型 —— 仅价格用于成本核算。",
  "admin-overwrite-existing": "覆盖已有条目",
  "admin-page-title": "模型 — AIplane",
+ "admin-price-cache-label": "每 1M 缓存读取价格",
+ "admin-price-cache-placeholder": "未定价",
  "admin-price-in-label": "输入价格",
  "admin-price-in-placeholder": "未定价",
  "admin-price-label": "{cur}/{unit}",

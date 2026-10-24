@@ -869,6 +869,7 @@ async fn spend(a: &A2a, tokens: i64) {
             prompt_tokens: Some(tokens),
             completion_tokens: Some(0),
             total_tokens: Some(tokens),
+            cached_tokens: None,
             input_units: None,
             output_units: None,
             enforce_limits: true,

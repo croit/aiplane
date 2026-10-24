@@ -531,6 +531,7 @@ mod tests {
             prompt_tokens: Some(total),
             completion_tokens: Some(0),
             total_tokens: Some(total),
+            cached_tokens: None,
             input_units: None,
             output_units: None,
             enforce_limits,
@@ -1149,10 +1150,10 @@ mod tests {
     #[tokio::test]
     async fn a_spent_cost_budget_never_refuses_a_free_model() {
         let pool = pool().await;
-        model_defaults::set_pricing(&pool, "paid", Some(1_000_000.0), Some(0.0))
+        model_defaults::set_pricing(&pool, "paid", Some(1_000_000.0), Some(0.0), None)
             .await
             .unwrap();
-        model_defaults::set_pricing(&pool, "zero", Some(0.0), Some(0.0))
+        model_defaults::set_pricing(&pool, "zero", Some(0.0), Some(0.0), None)
             .await
             .unwrap();
         limits::upsert(

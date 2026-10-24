@@ -500,6 +500,7 @@ impl OcrService {
             prompt_tokens: raw.prompt_tokens,
             completion_tokens: raw.completion_tokens,
             total_tokens: raw.total_tokens,
+            cached_tokens: raw.cached_tokens,
             // Pages are the natural non-token unit for document work: an
             // operator pricing OCR per page reads it straight off.
             input_units: raw.pages_processed.map(|p| p as f64),
@@ -549,6 +550,7 @@ pub struct RawOcr {
     pub prompt_tokens: Option<i64>,
     pub completion_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
+    pub cached_tokens: Option<i64>,
     /// Serving backend's name, for the usage row.
     pub backend: String,
 }
@@ -642,8 +644,7 @@ fn parse_response(bytes: &[u8]) -> Result<RawOcr, OcrError> {
         .map_err(|err| OcrError::Parse(format!("invalid JSON: {err}")))?;
     let body: SidecarResponse = serde_json::from_value(value.clone())
         .map_err(|err| OcrError::Parse(format!("unexpected response shape: {err}")))?;
-    let (prompt_tokens, completion_tokens, total_tokens) =
-        aiplane_core::server::db::usage::usage_from_value(&value);
+    let counts = aiplane_core::server::db::usage::usage_from_value(&value);
 
     let (markdown, pages_total, pages_processed) = match body.pages {
         Some(pages) if !pages.is_empty() => {
@@ -673,9 +674,10 @@ fn parse_response(bytes: &[u8]) -> Result<RawOcr, OcrError> {
         markdown,
         pages_total,
         pages_processed,
-        prompt_tokens,
-        completion_tokens,
-        total_tokens,
+        prompt_tokens: counts.prompt,
+        completion_tokens: counts.completion,
+        total_tokens: counts.total,
+        cached_tokens: counts.cached,
         backend: String::new(),
     })
 }

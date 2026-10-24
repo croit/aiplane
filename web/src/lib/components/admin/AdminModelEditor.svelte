@@ -25,6 +25,7 @@
 	const defaults = untrack(() => model.defaults);
 	let inputPrice = $state(defaults?.input_price?.toString() ?? '');
 	let outputPrice = $state(defaults?.output_price?.toString() ?? '');
+	let cachePrice = $state(defaults?.cache_read_price?.toString() ?? '');
 	let contextWindow = $state(defaults?.context_window?.toString() ?? '');
 	let reasoningStyle = $state(defaults?.reasoning_style ?? '');
 	let budgets = $state(
@@ -61,6 +62,7 @@
 				model_name: model.name,
 				input_price: inputPrice,
 				output_price: outputPrice,
+				cache_read_price: cachePrice,
 				pricing_unit: pricingUnitFor(model),
 				price_only: priceOnly ? '1' : '',
 				context_window: contextWindow,
@@ -101,6 +103,7 @@
 			<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-price-in-label')} ({priceLabel})</span><input type="number" min="0" step="any" class="input" bind:value={inputPrice} placeholder={t('admin-price-in-placeholder')} /></label>
 			<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-price-out-label')} ({priceLabel})</span><input type="number" min="0" step="any" class="input" bind:value={outputPrice} placeholder={t('admin-price-out-placeholder')} /></label>
 			{#if isChat}
+				<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-price-cache-label')} ({priceLabel})</span><input type="number" min="0" step="any" class="input" bind:value={cachePrice} placeholder={t('admin-price-cache-placeholder')} /></label>
 				<label class="flex flex-col gap-1">
 					<span class="text-xs opacity-70">{t('admin-context-window-full-label')}</span>
 					<input type="number" min="1" class="input" class:input-warning={contextHint?.tone === 'warning'} bind:value={contextWindow} placeholder={t('admin-context-window-placeholder')} aria-describedby={contextHint ? 'context-window-hint' : undefined} />

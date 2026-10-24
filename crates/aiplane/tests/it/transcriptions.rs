@@ -111,6 +111,7 @@ async fn provider_duration_is_priced_for_transcription() {
         "whisper-1",
         Some(0.02),
         None,
+        None,
         PricingUnit::Seconds,
     )
     .await

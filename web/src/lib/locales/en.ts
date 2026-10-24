@@ -145,6 +145,8 @@ export const en: Catalog = {
  "admin-other-price-note": "Sampling, reasoning and context don't apply to this kind — only pricing, for cost accounting.",
  "admin-overwrite-existing": "overwrite existing",
  "admin-page-title": "Models — AIplane",
+ "admin-price-cache-label": "Cache read",
+ "admin-price-cache-placeholder": "unpriced",
  "admin-price-in-label": "Price in",
  "admin-price-in-placeholder": "unpriced",
  "admin-price-label": "{cur}/{unit}",

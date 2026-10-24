@@ -60,8 +60,7 @@ pub fn from_openai(completion: &Value, requested_model: &str) -> Value {
 
     // The same reader billing and the SSE decoder use, so the three can't
     // disagree about a backend's spelling of the usage fields.
-    let (input_tokens, output_tokens, _total) =
-        crate::server::db::usage::usage_from_value(completion);
+    let counts = crate::server::db::usage::usage_from_value(completion);
 
     json!({
         "id": super::message_id(completion.get("id").and_then(Value::as_str)),
@@ -71,7 +70,7 @@ pub fn from_openai(completion: &Value, requested_model: &str) -> Value {
         "content": content,
         "stop_reason": super::stop_reason_for(finish),
         "stop_sequence": Value::Null,
-        "usage": usage_object(input_tokens.unwrap_or(0), output_tokens.unwrap_or(0)),
+        "usage": usage_object(counts.prompt.unwrap_or(0), counts.completion.unwrap_or(0)),
     })
 }
 

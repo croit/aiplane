@@ -465,6 +465,7 @@ async fn a_spent_budget_silences_voice_too() {
             prompt_tokens: Some(150),
             completion_tokens: Some(0),
             total_tokens: Some(150),
+            cached_tokens: None,
             input_units: None,
             output_units: None,
             enforce_limits: true,

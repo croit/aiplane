@@ -18,6 +18,7 @@ const model: AdminModel = {
 		context_window: 32768,
 		input_price: 1,
 		output_price: null,
+		cache_read_price: null,
 		pricing_unit: 'tokens',
 		budget_low: null,
 		budget_medium: 1024,

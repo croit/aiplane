@@ -145,6 +145,8 @@ export const ru: Catalog = {
  "admin-other-price-note": "Сэмплирование, рассуждения и контекст к этому виду не применяются — только цены, для учёта расходов.",
  "admin-overwrite-existing": "перезаписать существующий",
  "admin-page-title": "Модели — AIplane",
+ "admin-price-cache-label": "Цена чтения кэша за 1M",
+ "admin-price-cache-placeholder": "без цены",
  "admin-price-in-label": "Цена вх",
  "admin-price-in-placeholder": "без цены",
  "admin-price-label": "{cur}/{unit}",

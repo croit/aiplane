@@ -35,6 +35,8 @@ admin-price-in-label = Price in
 admin-price-out-label = Price out
 admin-price-in-placeholder = unpriced
 admin-price-out-placeholder = unpriced
+admin-price-cache-label = Cache read
+admin-price-cache-placeholder = unpriced
 
 # Context window (drives auto-compaction).
 admin-context-window-full-label = Context window (tokens)

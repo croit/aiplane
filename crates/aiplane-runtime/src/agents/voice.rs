@@ -337,6 +337,7 @@ async fn finish<T>(
                 prompt_tokens: None,
                 completion_tokens: None,
                 total_tokens: None,
+                cached_tokens: None,
                 input_units: usage.units.filter(|_| succeeded),
                 output_units: None,
                 principal_kind: PrincipalKind::System,

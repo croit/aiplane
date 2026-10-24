@@ -2449,6 +2449,7 @@ async fn the_models_endpoint_lists_offered_chat_models() {
         "model-a",
         Some(3.0),
         Some(15.0),
+        None,
     )
     .await
     .unwrap();

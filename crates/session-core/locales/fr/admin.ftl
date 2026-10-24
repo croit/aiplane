@@ -29,6 +29,8 @@ admin-price-in-label = Prix ent
 admin-price-out-label = Prix sor
 admin-price-in-placeholder = sans tarif
 admin-price-out-placeholder = sans tarif
+admin-price-cache-label = Prix lecture du cache par 1M
+admin-price-cache-placeholder = sans tarif
 
 # Fenêtre de contexte (pilote la compaction automatique).
 admin-context-window-full-label = Fenêtre de contexte (jetons)

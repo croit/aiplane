@@ -74,6 +74,12 @@ pub(crate) async fn apply_model_form(
             return Err(ModelFormError::Invalid(format!("not a valid price: {v}")));
         }
     };
+    let cache_read_price = match parse_price(&form.cache_read_price) {
+        Ok(p) => p,
+        Err(v) => {
+            return Err(ModelFormError::Invalid(format!("not a valid price: {v}")));
+        }
+    };
     let pricing_unit = db::PricingUnit::parse(&form.pricing_unit);
 
     if form.price_only == "1" {
@@ -82,6 +88,7 @@ pub(crate) async fn apply_model_form(
             &form.model_name,
             input_price,
             output_price,
+            cache_read_price,
             pricing_unit,
         )
         .await
@@ -174,6 +181,7 @@ pub(crate) async fn apply_model_form(
         context_window,
         input_price,
         output_price,
+        cache_read_price,
         pricing_unit,
         capabilities: db::ModelCapabilities {
             vision: tri(&form.cap_vision),
@@ -204,6 +212,8 @@ pub(crate) struct SaveForm {
     pub(crate) input_price: String,
     #[serde(default)]
     pub(crate) output_price: String,
+    #[serde(default)]
+    pub(crate) cache_read_price: String,
     #[serde(default)]
     pub(crate) pricing_unit: String,
     #[serde(default)]

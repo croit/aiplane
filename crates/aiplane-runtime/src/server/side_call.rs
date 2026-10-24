@@ -201,7 +201,7 @@ impl Payer {
         ) else {
             return;
         };
-        let (prompt_tokens, completion_tokens, total_tokens) = usage_from_value(&exchange.response);
+        let counts = usage_from_value(&exchange.response);
         state.usage.emit(
             UsageRecord {
                 created_at: jiff::Timestamp::now(),
@@ -215,9 +215,10 @@ impl Payer {
                 model: model.clone(),
                 status,
                 duration_ms: i64::try_from(exchange.latency_ms()).unwrap_or(i64::MAX),
-                prompt_tokens,
-                completion_tokens,
-                total_tokens,
+                prompt_tokens: counts.prompt,
+                completion_tokens: counts.completion,
+                total_tokens: counts.total,
+                cached_tokens: counts.cached,
                 input_units: None,
                 output_units: None,
                 enforce_limits: state
@@ -293,7 +294,7 @@ impl<T> Answered<T> {
     /// The tokens the call spent, as the upstream reported them.
     pub fn tokens(&self) -> u64 {
         usage_from_value(&self.exchange.response)
-            .2
+            .total
             .and_then(|t| u64::try_from(t).ok())
             .unwrap_or(0)
     }

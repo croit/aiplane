@@ -699,6 +699,7 @@ pub struct ModelDefaultsView {
     pub context_window: Option<i64>,
     pub input_price: Option<f64>,
     pub output_price: Option<f64>,
+    pub cache_read_price: Option<f64>,
     pub pricing_unit: &'static str,
     pub budget_low: Option<i64>,
     pub budget_medium: Option<i64>,
@@ -754,6 +755,7 @@ fn model_defaults_view(d: &db::model_defaults::ModelDefaults) -> ModelDefaultsVi
         context_window: d.context_window,
         input_price: d.input_price,
         output_price: d.output_price,
+        cache_read_price: d.cache_read_price,
         pricing_unit: d.pricing_unit.as_str(),
         budget_low: d.thinking_budget_low,
         budget_medium: d.thinking_budget_medium,
@@ -800,6 +802,7 @@ pub async fn models_save(State(state): State<Arc<RamaState>>, req: Request) -> R
         model_name: form_field(raw.model_name),
         input_price: form_field(raw.input_price),
         output_price: form_field(raw.output_price),
+        cache_read_price: form_field(raw.cache_read_price),
         pricing_unit: form_field(raw.pricing_unit),
         price_only: form_field(raw.price_only),
         context_window: form_field(raw.context_window),
@@ -849,6 +852,9 @@ pub struct ModelSaveBody {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     output_price: Option<serde_json::Value>,
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    cache_read_price: Option<serde_json::Value>,
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pricing_unit: Option<serde_json::Value>,

@@ -28,6 +28,8 @@ admin-price-in-label = 输入价格
 admin-price-out-label = 输出价格
 admin-price-in-placeholder = 未定价
 admin-price-out-placeholder = 未定价
+admin-price-cache-label = 每 1M 缓存读取价格
+admin-price-cache-placeholder = 未定价
 
 # 上下文窗口（驱动自动压缩）。
 admin-context-window-full-label = 上下文窗口（词元）

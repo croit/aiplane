@@ -96,15 +96,15 @@ impl RecordParams {
     }
 
     /// Finish the measurement and hand it to the (fire-and-forget) sink.
-    /// `tokens` is `(prompt, completion, total)` — any may be `None` when
-    /// the upstream didn't report usage.
+    /// `tokens` is the upstream's usage counts — any may be `None` when the
+    /// upstream didn't report usage.
     fn emit(
         &self,
         sink: &UsageHandle,
         backend: &str,
         status: u16,
         started: Instant,
-        tokens: (Option<i64>, Option<i64>, Option<i64>),
+        tokens: usage::TokenCounts,
     ) {
         sink.emit(self.record(backend, status, started, tokens));
     }
@@ -118,7 +118,7 @@ impl RecordParams {
         backend: &str,
         status: u16,
         started: Instant,
-        tokens: (Option<i64>, Option<i64>, Option<i64>),
+        tokens: usage::TokenCounts,
     ) {
         tracing::warn!(
             model = %self.model,
@@ -137,9 +137,8 @@ impl RecordParams {
         backend: &str,
         status: u16,
         started: Instant,
-        tokens: (Option<i64>, Option<i64>, Option<i64>),
+        tokens: usage::TokenCounts,
     ) -> UsageRecord {
-        let (prompt_tokens, completion_tokens, total_tokens) = tokens;
         UsageRecord {
             created_at: Timestamp::now(),
             user_id: self.user_id.clone(),
@@ -152,9 +151,10 @@ impl RecordParams {
             model: self.model.clone(),
             status,
             duration_ms: started.elapsed().as_millis() as i64,
-            prompt_tokens,
-            completion_tokens,
-            total_tokens,
+            prompt_tokens: tokens.prompt,
+            completion_tokens: tokens.completion,
+            total_tokens: tokens.total,
+            cached_tokens: tokens.cached,
             input_units: self.input_units,
             output_units: self.output_units,
             enforce_limits: self.enforce_limits,
@@ -346,19 +346,17 @@ pub(crate) fn limit_exceeded_response(e: &aiplane_core::server::limits::LimitExc
         })
 }
 
-/// Token counts from a buffered JSON body (or `(None, None, None)` if it
-/// doesn't parse / carries no `usage`).
-fn tokens_from_bytes(bytes: &Bytes) -> (Option<i64>, Option<i64>, Option<i64>) {
+/// Token counts from a buffered JSON body, or the empty count if it doesn't
+/// parse / carries no `usage`.
+fn tokens_from_bytes(bytes: &Bytes) -> usage::TokenCounts {
     serde_json::from_slice::<Value>(bytes)
         .map(|v| usage::usage_from_value(&v))
-        .unwrap_or((None, None, None))
+        .unwrap_or_default()
 }
 
-pub(crate) type TokenUsage = (Option<i64>, Option<i64>, Option<i64>);
-
-fn response_metrics(kind: UsageKind, bytes: &Bytes) -> (TokenUsage, UnitUsage) {
+fn response_metrics(kind: UsageKind, bytes: &Bytes) -> (usage::TokenCounts, UnitUsage) {
     let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
-        return ((None, None, None), UnitUsage::default());
+        return (usage::TokenCounts::default(), UnitUsage::default());
     };
     let mut units = usage::units_from_value(&value);
     if kind == UsageKind::Transcription && units.input.is_none() {
@@ -368,14 +366,14 @@ fn response_metrics(kind: UsageKind, bytes: &Bytes) -> (TokenUsage, UnitUsage) {
         units.output = aiplane_features::server::image_gen::image_output_units_from_value(&value)
             .or(units.output);
     }
-    let (mut prompt, completion, total) = usage::usage_from_value(&value);
+    let mut counts = usage::usage_from_value(&value);
     // Some backends report only `total_tokens` (vLLM for a rerank). An
     // embedding or a rerank generates nothing, so all of them are input and
     // priced so.
-    if matches!(kind, UsageKind::Embedding | UsageKind::Rerank) && completion.is_none() {
-        prompt = prompt.or(total);
+    if matches!(kind, UsageKind::Embedding | UsageKind::Rerank) && counts.completion.is_none() {
+        counts.prompt = counts.prompt.or(counts.total);
     }
-    ((prompt, completion, total), units)
+    (counts, units)
 }
 
 fn request_units(kind: UsageKind, body: &Bytes) -> UnitUsage {
@@ -682,7 +680,7 @@ async fn forward_one_round_once(
                 &backend_name,
                 StatusCode::BAD_GATEWAY.as_u16(),
                 started,
-                (None, None, None),
+                usage::TokenCounts::default(),
             );
             return Err(LoopError::Upstream(e.to_string()));
         }
@@ -701,7 +699,7 @@ async fn forward_one_round_once(
                 &backend_name,
                 StatusCode::BAD_GATEWAY.as_u16(),
                 started,
-                (None, None, None),
+                usage::TokenCounts::default(),
             );
             return Err(LoopError::Upstream(e.to_string()));
         }
@@ -1206,6 +1204,7 @@ fn record_selector_usage(state: &RamaState, user: &UserCtx, decision: &Automatic
             (Some(input), Some(output)) => Some(input + output),
             _ => None,
         },
+        cached_tokens: None,
         input_units: None,
         output_units: None,
         enforce_limits: state
@@ -2421,7 +2420,7 @@ async fn forward(
                 &backend_name,
                 StatusCode::BAD_GATEWAY.as_u16(),
                 started,
-                (None, None, None),
+                usage::TokenCounts::default(),
             );
             return error_response(
                 StatusCode::BAD_GATEWAY,
@@ -2451,7 +2450,7 @@ async fn forward(
                 &backend_name,
                 StatusCode::BAD_GATEWAY.as_u16(),
                 started,
-                (None, None, None),
+                usage::TokenCounts::default(),
             );
             return error_response(
                 StatusCode::BAD_GATEWAY,
@@ -2612,7 +2611,7 @@ async fn forward_streaming(
                 &backend_name,
                 StatusCode::BAD_GATEWAY.as_u16(),
                 started,
-                (None, None, None),
+                usage::TokenCounts::default(),
             );
             return Err(err.to_string());
         }
@@ -2694,7 +2693,7 @@ async fn forward_streaming(
         // but drop it from the relayed stream — keeping the passthrough
         // byte-faithful. Re-assembled event bytes are identical to the
         // upstream's, just re-chunked on `\n\n` boundaries.
-        let mut tokens: (Option<i64>, Option<i64>, Option<i64>) = (None, None, None);
+        let mut tokens: usage::TokenCounts = usage::TokenCounts::default();
         'frames: while let Some(frame) = upstream_stream.next().await {
             let Ok(frame) = frame else { break };
             buf.extend_from_slice(&frame);
@@ -2748,7 +2747,7 @@ async fn forward_streaming(
             // with one plain JSON body (no `\n\n`-framed events), so `buf`
             // holds it whole here. Parse it for the `usage` block (if we
             // haven't already) and forward it verbatim.
-            if tokens == (None, None, None)
+            if tokens == usage::TokenCounts::default()
                 && let Ok(v) = serde_json::from_slice::<Value>(&buf)
             {
                 tokens = usage::usage_from_value(&v);
@@ -2862,7 +2861,7 @@ pub(crate) trait StreamSink: Send {
     /// that the usage row is billed on. Called once per round rather than per
     /// chunk so a backend that repeats cumulative usage across several frames
     /// can't make the client-visible totals disagree with the billed ones.
-    fn round_usage(&mut self, tokens: TokenUsage) {
+    fn round_usage(&mut self, tokens: usage::TokenCounts) {
         let _ = tokens;
     }
 
@@ -3517,7 +3516,7 @@ async fn drive_streaming_tool_loop_inner(
                     &backend_name,
                     StatusCode::BAD_GATEWAY.as_u16(),
                     started,
-                    (None, None, None),
+                    usage::TokenCounts::default(),
                 );
                 drop(acquired);
                 if attempt >= DISPATCH_RETRIES {
@@ -3545,7 +3544,7 @@ async fn drive_streaming_tool_loop_inner(
                 &backend_name,
                 status.as_u16(),
                 started,
-                (None, None, None),
+                usage::TokenCounts::default(),
             );
             let body_str = String::from_utf8_lossy(&bytes)
                 .chars()
@@ -3570,7 +3569,7 @@ async fn drive_streaming_tool_loop_inner(
         let mut reasoning_guard = aiplane_runtime::loop_guard::LoopGuard::new();
         // Token counts ride the trailing `usage` frame when the client opted
         // into `stream_options.include_usage` (we never inject it on /v1).
-        let mut round_tokens: (Option<i64>, Option<i64>, Option<i64>) = (None, None, None);
+        let mut round_tokens: usage::TokenCounts = usage::TokenCounts::default();
         let mut held = HeldRound::default();
         let mut sse = upstream.bytes_stream();
 
@@ -4184,7 +4183,7 @@ mod tests {
         serde_json::from_slice(body).unwrap()
     }
 
-    fn tokens_of(kind: UsageKind, body: serde_json::Value) -> TokenUsage {
+    fn tokens_of(kind: UsageKind, body: serde_json::Value) -> usage::TokenCounts {
         response_metrics(kind, &Bytes::from(body.to_string())).0
     }
 
@@ -4192,14 +4191,20 @@ mod tests {
     fn a_bare_total_counts_as_input_for_input_only_kinds() {
         let bare = json!({"usage": {"total_tokens": 9}});
         for kind in [UsageKind::Embedding, UsageKind::Rerank] {
-            assert_eq!(tokens_of(kind, bare.clone()), (Some(9), None, Some(9)));
+            assert_eq!(
+                tokens_of(kind, bare.clone()),
+                usage::TokenCounts::new(Some(9), None, Some(9), None)
+            );
         }
     }
 
     #[test]
     fn a_bare_total_stays_unsplit_for_a_chat_call() {
         let bare = json!({"usage": {"total_tokens": 9}});
-        assert_eq!(tokens_of(UsageKind::Chat, bare), (None, None, Some(9)));
+        assert_eq!(
+            tokens_of(UsageKind::Chat, bare),
+            usage::TokenCounts::new(None, None, Some(9), None)
+        );
     }
 
     #[test]
@@ -4207,7 +4212,7 @@ mod tests {
         let full = json!({"usage": {"prompt_tokens": 4, "total_tokens": 9}});
         assert_eq!(
             tokens_of(UsageKind::Embedding, full),
-            (Some(4), None, Some(9))
+            usage::TokenCounts::new(Some(4), None, Some(9), None)
         );
     }
 

@@ -865,7 +865,7 @@ async fn model_overrides_validate_and_save() {
             Method::PUT,
             "/api/v0/admin/models",
             &cookie,
-            Some(r#"{"model_name":"m","input_price":"1.5","output_price":"2","pricing_unit":"tokens","context_window":"65536","reasoning_style":"qwen","budget_medium":"1024","cap_vision":"true","fallback_tools":"model-a","defaults_toml":"temperature = 0.4"}"#.into()),
+            Some(r#"{"model_name":"m","input_price":"1.5","output_price":"2","cache_read_price":"0.3","pricing_unit":"tokens","context_window":"65536","reasoning_style":"qwen","budget_medium":"1024","cap_vision":"true","fallback_tools":"model-a","defaults_toml":"temperature = 0.4"}"#.into()),
         ))
         .await
         .unwrap();
@@ -908,6 +908,8 @@ async fn model_overrides_validate_and_save() {
     assert_eq!(configured["uses_token_budget"], false);
     assert_eq!(configured["defaults"]["context_window"], 65536);
     assert_eq!(configured["defaults"]["budget_medium"], 1024);
+    assert_eq!(configured["defaults"]["input_price"], 1.5);
+    assert_eq!(configured["defaults"]["cache_read_price"], 0.3);
     assert_eq!(configured["defaults"]["capabilities"]["vision"], true);
     assert_eq!(
         configured["defaults"]["capabilities"]["fallback_tools"],

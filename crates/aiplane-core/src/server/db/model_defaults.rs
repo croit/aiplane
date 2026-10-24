@@ -54,6 +54,10 @@ pub struct ModelDefaults {
     pub input_price: Option<f64>,
     /// Output price using the same `pricing_unit` as `input_price`.
     pub output_price: Option<f64>,
+    /// Price of prompt-cache reads, in the same unit as `input_price` (per
+    /// 1M tokens for chat models). `None` = cached tokens price at the input
+    /// rate.
+    pub cache_read_price: Option<f64>,
     pub pricing_unit: PricingUnit,
     /// What this model can/cannot do (vision, tools, …). Tri-state per field:
     /// `None` = unknown, `Some(true)` = supported, `Some(false)` = confirmed
@@ -127,6 +131,7 @@ fn map_row(row: &SqliteRow) -> Result<ModelDefaults, DbError> {
     let context_window: Option<i64> = row.try_get("context_window")?;
     let input_price: Option<f64> = row.try_get("input_price")?;
     let output_price: Option<f64> = row.try_get("output_price")?;
+    let cache_read_price: Option<f64> = row.try_get("cache_read_price")?;
     let pricing_unit: String = row.try_get("pricing_unit")?;
     let capabilities = map_capabilities(row)?;
     let updated_at_s: String = row.try_get("updated_at")?;
@@ -151,6 +156,7 @@ fn map_row(row: &SqliteRow) -> Result<ModelDefaults, DbError> {
         context_window,
         input_price,
         output_price,
+        cache_read_price,
         pricing_unit: PricingUnit::parse(&pricing_unit),
         capabilities,
         updated_at,
@@ -183,7 +189,7 @@ pub async fn get(pool: &Pool, model_name: &str) -> Result<Option<ModelDefaults>,
                   thinking_budget_high, thinking_budget_xhigh,
                   reasoning_effort_low, reasoning_effort_medium,
                   reasoning_effort_high, reasoning_effort_xhigh,
-                   context_window, input_price, output_price, pricing_unit,
+                   context_window, input_price, output_price, cache_read_price, pricing_unit,
                   cap_vision, cap_audio_input, cap_pdf_input,
                   cap_tools, cap_parallel_tools, cap_structured_output,
                   fallback_vision, fallback_tools,
@@ -233,20 +239,23 @@ pub async fn set_pricing(
     model_name: &str,
     input_price: Option<f64>,
     output_price: Option<f64>,
+    cache_read_price: Option<f64>,
 ) -> Result<(), DbError> {
     let now = Timestamp::now().to_string();
     sqlx::query(
         r#"INSERT INTO model_defaults
-              (model_name, defaults_toml, input_price, output_price, updated_at)
-           VALUES (?, '', ?, ?, ?)
+              (model_name, defaults_toml, input_price, output_price, cache_read_price, updated_at)
+           VALUES (?, '', ?, ?, ?, ?)
            ON CONFLICT(model_name) DO UPDATE SET
-              input_price  = excluded.input_price,
-              output_price = excluded.output_price,
-              updated_at   = excluded.updated_at"#,
+               input_price      = excluded.input_price,
+               output_price     = excluded.output_price,
+               cache_read_price = excluded.cache_read_price,
+               updated_at       = excluded.updated_at"#,
     )
     .bind(model_name)
     .bind(input_price)
     .bind(output_price)
+    .bind(cache_read_price)
     .bind(now)
     .execute(pool)
     .await?;
@@ -260,22 +269,25 @@ pub async fn set_pricing_with_unit(
     model_name: &str,
     input_price: Option<f64>,
     output_price: Option<f64>,
+    cache_read_price: Option<f64>,
     pricing_unit: PricingUnit,
 ) -> Result<(), DbError> {
     let now = Timestamp::now().to_string();
     sqlx::query(
         r#"INSERT INTO model_defaults
-              (model_name, defaults_toml, input_price, output_price, pricing_unit, updated_at)
-           VALUES (?, '', ?, ?, ?, ?)
+              (model_name, defaults_toml, input_price, output_price, cache_read_price, pricing_unit, updated_at)
+           VALUES (?, '', ?, ?, ?, ?, ?)
            ON CONFLICT(model_name) DO UPDATE SET
-              input_price  = excluded.input_price,
-              output_price = excluded.output_price,
-              pricing_unit = excluded.pricing_unit,
-              updated_at   = excluded.updated_at"#,
+               input_price      = excluded.input_price,
+               output_price     = excluded.output_price,
+               cache_read_price = excluded.cache_read_price,
+               pricing_unit     = excluded.pricing_unit,
+               updated_at       = excluded.updated_at"#,
     )
     .bind(model_name)
     .bind(input_price)
     .bind(output_price)
+    .bind(cache_read_price)
     .bind(pricing_unit.as_str())
     .bind(now)
     .execute(pool)
@@ -474,6 +486,7 @@ pub struct AllFields {
     pub context_window: Option<i64>,
     pub input_price: Option<f64>,
     pub output_price: Option<f64>,
+    pub cache_read_price: Option<f64>,
     pub pricing_unit: PricingUnit,
     pub capabilities: ModelCapabilities,
 }
@@ -492,12 +505,12 @@ pub async fn set_all(pool: &Pool, model_name: &str, f: &AllFields) -> Result<(),
                thinking_budget_high, thinking_budget_xhigh,
                reasoning_effort_low, reasoning_effort_medium,
                reasoning_effort_high, reasoning_effort_xhigh,
-               context_window, input_price, output_price, pricing_unit,
+               context_window, input_price, output_price, cache_read_price, pricing_unit,
                cap_vision, cap_audio_input, cap_pdf_input,
                cap_tools, cap_parallel_tools, cap_structured_output,
                fallback_vision, fallback_tools,
                cap_updated_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(model_name) DO UPDATE SET
                defaults_toml             = excluded.defaults_toml,
                reasoning_style           = excluded.reasoning_style,
@@ -512,6 +525,7 @@ pub async fn set_all(pool: &Pool, model_name: &str, f: &AllFields) -> Result<(),
                 context_window            = excluded.context_window,
                 input_price               = excluded.input_price,
                 output_price              = excluded.output_price,
+                cache_read_price          = excluded.cache_read_price,
                 pricing_unit              = excluded.pricing_unit,
                cap_vision                = excluded.cap_vision,
                cap_audio_input           = excluded.cap_audio_input,
@@ -538,6 +552,7 @@ pub async fn set_all(pool: &Pool, model_name: &str, f: &AllFields) -> Result<(),
     .bind(f.context_window)
     .bind(f.input_price)
     .bind(f.output_price)
+    .bind(f.cache_read_price)
     .bind(f.pricing_unit.as_str())
     .bind(f.capabilities.vision.map(|b| b as i64))
     .bind(f.capabilities.audio_input.map(|b| b as i64))
@@ -560,25 +575,27 @@ pub async fn set_all(pool: &Pool, model_name: &str, f: &AllFields) -> Result<(),
 pub struct ModelPrice {
     pub input_price: Option<f64>,
     pub output_price: Option<f64>,
+    pub cache_read_price: Option<f64>,
     pub pricing_unit: PricingUnit,
 }
 
-/// Whether a model with these prices can cost anything: with neither side
-/// priced above zero, every call settles to 0.
+/// Whether a model with these prices can cost anything: with no price set on
+/// any side, every call settles to 0.
 pub fn charges(input_price: Option<f64>, output_price: Option<f64>) -> bool {
     input_price.is_some_and(|p| p > 0.0) || output_price.is_some_and(|p| p > 0.0)
 }
 
 /// Load every priced model's prices into a map, keyed by model name. Rows
-/// with no price on either side are skipped. Called once per flush by the
+/// with no price on any side are skipped. Called once per flush by the
 /// usage writer to turn token counts into `cost` without a per-row query —
 /// `model_defaults` is small (a handful of rows), so this is cheap.
 pub async fn all_prices(
     pool: &Pool,
 ) -> Result<std::collections::HashMap<String, ModelPrice>, DbError> {
     let rows = sqlx::query(
-        "SELECT model_name, input_price, output_price, pricing_unit FROM model_defaults \
-         WHERE input_price IS NOT NULL OR output_price IS NOT NULL",
+        "SELECT model_name, input_price, output_price, cache_read_price, pricing_unit \
+         FROM model_defaults \
+         WHERE input_price IS NOT NULL OR output_price IS NOT NULL OR cache_read_price IS NOT NULL",
     )
     .fetch_all(pool)
     .await?;
@@ -590,6 +607,7 @@ pub async fn all_prices(
             ModelPrice {
                 input_price: row.try_get("input_price")?,
                 output_price: row.try_get("output_price")?,
+                cache_read_price: row.try_get("cache_read_price")?,
                 pricing_unit: PricingUnit::parse(
                     row.try_get::<String, _>("pricing_unit")?.as_str(),
                 ),
@@ -613,7 +631,7 @@ pub async fn all(pool: &Pool) -> Result<Vec<ModelDefaults>, DbError> {
                   thinking_budget_high, thinking_budget_xhigh,
                   reasoning_effort_low, reasoning_effort_medium,
                   reasoning_effort_high, reasoning_effort_xhigh,
-                   context_window, input_price, output_price, pricing_unit,
+                   context_window, input_price, output_price, cache_read_price, pricing_unit,
                   cap_vision, cap_audio_input, cap_pdf_input,
                   cap_tools, cap_parallel_tools, cap_structured_output,
                   fallback_vision, fallback_tools,
@@ -727,9 +745,9 @@ mod tests {
     async fn pricing_round_trips_and_composes() {
         let pool = fresh().await;
         // Prices set on a model that already has TOML defaults — the setter
-        // touches only the two price columns.
+        // touches only the price columns.
         upsert(&pool, "m", "temperature = 0.5").await.unwrap();
-        set_pricing(&pool, "m", Some(3.0), Some(15.0))
+        set_pricing(&pool, "m", Some(3.0), Some(15.0), None)
             .await
             .unwrap();
         let row = get(&pool, "m").await.unwrap().unwrap();
@@ -738,7 +756,9 @@ mod tests {
         assert_eq!(row.defaults_toml, "temperature = 0.5");
 
         // Clearing one side leaves the other intact.
-        set_pricing(&pool, "m", None, Some(15.0)).await.unwrap();
+        set_pricing(&pool, "m", None, Some(15.0), None)
+            .await
+            .unwrap();
         let row = get(&pool, "m").await.unwrap().unwrap();
         assert_eq!(row.input_price, None);
         assert_eq!(row.output_price, Some(15.0));
@@ -747,11 +767,13 @@ mod tests {
     #[tokio::test]
     async fn all_prices_skips_unpriced_models() {
         let pool = fresh().await;
-        set_pricing(&pool, "cloud", Some(3.0), Some(15.0))
+        set_pricing(&pool, "cloud", Some(3.0), Some(15.0), None)
             .await
             .unwrap();
         // Priced on one side only — still included.
-        set_pricing(&pool, "half", Some(1.0), None).await.unwrap();
+        set_pricing(&pool, "half", Some(1.0), None, None)
+            .await
+            .unwrap();
         // A row that exists but was never priced — excluded from the map.
         upsert(&pool, "gpu-local", "temperature = 0.7")
             .await
@@ -800,6 +822,7 @@ mod tests {
             context_window: Some(262_144),
             input_price: Some(0.15),
             output_price: Some(0.60),
+            cache_read_price: Some(0.03),
             pricing_unit: PricingUnit::Tokens,
             capabilities: ModelCapabilities {
                 vision: Some(true),
@@ -819,6 +842,7 @@ mod tests {
         assert_eq!(row.context_window, Some(262_144));
         assert_eq!(row.input_price, Some(0.15));
         assert_eq!(row.output_price, Some(0.60));
+        assert_eq!(row.cache_read_price, Some(0.03));
         assert_eq!(row.capabilities.vision, Some(true));
         assert_eq!(row.capabilities.structured_output, Some(false));
         assert_eq!(row.capabilities.fallback_vision.as_deref(), Some("glm-5.2"));
@@ -850,10 +874,12 @@ mod tests {
     #[tokio::test]
     async fn set_pricing_preserves_non_token_unit() {
         let pool = fresh().await;
-        set_pricing_with_unit(&pool, "image", None, Some(1.0), PricingUnit::Images)
+        set_pricing_with_unit(&pool, "image", None, Some(1.0), None, PricingUnit::Images)
             .await
             .unwrap();
-        set_pricing(&pool, "image", None, Some(2.0)).await.unwrap();
+        set_pricing(&pool, "image", None, Some(2.0), None)
+            .await
+            .unwrap();
         let row = get(&pool, "image").await.unwrap().unwrap();
         assert_eq!(row.pricing_unit, PricingUnit::Images);
         assert_eq!(row.output_price, Some(2.0));
@@ -862,10 +888,10 @@ mod tests {
     #[tokio::test]
     async fn set_pricing_does_not_replace_unit_when_row_is_updated() {
         let pool = fresh().await;
-        set_pricing_with_unit(&pool, "image", None, Some(1.0), PricingUnit::Images)
+        set_pricing_with_unit(&pool, "image", None, Some(1.0), None, PricingUnit::Images)
             .await
             .unwrap();
-        set_pricing(&pool, "image", Some(2.0), Some(3.0))
+        set_pricing(&pool, "image", Some(2.0), Some(3.0), None)
             .await
             .unwrap();
         assert_eq!(

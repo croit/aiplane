@@ -126,7 +126,7 @@ pub struct Usage {
 impl Usage {
     /// A completion's `usage`, read with the same reader billing uses.
     pub fn from_completion(completion: &Value) -> Self {
-        let (input, output, _) = aiplane_core::server::db::usage::usage_from_value(completion);
+        let counts = aiplane_core::server::db::usage::usage_from_value(completion);
         let detail = |pointer: &str| {
             completion
                 .pointer(pointer)
@@ -134,10 +134,10 @@ impl Usage {
                 .unwrap_or(0)
         };
         Self {
-            input_tokens: input.unwrap_or(0),
-            output_tokens: output.unwrap_or(0),
+            input_tokens: counts.prompt.unwrap_or(0),
+            output_tokens: counts.completion.unwrap_or(0),
             reasoning_tokens: detail("/usage/completion_tokens_details/reasoning_tokens"),
-            cached_tokens: detail("/usage/prompt_tokens_details/cached_tokens"),
+            cached_tokens: counts.cached.unwrap_or(0),
         }
     }
 

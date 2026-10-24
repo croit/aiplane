@@ -29,6 +29,8 @@ admin-price-in-label = Цена вх
 admin-price-out-label = Цена вых
 admin-price-in-placeholder = без цены
 admin-price-out-placeholder = без цены
+admin-price-cache-label = Цена чтения кэша за 1M
+admin-price-cache-placeholder = без цены
 
 # Окно контекста (управляет авто-компактизацией).
 admin-context-window-full-label = Окно контекста (токены)

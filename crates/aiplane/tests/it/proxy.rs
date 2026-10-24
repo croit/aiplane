@@ -366,6 +366,67 @@ async fn v1_chat_completion_records_a_usage_row() {
     assert_eq!(agg.by_user[0].label, "alice@example.com");
 }
 
+/// A cached workload settles at the cache-read rate: the upstream reports
+/// `prompt_tokens_details.cached_tokens`, and the row prices `prompt − cached`
+/// at the input rate and `cached` at the model's cache-read rate — the
+/// discount OpenRouter bills (without it, spend was overstated several times
+/// for agentic traffic).
+#[tokio::test]
+async fn v1_chat_completion_settles_cached_prompt_tokens_at_the_cache_rate() {
+    use aiplane_core::server::db::model_defaults;
+
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{"message": {"role": "assistant", "content": "hi"}}],
+            "usage": {
+                "prompt_tokens": 1_000_000,
+                "completion_tokens": 100_000,
+                "total_tokens": 1_100_000,
+                "prompt_tokens_details": {"cached_tokens": 900_000}
+            }
+        })))
+        .mount(&upstream)
+        .await;
+
+    let state = common::state_with_chat_pool(&upstream.uri()).await;
+    model_defaults::set_pricing(&state.db, "model-a", Some(0.30), Some(1.20), Some(0.06))
+        .await
+        .unwrap();
+    let metered = aiplane_core::server::usage::spawn(state.db.clone(), 90);
+    let state = state.with_usage(metered);
+    let db = state.db.clone();
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    let body = json!({"model": "model-a", "messages": []}).to_string();
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/chat/completions")
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
+    let resp = app.serve(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let _ = common::read_body(resp).await;
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+    let (cached, cost): (Option<i64>, f64) = sqlx::query_as(
+        "SELECT cached_tokens, cost FROM usage_events ORDER BY created_at DESC LIMIT 1",
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(cached, Some(900_000), "cached count recorded on the row");
+    // 100k fresh × 0.30/M + 900k cached × 0.06/M + 100k completion × 1.20/M.
+    assert!(
+        (cost - 0.204).abs() < 1e-9,
+        "cost settled at the cache rate"
+    );
+}
+
 /// A model that collapses into repeating itself on `/v1` is cut off with an
 /// in-band `loop_detected` error, and the call is recorded as stopped — the
 /// only trace a `/v1` loop leaves, since the client keeps no turn row.
@@ -517,6 +578,7 @@ async fn v1_images_generations_records_image_usage_row() {
         "glm-image",
         None,
         Some(0.75),
+        None,
         aiplane_core::server::db::model_defaults::PricingUnit::Images,
     )
     .await
@@ -573,6 +635,7 @@ async fn v1_image_edits_count_all_input_images() {
         "image-edit",
         Some(2.0),
         Some(3.0),
+        None,
         PricingUnit::Images,
     )
     .await
@@ -632,6 +695,7 @@ async fn v1_speech_records_character_usage_for_costs() {
         &state.db,
         "tts-model",
         Some(0.01),
+        None,
         None,
         PricingUnit::Characters,
     )
@@ -1642,6 +1706,7 @@ async fn v1_rerank_records_rerank_usage_priced_on_its_tokens() {
         "rerank-model",
         Some(2.0),
         None,
+        None,
         PricingUnit::Tokens,
     )
     .await
@@ -1705,6 +1770,7 @@ async fn v1_embeddings_prices_a_bare_total_as_input_tokens() {
         &state.db,
         "embed-model",
         Some(4.0),
+        None,
         None,
         PricingUnit::Tokens,
     )

@@ -659,13 +659,13 @@ impl Drop for PersonalRoundUsage {
     }
 }
 
-fn known_round_tokens(tokens: (Option<i64>, Option<i64>, Option<i64>)) -> Option<u64> {
+fn known_round_tokens(tokens: aiplane_core::server::db::usage::TokenCounts) -> Option<u64> {
     tokens
-        .2
+        .total
         .or_else(|| {
             tokens
-                .0
-                .zip(tokens.1)
+                .prompt
+                .zip(tokens.completion)
                 .map(|(prompt, completion)| prompt.saturating_add(completion))
         })
         .map(|tokens| tokens.max(0) as u64)
@@ -1892,7 +1892,7 @@ async fn run_one_turn(
                 &backend_name,
                 status.as_u16(),
                 started,
-                (None, None, None),
+                aiplane_core::server::db::usage::TokenCounts::default(),
             );
             let body = String::from_utf8_lossy(&bytes);
             let answer = exchange::Answer::failed(Some(status.as_u16()), body.to_string());
@@ -1946,7 +1946,8 @@ async fn run_one_turn(
         // content channel without breaking on a tag split across deltas.
         let mut content_tag_buf = String::new();
         // Token counts from the trailing `usage` frame (we set include_usage).
-        let mut round_tokens: (Option<i64>, Option<i64>, Option<i64>) = (None, None, None);
+        let mut round_tokens: aiplane_core::server::db::usage::TokenCounts =
+            aiplane_core::server::db::usage::TokenCounts::default();
         // Why the upstream stopped generating this round. Read from whichever
         // frame carries it (backends put it on the last delta frame, sometimes
         // on a choice-less one), so it is captured before the delta guard.
@@ -2205,8 +2206,13 @@ async fn run_one_turn(
                     // The looped call was real and is metered (as stopped);
                     // it counts against the turn's token budget too.
                     let spent = round_tokens
-                        .2
-                        .or_else(|| Some(round_tokens.0.unwrap_or(0) + round_tokens.1.unwrap_or(0)))
+                        .total
+                        .or_else(|| {
+                            Some(
+                                round_tokens.prompt.unwrap_or(0)
+                                    + round_tokens.completion.unwrap_or(0),
+                            )
+                        })
                         .map_or(0, |t| t.max(0) as u64);
                     tokens_used += spent;
                     policy.record_spend(spent);
@@ -2239,8 +2245,10 @@ async fn run_one_turn(
             round_tokens,
         ));
         let spent = round_tokens
-            .2
-            .or_else(|| Some(round_tokens.0.unwrap_or(0) + round_tokens.1.unwrap_or(0)))
+            .total
+            .or_else(|| {
+                Some(round_tokens.prompt.unwrap_or(0) + round_tokens.completion.unwrap_or(0))
+            })
             .map_or(0, |t| t.max(0) as u64);
         tokens_used += spent;
         policy.record_spend(spent);
@@ -2249,7 +2257,7 @@ async fn run_one_turn(
         // when it grows, so a tool-using turn writes at most once per round
         // and a normal turn writes once. Best-effort — a failed write just
         // leaves the trigger reading a slightly stale value next turn.
-        if let Some(prompt) = round_tokens.0
+        if let Some(prompt) = round_tokens.prompt
             && prompt > max_prompt_tokens
         {
             max_prompt_tokens = prompt;
@@ -2317,7 +2325,7 @@ async fn run_one_turn(
                 model = %ctx.model,
                 backend = %backend_name,
                 round,
-                completion_tokens = ?round_tokens.1,
+                completion_tokens = ?round_tokens.completion,
                 "upstream stopped at the output-token limit; finalizing the turn as truncated"
             );
             return Ok(TurnEnd::CutShort(CutShort {
@@ -3858,7 +3866,7 @@ fn emit_usage(
     backend: &str,
     status: u16,
     started: std::time::Instant,
-    tokens: (Option<i64>, Option<i64>, Option<i64>),
+    tokens: aiplane_core::server::db::usage::TokenCounts,
 ) {
     d.state.usage.emit(usage_record(
         d, user_email, model, backend, status, started, tokens,
@@ -3873,7 +3881,7 @@ fn emit_loop_usage(
     backend: &str,
     status: u16,
     started: std::time::Instant,
-    tokens: (Option<i64>, Option<i64>, Option<i64>),
+    tokens: aiplane_core::server::db::usage::TokenCounts,
 ) {
     d.state.usage.emit(UsageRecord {
         stop_reason: Some(StopReason::Loop),
@@ -3889,9 +3897,8 @@ fn usage_record(
     backend: &str,
     status: u16,
     started: std::time::Instant,
-    tokens: (Option<i64>, Option<i64>, Option<i64>),
+    tokens: aiplane_core::server::db::usage::TokenCounts,
 ) -> UsageRecord {
-    let (prompt_tokens, completion_tokens, total_tokens) = tokens;
     UsageRecord {
         created_at: jiff::Timestamp::now(),
         user_id: d.tool_ctx.principal.subject_id().to_string(),
@@ -3904,9 +3911,10 @@ fn usage_record(
         model: model.to_string(),
         status,
         duration_ms: started.elapsed().as_millis() as i64,
-        prompt_tokens,
-        completion_tokens,
-        total_tokens,
+        prompt_tokens: tokens.prompt,
+        completion_tokens: tokens.completion,
+        total_tokens: tokens.total,
+        cached_tokens: tokens.cached,
         input_units: None,
         output_units: None,
         enforce_limits: d
@@ -3951,6 +3959,7 @@ fn emit_selector_usage(
                 (Some(input), Some(output)) => Some(input + output),
                 _ => None,
             },
+            cached_tokens: None,
             input_units: None,
             output_units: None,
             enforce_limits: d.state.upstreams.enforce_limits_for_model(
@@ -4144,10 +4153,37 @@ mod tests {
 
     #[test]
     fn personal_round_usage_requires_complete_token_facts_and_marks_abandoned_requests_unknown() {
-        assert_eq!(super::known_round_tokens((None, None, None)), None);
-        assert_eq!(super::known_round_tokens((Some(3), None, None)), None);
-        assert_eq!(super::known_round_tokens((Some(3), Some(2), None)), Some(5));
-        assert_eq!(super::known_round_tokens((None, None, Some(7))), Some(7));
+        assert_eq!(
+            super::known_round_tokens(aiplane_core::server::db::usage::TokenCounts::default()),
+            None
+        );
+        assert_eq!(
+            super::known_round_tokens(aiplane_core::server::db::usage::TokenCounts::new(
+                Some(3),
+                None,
+                None,
+                None
+            )),
+            None
+        );
+        assert_eq!(
+            super::known_round_tokens(aiplane_core::server::db::usage::TokenCounts::new(
+                Some(3),
+                Some(2),
+                None,
+                None
+            )),
+            Some(5)
+        );
+        assert_eq!(
+            super::known_round_tokens(aiplane_core::server::db::usage::TokenCounts::new(
+                None,
+                None,
+                Some(7),
+                None
+            )),
+            Some(7)
+        );
         let limits =
             crate::budget::Budget::from_limits(session_core::db::suspensions::BudgetLimits {
                 rounds: 4,

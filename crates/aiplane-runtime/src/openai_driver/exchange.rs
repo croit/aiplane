@@ -33,7 +33,7 @@ pub(super) struct Answer {
     pub reasoning: String,
     pub tool_calls: Vec<Value>,
     pub finish_reason: Option<String>,
-    pub usage: (Option<i64>, Option<i64>, Option<i64>),
+    pub usage: aiplane_core::server::db::usage::TokenCounts,
     /// The upstream's or the transport's failure, in full.
     pub error: Option<String>,
     pub cancelled: bool,
@@ -165,7 +165,7 @@ async fn record(
     answer: Answer,
     started: Instant,
 ) -> Option<String> {
-    let (prompt, completion, total) = answer.usage;
+    let usage = answer.usage;
     let latency = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let ctx = ToolContext {
         call_id: None,
@@ -185,9 +185,10 @@ async fn record(
             "tool_calls": answer.tool_calls,
             "finish_reason": answer.finish_reason,
             "usage": {
-                "prompt_tokens": prompt,
-                "completion_tokens": completion,
-                "total_tokens": total,
+                "prompt_tokens": usage.prompt,
+                "completion_tokens": usage.completion,
+                "total_tokens": usage.total,
+                "cached_tokens": usage.cached,
             },
         },
         "latency_ms": latency,

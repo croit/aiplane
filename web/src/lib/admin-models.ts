@@ -26,6 +26,7 @@ export interface ModelDefaults {
 	context_window: number | null;
 	input_price: number | null;
 	output_price: number | null;
+	cache_read_price: number | null;
 	pricing_unit: PricingUnit;
 	budget_low: number | null;
 	budget_medium: number | null;
@@ -141,7 +142,12 @@ export function configuredFacets(model: AdminModel): string[] {
 	if (!defaults) return [];
 	const capabilities = defaults.capabilities;
 	const facets: string[] = [];
-	if (defaults.input_price !== null || defaults.output_price !== null) facets.push('price');
+	if (
+		defaults.input_price !== null ||
+		defaults.output_price !== null ||
+		defaults.cache_read_price !== null
+	)
+		facets.push('price');
 	if (defaults.context_window !== null) facets.push('context');
 	if (TUNED_EFFORTS.some((level) => defaults[`budget_${level}`] !== null || defaults[`effort_${level}`] !== null)) facets.push('budget');
 	if (Object.values(capabilities).some((value) => value !== null && value !== undefined && value !== '')) facets.push('capabilities');

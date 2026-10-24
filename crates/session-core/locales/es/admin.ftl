@@ -29,6 +29,8 @@ admin-price-in-label = Precio ent
 admin-price-out-label = Precio sal
 admin-price-in-placeholder = sin precio
 admin-price-out-placeholder = sin precio
+admin-price-cache-label = Precio de lectura de caché por 1M
+admin-price-cache-placeholder = sin precio
 
 # Ventana de contexto (controla la compactación automática).
 admin-context-window-full-label = Ventana de contexto (tokens)

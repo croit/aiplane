@@ -43,7 +43,7 @@ use aiplane_runtime::rama_server::auth::require_bearer;
 use aiplane_runtime::rama_server::state::RamaState;
 use aiplane_runtime::server::tools::runner::{LoopError, LoopOutput, ToolCallAcc};
 
-use crate::rama_server::proxy::{self, ChunkMeta, Outbound, StreamFailure, StreamSink, TokenUsage};
+use crate::rama_server::proxy::{self, ChunkMeta, Outbound, StreamFailure, StreamSink};
 use crate::rama_server::translated::{self, Ran, TranslatedTurn, Turn};
 
 use output::Shell;
@@ -277,9 +277,9 @@ impl StreamSink for ResponsesSink {
             .unwrap_or_default()
     }
 
-    fn round_usage(&mut self, tokens: TokenUsage) {
+    fn round_usage(&mut self, tokens: aiplane_core::server::db::usage::TokenCounts) {
         self.encoder
-            .absorb_round_usage(tokens.0.unwrap_or(0), tokens.1.unwrap_or(0));
+            .absorb_round_usage(tokens.prompt.unwrap_or(0), tokens.completion.unwrap_or(0));
     }
 
     fn client_tool_calls(

@@ -205,8 +205,11 @@ image, character, or second respectively. Costs are settled when the usage
 writer flushes the event and are immutable afterwards. A successful cache hit
 on the voice TTS path does not create an upstream event and is therefore free.
 
-Provider-specific cached-token discounts are not currently applied separately;
-the reported total input token count is priced at the configured input rate.
+Cached prompt tokens are billed at the model's optional **cache read price**
+(`/admin/models`, per 1M tokens). When a chat or embedding call reports
+`usage.prompt_tokens_details.cached_tokens`, those tokens settle at the cache
+read price and the remaining prompt tokens at the input rate. A model without a
+configured cache read price settles its cached tokens at the input rate.
 
 ## Errors
 

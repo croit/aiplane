@@ -145,6 +145,8 @@ export const es: Catalog = {
  "admin-other-price-note": "El muestreo, el razonamiento y el contexto no se aplican a esta clase — solo los precios, para la contabilidad de costes.",
  "admin-overwrite-existing": "sobrescribir el existente",
  "admin-page-title": "Modelos — AIplane",
+ "admin-price-cache-label": "Precio de lectura de caché por 1M",
+ "admin-price-cache-placeholder": "sin precio",
  "admin-price-in-label": "Precio ent",
  "admin-price-in-placeholder": "sin precio",
  "admin-price-label": "{cur}/{unit}",

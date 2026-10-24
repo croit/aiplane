@@ -513,6 +513,7 @@ impl ImageGenerator {
             prompt_tokens: None,
             completion_tokens: None,
             total_tokens: None,
+            cached_tokens: None,
             input_units: units.input,
             output_units: units.output,
             enforce_limits: self

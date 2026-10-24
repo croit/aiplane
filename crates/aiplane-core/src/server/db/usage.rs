@@ -119,6 +119,9 @@ pub struct UsageRecord {
     pub prompt_tokens: Option<i64>,
     pub completion_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
+    /// Prompt tokens served from the upstream's prompt cache; a subset of
+    /// `prompt_tokens`, priced at the model's cache-read rate.
+    pub cached_tokens: Option<i64>,
     /// Normalized non-token usage. For token-priced models these remain zero;
     /// for images, speech, and transcription they carry the billable units.
     pub input_units: Option<f64>,
@@ -171,10 +174,46 @@ impl UsageRecord {
     }
 }
 
+/// Token counts as an upstream usage object reports them.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TokenCounts {
+    pub prompt: Option<i64>,
+    pub completion: Option<i64>,
+    pub total: Option<i64>,
+    /// Prompt tokens served from the upstream's prompt cache
+    /// (`usage.prompt_tokens_details.cached_tokens`); a subset of `prompt`.
+    pub cached: Option<i64>,
+}
+
+impl TokenCounts {
+    pub const fn new(
+        prompt: Option<i64>,
+        completion: Option<i64>,
+        total: Option<i64>,
+        cached: Option<i64>,
+    ) -> Self {
+        Self {
+            prompt,
+            completion,
+            total,
+            cached,
+        }
+    }
+
+    /// The cached count clamped to the prompt count it is a subset of, so a
+    /// malformed usage object (more "cached" than prompt) can never price a
+    /// negative fresh-token count.
+    fn cached_clamped(self) -> i64 {
+        let cached = self.cached.unwrap_or(0);
+        let prompt = self.prompt.unwrap_or(0);
+        cached.min(prompt)
+    }
+}
+
 /// Pull token counts out of an OpenAI-compatible completion body or trailing
 /// SSE usage frame. Both `prompt_tokens`/`completion_tokens` and
 /// `input_tokens`/`output_tokens` are accepted.
-pub fn usage_from_value(v: &Value) -> (Option<i64>, Option<i64>, Option<i64>) {
+pub fn usage_from_value(v: &Value) -> TokenCounts {
     let usage = v.get("usage");
     let get = |key: &str, fallback: &str| {
         usage
@@ -191,7 +230,10 @@ pub fn usage_from_value(v: &Value) -> (Option<i64>, Option<i64>, Option<i64>) {
                 .zip(completion)
                 .and_then(|(input, output)| input.checked_add(output))
         });
-    (prompt, completion, total)
+    let cached = usage
+        .and_then(|u| u.pointer("/prompt_tokens_details/cached_tokens"))
+        .and_then(Value::as_i64);
+    TokenCounts::new(prompt, completion, total, cached)
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -214,13 +256,20 @@ pub fn units_from_value(v: &Value) -> UnitUsage {
 }
 
 /// Monetary cost of one call from its model's prices (per 1M tokens) and its
-/// token counts. An unpriced model (`None`) or an unpriced side costs 0, as do
-/// missing token counts — so transcription/speech rows (no `usage`) and
-/// self-hosted models the operator never priced settle to 0 cost.
+/// token counts. Prompt tokens are split at the cache: `prompt − cached`
+/// prices at the input rate, `cached` at the model's cache-read rate — the
+/// discount upstream providers bill (OpenRouter's MiniMax cache reads cost
+/// ~80-90% less than uncached input). With no cache-read price set, the
+/// cached tokens price at the input rate, so an unconfigured model keeps
+/// today's full-rate cost. An unpriced model (`None`) or an unpriced side
+/// costs 0, as do missing token counts — so transcription/speech rows (no
+/// `usage`) and self-hosted models the operator never priced settle to 0
+/// cost.
 fn compute_cost(
     price: Option<&super::model_defaults::ModelPrice>,
     prompt_tokens: Option<i64>,
     completion_tokens: Option<i64>,
+    cached_tokens: Option<i64>,
     input_units: Option<f64>,
     output_units: Option<f64>,
 ) -> f64 {
@@ -231,7 +280,14 @@ fn compute_cost(
         rate.unwrap_or(0.0) * (tokens.unwrap_or(0) as f64) / 1_000_000.0
     };
     if p.pricing_unit == super::model_defaults::PricingUnit::Tokens {
-        return per_million(p.input_price, prompt_tokens)
+        let counts = TokenCounts::new(prompt_tokens, completion_tokens, None, cached_tokens);
+        let fresh = counts
+            .prompt
+            .map(|prompt| prompt - counts.cached_clamped())
+            .unwrap_or(0);
+        let cache_rate = p.cache_read_price.or(p.input_price);
+        return per_million(p.input_price, Some(fresh))
+            + per_million(cache_rate, Some(counts.cached_clamped()))
             + per_million(p.output_price, completion_tokens);
     }
     let input_cost = match input_units {
@@ -274,6 +330,7 @@ pub async fn insert_batch(pool: &Pool, recs: &[UsageRecord]) -> Result<(), DbErr
             prices.get(&r.model),
             r.prompt_tokens,
             r.completion_tokens,
+            r.cached_tokens,
             r.input_units,
             r.output_units,
         );
@@ -281,9 +338,10 @@ pub async fn insert_batch(pool: &Pool, recs: &[UsageRecord]) -> Result<(), DbErr
             "INSERT INTO usage_events
                (id, created_at, user_id, user_email, token_id, token_name,
                 source, kind, backend, model, status, duration_ms,
-                 prompt_tokens, completion_tokens, total_tokens, input_units, output_units,
+                 prompt_tokens, completion_tokens, total_tokens, cached_tokens,
+                 input_units, output_units,
                  cost, enforce_limits, principal_kind, agent_id, chain, stop_reason)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(Uuid::new_v4().to_string())
         .bind(&created)
@@ -300,6 +358,7 @@ pub async fn insert_batch(pool: &Pool, recs: &[UsageRecord]) -> Result<(), DbErr
         .bind(r.prompt_tokens)
         .bind(r.completion_tokens)
         .bind(r.total_tokens)
+        .bind(r.cached_tokens)
         .bind(r.input_units.unwrap_or(0.0))
         .bind(r.output_units.unwrap_or(0.0))
         .bind(cost)
@@ -320,14 +379,15 @@ pub async fn insert_batch(pool: &Pool, recs: &[UsageRecord]) -> Result<(), DbErr
             "INSERT INTO usage_daily
                (day, user_id, user_email, token_id, token_name, source, kind, backend, model,
                  req_count, error_count, prompt_tokens, completion_tokens, total_tokens,
-                 input_units, output_units, cost)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+                 cached_tokens, input_units, output_units, cost)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(day, user_id, token_id, source, kind, backend, model) DO UPDATE SET
                 req_count         = req_count         + 1,
                 error_count       = error_count       + excluded.error_count,
                 prompt_tokens     = prompt_tokens     + excluded.prompt_tokens,
                  completion_tokens = completion_tokens + excluded.completion_tokens,
                  total_tokens      = total_tokens      + excluded.total_tokens,
+                 cached_tokens     = cached_tokens     + excluded.cached_tokens,
                  input_units       = input_units       + excluded.input_units,
                  output_units      = output_units      + excluded.output_units,
                  cost              = cost              + excluded.cost",
@@ -345,6 +405,7 @@ pub async fn insert_batch(pool: &Pool, recs: &[UsageRecord]) -> Result<(), DbErr
         .bind(r.prompt_tokens.unwrap_or(0))
         .bind(r.completion_tokens.unwrap_or(0))
         .bind(r.total_tokens.unwrap_or(0))
+        .bind(r.cached_tokens.unwrap_or(0))
         .bind(r.input_units.unwrap_or(0.0))
         .bind(r.output_units.unwrap_or(0.0))
         .bind(cost)
@@ -999,6 +1060,7 @@ mod tests {
             prompt_tokens: Some(total / 2),
             completion_tokens: Some(total / 2),
             total_tokens: Some(total),
+            cached_tokens: None,
             input_units: None,
             output_units: None,
             enforce_limits: true,
@@ -1243,16 +1305,22 @@ mod tests {
         let v = serde_json::json!({
             "usage": {"prompt_tokens": 12, "completion_tokens": 7, "total_tokens": 19}
         });
-        assert_eq!(usage_from_value(&v), (Some(12), Some(7), Some(19)));
+        assert_eq!(
+            usage_from_value(&v),
+            TokenCounts::new(Some(12), Some(7), Some(19), None)
+        );
     }
 
     #[test]
     fn usage_from_value_missing_is_none() {
         let v = serde_json::json!({"choices": []});
-        assert_eq!(usage_from_value(&v), (None, None, None));
+        assert_eq!(usage_from_value(&v), TokenCounts::default());
         // Embeddings: prompt+total but no completion.
         let e = serde_json::json!({"usage": {"prompt_tokens": 5, "total_tokens": 5}});
-        assert_eq!(usage_from_value(&e), (Some(5), None, Some(5)));
+        assert_eq!(
+            usage_from_value(&e),
+            TokenCounts::new(Some(5), None, Some(5), None)
+        );
     }
 
     #[test]
@@ -1260,7 +1328,80 @@ mod tests {
         let v = serde_json::json!({
             "usage": {"input_tokens": 12, "output_tokens": 7}
         });
-        assert_eq!(usage_from_value(&v), (Some(12), Some(7), Some(19)));
+        assert_eq!(
+            usage_from_value(&v),
+            TokenCounts::new(Some(12), Some(7), Some(19), None)
+        );
+    }
+
+    #[test]
+    fn usage_from_value_reads_cached_prompt_tokens() {
+        let v = serde_json::json!({
+            "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 50,
+                "total_tokens": 1050,
+                "prompt_tokens_details": {"cached_tokens": 900}
+            }
+        });
+        assert_eq!(
+            usage_from_value(&v),
+            TokenCounts::new(Some(1000), Some(50), Some(1050), Some(900))
+        );
+    }
+
+    #[test]
+    fn cached_count_clamps_to_prompt() {
+        let healthy = TokenCounts::new(Some(1000), None, None, Some(900));
+        assert_eq!(healthy.cached_clamped(), 900);
+        // More "cached" than prompt: a malformed usage object.
+        let malformed = TokenCounts::new(Some(10), None, None, Some(900));
+        assert_eq!(malformed.cached_clamped(), 10);
+        // No prompt count at all: nothing to split.
+        let no_prompt = TokenCounts::new(None, None, None, Some(900));
+        assert_eq!(no_prompt.cached_clamped(), 0);
+    }
+
+    #[test]
+    fn token_cost_splits_prompt_at_the_cache() {
+        // Per the MiniMax-on-OpenRouter shape: $0.30/M in, $0.06/M cached, $1.20/M out.
+        let price = crate::server::db::model_defaults::ModelPrice {
+            input_price: Some(0.30),
+            output_price: Some(1.20),
+            cache_read_price: Some(0.06),
+            pricing_unit: crate::server::db::model_defaults::PricingUnit::Tokens,
+        };
+        // 1M prompt with 900k cached, 100k completion.
+        let cost = compute_cost(
+            Some(&price),
+            Some(1_000_000),
+            Some(100_000),
+            Some(900_000),
+            None,
+            None,
+        );
+        // 100k × 0.30/M + 900k × 0.06/M + 100k × 1.20/M = 0.03 + 0.054 + 0.12.
+        assert!((cost - 0.204).abs() < 1e-9);
+    }
+
+    #[test]
+    fn token_cost_prices_cached_at_input_rate_without_cache_price() {
+        let price = crate::server::db::model_defaults::ModelPrice {
+            input_price: Some(0.30),
+            output_price: Some(1.20),
+            cache_read_price: None,
+            pricing_unit: crate::server::db::model_defaults::PricingUnit::Tokens,
+        };
+        let cost = compute_cost(
+            Some(&price),
+            Some(1_000_000),
+            Some(100_000),
+            Some(900_000),
+            None,
+            None,
+        );
+        // 1M × 0.30/M + 100k × 1.20/M — today's full-rate behaviour.
+        assert!((cost - 0.42).abs() < 1e-9);
     }
 
     #[test]
@@ -1268,9 +1409,10 @@ mod tests {
         let price = crate::server::db::model_defaults::ModelPrice {
             input_price: Some(3.0),
             output_price: Some(15.0),
+            cache_read_price: None,
             pricing_unit: crate::server::db::model_defaults::PricingUnit::Seconds,
         };
-        let cost = compute_cost(Some(&price), Some(100), Some(100), None, None);
+        let cost = compute_cost(Some(&price), Some(100), Some(100), None, None, None);
         assert!((cost - 0.0018).abs() < 1e-9);
     }
 
@@ -1349,7 +1491,7 @@ mod tests {
         let pool = pool().await;
         let now: Timestamp = "2026-06-20T12:00:00Z".parse().unwrap();
         // $3 / 1M prompt tokens, $15 / 1M completion tokens.
-        model_defaults::set_pricing(&pool, "qwen", Some(3.0), Some(15.0))
+        model_defaults::set_pricing(&pool, "qwen", Some(3.0), Some(15.0), None)
             .await
             .unwrap();
         // `rec` splits `total` evenly across prompt/completion, so total=200 →
@@ -1369,7 +1511,7 @@ mod tests {
         assert!((agg.by_model[0].cost - 0.0018).abs() < 1e-9);
 
         // The per-row cost is stored immutably, so re-pricing doesn't move it.
-        model_defaults::set_pricing(&pool, "qwen", Some(999.0), Some(999.0))
+        model_defaults::set_pricing(&pool, "qwen", Some(999.0), Some(999.0), None)
             .await
             .unwrap();
         let stored: f64 = sqlx::query_scalar("SELECT SUM(cost) FROM usage_events")
@@ -1407,6 +1549,7 @@ mod tests {
             "tts",
             Some(0.01),
             None,
+            None,
             PricingUnit::Characters,
         )
         .await
@@ -1428,6 +1571,7 @@ mod tests {
                 prompt_tokens: None,
                 completion_tokens: None,
                 total_tokens: None,
+                cached_tokens: None,
                 input_units: Some(25.0),
                 output_units: None,
                 enforce_limits: true,
@@ -1456,6 +1600,7 @@ mod tests {
             "legacy-image",
             None,
             Some(2.0),
+            None,
             PricingUnit::Tokens,
         )
         .await
@@ -1477,6 +1622,7 @@ mod tests {
                 prompt_tokens: None,
                 completion_tokens: None,
                 total_tokens: None,
+                cached_tokens: None,
                 input_units: None,
                 output_units: Some(1.0),
                 enforce_limits: true,

@@ -35,6 +35,8 @@ admin-price-in-label = Preis ein
 admin-price-out-label = Preis aus
 admin-price-in-placeholder = kein Preis
 admin-price-out-placeholder = kein Preis
+admin-price-cache-label = Preis Lese-Cache pro 1M
+admin-price-cache-placeholder = kein Preis
 
 # Kontextfenster (steuert die Auto-Kompaktierung).
 admin-context-window-full-label = Kontextfenster (Tokens)

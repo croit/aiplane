@@ -145,6 +145,8 @@ export const de: Catalog = {
  "admin-other-price-note": "Sampling, Reasoning und Kontext gelten für diese Art nicht — nur Preise, für die Kostenabrechnung.",
  "admin-overwrite-existing": "vorhandenen Eintrag überschreiben",
  "admin-page-title": "Modelle — AIplane",
+ "admin-price-cache-label": "Preis Lese-Cache pro 1M",
+ "admin-price-cache-placeholder": "kein Preis",
  "admin-price-in-label": "Preis ein",
  "admin-price-in-placeholder": "kein Preis",
  "admin-price-label": "{cur}/{unit}",

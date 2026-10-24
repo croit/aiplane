@@ -280,6 +280,7 @@ async fn token_management_details_return_saved_scopes_quotas_policy_and_account(
         "model-a",
         Some(1.5),
         Some(2.0),
+        None,
     )
     .await
     .unwrap();

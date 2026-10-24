@@ -145,6 +145,8 @@ export const fr: Catalog = {
  "admin-other-price-note": "L'échantillonnage, le raisonnement et le contexte ne s'appliquent pas à ce type — seuls les tarifs, pour la comptabilité des coûts.",
  "admin-overwrite-existing": "écraser l'existant",
  "admin-page-title": "Modèles — AIplane",
+ "admin-price-cache-label": "Prix lecture du cache par 1M",
+ "admin-price-cache-placeholder": "sans tarif",
  "admin-price-in-label": "Prix ent",
  "admin-price-in-placeholder": "sans tarif",
  "admin-price-label": "{cur}/{unit}",
