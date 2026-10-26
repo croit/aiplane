@@ -1407,6 +1407,36 @@ async fn run_one_turn(
         )
         .unwrap_or_else(|| routing_model.to_string());
 
+    // A confidential conversation never reaches a model the operator did not
+    // clear for it — even when the client asked for one directly, and even
+    // after the picker filtered the list. The check runs on the resolved model
+    // so an automatic route is judged by the target it actually picked.
+    if aiplane_core::server::db::chat_session_settings::get_confidential(
+        &d.state.db,
+        &ctx.session_id,
+    )
+    .await
+    .unwrap_or(false)
+    {
+        let requires = d.state.config().chat.confidential.requires;
+        let compliance = d
+            .state
+            .upstreams
+            .models_with_compliance_for_kind_for(
+                aiplane_core::server::upstreams::PoolKind::Chat,
+                &access,
+            )
+            .into_iter()
+            .find_map(|(id, compliance)| (id == real_model).then_some(compliance));
+        if !compliance.is_some_and(|compliance| requires.satisfied_by(compliance)) {
+            return Err(TurnError::Upstream {
+                message: "This conversation is confidential; the selected model is not cleared \
+                          for it. Choose a model without a GDPR or NDA warning."
+                    .into(),
+            });
+        }
+    }
+
     let effort = Effort::from_db(
         aiplane_core::server::db::chat_session_settings::get_effort(&d.state.db, &ctx.session_id)
             .await

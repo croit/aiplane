@@ -331,3 +331,18 @@ branding-error-slot = Unknown theme slot — the logo is set for the light or th
 branding-error-empty = The upload carried no file.
 branding-error-multipart = The upload was not a readable form submission — try uploading the file again.
 branding-error-store = The logo could not be stored — try again.
+
+settings-s-chat-welcome = Welcome text
+settings-s-chat-welcome-blurb = Shown on an empty conversation before the first message.
+settings-f-chat-welcome-text = Welcome text
+settings-f-chat-welcome-text-help = Centred in an empty chat. Markdown is supported; empty means no welcome text. Placeholders: { "{" }name{ "}" } (display name), { "{" }first_name{ "}" }, { "{" }email{ "}" }, { "{" }language{ "}" } (interface language).
+
+settings-s-chat-confidential = Confidential chats
+settings-s-chat-confidential-blurb = A confidential conversation may only be routed to models cleared for it, and it never becomes non-confidential again.
+settings-f-chat-confidential-default = New chats start confidential
+settings-f-chat-confidential-default-help = New conversations are marked confidential when they are created. Changing this later does not open existing conversations.
+settings-f-chat-confidential-requires = Required for a confidential chat
+settings-f-chat-confidential-requires-help = Which compliance marker a model's pools must carry to stay selectable in a confidential conversation. Both requires GDPR and NDA coverage; a cloud model with both stays selectable.
+settings-f-chat-confidential-requires-opt-both = GDPR and NDA
+settings-f-chat-confidential-requires-opt-gdpr = GDPR only
+settings-f-chat-confidential-requires-opt-nda = NDA only

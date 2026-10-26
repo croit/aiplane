@@ -320,3 +320,18 @@ branding-error-slot = 未知的主题槽位 — 标志针对浅色或深色主�
 branding-error-empty = 上传中没有文件。
 branding-error-multipart = 上传不是可读的表单 — 请重新上传文件。
 branding-error-store = 无法保存标志 — 请重试。
+
+settings-s-chat-welcome = 欢迎语
+settings-s-chat-welcome-blurb = 在空对话中、第一条消息之前显示。
+settings-f-chat-welcome-text = 欢迎语
+settings-f-chat-welcome-text-help = 显示在空聊天中央。支持 Markdown；留空则不显示。变量：{ "{" }name{ "}" }（显示名称）、{ "{" }first_name{ "}" }、{ "{" }email{ "}" }、{ "{" }language{ "}" }（界面语言）。
+
+settings-s-chat-confidential = 机密聊天
+settings-s-chat-confidential-blurb = 机密对话只会路由到获准的模型，且不会再次变为非机密。
+settings-f-chat-confidential-default = 新聊天默认机密
+settings-f-chat-confidential-default-help = 新对话在创建时标记为机密。之后更改此设置不会重新开放现有对话。
+settings-f-chat-confidential-requires = 机密聊天的要求
+settings-f-chat-confidential-requires-help = 模型的池必须携带哪种合规标记，才能在机密对话中保持可选。“两者”要求 GDPR 和 NDA 覆盖；同时具备两者的云模型仍然可选。
+settings-f-chat-confidential-requires-opt-both = GDPR 和 NDA
+settings-f-chat-confidential-requires-opt-gdpr = 仅 GDPR
+settings-f-chat-confidential-requires-opt-nda = 仅 NDA

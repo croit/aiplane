@@ -2,6 +2,8 @@ import type { SearchOption, SearchOptionBadge } from './searchable-select';
 
 export interface ChatModelOption {
 	id: string;
+	/** The operator's picker description, when one is configured. */
+	description?: string;
 	gdpr: boolean;
 	nda: boolean;
 	/** A speech model's voices (`GET /api/v0/agent-resources`). */
@@ -32,6 +34,11 @@ export function modelSelectOptions(
 			{ label: labels.gdpr, tone: model.gdpr ? 'success' : 'error' },
 			{ label: labels.nda, tone: model.nda ? 'success' : 'error' }
 		);
-		return { value: model.id, label: model.id, badges };
+		return {
+			value: model.id,
+			label: model.id,
+			...(model.description ? { description: model.description } : {}),
+			badges
+		};
 	});
 }

@@ -132,7 +132,27 @@ pub(crate) async fn evaluate_for_turn(
         )
         .await?;
     }
-    evaluate(state, request, compliance).await
+    let action = evaluate(state, request, compliance).await?;
+    // Something in this turn matched a compliance flag the destination lacks:
+    // the conversation is sensitive from now on. The mark is sticky, so the
+    // next picker and the next turn only see cleared models. Person chats
+    // only: an agent's model comes from its spec, so ratcheting its
+    // conversation would silently narrow the agent rather than offer the
+    // person a choice.
+    if !matches!(action, Action::Allow)
+        && context.agent.is_none()
+        && let Some(session_id) = context.session_id.as_deref()
+        && let Err(error) =
+            aiplane_core::server::db::chat_session_settings::set_confidential(&state.db, session_id)
+                .await
+    {
+        tracing::warn!(
+            session_id,
+            error = %error,
+            "could not mark the conversation confidential after a content-guard match"
+        );
+    }
+    Ok(action)
 }
 
 async fn evaluate_checked(

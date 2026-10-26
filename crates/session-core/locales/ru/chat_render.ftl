@@ -103,3 +103,11 @@ chat-render-canvas-close-title = Закрыть холст
 chat-render-delegated-readonly-banner = Делегированный разговор — история только для чтения. Продолжайте, одобряйте или останавливайте эту работу через основной разговор или входящие.
 chat-render-delegated-root-link = Открыть основной разговор
 chat-render-delegated-root-unavailable = Основной разговор недоступен. Эта история остаётся доступной только для чтения.
+
+chat-render-confidential = Конфиденциально
+chat-render-confidential-title = Помечает разговор как конфиденциальный. Остаются доступны только модели с { $requires }; это нельзя отменить.
+chat-render-confidential-requires-both = соответствием GDPR и NDA
+chat-render-confidential-requires-gdpr = соответствием GDPR
+chat-render-confidential-requires-nda = соответствием NDA
+chat-render-confidential-no-model = Ни одна модель не разрешена для конфиденциальных данных. Попросите администратора разрешить одну.
+chat-render-confidential-model-switched = Разговор теперь конфиденциальный; выбранная модель не была для него разрешена.

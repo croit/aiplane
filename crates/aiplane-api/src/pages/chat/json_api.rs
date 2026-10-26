@@ -180,12 +180,32 @@ async fn blank_or_new_session(
     }
 }
 
+/// A newly created conversation inherits the operator's confidential default.
+/// Materialised here, not resolved on read, so turning the default off later
+/// does not reopen conversations that were created while it was on.
+async fn apply_confidential_default(
+    state: &RamaState,
+    session: &chat::Session,
+    created: bool,
+) -> Result<(), aiplane_core::server::db::DbError> {
+    if created && state.config().chat.confidential.default {
+        aiplane_core::server::db::chat_session_settings::set_confidential(&state.db, &session.id)
+            .await?;
+    }
+    Ok(())
+}
+
 /// GET /api/v0/chat/landing — the conversation the app opens on: the caller's
 /// blank one, created when they have none.
 pub async fn session_landing(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, user) = require_session_json!(state, req);
     match blank_or_new_session(&state, &user.id).await {
-        Ok((session, _)) => ok_json(StatusCode::OK, SessionEnvelope { session }),
+        Ok((session, created)) => {
+            if let Err(err) = apply_confidential_default(&state, &session, created).await {
+                return internal(err);
+            }
+            ok_json(StatusCode::OK, SessionEnvelope { session })
+        }
         Err(err) => internal(err),
     }
 }
@@ -195,14 +215,19 @@ pub async fn session_landing(State(state): State<Arc<RamaState>>, req: Request) 
 pub async fn session_create(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, user) = require_session_json!(state, req);
     match blank_or_new_session(&state, &user.id).await {
-        Ok((session, created)) => ok_json(
-            if created {
-                StatusCode::CREATED
-            } else {
-                StatusCode::OK
-            },
-            SessionEnvelope { session },
-        ),
+        Ok((session, created)) => {
+            if let Err(err) = apply_confidential_default(&state, &session, created).await {
+                return internal(err);
+            }
+            ok_json(
+                if created {
+                    StatusCode::CREATED
+                } else {
+                    StatusCode::OK
+                },
+                SessionEnvelope { session },
+            )
+        }
         Err(err) => internal(err),
     }
 }
@@ -251,6 +276,15 @@ pub async fn session_get(
             }
             Err(err) => return internal(err),
         };
+    let confidential = match aiplane_core::server::db::chat_session_settings::get_confidential(
+        &state.db,
+        &session_id,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(err) => return internal(err),
+    };
     let compacted_up_to_seq =
         match aiplane_core::server::db::chat_compactions::get(&state.db, &session_id).await {
             Ok(compaction) => compaction.map(|value| value.up_to_seq),
@@ -287,6 +321,9 @@ pub async fn session_get(
             session,
             turns,
             effort,
+            confidential,
+            confidential_requires: state.config().chat.confidential.requires.as_str(),
+            welcome: state.config().chat.welcome.clone(),
             compacted_up_to_seq,
             assets,
         },
@@ -303,6 +340,15 @@ pub struct SessionDetail {
     /// The conversation's effort level — the stored one, or the default
     /// (`low`) when none was chosen.
     pub effort: &'static str,
+    /// The conversation is marked confidential: only models whose pools carry
+    /// [`Self::confidential_requires`] may serve it, and the mark never clears.
+    pub confidential: bool,
+    /// The compliance a model needs for this conversation — `both`, `gdpr` or
+    /// `nda`, from the operator's confidential-chat policy.
+    pub confidential_requires: &'static str,
+    /// The operator's welcome text, shown while the conversation has no turns.
+    /// Empty means nothing.
+    pub welcome: String,
     /// The highest turn `seq` a compaction summary replaces when the
     /// conversation is replayed to the model; `null` when nothing was compacted.
     pub compacted_up_to_seq: Option<i64>,
@@ -1716,6 +1762,44 @@ pub async fn session_effort(
         &parsed.effort,
     )
     .await
+    {
+        Ok(()) => ok_json(StatusCode::OK, parsed),
+        Err(err) => internal(err),
+    }
+}
+
+/// POST /api/v0/chat/sessions/{id}/confidential — mark the conversation
+/// confidential.
+///
+/// Sticky by design: only `true` is accepted. A conversation that has held
+/// personal or confidential material must not be able to fall back to models
+/// the operator did not clear for it.
+#[derive(serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
+pub struct ConfidentialBody {
+    pub confidential: bool,
+}
+
+pub async fn session_confidential(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let (_session, user) = require_session_json!(state, req);
+    if !user_can_write(&state, &user.id, &session_id).await {
+        return not_found_conversation();
+    }
+    let (_, body) = req.into_parts();
+    let parsed: ConfidentialBody = match read_json(body, "the confidentiality body").await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    if !parsed.confidential {
+        return bad_request(
+            "a confidential conversation cannot become non-confidential: the mark never clears",
+        );
+    }
+    match aiplane_core::server::db::chat_session_settings::set_confidential(&state.db, &session_id)
+        .await
     {
         Ok(()) => ok_json(StatusCode::OK, parsed),
         Err(err) => internal(err),

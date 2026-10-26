@@ -15,7 +15,8 @@
 	import { renderPromptMarkdown, sanitizeSvgPreview } from '#lib/markdown.js';
 	import { DragDepth, carriesFiles, droppedOnlyDirectories, filesFrom } from '#lib/drop-files.js';
 	import { me } from '#lib/session.svelte.js';
-	import { t, time, n } from '#lib/i18n.svelte.js';
+	import { renderWelcome } from '#lib/welcome.js';
+	import { locale, t, time, n } from '#lib/i18n.svelte.js';
 	import ConversationHeader from '#lib/components/chat/ConversationHeader.svelte';
 	import DictationButton from '#lib/components/chat/DictationButton.svelte';
 	import CapabilityPicker from '#lib/components/chat/CapabilityPicker.svelte';
@@ -51,6 +52,12 @@
 	let tools = $state<ChatCapability[]>([]);
 	// Until the snapshot says otherwise; `low` is also the server's default.
 	let effort = $state<Effort>('low');
+	// Sticky once true: the server refuses to clear it, so there is no path
+	// back and the checkbox stays disabled.
+	let confidential = $state(false);
+	let confidentialRequires = $state<'both' | 'gdpr' | 'nda'>('both');
+	let welcome = $state('');
+	let confidentialSaving = $state(false);
 	let sending = $state(false);
 	/**
 	 * The composer's textarea, so the actions that empty it can hand the
@@ -245,6 +252,9 @@
 			permissions = { can_write: snap.can_write, can_delete: snap.can_delete, delegation: snap.delegation };
 			compactedUpToSeq = snap.compacted_up_to_seq;
 			effort = snap.effort;
+			confidential = snap.confidential;
+			confidentialRequires = snap.confidential_requires;
+			welcome = snap.welcome;
 			assets = snap.assets;
 			if (snap.assets.length > 0 && window.innerWidth >= 768) canvasOpen = true;
 			// Prefill the model picker from the conversation's last assistant
@@ -254,8 +264,12 @@
 				.find((e) => e.turn.role === 'assistant' && e.turn.model)?.turn.model;
 			// A conversation with no assistant turn to learn from falls back to
 			// the first offered model, or the composer would open with an empty
-			// picker and refuse to send.
-			if (!model) model = lastModel ?? models[0]?.id ?? '';
+			// picker and refuse to send. A confidential conversation may have
+			// filtered the remembered model out of the list.
+			if (!model) {
+				const remembered = models.find((candidate) => candidate.id === lastModel);
+				model = remembered?.id ?? models[0]?.id ?? '';
+			}
 			return true;
 		} catch (err) {
 			if (request !== metaRequest) return false;
@@ -278,7 +292,9 @@
 	 * The compliance flags ride along as the option's title tooltip. */
 	async function loadModels() {
 		try {
-			const list = await api.listChatModels();
+			// The session id lets the server narrow the list to what a
+			// confidential conversation may reach; the client never decides.
+			const list = await api.listChatModels(id);
 			models = list.models;
 			modelCurrency = list.currency;
 			if (!model && models.length > 0) model = models[0].id;
@@ -337,6 +353,26 @@
 			await api.setChatEffort(id, effort);
 		} catch {
 			/* non-fatal */
+		}
+	}
+
+	async function markConfidential() {
+		// The checkbox is one-way: `confidential` only leaves `false` here, and
+		// the input is disabled once it is true. A failed request puts it back.
+		if (!canWrite || !confidential || confidentialSaving) return;
+		confidentialSaving = true;
+		try {
+			await api.setChatConfidential(id);
+			await loadModels();
+			if (model && !models.some((candidate) => candidate.id === model)) {
+				model = models[0]?.id ?? '';
+				notice = t('chat-render-confidential-model-switched');
+			}
+		} catch (caught) {
+			confidential = false;
+			notice = String(caught);
+		} finally {
+			confidentialSaving = false;
 		}
 	}
 
@@ -927,6 +963,21 @@
 	<div class="alert alert-warning mb-4"><span>{notice}</span></div>
 {/if}
 
+{#if turns.length === 0 && welcome.trim()}
+	<div class="mx-auto mb-6 mt-10 max-w-2xl text-center" data-chat-welcome>
+		<Markdown
+			content={renderWelcome(welcome, {
+				name: me.value?.name,
+				email: me.value?.email,
+				language: locale.current
+			})}
+			class="prose prose-sm mx-auto max-w-none text-base-content/70"
+			images={[]}
+			hiddenImageUrls={new Set()}
+		/>
+	</div>
+{/if}
+
 <div class="mb-4 flex flex-1 flex-col gap-4">
 	{#each turns as entry, index (entry.turn.id)}
 		{#if index > 0 && compactedUpToSeq !== null && turns[index - 1].turn.seq <= compactedUpToSeq && entry.turn.seq > compactedUpToSeq}
@@ -1180,6 +1231,21 @@
 		<div class="flex flex-wrap items-center gap-2">
 			<CapabilityPicker capabilities={tools} onset={setCapability} />
 			<span class="flex-1"></span>
+			<label
+				class="label cursor-pointer items-center gap-1.5 p-0 text-xs"
+				title={t('chat-render-confidential-title', {
+					requires: t(`chat-render-confidential-requires-${confidentialRequires}`)
+				})}
+			>
+				<input
+					type="checkbox"
+					class="checkbox checkbox-xs"
+					bind:checked={confidential}
+					disabled={confidential || confidentialSaving}
+					onchange={markConfidential}
+				/>
+				<span>{t('chat-render-confidential')}</span>
+			</label>
 			<select
 				class="select select-xs w-auto max-w-48"
 				aria-label={t('chat-render-effort-title')}
@@ -1194,6 +1260,9 @@
 					</option>
 				{/each}
 			</select>
+			{#if confidential && models.length === 0}
+				<div class="alert alert-warning alert-soft mx-2 py-2 text-xs" role="alert"><span>{t('chat-render-confidential-no-model')}</span></div>
+			{/if}
 			{#if feedback.enabled}
 				<!-- The feedback entry point for conversation pages. The floating
 				     button is suppressed here (it would sit on top of send/stop),

@@ -44,12 +44,23 @@ pub(crate) enum ModelFormError {
     Store(aiplane_core::server::db::DbError),
 }
 
+/// The longest picker description a model may carry. It is one line under the
+/// model's name in the dropdown, not prose.
+const MAX_DESCRIPTION_CHARS: usize = 240;
+
 pub(crate) async fn apply_model_form(
     state: &RamaState,
     form: &SaveForm,
 ) -> Result<(), ModelFormError> {
     if form.model_name.is_empty() {
         return Err(ModelFormError::Invalid("a model name is required".into()));
+    }
+    let description = form.description.trim().to_string();
+    if description.chars().count() > MAX_DESCRIPTION_CHARS {
+        return Err(ModelFormError::Invalid(format!(
+            "a model description must be at most {MAX_DESCRIPTION_CHARS} characters — \
+             it is the line shown under the model in the chat picker"
+        )));
     }
 
     // ---- validate every field before touching the DB ----
@@ -176,6 +187,7 @@ pub(crate) async fn apply_model_form(
     };
     let fields = db::AllFields {
         defaults_toml: form.defaults_toml.clone(),
+        description,
         reasoning_style,
         overrides,
         context_window,
@@ -208,6 +220,8 @@ pub(crate) async fn apply_model_form(
 #[derive(Default, serde::Deserialize)]
 pub(crate) struct SaveForm {
     pub(crate) model_name: String,
+    #[serde(default)]
+    pub(crate) description: String,
     #[serde(default)]
     pub(crate) input_price: String,
     #[serde(default)]

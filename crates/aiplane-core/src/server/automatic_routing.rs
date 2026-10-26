@@ -878,6 +878,7 @@ mod tests {
             &db,
             &AutomaticRoute {
                 alias: "automatic".into(),
+                description: String::new(),
                 selector_model: "selector".into(),
                 objective: "balanced".into(),
                 instructions: "Choose a configured candidate.".into(),

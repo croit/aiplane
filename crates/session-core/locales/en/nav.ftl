@@ -59,7 +59,7 @@ nav-flow-error-heading = That connection did not complete
 nav-flow-error-back = Back to the app
 nav-admin-required = Admin role required
 nav-source-title = Source code (AGPL-3.0)
-nav-source-line = Source · AGPL-3.0 · { $version }
+nav-source-line = AGPL-3.0 · { $version }
 login-heading = Sign in to AIplane
 login-description = Authenticate with your company's OIDC provider to mint API tokens and route LLM requests.
 login-continue-button = Continue with OIDC →
@@ -69,4 +69,4 @@ page-title-branded = { $title } — AIplane
 
 admin-access-heading = Access & limits
 
-nav-documentation = Documentation
+nav-documentation = Docs

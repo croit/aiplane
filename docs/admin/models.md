@@ -71,8 +71,9 @@ For a known model, AIplane skips unhealthy or drained backends and routes to a h
 1. Open **Catalog**. Search by model name or use the chat, other, aliases or configured filter.
 2. Open the model editor (`/admin/models/edit`).
 3. Set input/output prices in the unit shown for that model kind. Configure prices before treating monetary usage totals as complete. With a per-token price, embedding and rerank calls are charged at the input price; when a backend reports only a total token count, those tokens count as input. A rerank backend that reports no token usage (Text Embeddings Inference) or reports search units instead (Cohere) records its calls with no tokens and no cost; see [reranking](../reference/api.md#reranking).
-4. For a chat model, verify its context window, reasoning format and capabilities against the upstream's actual configuration.
-5. Save. Return to the catalog and inspect the configured values.
+4. Optionally set the **description**: the one-line subtext the chat picker shows under the model or alias. It is limited to 240 characters and is searchable in the picker.
+5. For a chat model, verify its context window, reasoning format and capabilities against the upstream's actual configuration.
+6. Save. Return to the catalog and inspect the configured values.
 
 Chat overrides include reasoning styles `none`, `qwen`, `openai`, `glm`, `anthropic` and `ollama`; token budgets or effort values for the low, medium, high and xhigh levels (off turns thinking off and has nothing to tune); vision, tools, structured output, audio input, PDF input and parallel tools; and fallback models for vision and tools. Capability fields distinguish **unknown**, **enabled** and **disabled**. Unknown is not proof of support. The vision fallback describes images returned by tools only when vision is explicitly **Disabled**; Unknown and Enabled leave the image unchanged. If describing an image fails, AIplane keeps the original image part.
 
@@ -97,7 +98,7 @@ Open **Defaults** and choose the chat, transcription, speech, image or embedding
 Use an automatic route when clients should request a stable alias and AIplane should choose among known chat models for each request.
 
 1. Open **Automatic routing** and add a route. The form requires an available selector and at least two candidate models.
-2. Set the alias, selector model and quality/balanced/cost objective.
+2. Set the alias, selector model and quality/balanced/cost objective. The route's **description** is the line the chat picker shows under the alias; candidate descriptions inform selection.
 3. Give every candidate a unique key, a real model target and a description of its intended workload. These descriptions inform selection.
 4. Choose a fallback from the candidates. Set confidence threshold and selector timeout.
 5. Begin with **Shadow** rollout. Save and send representative requests to the alias. Inspect recent decisions.

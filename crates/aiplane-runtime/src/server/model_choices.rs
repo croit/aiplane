@@ -282,6 +282,7 @@ pub(super) mod tests {
             &db,
             &AutomaticRoute {
                 alias: "auto".into(),
+                description: String::new(),
                 selector_model: "picker".into(),
                 objective: "balanced".into(),
                 instructions: String::new(),

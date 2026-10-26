@@ -45,10 +45,11 @@ use std::path::PathBuf;
 
 use crate::server::config::AllowedIps;
 use crate::server::config::{
-    ChatConfig, ComfyuiConfig, CompactionConfig, Config, ContentGuardConfig, ContentGuardMode,
-    ContentGuardPolicy, DotsConfig, FeedbackConfig, GatewayConfig, GeoipConfig, LimitsConfig,
-    LoopsConfig, MetricsConfig, OcrConfig, PromptConfig, PushConfig, RagConfig, S3Config,
-    SandboxConfig, SkillsConfig, TurnsConfig, TypstConfig, UsageConfig, VoiceConfig,
+    ChatConfig, ComfyuiConfig, CompactionConfig, ConfidentialConfig, ConfidentialRequirement,
+    Config, ContentGuardConfig, ContentGuardMode, ContentGuardPolicy, DotsConfig, FeedbackConfig,
+    GatewayConfig, GeoipConfig, LimitsConfig, LoopsConfig, MetricsConfig, OcrConfig, PromptConfig,
+    PushConfig, RagConfig, S3Config, SandboxConfig, SkillsConfig, TurnsConfig, TypstConfig,
+    UsageConfig, VoiceConfig,
 };
 use crate::server::crypto::Crypto;
 use crate::server::db::{DbError, Pool, app_settings};
@@ -478,6 +479,16 @@ pub static SECTIONS: &[SectionSpec] = &[
         ],
     },
     SectionSpec {
+        name: "chat.welcome",
+        category: Category::Chat,
+        user_feature: false,
+        fields: &[f_default(
+            "chat.welcome.text",
+            Kind::TextArea,
+            super::prompts::WELCOME_TEXT,
+        )],
+    },
+    SectionSpec {
         name: "content_guard",
         category: Category::Access,
         user_feature: true,
@@ -492,6 +503,18 @@ pub static SECTIONS: &[SectionSpec] = &[
             f(
                 "content_guard.nda_action",
                 Kind::Choice(&["allow", "confirm", "deny"]),
+            ),
+        ],
+    },
+    SectionSpec {
+        name: "chat.confidential",
+        category: Category::Access,
+        user_feature: false,
+        fields: &[
+            f("chat.confidential.default", Kind::Bool),
+            f(
+                "chat.confidential.requires",
+                Kind::Choice(&["both", "gdpr", "nda"]),
             ),
         ],
     },
@@ -989,6 +1012,13 @@ impl Settings {
 pub fn apply(settings: &Settings, config: &mut Config) {
     config.chat = ChatConfig {
         prompt: prompt(settings),
+        welcome: welcome(settings),
+        confidential: ConfidentialConfig {
+            default: settings.bool("chat.confidential.default", false),
+            requires: ConfidentialRequirement::parse(
+                &settings.text_or("chat.confidential.requires", "both"),
+            ),
+        },
         voice: voice(settings),
         ocr: ocr(settings),
         compaction: compaction(settings),
@@ -1070,6 +1100,17 @@ fn prompt(s: &Settings) -> PromptConfig {
     PromptConfig {
         enabled: s.bool("chat.prompt.enabled", d.enabled),
         text: s.text_or("chat.prompt.text", ""),
+    }
+}
+
+/// A missing welcome row falls back to the built-in text, but an explicitly
+/// stored empty value stays empty: clearing the field is how an operator turns
+/// the welcome off. `text_or` would treat both as absent, which is why this
+/// one reads the raw row.
+fn welcome(s: &Settings) -> String {
+    match s.raw("chat.welcome.text") {
+        Some(value) => value.trim().to_owned(),
+        None => super::prompts::WELCOME_TEXT.to_owned(),
     }
 }
 
@@ -1362,6 +1403,15 @@ pub fn snapshot(c: &Config) -> Vec<(String, String)> {
 
     put("chat.prompt.enabled", c.chat.prompt.enabled.to_string());
     put("chat.prompt.text", c.chat.prompt.text.clone());
+    put("chat.welcome.text", c.chat.welcome.clone());
+    put(
+        "chat.confidential.default",
+        c.chat.confidential.default.to_string(),
+    );
+    put(
+        "chat.confidential.requires",
+        c.chat.confidential.requires.as_str().to_string(),
+    );
     put("chat.voice.directive", c.chat.voice.directive.clone());
 
     put("chat.ocr.enabled", ocr.enabled.to_string());
@@ -1688,6 +1738,87 @@ mod tests {
             cleared.chat.prompt.text.is_empty(),
             "whitespace is not a prompt"
         );
+    }
+
+    #[test]
+    fn welcome_and_confidential_settings_round_trip() {
+        let mut config = Config::default();
+        assert!(config.chat.welcome.is_empty());
+        assert!(!config.chat.confidential.default);
+        assert_eq!(
+            config.chat.confidential.requires,
+            ConfidentialRequirement::Both
+        );
+
+        // No stored row: the built-in welcome ships with the gateway.
+        let mut unset = Config::default();
+        apply(&settings_of(&[]), &mut unset);
+        assert_eq!(
+            unset.chat.welcome,
+            crate::server::prompts::WELCOME_TEXT,
+            "an untouched gateway still shows a welcome"
+        );
+
+        apply(
+            &settings_of(&[
+                ("chat.welcome.text", "Willkommen bei uns."),
+                ("chat.confidential.default", "true"),
+                ("chat.confidential.requires", "gdpr"),
+            ]),
+            &mut config,
+        );
+        assert_eq!(config.chat.welcome, "Willkommen bei uns.");
+        assert!(config.chat.confidential.default);
+        assert_eq!(
+            config.chat.confidential.requires,
+            ConfidentialRequirement::Gdpr
+        );
+
+        for (key, expected) in [
+            ("chat.welcome.text", "Willkommen bei uns."),
+            ("chat.confidential.default", "true"),
+            ("chat.confidential.requires", "gdpr"),
+        ] {
+            assert_eq!(
+                snapshot(&config)
+                    .into_iter()
+                    .find(|(k, _)| k == key)
+                    .map(|(_, v)| v)
+                    .as_deref(),
+                Some(expected)
+            );
+        }
+
+        let mut cleared = Config::default();
+        apply(&settings_of(&[("chat.welcome.text", "   ")]), &mut cleared);
+        assert!(
+            cleared.chat.welcome.is_empty(),
+            "whitespace is not a welcome text"
+        );
+    }
+
+    #[test]
+    fn a_confidential_requirement_matches_the_flagged_pools() {
+        use crate::server::upstreams::config::Compliance;
+        let clear = Compliance {
+            gdpr: true,
+            nda: true,
+        };
+        let gdpr_only = Compliance {
+            gdpr: true,
+            nda: false,
+        };
+        let nda_only = Compliance {
+            gdpr: false,
+            nda: true,
+        };
+        assert!(ConfidentialRequirement::Both.satisfied_by(clear));
+        assert!(!ConfidentialRequirement::Both.satisfied_by(gdpr_only));
+        assert!(!ConfidentialRequirement::Both.satisfied_by(nda_only));
+        assert!(ConfidentialRequirement::Gdpr.satisfied_by(gdpr_only));
+        assert!(!ConfidentialRequirement::Gdpr.satisfied_by(nda_only));
+        assert!(ConfidentialRequirement::Nda.satisfied_by(nda_only));
+        assert!(!ConfidentialRequirement::Nda.satisfied_by(gdpr_only));
     }
 
     #[test]

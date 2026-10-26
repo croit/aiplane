@@ -17,7 +17,7 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use crate::server::upstreams::config::FallbackConfig;
+use crate::server::upstreams::config::{Compliance, FallbackConfig};
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -684,6 +684,12 @@ pub struct ChatConfig {
     pub s3: Option<S3Config>,
     /// The deployment-wide system prompt for a person's chat.
     pub prompt: PromptConfig,
+    /// The operator's welcome text for an empty conversation. Plain content
+    /// shown on the chat page before the first turn; empty means nothing.
+    pub welcome: String,
+    /// What makes a conversation confidential, and what a model must carry
+    /// to stay selectable in one.
+    pub confidential: ConfidentialConfig,
     /// The operator's standing instructions for voice turns.
     pub voice: VoiceConfig,
     /// Optional automatic OCR enrichment for image/PDF attachments. The OCR
@@ -696,6 +702,53 @@ pub struct ChatConfig {
     pub turns: TurnsConfig,
     /// What a chat turn does when its model starts repeating itself.
     pub loops: LoopsConfig,
+}
+
+/// What a confidential conversation requires of the models it may reach.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConfidentialRequirement {
+    /// GDPR and NDA coverage — the safe default for a conversation that may
+    /// hold both personal data and confidential material.
+    #[default]
+    Both,
+    Gdpr,
+    Nda,
+}
+
+impl ConfidentialRequirement {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Both => "both",
+            Self::Gdpr => "gdpr",
+            Self::Nda => "nda",
+        }
+    }
+
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "gdpr" => Self::Gdpr,
+            "nda" => Self::Nda,
+            _ => Self::Both,
+        }
+    }
+
+    /// Whether a model whose pools carry `compliance` may serve a confidential
+    /// conversation under this requirement.
+    pub fn satisfied_by(self, compliance: Compliance) -> bool {
+        match self {
+            Self::Both => compliance.gdpr && compliance.nda,
+            Self::Gdpr => compliance.gdpr,
+            Self::Nda => compliance.nda,
+        }
+    }
+}
+
+/// The confidential-chat policy: whether new conversations start confidential,
+/// and which compliance a model must carry to remain selectable in one.
+#[derive(Debug, Clone, Default)]
+pub struct ConfidentialConfig {
+    pub default: bool,
+    pub requires: ConfidentialRequirement,
 }
 
 /// Retries for a chat turn whose model collapsed into a loop.

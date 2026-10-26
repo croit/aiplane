@@ -22,6 +22,7 @@ export interface ModelCapabilities {
 
 export interface ModelDefaults {
 	defaults_toml: string;
+	description: string;
 	reasoning_style: string | null;
 	context_window: number | null;
 	input_price: number | null;
@@ -48,6 +49,8 @@ export const MIN_THINKING_BUDGET = 1024;
 
 export interface AdminModel {
 	name: string;
+	/** The picker description; empty when none is set. */
+	description: string;
 	kind: ModelKind;
 	alias_target: string | null;
 	/** An upstream pool currently advertises this model. */

@@ -585,6 +585,36 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
         &access,
     )
     .await;
+    // A confidential conversation may only reach models the operator cleared
+    // for it. The filter is server-side; the picker merely renders what it is
+    // given. A session the caller does not own is ignored, so the list is
+    // never narrowed by guessing.
+    let requested_session = req.uri().query().and_then(|query| {
+        query
+            .split('&')
+            .find_map(|pair| pair.strip_prefix("session="))
+    });
+    let confidential = match requested_session {
+        Some(session_id)
+            if session_core::db::is_root_session_owned(&state.db, &user.id, session_id)
+                .await
+                .unwrap_or(false) =>
+        {
+            aiplane_core::server::db::chat_session_settings::get_confidential(&state.db, session_id)
+                .await
+                .unwrap_or(false)
+        }
+        _ => false,
+    };
+    let models = if confidential {
+        let requires = state.config().chat.confidential.requires;
+        models
+            .into_iter()
+            .filter(|choice| requires.satisfied_by(choice.compliance))
+            .collect()
+    } else {
+        models
+    };
     // Whether the composer's effort control does anything for each model.
     //
     // It is a select that has always been rendered the same for every model,
@@ -600,12 +630,27 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
     // load — a deployment with fifty models would have made fifty round trips
     // to answer a question about a dropdown. Most models have no row at all,
     // so the map is small and the lookup usually misses.
-    let stored: std::collections::HashMap<String, Option<String>> =
-        aiplane_core::server::db::model_defaults::all(&state.db)
+    let rows = aiplane_core::server::db::model_defaults::all(&state.db)
+        .await
+        .unwrap_or_default();
+    let stored: std::collections::HashMap<String, Option<String>> = rows
+        .iter()
+        .map(|row| (row.model_name.clone(), row.reasoning_style.clone()))
+        .collect();
+    // The picker's description line, keyed by the name the picker shows: a
+    // model id, a backend alias, or an automatic-route alias.
+    let descriptions: std::collections::HashMap<String, String> = rows
+        .into_iter()
+        .filter(|row| !row.description.is_empty())
+        .map(|row| (row.model_name, row.description))
+        .collect();
+    let route_descriptions: std::collections::HashMap<String, String> =
+        aiplane_core::server::db::automatic_routes::all(&state.db)
             .await
             .unwrap_or_default()
             .into_iter()
-            .map(|row| (row.model_name, row.reasoning_style))
+            .filter(|route| !route.description.is_empty())
+            .map(|route| (route.alias, route.description))
             .collect();
     // Per-model prices keyed by the resolved model name, one map rather than a
     // query per row — `model_defaults` is small. A model with no row here is
@@ -626,6 +671,12 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
             // sends Qwen's `enable_thinking`, which is the same disagreement
             // between UI and wire this whole field exists to prevent.
             let is_route = choice.route.is_some();
+            let description = if is_route {
+                route_descriptions.get(&choice.id)
+            } else {
+                descriptions.get(&choice.id)
+            }
+            .cloned();
             let targets = match choice.route {
                 Some(route) => route.candidates,
                 None => vec![
@@ -680,6 +731,7 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
                 id: choice.id,
                 gdpr: choice.compliance.gdpr,
                 nda: choice.compliance.nda,
+                description,
                 efforts: efforts
                     .unwrap_or_default()
                     .into_iter()
@@ -709,6 +761,9 @@ pub struct ChatModel {
     pub gdpr: bool,
     /// Whether the model's backend is flagged as covered by an NDA.
     pub nda: bool,
+    /// The operator's one-line description, shown under the name in the
+    /// picker. `null` when none is configured.
+    pub description: Option<String>,
     /// The effort levels the composer offers for this model, least thinking
     /// first; empty when the effort control would change nothing.
     pub efforts: Vec<&'static str>,

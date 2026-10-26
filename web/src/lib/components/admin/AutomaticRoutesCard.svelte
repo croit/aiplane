@@ -7,6 +7,7 @@
 	type Candidate = { key: string; target: string; description: string };
 	type Route = {
 		alias: string;
+		description: string;
 		selector_model: string;
 		objective: 'quality' | 'balanced' | 'cost';
 		instructions: string;
@@ -43,6 +44,7 @@
 	function emptyRoute(source: Data): Route {
 		return {
 			alias: '',
+			description: '',
 			selector_model: source.selector_models[0] ?? '',
 			objective: 'balanced',
 			instructions: '',
@@ -184,6 +186,7 @@
 								<div class="flex gap-1"><span class="badge badge-outline">v{route.version}</span><span class="badge">{rolloutLabel(route.rollout)}</span></div>
 							</div>
 							<p class="text-sm text-base-content/70">{route.candidates.length} {t('auto-route-candidates')} · {objectiveLabel(route.objective)} · {route.fallback_target}</p>
+							{#if route.description}<p class="text-sm text-base-content/60">{route.description}</p>{/if}
 							<div class="card-actions justify-end">
 								<button class="btn btn-sm" type="button" onclick={() => void showEditor(route)}>{t('auto-route-edit')}</button>
 								<button class="btn btn-ghost btn-sm text-error" type="button" onclick={() => void remove(route.alias)}>{t('auto-route-delete')}</button>
@@ -208,6 +211,7 @@
 							<fieldset class="fieldset w-full min-w-0"><legend class="fieldset-legend">{t('auto-route-confidence')}</legend><input class="input w-full" type="number" min="0" max="1" step="0.01" bind:value={editing.minimum_confidence} /><p class="label whitespace-normal">{t('auto-route-confidence-help')}</p></fieldset>
 							<fieldset class="fieldset w-full min-w-0"><legend class="fieldset-legend">{t('auto-route-timeout')}</legend><input class="input w-full" type="number" min="100" max="30000" step="100" bind:value={editing.selector_timeout_ms} /></fieldset>
 						</div>
+						<fieldset class="fieldset w-full min-w-0"><legend class="fieldset-legend">{t('auto-route-picker-description')}</legend><input class="input w-full" bind:value={editing.description} placeholder={t('auto-route-picker-description-placeholder')} /><p class="label whitespace-normal">{t('auto-route-picker-description-help')}</p></fieldset>
 						<fieldset class="fieldset w-full min-w-0"><legend class="fieldset-legend">{t('auto-route-instructions')}</legend><textarea class="textarea min-h-24 w-full" bind:value={editing.instructions} placeholder={t('auto-route-instructions-placeholder')}></textarea><p class="label whitespace-normal">{t('auto-route-instructions-help')}</p></fieldset>
 						<div class="flex flex-col gap-3">
 							<div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between"><div><h4 class="font-semibold">{t('auto-route-candidates')}</h4><p class="text-sm text-base-content/70">{t('auto-route-candidates-help')}</p></div><button class="btn btn-sm" type="button" onclick={addCandidate}>+ {t('auto-route-candidate-add')}</button></div>

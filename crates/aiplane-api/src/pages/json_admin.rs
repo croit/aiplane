@@ -552,6 +552,10 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
             if !seen.insert(name.clone()) {
                 continue;
             }
+            let stored_description = configured
+                .get(&name)
+                .map(|d| d.description.clone())
+                .unwrap_or_default();
             if alias_target.is_some() {
                 configured.remove(&name);
             }
@@ -584,6 +588,7 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
                 // truncated upstream, and that is worth saying out loud.
                 detected_context_window: state.upstreams.probed_context_window(&name),
                 name,
+                description: stored_description,
                 kind: kind_label,
                 alias_target,
                 served: true,
@@ -598,6 +603,11 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
     let mut leftover: Vec<_> = configured.into_values().collect();
     leftover.sort_by(|a, b| a.model_name.cmp(&b.model_name));
     for defaults in leftover {
+        // Alias rows carry the picker description; the alias itself was
+        // already listed above, so it must not appear a second time.
+        if seen.contains(&defaults.model_name) {
+            continue;
+        }
         // These are rows for models nothing currently serves, so there is no
         // backend to ask — the model name decides, as it always did.
         let reasoning = aiplane_core::server::reasoning::ReasoningStyle::resolve(
@@ -607,6 +617,7 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
         );
         models.push(ModelView {
             name: defaults.model_name.clone(),
+            description: defaults.description.clone(),
             kind: "chat",
             alias_target: None,
             // Nothing advertises this model any more — the page files the row
@@ -678,6 +689,9 @@ pub struct ModelsView {
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct ModelView {
     pub name: String,
+    /// The operator's picker description, empty when none is set. Works for
+    /// model ids and backend aliases alike.
+    pub description: String,
     /// The pool kind serving it, e.g. `chat`, `embedding`.
     pub kind: &'static str,
     /// The model this name is an alias of.
@@ -702,6 +716,8 @@ pub struct ModelView {
 pub struct ModelDefaultsView {
     /// The request defaults as the operator typed them, in TOML.
     pub defaults_toml: String,
+    /// The picker description, empty when none is set.
+    pub description: String,
     pub reasoning_style: Option<String>,
     pub context_window: Option<i64>,
     pub input_price: Option<f64>,
@@ -758,6 +774,7 @@ pub struct SearchSettingsView {
 fn model_defaults_view(d: &db::model_defaults::ModelDefaults) -> ModelDefaultsView {
     ModelDefaultsView {
         defaults_toml: d.defaults_toml.clone(),
+        description: d.description.clone(),
         reasoning_style: d.reasoning_style.clone(),
         context_window: d.context_window,
         input_price: d.input_price,
@@ -807,6 +824,7 @@ pub async fn models_save(State(state): State<Arc<RamaState>>, req: Request) -> R
     };
     let form = super::admin::SaveForm {
         model_name: form_field(raw.model_name),
+        description: form_field(raw.description),
         input_price: form_field(raw.input_price),
         output_price: form_field(raw.output_price),
         cache_read_price: form_field(raw.cache_read_price),
@@ -853,6 +871,9 @@ pub struct ModelSaveBody {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     model_name: Option<serde_json::Value>,
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
+    description: Option<serde_json::Value>,
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     input_price: Option<serde_json::Value>,

@@ -99,3 +99,11 @@ chat-render-canvas-close-title = Canvas schließen
 chat-render-delegated-readonly-banner = Delegierte Unterhaltung — schreibgeschützter Verlauf. Setzen Sie diese Arbeit über die Hauptunterhaltung oder den Posteingang fort, geben Sie sie dort frei oder stoppen Sie sie.
 chat-render-delegated-root-link = Hauptunterhaltung öffnen
 chat-render-delegated-root-unavailable = Die Hauptunterhaltung ist nicht verfügbar. Dieser Verlauf bleibt schreibgeschützt.
+
+chat-render-confidential = Vertraulich
+chat-render-confidential-title = Markiert diese Unterhaltung als vertraulich. Nur Modelle mit { $requires } bleiben wählbar; das lässt sich nicht rückgängig machen.
+chat-render-confidential-requires-both = GDPR- und NDA-Abdeckung
+chat-render-confidential-requires-gdpr = GDPR-Abdeckung
+chat-render-confidential-requires-nda = NDA-Abdeckung
+chat-render-confidential-no-model = Kein Modell ist für vertrauliche Daten freigegeben. Bitte einen Administrator, eines freizugeben.
+chat-render-confidential-model-switched = Diese Unterhaltung ist jetzt vertraulich; das gewählte Modell war dafür nicht freigegeben.

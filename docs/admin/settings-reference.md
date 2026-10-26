@@ -20,6 +20,25 @@ Category: **Access**.
 
 The checks run only for compliance areas not declared covered by the destination chat pool. When both areas are uncovered, both questions are sent to the selected System One model. The model also receives the request messages, so assess its own pool declarations before selecting it. See [content guard setup and behavior](settings.md#access-and-content-guard).
 
+### chat.confidential
+
+Category: **Access**.
+
+| Key | Input / choices | Meaning | Restart |
+|---|---|---|---|
+| `chat.confidential.default` | Boolean | Mark every newly created conversation confidential. Materialised at creation, so turning this off later does not reopen existing conversations. Ships off. | No |
+| `chat.confidential.requires` | both, gdpr, nda | Compliance a model must carry to remain selectable in a confidential conversation. Both requires GDPR and NDA coverage; a cloud model with both stays selectable. Ships as both. | No |
+
+A confidential conversation can only be routed to models whose pools satisfy the requirement, and the mark never clears. The content guard sets it automatically when it matches sensitive content; people can also set it from the chat composer. See [confidential conversations](settings.md#confidential-conversations).
+
+### chat.welcome
+
+Category: **Chat**.
+
+| Key | Input / choices | Meaning | Restart |
+|---|---|---|---|
+| `chat.welcome.text` | Text | Shown centred on an empty conversation before the first message. Markdown is supported; empty means no welcome text. Ships with a built-in default, shown while nothing is stored. Placeholders: `{name}` (display name, falling back to the address local part), `{first_name}`, `{email}`, `{language}` (interface language code). | No |
+
 ### chat.prompt
 
 Category: **Chat**.

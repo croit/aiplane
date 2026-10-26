@@ -5,6 +5,7 @@ import type { AdminModel } from './admin-models.ts';
 
 const model: AdminModel = {
 	name: 'Qwen/Qwen3',
+	description: '',
 	kind: 'chat',
 	alias_target: null,
 	served: true,
@@ -15,6 +16,7 @@ const model: AdminModel = {
 	effort_levels: [],
 	defaults: {
 		defaults_toml: 'temperature = 0.7',
+		description: '',
 		reasoning_style: null,
 		context_window: 32768,
 		input_price: 1,

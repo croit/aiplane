@@ -18,6 +18,10 @@ pub struct AutomaticRouteCandidate {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AutomaticRoute {
     pub alias: String,
+    /// The operator's one-line description, shown under the route's alias in
+    /// the chat picker. Empty when none is set.
+    #[serde(default)]
+    pub description: String,
     pub selector_model: String,
     pub objective: String,
     pub instructions: String,
@@ -141,7 +145,7 @@ async fn get_with(
     alias: &str,
 ) -> Result<Option<AutomaticRoute>, DbError> {
     let Some(row) = sqlx::query(
-        r#"SELECT alias, selector_model, objective, instructions, minimum_confidence,
+        r#"SELECT alias, description, selector_model, objective, instructions, minimum_confidence,
                   selector_timeout_ms, fallback_target, session_affinity,
                   session_ttl_seconds, rollout, version
              FROM automatic_routes WHERE alias = ?"#,
@@ -168,6 +172,7 @@ async fn get_with(
     .collect();
     Ok(Some(AutomaticRoute {
         alias: row.get("alias"),
+        description: row.get("description"),
         selector_model: row.get("selector_model"),
         objective: row.get("objective"),
         instructions: row.get("instructions"),
@@ -191,11 +196,12 @@ pub async fn upsert(db: &Pool, route: &AutomaticRoute) -> Result<i64, DbError> {
     let mut tx = db.begin().await?;
     sqlx::query(
         r#"INSERT INTO automatic_routes
-              (alias, selector_model, objective, instructions, minimum_confidence,
+              (alias, description, selector_model, objective, instructions, minimum_confidence,
                selector_timeout_ms, fallback_target, session_affinity, session_ttl_seconds,
                rollout, version, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
             ON CONFLICT(alias) DO UPDATE SET
+              description = excluded.description,
               selector_model = excluded.selector_model,
               objective = excluded.objective,
               instructions = excluded.instructions,
@@ -209,6 +215,7 @@ pub async fn upsert(db: &Pool, route: &AutomaticRoute) -> Result<i64, DbError> {
               updated_at = excluded.updated_at"#,
     )
     .bind(route.alias.trim())
+    .bind(route.description.trim())
     .bind(route.selector_model.trim())
     .bind(&route.objective)
     .bind(route.instructions.trim())
@@ -343,6 +350,7 @@ mod tests {
     fn route() -> AutomaticRoute {
         AutomaticRoute {
             alias: "default".into(),
+            description: String::new(),
             selector_model: "jev-latest".into(),
             objective: "balanced".into(),
             instructions: "Prefer the coding model for software tasks.".into(),

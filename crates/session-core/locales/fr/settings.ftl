@@ -321,3 +321,18 @@ branding-error-slot = Slot de thème inconnu — le logo se définit pour le th�
 branding-error-empty = Le téléversement ne contenait aucun fichier.
 branding-error-multipart = Le téléversement n'était pas un formulaire lisible — réessayez avec le fichier.
 branding-error-store = Le logo n'a pas pu être enregistré — réessayez.
+
+settings-s-chat-welcome = Message d'accueil
+settings-s-chat-welcome-blurb = Affiché dans une conversation vide avant le premier message.
+settings-f-chat-welcome-text = Message d'accueil
+settings-f-chat-welcome-text-help = Au centre d'un chat vide. Le Markdown est pris en charge ; vide signifie aucun message d'accueil. Variables : { "{" }name{ "}" } (nom affiché), { "{" }first_name{ "}" }, { "{" }email{ "}" }, { "{" }language{ "}" } (langue de l'interface).
+
+settings-s-chat-confidential = Chats confidentiels
+settings-s-chat-confidential-blurb = Une conversation confidentielle n'est routée que vers des modèles autorisés et ne redevient jamais non confidentielle.
+settings-f-chat-confidential-default = Les nouveaux chats démarrent confidentiels
+settings-f-chat-confidential-default-help = Les nouvelles conversations sont marquées confidentielles à leur création. Modifier ce réglage plus tard ne rouvre pas les conversations existantes.
+settings-f-chat-confidential-requires = Exigence pour un chat confidentiel
+settings-f-chat-confidential-requires-help = Le marqueur de conformité que les pools d'un modèle doivent porter pour rester sélectionnables dans une conversation confidentielle. « Les deux » exige la couverture GDPR et NDA ; un modèle cloud couvert par les deux reste sélectionnable.
+settings-f-chat-confidential-requires-opt-both = GDPR et NDA
+settings-f-chat-confidential-requires-opt-gdpr = GDPR uniquement
+settings-f-chat-confidential-requires-opt-nda = NDA uniquement

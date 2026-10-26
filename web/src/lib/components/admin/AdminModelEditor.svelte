@@ -23,6 +23,7 @@
 	} = $props();
 
 	const defaults = untrack(() => model.defaults);
+	let description = $state(untrack(() => model.description ?? ''));
 	let inputPrice = $state(defaults?.input_price?.toString() ?? '');
 	let outputPrice = $state(defaults?.output_price?.toString() ?? '');
 	let cachePrice = $state(defaults?.cache_read_price?.toString() ?? '');
@@ -60,6 +61,7 @@
 		try {
 			await onsave({
 				model_name: model.name,
+				description,
 				input_price: inputPrice,
 				output_price: outputPrice,
 				cache_read_price: cachePrice,
@@ -99,6 +101,7 @@
 <div class="flex flex-col gap-3">
 	{#if error}<div class="alert alert-error py-2 text-sm"><span>{error}</span></div>{/if}
 	<form class="m-0 flex flex-col gap-3" onsubmit={(event) => { event.preventDefault(); save(!isChat); }}>
+		<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-model-description-label')}</span><input class="input" bind:value={description} maxlength="240" placeholder={t('admin-model-description-placeholder')} /><span class="text-xs opacity-60">{t('admin-model-description-help')}</span></label>
 		<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
 			<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-price-in-label')} ({priceLabel})</span><input type="number" min="0" step="any" class="input" bind:value={inputPrice} placeholder={t('admin-price-in-placeholder')} /></label>
 			<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-price-out-label')} ({priceLabel})</span><input type="number" min="0" step="any" class="input" bind:value={outputPrice} placeholder={t('admin-price-out-placeholder')} /></label>

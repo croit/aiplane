@@ -1395,6 +1395,7 @@ async fn upsert_route(fx: &Fixture, alias: &str, candidates: &[&str]) {
         &fx.state.db,
         &AutomaticRoute {
             alias: alias.into(),
+            description: String::new(),
             selector_model: "picker".into(),
             objective: "balanced".into(),
             instructions: String::new(),

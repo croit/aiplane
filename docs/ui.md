@@ -114,6 +114,20 @@ voice selectors at every width: inline beside the actions from `sm` up, on a
 full-width row of their own beneath them below it. It is one set of controls,
 not a mobile copy, so the options and the selected model are the same on both.
 
+An empty conversation shows the operator's welcome text (`chat.welcome.text`)
+centred above the composer; it is operator content, so it is not translated
+and `empty` means nothing is drawn. The built-in default ships until the
+operator stores a value. The placeholders `{name}` (display name, falling back
+to the address local part), `{first_name}`, `{email}` and `{language}`
+(interface language code) are filled in per person and escaped for Markdown,
+so a name cannot inject markup. The composer also carries the
+**Confidential** checkbox once write access is known: ticking it marks the
+conversation sticky-confidential (`POST …/confidential`), refetches the model
+list, and switches away from a model the new mark does not allow. The box then
+stays checked and disabled, because the server refuses to clear the mark. A
+confidential conversation whose policy leaves no model cleared shows a warning
+instead of an unusable picker; the server enforces the same rule on the turn.
+
 ### Bounded viewport
 
 A page that is a conversation fills the window rather than scrolling as a
@@ -247,7 +261,10 @@ of a native select. It searches labels, stored values, descriptions, keywords an
 badges; supports arrow keys, Enter and Escape; and bounds long result lists to
 their own scroll region. Model choices render the model id left-aligned and show
 compact GDPR and NDA status badges right-aligned on every row. Green check badges
-mean the model is cleared; red crossed-out badges mean it is restricted. The chat
+mean the model is cleared; red crossed-out badges mean it is restricted. An
+operator description (`model_defaults.description` for a model or backend
+alias, `automatic_routes.description` for a route alias) renders as the row's
+subtext and is searchable. The chat
 model picker additionally shows a neutral price badge: the model's configured
 price in the deployment's currency (an alias is priced as the model it resolves
 to), or "free" when unpriced. An automatic route reaches several models and has

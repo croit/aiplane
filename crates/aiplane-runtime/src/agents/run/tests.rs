@@ -1741,6 +1741,7 @@ async fn an_agent_on_an_automatic_route_with_an_alias_candidate_answers_and_comp
         world.db(),
         &AutomaticRoute {
             alias: "auto".into(),
+            description: String::new(),
             selector_model: "no-selector".into(),
             objective: "balanced".into(),
             instructions: String::new(),

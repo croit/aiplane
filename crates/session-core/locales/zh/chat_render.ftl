@@ -90,3 +90,11 @@ chat-render-canvas-close-title = 关闭画布
 chat-render-delegated-readonly-banner = 委派的对话 — 只读历史记录。请通过主对话或收件箱继续、批准或停止此工作。
 chat-render-delegated-root-link = 打开主对话
 chat-render-delegated-root-unavailable = 主对话不可用。此历史记录仍为只读。
+
+chat-render-confidential = 机密
+chat-render-confidential-title = 将此对话标记为机密。只有具备{ $requires }的模型仍可选，且此操作不可撤销。
+chat-render-confidential-requires-both = GDPR 和 NDA 合规
+chat-render-confidential-requires-gdpr = GDPR 合规
+chat-render-confidential-requires-nda = NDA 合规
+chat-render-confidential-no-model = 没有模型获准处理机密数据。请联系管理员授权一个。
+chat-render-confidential-model-switched = 此对话现已设为机密；所选模型未获准用于它。

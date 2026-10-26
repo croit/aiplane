@@ -25,6 +25,9 @@ pub struct ModelDefaults {
     /// re-render. May be empty (operator cleared the textarea +
     /// hit save — equivalent to deleting the row, but tolerated).
     pub defaults_toml: String,
+    /// The operator's one-line description of the model, shown under its name
+    /// in the chat picker. Empty means the picker shows none.
+    pub description: String,
     /// How this model expresses its reasoning budget on the wire
     /// (`qwen` | `openai` | `glm` | `anthropic` | `none`). `None` =
     /// auto-detect from the model name at request time. Drives
@@ -119,6 +122,7 @@ pub struct ModelCapabilities {
 fn map_row(row: &SqliteRow) -> Result<ModelDefaults, DbError> {
     let model_name: String = row.try_get("model_name")?;
     let defaults_toml: String = row.try_get("defaults_toml")?;
+    let description: String = row.try_get("description")?;
     let reasoning_style: Option<String> = row.try_get("reasoning_style")?;
     let thinking_budget_low: Option<i64> = row.try_get("thinking_budget_low")?;
     let thinking_budget_medium: Option<i64> = row.try_get("thinking_budget_medium")?;
@@ -144,6 +148,7 @@ fn map_row(row: &SqliteRow) -> Result<ModelDefaults, DbError> {
     Ok(ModelDefaults {
         model_name,
         defaults_toml,
+        description,
         reasoning_style,
         thinking_budget_low,
         thinking_budget_medium,
@@ -184,7 +189,7 @@ fn map_capabilities(row: &SqliteRow) -> Result<ModelCapabilities, DbError> {
 /// through to forwarding the client body verbatim.
 pub async fn get(pool: &Pool, model_name: &str) -> Result<Option<ModelDefaults>, DbError> {
     let row = sqlx::query(
-        r#"SELECT model_name, defaults_toml, reasoning_style,
+        r#"SELECT model_name, defaults_toml, description, reasoning_style,
                   thinking_budget_low, thinking_budget_medium,
                   thinking_budget_high, thinking_budget_xhigh,
                   reasoning_effort_low, reasoning_effort_medium,
@@ -481,6 +486,7 @@ pub async fn upsert(pool: &Pool, model_name: &str, defaults_toml: &str) -> Resul
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AllFields {
     pub defaults_toml: String,
+    pub description: String,
     pub reasoning_style: Option<String>,
     pub overrides: ReasoningOverrideCols,
     pub context_window: Option<i64>,
@@ -500,7 +506,7 @@ pub async fn set_all(pool: &Pool, model_name: &str, f: &AllFields) -> Result<(),
     let now = Timestamp::now().to_string();
     sqlx::query(
         r#"INSERT INTO model_defaults
-              (model_name, defaults_toml, reasoning_style,
+              (model_name, defaults_toml, description, reasoning_style,
                thinking_budget_low, thinking_budget_medium,
                thinking_budget_high, thinking_budget_xhigh,
                reasoning_effort_low, reasoning_effort_medium,
@@ -510,9 +516,10 @@ pub async fn set_all(pool: &Pool, model_name: &str, f: &AllFields) -> Result<(),
                cap_tools, cap_parallel_tools, cap_structured_output,
                fallback_vision, fallback_tools,
                cap_updated_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(model_name) DO UPDATE SET
                defaults_toml             = excluded.defaults_toml,
+               description               = excluded.description,
                reasoning_style           = excluded.reasoning_style,
                thinking_budget_low = excluded.thinking_budget_low,
                thinking_budget_medium = excluded.thinking_budget_medium,
@@ -540,6 +547,7 @@ pub async fn set_all(pool: &Pool, model_name: &str, f: &AllFields) -> Result<(),
     )
     .bind(model_name)
     .bind(&f.defaults_toml)
+    .bind(&f.description)
     .bind(f.reasoning_style.as_deref())
     .bind(f.overrides.budget_low)
     .bind(f.overrides.budget_medium)
@@ -626,7 +634,7 @@ pub async fn all_prices(
 /// scale with the number of models the gateway offers.
 pub async fn all(pool: &Pool) -> Result<Vec<ModelDefaults>, DbError> {
     let rows = sqlx::query(
-        r#"SELECT model_name, defaults_toml, reasoning_style,
+        r#"SELECT model_name, defaults_toml, description, reasoning_style,
                   thinking_budget_low, thinking_budget_medium,
                   thinking_budget_high, thinking_budget_xhigh,
                   reasoning_effort_low, reasoning_effort_medium,
@@ -812,6 +820,7 @@ mod tests {
         let pool = fresh().await;
         let fields = AllFields {
             defaults_toml: "temperature = 0.7".into(),
+            description: "Karl local — data stays in the house".into(),
             reasoning_style: Some("qwen".into()),
             overrides: ReasoningOverrideCols {
                 budget_medium: Some(4_096),
@@ -835,6 +844,7 @@ mod tests {
         set_all(&pool, "m", &fields).await.unwrap();
         let row = get(&pool, "m").await.unwrap().unwrap();
         assert_eq!(row.defaults_toml, "temperature = 0.7");
+        assert_eq!(row.description, "Karl local — data stays in the house");
         assert_eq!(row.reasoning_style.as_deref(), Some("qwen"));
         assert_eq!(row.thinking_budget_medium, Some(4_096));
         assert_eq!(row.thinking_budget_high, Some(16_384));

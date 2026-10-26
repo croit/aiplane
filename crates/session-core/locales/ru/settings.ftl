@@ -321,3 +321,18 @@ branding-error-slot = Неизвестный слот темы — логоти�
 branding-error-empty = В загрузке не было файла.
 branding-error-multipart = Загрузка не была читаемой формой — повторите загрузку файла.
 branding-error-store = Не удалось сохранить логотип — повторите попытку.
+
+settings-s-chat-welcome = Приветственный текст
+settings-s-chat-welcome-blurb = Показывается в пустом разговоре до первого сообщения.
+settings-f-chat-welcome-text = Приветственный текст
+settings-f-chat-welcome-text-help = По центру пустого чата. Поддерживается Markdown; пусто — без приветствия. Переменные: { "{" }name{ "}" } (отображаемое имя), { "{" }first_name{ "}" }, { "{" }email{ "}" }, { "{" }language{ "}" } (язык интерфейса).
+
+settings-s-chat-confidential = Конфиденциальные чаты
+settings-s-chat-confidential-blurb = Конфиденциальный разговор направляется только в разрешённые модели и больше не становится неконфиденциальным.
+settings-f-chat-confidential-default = Новые чаты начинаются конфиденциальными
+settings-f-chat-confidential-default-help = Новые разговоры помечаются конфиденциальными при создании. Изменение этой настройки позже не открывает существующие разговоры.
+settings-f-chat-confidential-requires = Требование для конфиденциального чата
+settings-f-chat-confidential-requires-help = Какое обозначение соответствия должны нести пулы модели, чтобы оставаться доступной в конфиденциальном разговоре. «Оба» требует соответствия GDPR и NDA; облачная модель с обоими остаётся доступной.
+settings-f-chat-confidential-requires-opt-both = GDPR и NDA
+settings-f-chat-confidential-requires-opt-gdpr = Только GDPR
+settings-f-chat-confidential-requires-opt-nda = Только NDA

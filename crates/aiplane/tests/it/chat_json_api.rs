@@ -2493,6 +2493,7 @@ async fn automatic_route_stays_in_model_picker_while_selector_is_unavailable() {
         &state.db,
         &AutomaticRoute {
             alias: "default".into(),
+            description: String::new(),
             selector_model: "jev-model".into(),
             objective: "balanced".into(),
             instructions: String::new(),
@@ -2683,6 +2684,57 @@ async fn a_thinking_budget_reaches_a_strict_sglang_as_custom_params() {
     );
     assert!(sent.get("thinking_token_budget").is_none());
     assert_eq!(sent["chat_template_kwargs"]["reasoning_effort"], "xhigh");
+}
+
+/// The confidential mark is sticky: setting it works, clearing it is refused,
+/// and the session detail reports it.
+#[tokio::test]
+async fn a_confidential_mark_is_sticky_and_reported() {
+    let upstream = MockServer::start().await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let app = router(state.clone());
+    let set = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/confidential", session.id),
+            &cookie,
+            Some(r#"{"confidential":true}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(set.status(), StatusCode::OK);
+
+    let clear = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/confidential", session.id),
+            &cookie,
+            Some(r#"{"confidential":false}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(clear.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        body_string(clear)
+            .await
+            .contains("cannot become non-confidential"),
+        "the refusal must say why"
+    );
+
+    let detail = app
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/chat/sessions/{}", session.id),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(detail.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_string(detail).await).unwrap();
+    assert_eq!(body["confidential"], true);
+    assert_eq!(body["confidential_requires"], "both");
 }
 
 /// The old scale's names are refused with the new ones spelled out.

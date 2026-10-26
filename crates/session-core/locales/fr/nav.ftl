@@ -56,7 +56,7 @@ nav-flow-error-heading = Cette connexion n’a pas abouti
 nav-flow-error-back = Retour à l’application
 nav-admin-required = Rôle administrateur requis
 nav-source-title = Code source (AGPL-3.0)
-nav-source-line = Source · AGPL-3.0 · { $version }
+nav-source-line = AGPL-3.0 · { $version }
 login-heading = Se connecter à AIplane
 login-description = Authentifiez-vous via le fournisseur OIDC de votre entreprise pour créer des jetons API et acheminer les requêtes LLM.
 login-continue-button = Continuer avec OIDC →
@@ -66,4 +66,4 @@ page-title-branded = { $title } — AIplane
 
 admin-access-heading = Accès et limites
 
-nav-documentation = Documentation
+nav-documentation = Docs

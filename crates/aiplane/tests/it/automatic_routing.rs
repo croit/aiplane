@@ -16,6 +16,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 fn route(rollout: &str, minimum_confidence: f64) -> AutomaticRoute {
     AutomaticRoute {
         alias: "default".into(),
+        description: String::new(),
         selector_model: "jev-model".into(),
         objective: "balanced".into(),
         instructions: "Use expert for complex software engineering.".into(),

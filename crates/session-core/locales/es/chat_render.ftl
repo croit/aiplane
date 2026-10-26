@@ -99,3 +99,11 @@ chat-render-canvas-close-title = Cerrar lienzo
 chat-render-delegated-readonly-banner = Conversación delegada — historial de solo lectura. Continúe, apruebe o detenga este trabajo desde la conversación principal o la bandeja de entrada.
 chat-render-delegated-root-link = Abrir la conversación principal
 chat-render-delegated-root-unavailable = La conversación principal no está disponible. Este historial sigue siendo de solo lectura.
+
+chat-render-confidential = Confidencial
+chat-render-confidential-title = Marca esta conversación como confidencial. Solo los modelos con { $requires } siguen siendo seleccionables, y esto no se puede deshacer.
+chat-render-confidential-requires-both = cobertura GDPR y NDA
+chat-render-confidential-requires-gdpr = cobertura GDPR
+chat-render-confidential-requires-nda = cobertura NDA
+chat-render-confidential-no-model = Ningún modelo está autorizado para datos confidenciales. Pide a un administrador que autorice uno.
+chat-render-confidential-model-switched = Esta conversación ahora es confidencial; el modelo seleccionado no estaba autorizado para ella.

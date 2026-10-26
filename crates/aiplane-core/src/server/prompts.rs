@@ -20,6 +20,22 @@ irreversible actions are at stake.\n\
 - Never ask for passwords, API keys or other credentials.\n\
 - Be friendly and helpful, and answer in the language the user writes in.";
 
+/// The built-in welcome text on an empty conversation. Operator content like
+/// the chat prompt, so it ships in English and the settings editor shows it
+/// while no text is stored; the `{name}`-style placeholders are filled in by
+/// the SPA (see `web/src/lib/welcome.ts`).
+pub const WELCOME_TEXT: &str = "**Hello {name} — how can I help?**\n\
+\n\
+- Summarize a text and pull out the key points\n\
+- Explain a concept in plain language\n\
+- Draft or revise an email\n\
+- Compare two options and recommend one\n\
+\n\
+Switch models in the header — the badges show whether a model is cleared for\n\
+personal data (GDPR) and confidential material (NDA). For sensitive work, mark\n\
+the conversation confidential in the composer: only cleared models stay\n\
+selectable.";
+
 /// Voice-conversation brevity/format directive. Injected only for voice-mode
 /// turns so the reply is short spoken prose the TTS can read. Instructs the
 /// model to answer in the user's spoken language — the gateway shapes the
