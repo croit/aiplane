@@ -18,7 +18,7 @@ The Rust binary and the UI build separately: `cargo build` needs no Node, and th
 
 | Goal | Command |
 |---|---|
-| Run the complete HMR development stack on :8080 | `mise run dev` |
+| Run the complete HMR development stack on :8080, with regular OIDC login | `mise run dev` |
 | Run the production-shaped compiled SPA on :8080 | `mise run dev-served` |
 | Run only the Rust gateway | `mise run dev-gateway` |
 | Run a stub gateway for UI debugging (seeded session, mock LLM) | `mise run dev-ui` |
@@ -293,6 +293,18 @@ a stub gateway with mock backends and a pre-seeded session instead.
 
 `mise run dev-served` is the production-shaped alternative: it builds `target/frontend/build` and serves that directory directly from the debug gateway on `http://localhost:8080`, without HMR. `mise run dev-gateway` exposes the Rust process alone and honors the normal `IP` / `PORT` environment variables.
 
+**Login works in every worktree.** `mise run dev` is the regular path: it serves your real
+`gateway.sqlite`, whose OIDC provider is configured there, so the browser login is the
+production login. A linked worktree has no database of its own, so on its first run the
+gateway task copies the main worktree's database with SQLite's online backup (safe while
+the main server is running) and reuses its `.aiplane-dev-session-key`, which keeps the
+copied database's sealed secrets readable. The copy is a snapshot; each worktree then
+migrates and writes its own database. An existing worktree database is never overwritten —
+delete `gateway.sqlite*` in the worktree to reseed, or set `AIPLANE_DEV_SEED=0` to keep a
+fresh `/setup` database. If the main database is ahead of the checkout's own migrations
+(the branch predates one of them), the seed is skipped with that reason rather than leaving
+a database the binary would refuse to open; merge the main branch or start from `/setup`.
+
 ## Environment
 
 Env config is layered through mise, not a `.env` file:
@@ -432,6 +444,8 @@ mise run dev       # public Vite/HMR on :8080, private Rust gateway on :8081
 ```
 
 Open `http://localhost:8080`. Vite proxies the complete dynamic surface to AIplane on :8081 (`web/vite.config.ts`), so sessions, OIDC callbacks, attachments, downloads, SSE, and API calls share the production-shaped browser origin. A Svelte-file save re-renders in well under a second with **no Rust rebuild**.
+
+Do not run `mise run check-web` (or any `svelte-kit sync`) while this server is up: it can replace the generated dev modules underneath Vite and leave the next page load blank with `504 Outdated Optimize Dep`. Restart `mise run dev` afterwards; if the cache stays stale, `rm -rf web/node_modules/.vite` first.
 
 **Served mode — what production looks like.** `mise run dev-served` builds the SPA and lets AIplane serve it directly at `http://localhost:8080`. Use this to check the built artefact, cache headers and history fallback. No Node runs in production: the container image `COPY`s the built `target/frontend/build/` directory in and the Rust binary serves it (`crates/aiplane/src/rama_server/spa.rs`). `dev-served` and `dev-ui` also run `mise run stage-extension`, which packages the Chrome extension into `target/frontend/build/downloads/` — the download `/tools/browser` links to — because `build-web` recreates that directory and would otherwise leave the link dead.
 

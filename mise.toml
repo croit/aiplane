@@ -167,9 +167,41 @@ env \
 dir = "{{ config_root }}"
 
 [tasks.dev-gateway]
-description = "Run only the Rust gateway for another local frontend or debugger. Defaults to the normal IP/PORT; `mise run dev` overrides it to private :8081."
+description = "Run only the Rust gateway for another local frontend or debugger. Defaults to the normal IP/PORT; `mise run dev` overrides it to private :8081. A linked worktree starts from a copy of the main worktree's dev database, so OIDC login works there too."
 run = """
+set -eu
 KEY_FILE=".aiplane-dev-session-key"
+
+# A linked worktree starts with no dev database, so it would boot into /setup
+# with no identity provider — exactly the state where nobody can sign in. Seed
+# it once from the main worktree's database, using SQLite's online backup (safe
+# while that server is running) and the matching persistent session key, which
+# is what makes the copied database's sealed secrets readable. An existing
+# database is never touched: delete `gateway.sqlite*` here to reseed, or set
+# AIPLANE_DEV_SEED=0 to opt out.
+SEED_ROOT="$(git worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -1)"
+if [ "${AIPLANE_DEV_SEED:-1}" != "0" ] && [ -n "$SEED_ROOT" ] \
+  && [ "$SEED_ROOT" != "$PWD" ] && [ ! -e gateway.sqlite ] \
+  && [ -f "$SEED_ROOT/gateway.sqlite" ]; then
+  # The copy carries the main database's migration history. A checkout whose
+  # code predates one of those migrations cannot open it, so say so instead of
+  # letting sqlx fail at boot.
+  CODE_MAX=$(ls crates/aiplane-core/migrations/*.sql 2>/dev/null | sed -E 's|.*/([0-9]+)_.*|\\1|' | sort -n | tail -1)
+  DB_MAX=$(sqlite3 "$SEED_ROOT/gateway.sqlite" "select coalesce(max(version), 0) from _sqlx_migrations;" 2>/dev/null || echo 0)
+  if [ "${DB_MAX:-0}" -gt "${CODE_MAX:-0}" ]; then
+    echo "not seeding: the main dev database is at migration $DB_MAX, this checkout only knows $CODE_MAX. Merge the main branch (or delete gateway.sqlite* to start from /setup)." >&2
+  elif command -v sqlite3 >/dev/null 2>&1; then
+    echo "seeding the dev database from $SEED_ROOT/gateway.sqlite (OIDC login included)"
+    sqlite3 "$SEED_ROOT/gateway.sqlite" ".backup '$PWD/gateway.sqlite'"
+    if [ -f "$SEED_ROOT/.aiplane-dev-session-key" ]; then
+      cp -p "$SEED_ROOT/.aiplane-dev-session-key" "$KEY_FILE"
+      chmod 600 "$KEY_FILE"
+    fi
+  else
+    echo "sqlite3 not found — skipping the database seed; /setup will ask for an identity provider" >&2
+  fi
+fi
+
 if [ ! -f "$KEY_FILE" ]; then
   openssl rand -hex 32 > "$KEY_FILE"
   chmod 600 "$KEY_FILE"

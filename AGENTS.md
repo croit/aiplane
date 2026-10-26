@@ -220,7 +220,10 @@ After `mise install` (one time):
 
 ```bash
 # One terminal during UI work: public Vite/HMR on :8080 proxies every
-# dynamic route to the private debug gateway on :8081.
+# dynamic route to the private debug gateway on :8081. This is the path
+# with the real OIDC login, and it works from any worktree: a fresh one
+# seeds its database from the main checkout's on first run (see
+# docs/dev-workflow.md → "Login works in every worktree").
 mise run dev
 mise run dev-served        # production-shaped compiled SPA, no HMR
 
