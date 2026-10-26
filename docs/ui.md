@@ -34,7 +34,7 @@ What it does, and why:
 
 ### The first-run gate
 
-`rama_server::first_run` redirects the whole surface to the setup wizard until setup completes. Because the wizard *is* the SPA, `serves_before_setup` allowlists the SPA's static shell — `/_app/*`, `/assets/*`, `/icons/*`, `favicon.*`, `manifest.webmanifest`, `sw.js`, `robots.txt`, `pcm-recorder.js` — plus `/setup*` and `/auth/callback`. Gating a JavaScript module request would 303 it to an HTML page and leave the wizard blank. Those files are unauthenticated static bytes; the SPA's own API calls self-protect with 401/403.
+`rama_server::first_run` redirects the whole surface to the setup wizard until setup completes. Because the wizard *is* the SPA, `serves_before_setup` allowlists the SPA's static shell — `/_app/*`, `/assets/*`, `/icons/*`, `favicon.*`, `manifest.webmanifest`, `sw.js`, `robots.txt`, `pcm-recorder.js` — plus `/brand/logo` and `/brand/logo-dark` (the uploaded logo renders on the setup screen too), `/setup*` and `/auth/callback`. Gating a JavaScript module request would 303 it to an HTML page and leave the wizard blank. Those files are unauthenticated static bytes; the SPA's own API calls self-protect with 401/403.
 
 ## Layout of `web/`
 
@@ -80,6 +80,9 @@ web/
 └── static/               copied verbatim into the build output
     ├── manifest.webmanifest, sw.js, robots.txt
     ├── favicon.svg, icons/*.png
+    ├── croit-logo-black.svg, croit-logo-white.svg   built-in brand lockup; the SPA
+    │                                                falls back to them when no
+    │                                                operator logo is set
     └── pcm-recorder.js   AudioWorklet processor (its own JS realm — not bundled);
                           the gateway embeds the same file for the widget
                           (/api/v0/embed/recorder.js)
@@ -376,6 +379,7 @@ Public triggers and provider authorization round trips use these routes outside 
 | `GET /hooks/{secret}`, `POST /hooks/{secret}`, `POST /hooks/rag/{token}` | Public triggers. The URL *is* the credential; a third party (a file host's webhook, a cron line) calls them. |
 | `GET /rag/{id}/connect`, `GET /rag/oauth/callback` | RAG source OAuth round trip. The redirect URI is registered with an external provider, so the path is not ours to change. |
 | `POST /integrations/{key}/connect`, `POST /integrations/{key}/retry`, `GET /integrations/callback` | Per-user MCP connector OAuth, same shape. |
+| `GET /brand/logo`, `GET /brand/logo-dark` | The operator's uploaded company logo. Public because the brand lockup renders on the login screen; a missing slot is a 404 the SPA falls back past. The admin writes live under `/api/v0/admin/branding` (API reference → Branding). |
 
 Provider callback failures render a small standalone, localized HTML document:
 the provider detail is escaped, the recovery action returns to the SPA, and the
@@ -637,7 +641,14 @@ card's `chat.compaction.summary_prompt` are `textarea` fields over the two
 built-in prompts the gateway injects (the voice-turn directive, the
 summariser's instructions): while nothing is stored the field shows the
 built-in text, and saving an edit — or the reset button — takes effect on the
-next voice turn / compaction without a restart.
+next voice turn / compaction without a restart. The **Branding** category is
+the one card that is not spec-driven: it uploads the operator's company logo
+per theme slot (`light` / `dark`) through `POST /api/v0/admin/branding`,
+previews the stored bytes from the public `/brand/logo` routes and removes a
+slot with `DELETE /api/v0/admin/branding/{slot}`. The SPA's `BrandLockup`
+(app header, login screen, mobile top bar) points at those routes and falls
+back to the built-in croit mark on a 404; `+layout.svelte` swaps the favicon
+the same way on mount.
 
 `chat-protocol.ts` is deliberately framework-free — no Svelte, no DOM — so the fold is unit-testable under `node --test` (`chat-protocol.test.ts`, run by `mise run test-web`) and `chat.svelte.ts` stays a thin reactive wrapper around it. Keep it that way: wire behaviour that can only be tested through a browser is wire behaviour nobody tests.
 

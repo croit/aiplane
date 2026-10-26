@@ -25,6 +25,25 @@
 	import FeedbackFab from '#lib/components/feedback/FeedbackFab.svelte';
 	import FeedbackDialog from '#lib/components/feedback/FeedbackDialog.svelte';
 
+	// Point the browser-tab icon at the operator's uploaded logo when there
+	// is one; the built-in favicon stays while no logo is set. The type
+	// attribute goes with it: the upload may be a PNG, and a wrong type hints
+	// the icon away in some browsers.
+	async function applyBrandFavicon() {
+		let res: Response;
+		try {
+			res = await fetch('/brand/logo', { cache: 'no-cache' });
+		} catch {
+			return;
+		}
+		if (!res.ok) return;
+		const link = document.querySelector('link[rel="icon"]');
+		if (link) {
+			link.removeAttribute('type');
+			link.setAttribute('href', '/brand/logo');
+		}
+	}
+
 	let { children }: { children: import('svelte').Snippet } = $props();
 
 	loadMe();
@@ -239,6 +258,7 @@
 		document.documentElement.lang = locale.current;
 		void refreshSidebar();
 		void loadConfig();
+		void applyBrandFavicon();
 		if ('serviceWorker' in navigator) {
 			void navigator.serviceWorker.register('/sw.js');
 		}

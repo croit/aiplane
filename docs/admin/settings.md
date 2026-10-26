@@ -95,6 +95,10 @@ Push settings enable browser push support and set the VAPID contact identity. Us
 
 The Web search category has its own provider card. Choose the provider, set the SearXNG URL or Brave API key as appropriate, and configure the optional Tavily settings. Existing API keys are preserved by blank inputs; use each clear-key control to remove one. Save and test a permitted search tool in chat. Selecting a provider does not grant the tool to users.
 
+## Branding
+
+The Branding category is a single card with one slot per theme: the light logo shown on the light theme, and an optional dark variant. Upload an SVG or a raster image (PNG, JPEG) per slot; the gateway resamples raster uploads down to 1200 px on the longest side and stores them as PNG, while SVG passes through unchanged. A stored image is capped at 512 KB, and an upload over the cap after resizing is refused. The logo appears in the app header, on the login screen and as the browser tab icon; removing a slot returns the built-in mark for that theme. The public read routes are documented in [the API reference](../reference/api.md#branding).
+
 ## Troubleshooting
 
 | Symptom | Check |

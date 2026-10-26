@@ -25,6 +25,7 @@ mod architecture;
 mod ask_feedback;
 mod automatic_routing;
 mod body_limit;
+mod branding;
 mod browser_feedback;
 mod chat_json_api;
 mod clients;

@@ -37,6 +37,10 @@ serde_urlencoded = { workspace = true }
 # Multipart parsing for file uploads (skill bundles, chat
 # attachments, RAG document drops).
 multer = { workspace = true }
+# Logo uploads: decode the raster formats an operator drops on us and resize
+# them before they land in the `branding` table. Already a workspace
+# dependency (PDF rasterisation); no new external crate.
+image = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
 

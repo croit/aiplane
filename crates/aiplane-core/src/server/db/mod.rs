@@ -15,6 +15,7 @@ use thiserror::Error;
 pub mod app_settings;
 pub mod audit;
 pub mod automatic_routes;
+pub mod branding;
 pub mod browser_audit;
 pub mod chat_compactions;
 pub mod chat_session_settings;

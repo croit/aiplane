@@ -303,3 +303,23 @@ settings-f-gateway-default_priority-opt-high = Alta
 
 settings-f-dots-max_active_per_organization = Dots activos por organización
 settings-f-dots-max_active_per_organization-help = Número máximo de Dots activos de una organización, incluidos los que están en espera. Valor predeterminado: 4.
+
+# Branding — el logotipo de la empresa que sube la persona que administra el
+# sistema. Una tarjeta de administración hecha a mano, no una sección de
+# settings.rs, por lo que sus nombres son simples.
+settings-tab-branding = Marca
+branding-heading = Marca
+branding-intro = El logotipo de la empresa que se muestra en la cabecera de la aplicación, en la pantalla de inicio de sesión y como icono de la pestaña del navegador. Sube una variante clara y, opcionalmente, una oscura.
+branding-slot-light = Tema claro
+branding-slot-dark = Tema oscuro
+branding-upload = Subir
+branding-remove = Eliminar
+branding-format-hint = SVG o PNG, hasta 512 KB. Las imágenes mayores se redimensionan automáticamente.
+branding-saved = Logotipo guardado.
+branding-removed = Logotipo eliminado.
+branding-error-format = Ese archivo no es un logotipo usable: sube un SVG o una imagen rasterizada (PNG, JPEG).
+branding-error-too-large = El logotipo sigue superando 512 KB tras redimensionarse: sube una imagen más pequeña.
+branding-error-slot = Slot de tema desconocido: el logotipo se define para el tema claro o el tema oscuro.
+branding-error-empty = La subida no contenía ningún archivo.
+branding-error-multipart = La subida no fue un formulario legible: reinténtalo con el archivo.
+branding-error-store = No se pudo guardar el logotipo: reinténtalo.

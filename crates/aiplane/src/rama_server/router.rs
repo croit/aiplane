@@ -59,6 +59,11 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         .with_get("/healthz", async || Json(json!({"status": "ok"})))
         .with_get("/openapi.json", openapi::document)
         .with_get("/api/v0/build", aiplane_api::build_info::metadata)
+        // The operator's company logo, if they uploaded one. Public on
+        // purpose: the brand lockup renders on the login screen, and a logo
+        // is not a secret. A missing slot is a 404 the SPA falls back past.
+        .with_get("/brand/logo", pages::branding::serve)
+        .with_get("/brand/logo-dark", pages::branding::serve)
         // `/healthz` is liveness — the process is up. `/readyz` is readiness,
         // and an unconfigured gateway is not ready: it cannot serve a single
         // authenticated request, so a load balancer must not route production
@@ -599,6 +604,8 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
             "/api/v0/admin/search-settings",
             pages::json_admin::models_search_save,
         )
+        .with_get("/api/v0/admin/branding", pages::branding::state)
+        .with_delete("/api/v0/admin/branding/{slot}", pages::branding::remove)
         .with_get("/api/v0/admin/limits", pages::json_admin::limits_list)
         .with_post("/api/v0/admin/limits", pages::json_admin::limits_save)
         .with_delete(
@@ -663,6 +670,8 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         // Workspace JSON API for the SPA: skills, connectors, integrations.
         .with_get("/api/v0/skills", pages::json_skills::skills_list)
         .with_post("/api/v0/skills", pages::json_skills::skills_upload)
+        // The logo upload rides the same upload layer as the skills bundles.
+        .with_post("/api/v0/admin/branding", pages::branding::upload)
         .with_post("/api/v0/skills/draft", pages::json_skills::skills_draft)
         .with_get("/api/v0/skills/{name}/body", pages::json_skills::skill_body)
         .with_get(

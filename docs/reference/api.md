@@ -209,6 +209,21 @@ Examples of its task families:
 
 `POST /api/v0/skills/draft` accepts `{name, goal, steps, stop_conditions, model}` from a signed-in user and returns `{manifest, model, saved:false}`. It requires personal-skill storage, validates the model against the caller's currently offered chat models, and meters generation to that user. It has no tool execution or persistence side effect. `POST /api/v0/skills` saves the reviewed manifest; JSON skill edits must set `overwrite:true`, while a create that collides with an existing personal skill returns `409`.
 
+### Branding
+
+The operator's company logo, set by an administrator under
+[Settings → Branding](../admin/settings.md#branding). `POST /api/v0/admin/branding`
+takes a multipart body with a `file` part (SVG or a raster image: PNG, JPEG,
+WebP) and an optional `slot` part (`light`, the default, or `dark`); raster
+uploads are resampled down to 1200 px on the longest side and stored as PNG,
+SVG passes through byte-for-byte, and a stored image is refused above 512 KB
+(`413 logo_too_large`). `GET /api/v0/admin/branding` reports which slots are
+set, and `DELETE /api/v0/admin/branding/{slot}` drops one. `GET /brand/logo`
+and `GET /brand/logo-dark` serve the stored bytes with their content type and
+`Cache-Control: no-cache`; they are public because the SPA's brand lockup
+renders on the login screen, and a missing slot is a plain 404 the SPA falls
+back past to the built-in mark.
+
 The running gateway supplies `/openapi.json`, a typed OpenAPI contract for the
 registered `/api/v0` routes. It describes operations, path parameters, request
 and response schemas, security requirements and the shared error envelope.
@@ -522,6 +537,8 @@ Debug fixture routes exist only in development builds.
 | `GET /__dev/session` |
 | `POST /a2a/agents/{id}` |
 | `GET /a2a/agents/{id}/agent-card.json` |
+| `GET /brand/logo` |
+| `GET /brand/logo-dark` |
 | `HEAD /api/hello` |
 | `GET /api/v0/admin/automatic-routes` |
 | `PUT /api/v0/admin/automatic-routes` |
@@ -531,6 +548,9 @@ Debug fixture routes exist only in development builds.
 | `DELETE /api/v0/admin/backends/{name}` |
 | `POST /api/v0/admin/backends/{name}/enabled` |
 | `POST /api/v0/admin/backends/{name}/rename` |
+| `GET /api/v0/admin/branding` |
+| `POST /api/v0/admin/branding` |
+| `DELETE /api/v0/admin/branding/{slot}` |
 | `GET /api/v0/admin/connectors` |
 | `PUT /api/v0/admin/connectors` |
 | `POST /api/v0/admin/connectors/restore-defaults` |

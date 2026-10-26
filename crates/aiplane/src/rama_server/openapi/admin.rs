@@ -4,7 +4,21 @@
 //! The `/api/v0/admin/*` operator surfaces.
 
 use super::*;
-use crate::rama_server::pages::{json_admin as admin, json_tokens};
+use crate::rama_server::pages::{branding, json_admin as admin, json_tokens};
+
+/// The parts the logo upload reads from its multipart body.
+const LOGO_PARTS: &[Part] = &[
+    Part {
+        name: "file",
+        kind: PartKind::File,
+        required: true,
+    },
+    Part {
+        name: "slot",
+        kind: PartKind::Text,
+        required: false,
+    },
+];
 
 pub(super) fn operations() -> Vec<Op> {
     vec![
@@ -47,6 +61,14 @@ pub(super) fn operations() -> Vec<Op> {
             .errors(&[400]),
         put("/api/v0/admin/search-settings", Access::Admin)
             .body(json::<admin::SearchSettingsBody>())
+            .ok(json::<aiplane_api::pages::Done>())
+            .errors(&[400]),
+        get("/api/v0/admin/branding", Access::Admin).ok(json::<branding::BrandingState>()),
+        post("/api/v0/admin/branding", Access::Admin)
+            .body(Content::Multipart(LOGO_PARTS))
+            .created(json::<aiplane_api::pages::Done>())
+            .errors(&[400, 413]),
+        delete("/api/v0/admin/branding/{slot}", Access::Admin)
             .ok(json::<aiplane_api::pages::Done>())
             .errors(&[400]),
         get("/api/v0/admin/limits", Access::Admin).ok(json::<admin::LimitsView>()),

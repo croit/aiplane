@@ -62,6 +62,8 @@ rsa = { version = "0.9", features = ["sha2"] }
 # crates the production paths use.
 jsonwebtoken = { workspace = true }
 sha2 = { workspace = true }
+# Test-only: the branding test mints the PNG fixtures it uploads.
+image = { workspace = true }
 # Throwaway skill / RAG / typst-template roots for the fixtures that need a
 # real directory on disk.
 tempfile = { workspace = true }

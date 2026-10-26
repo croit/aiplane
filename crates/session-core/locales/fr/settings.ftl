@@ -302,3 +302,22 @@ settings-f-gateway-default_priority-opt-high = Haute
 
 settings-f-dots-max_active_per_organization = Dots actifs par organisation
 settings-f-dots-max_active_per_organization-help = Nombre maximal de Dots actifs appartenant à une organisation, y compris les Dots inactifs en attente. Valeur par défaut : 4.
+
+# Branding — le logo de l'entreprise téléversé par l'opérateur. Une carte
+# d'admin faite main, pas une section settings.rs, d'où des noms simples.
+settings-tab-branding = Branding
+branding-heading = Branding
+branding-intro = Le logo de l'entreprise affiché dans l'en-tête de l'application, sur l'écran de connexion et en icône d'onglet du navigateur. Téléversez une variante claire et, facultativement, une variante sombre.
+branding-slot-light = Thème clair
+branding-slot-dark = Thème sombre
+branding-upload = Téléverser
+branding-remove = Retirer
+branding-format-hint = SVG ou PNG, jusqu'à 512 Ko. Les images plus grandes sont redimensionnées automatiquement.
+branding-saved = Logo enregistré.
+branding-removed = Logo retiré.
+branding-error-format = Ce fichier n'est pas un logo utilisable — téléversez un SVG ou une image matricielle (PNG, JPEG).
+branding-error-too-large = Le logo dépasse toujours 512 Ko après redimensionnement — téléversez une image plus petite.
+branding-error-slot = Slot de thème inconnu — le logo se définit pour le thème clair ou le thème sombre.
+branding-error-empty = Le téléversement ne contenait aucun fichier.
+branding-error-multipart = Le téléversement n'était pas un formulaire lisible — réessayez avec le fichier.
+branding-error-store = Le logo n'a pas pu être enregistré — réessayez.

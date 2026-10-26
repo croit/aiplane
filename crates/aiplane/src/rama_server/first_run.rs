@@ -78,6 +78,8 @@ fn serves_before_setup(path: &str) -> bool {
             | "/sw.js"
             | "/robots.txt"
             | "/pcm-recorder.js"
+            | "/brand/logo"
+            | "/brand/logo-dark"
     ) {
         return true;
     }

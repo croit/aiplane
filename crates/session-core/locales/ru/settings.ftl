@@ -301,3 +301,23 @@ settings-f-gateway-default_priority-opt-high = Высокий
 
 settings-f-dots-max_active_per_organization = Активные Dots на организацию
 settings-f-dots-max_active_per_organization-help = Максимальное количество активных Dots организации, включая ожидающих работы. По умолчанию: 4.
+
+# Branding — корпоративный логотип, который загружает администратор.
+# Ручная карточка админ-раздела, а не секция settings.rs, поэтому имена
+# простые.
+settings-tab-branding = Брендирование
+branding-heading = Брендирование
+branding-intro = Корпоративный логотип в шапке приложения, на экране входа и в значке вкладки браузера. Загрузите вариант для светлой темы и, при необходимости, для тёмной.
+branding-slot-light = Светлая тема
+branding-slot-dark = Тёмная тема
+branding-upload = Загрузить
+branding-remove = Удалить
+branding-format-hint = SVG или PNG, до 512 КБ. Большие изображения уменьшаются автоматически.
+branding-saved = Логотип сохранён.
+branding-removed = Логотип удалён.
+branding-error-format = Этот файл не подходит в качестве логотипа — загрузите SVG или растровое изображение (PNG, JPEG).
+branding-error-too-large = Логотип после уменьшения всё ещё превышает 512 КБ — загрузите изображение поменьше.
+branding-error-slot = Неизвестный слот темы — логотип задаётся для светлой или тёмной темы.
+branding-error-empty = В загрузке не было файла.
+branding-error-multipart = Загрузка не была читаемой формой — повторите загрузку файла.
+branding-error-store = Не удалось сохранить логотип — повторите попытку.

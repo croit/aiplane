@@ -301,3 +301,22 @@ settings-f-gateway-default_priority-opt-high = 高
 
 settings-f-dots-max_active_per_organization = 每个组织可启用的 Dot
 settings-f-dots-max_active_per_organization-help = 组织可拥有的已启用 Dot 数量上限，包括空闲的 Dot。默认值：4。
+
+# Branding — 由运营人员上传的公司标志。这是手写的管理卡片，不是
+# settings.rs 分区，因此使用简单名称。
+settings-tab-branding = 品牌标识
+branding-heading = 品牌标识
+branding-intro = 显示在应用头部、登录页面和浏览器标签页图标中的公司标志。请上传浅色版本，并可选上传深色版本。
+branding-slot-light = 浅色主题
+branding-slot-dark = 深色主题
+branding-upload = 上传
+branding-remove = 移除
+branding-format-hint = SVG 或 PNG，最大 512 KB。更大的图像会自动缩小。
+branding-saved = 标志已保存。
+branding-removed = 标志已移除。
+branding-error-format = 该文件不是可用的标志 — 请上传 SVG 或位图图像（PNG、JPEG）。
+branding-error-too-large = 缩小后标志仍超过 512 KB — 请上传更小的图像。
+branding-error-slot = 未知的主题槽位 — 标志针对浅色或深色主题设置。
+branding-error-empty = 上传中没有文件。
+branding-error-multipart = 上传不是可读的表单 — 请重新上传文件。
+branding-error-store = 无法保存标志 — 请重试。

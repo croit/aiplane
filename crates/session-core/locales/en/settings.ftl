@@ -312,3 +312,22 @@ settings-f-gateway-default_priority-opt-high = High
 
 settings-f-dots-max_active_per_organization = Active Dots per organization
 settings-f-dots-max_active_per_organization-help = Maximum number of active Dots an organization may own, including idle Dots. Default: 4.
+
+# Branding — the operator-uploaded company logo. A hand-rolled admin card,
+# not a settings.rs section, so its keys are plain names.
+settings-tab-branding = Branding
+branding-heading = Branding
+branding-intro = The company logo shown in the app header, on the login screen and as the browser tab icon. Upload a light variant and, optionally, a dark one.
+branding-slot-light = Light theme
+branding-slot-dark = Dark theme
+branding-upload = Upload
+branding-remove = Remove
+branding-format-hint = SVG or PNG, up to 512 KB. Larger images are resized for you.
+branding-saved = Logo saved.
+branding-removed = Logo removed.
+branding-error-format = That file is not a usable logo — upload an SVG or a raster image (PNG, JPEG).
+branding-error-too-large = The logo is still over 512 KB after resizing — upload a smaller image.
+branding-error-slot = Unknown theme slot — the logo is set for the light or the dark theme.
+branding-error-empty = The upload carried no file.
+branding-error-multipart = The upload was not a readable form submission — try uploading the file again.
+branding-error-store = The logo could not be stored — try again.
