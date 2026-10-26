@@ -130,7 +130,15 @@ jobs:
 
   ci:
     name: lint + test + build
-    runs-on: ubuntu-latest
+    # Pinned, not `ubuntu-latest`: these binaries are linked against the
+    # runner's glibc and run inside `debian:trixie-slim` (glibc 2.41). When
+    # `latest` moved to 26.04 (glibc 2.43) the release build recorded
+    # GLIBC_2.43 and every container built from it died in the loader before
+    # its first log line. Keep this runner at or below the runtime base's glibc;
+    # the image build re-checks the result (Dockerfile), so a drift fails the
+    # build instead of shipping. When this label retires, build inside the
+    # runtime base rather than going back to `latest`.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

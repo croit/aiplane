@@ -164,6 +164,16 @@ ENV IP=0.0.0.0 \
     PDFIUM_LIB_PATH=/usr/local/lib/libpdfium.so \
     AIPLANE_STATIC_DIR=/usr/share/gateway/ui
 
+# A build that succeeds publishes the image, so a binary that cannot start has
+# to fail the build rather than the operator's next `podman auto-update`. The
+# mismatch to catch is a glibc newer than this base: Rust built on a newer
+# distro records e.g. GLIBC_2.43, Debian's loader here provides 2.41, and the
+# container dies before its first log line with `version 'GLIBC_2.43' not
+# found`. It has to be an execution — `ldd` and `ld.so --list` both exit 0 on
+# such a binary. Run as the runtime user, under the runtime environment; both
+# commands only print and exit, neither opens the database nor binds a port.
+RUN /app/aiplane --help > /dev/null && typst --version > /dev/null
+
 EXPOSE 8080
 
 CMD ["/app/aiplane"]

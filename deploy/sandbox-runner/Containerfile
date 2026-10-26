@@ -52,4 +52,10 @@ COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 
 COPY target/release/sandbox-runner /usr/local/bin/sandbox-runner
 
+# Same guard as the gateway image (../../Dockerfile): the binary was linked
+# against the build runner's glibc, and one newer than this base's means the
+# container crash-loops instead of serving. `--version` is answered by clap, so
+# this exits before any podman or socket work.
+RUN /usr/local/bin/sandbox-runner --version > /dev/null
+
 ENTRYPOINT ["/usr/local/bin/sandbox-runner"]

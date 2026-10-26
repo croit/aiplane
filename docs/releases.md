@@ -106,6 +106,19 @@ Each of them is signed keyless with cosign by the job that pushed it, by
 digest, under the workflow identity of `ci.yml` and the pushed ref; see
 [Verify images](operations/deployment.md#verify-images).
 
+**Nothing publishes unless the image starts.** The two images that carry a
+compiled binary — gateway and sandbox runner — execute that binary as a build
+step, in the runtime stage and as the runtime user (`/app/aiplane --help`,
+`sandbox-runner --version`). A binary that cannot load fails the build, and a
+failed build pushes no tag, so a container that would crash-loop never reaches
+`:latest`, a `:v…` pin or `:production`. The mismatch this catches is the one
+the build cannot see by itself: a binary linked against a newer glibc than the
+base image provides, which the loader rejects before `main` runs — hence
+*executing* it, because `ldd` and the loader's `--list` report success on such
+a binary. The `ci` job builds on the pinned `ubuntu-24.04` runner for that
+reason: its glibc stays at or below the Debian 13 base's, and moving the job
+to a newer runner without moving the base is what produces such an image.
+
 A **tag** build makes one more thing: a [GitHub Release][gh-releases] entry,
 written by the `github release` job once every publishing job above it has
 succeeded. That ordering is the point — the Releases page is what a human reads
