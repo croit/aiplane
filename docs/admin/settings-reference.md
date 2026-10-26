@@ -37,7 +37,7 @@ Category: **Chat**.
 
 | Key | Input / choices | Meaning | Restart |
 |---|---|---|---|
-| `chat.welcome.text` | Text | Shown centred on an empty conversation before the first message. Markdown is supported; empty means no welcome text. Ships with a built-in default, shown while nothing is stored. Placeholders: `{name}` (display name, falling back to the address local part), `{first_name}`, `{email}`, `{language}` (interface language code). | No |
+| `chat.welcome.text` | Text | Shown on a card centred in an empty conversation before the first message. Markdown is supported; empty means no welcome text. Ships with a built-in default, shown while nothing is stored. Placeholders: `{name}` (display name, falling back to the address local part), `{first_name}`, `{email}`, `{language}` (interface language code). Text wrapped in `<prompt>…</prompt>` becomes a button that sends it. | No |
 
 ### chat.prompt
 

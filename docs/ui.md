@@ -115,12 +115,17 @@ full-width row of their own beneath them below it. It is one set of controls,
 not a mobile copy, so the options and the selected model are the same on both.
 
 An empty conversation shows the operator's welcome text (`chat.welcome.text`)
-centred above the composer; it is operator content, so it is not translated
-and `empty` means nothing is drawn. The built-in default ships until the
-operator stores a value. The placeholders `{name}` (display name, falling back
-to the address local part), `{first_name}`, `{email}` and `{language}`
-(interface language code) are filled in per person and escaped for Markdown,
-so a name cannot inject markup. The composer also carries the
+on a card centred in the space between header and composer, its content
+left-aligned so a list marker stays with the line it belongs to; it is
+operator content, so it is not translated and `empty` means nothing is drawn.
+The built-in default ships until the operator stores a value. The placeholders
+`{name}` (display name, falling back to the address local part), `{first_name}`,
+`{email}` and `{language}` (interface language code) are filled in per person
+and escaped for Markdown, so a name cannot inject markup. Text wrapped in
+`<prompt>…</prompt>` becomes a chip that sends exactly that text in one click —
+what the person had already typed is put back into the composer afterwards.
+The tag is rendered on this card only, so a model's answer can never grow
+buttons of its own. The composer also carries the
 **Confidential** checkbox once write access is known: ticking it marks the
 conversation sticky-confidential (`POST …/confidential`), refetches the model
 list, and switches away from a model the new mark does not allow. The box then

@@ -230,3 +230,10 @@ h1, h2, h3, .card-title {
 .chat-prose > :last-child {
     margin-bottom: 0;
 }
+
+/* The empty conversation's welcome card is operator markdown read as a card:
+ * left-aligned, because a centred block leaves every list marker stranded at
+ * the far edge, detached from the line it belongs to. */
+.welcome-prose {
+    text-align: start;
+}

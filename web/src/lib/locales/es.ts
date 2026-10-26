@@ -2551,7 +2551,7 @@ export const es: Catalog = {
  "settings-f-chat-voice-directive": "Directiva de voz",
  "settings-f-chat-voice-directive-help": "Instrucciones permanentes para turnos de voz, añadidas al mensaje del sistema. Déjalo vacío para usar la directiva integrada.",
  "settings-f-chat-welcome-text": "Texto de bienvenida",
- "settings-f-chat-welcome-text-help": "Centrado en un chat vacío. Se admite Markdown; vacío significa sin texto de bienvenida. Variables: {name} (nombre visible), {first_name}, {email}, {language} (idioma de la interfaz).",
+ "settings-f-chat-welcome-text-help": "Centrado en una tarjeta en un chat vacío. Se admite Markdown; vacío significa sin texto de bienvenida. Variables: {name} (nombre visible), {first_name}, {email}, {language} (idioma de la interfaz). El texto entre <prompt>…</prompt> se convierte en un botón que lo envía.",
  "settings-f-comfyui-base_url": "URL de ComfyUI",
  "settings-f-comfyui-base_url-help": "URL base de la instancia de ComfyUI. No tiene autenticación, así que solo debe ser accesible desde la pasarela.",
  "settings-f-comfyui-content_dir": "Directorio de workflows",

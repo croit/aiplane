@@ -23,17 +23,21 @@ irreversible actions are at stake.\n\
 /// The built-in welcome text on an empty conversation. Operator content like
 /// the chat prompt, so it ships in English and the settings editor shows it
 /// while no text is stored; the `{name}`-style placeholders are filled in by
-/// the SPA (see `web/src/lib/welcome.ts`).
+/// the SPA (see `web/src/lib/welcome.ts`). `<prompt>…</prompt>` makes a
+/// suggestion a button that sends that text in one click.
 pub const WELCOME_TEXT: &str = "**Hello {name} — how can I help?**\n\
 \n\
-- Summarize a text and pull out the key points\n\
-- Explain a concept in plain language\n\
-- Draft or revise an email\n\
-- Compare two options and recommend one\n\
+<prompt>Summarize a text and pull out the key points</prompt>\n\
 \n\
-Switch models in the header — the badges show whether a model is cleared for\n\
-personal data (GDPR) and confidential material (NDA). For sensitive work, mark\n\
-the conversation confidential in the composer: only cleared models stay\n\
+<prompt>Explain a concept in plain language</prompt>\n\
+\n\
+<prompt>Draft or revise an email</prompt>\n\
+\n\
+<prompt>Compare two options and recommend one</prompt>\n\
+\n\
+Switch models in the header — the badges show whether a model is cleared for \
+personal data (GDPR) and confidential material (NDA). For sensitive work, mark \
+the conversation confidential in the composer: only cleared models stay \
 selectable.";
 
 /// Voice-conversation brevity/format directive. Injected only for voice-mode

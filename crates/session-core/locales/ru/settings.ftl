@@ -325,7 +325,7 @@ branding-error-store = Не удалось сохранить логотип —
 settings-s-chat-welcome = Приветственный текст
 settings-s-chat-welcome-blurb = Показывается в пустом разговоре до первого сообщения.
 settings-f-chat-welcome-text = Приветственный текст
-settings-f-chat-welcome-text-help = По центру пустого чата. Поддерживается Markdown; пусто — без приветствия. Переменные: { "{" }name{ "}" } (отображаемое имя), { "{" }first_name{ "}" }, { "{" }email{ "}" }, { "{" }language{ "}" } (язык интерфейса).
+settings-f-chat-welcome-text-help = По центру карточки в пустом чате. Поддерживается Markdown; пусто — без приветствия. Переменные: { "{" }name{ "}" } (отображаемое имя), { "{" }first_name{ "}" }, { "{" }email{ "}" }, { "{" }language{ "}" } (язык интерфейса). Текст в <prompt>…</prompt> становится кнопкой, которая его отправляет.
 
 settings-s-chat-confidential = Конфиденциальные чаты
 settings-s-chat-confidential-blurb = Конфиденциальный разговор направляется только в разрешённые модели и больше не становится неконфиденциальным.

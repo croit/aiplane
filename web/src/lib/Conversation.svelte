@@ -174,6 +174,15 @@
 	const prompt = $derived(controller?.state.prompt ?? null);
 	// A turn waiting for a decision holds the conversation until it is answered.
 	const paused = $derived(pausedTurn(turns));
+	const showsWelcome = $derived(turns.length === 0 && welcome.trim().length > 0);
+	/**
+	 * Whether the page holds nothing but the welcome card.
+	 *
+	 * The card then centres itself in the whole free height between header and
+	 * composer, so nothing else may share that space: a notice drawn above it
+	 * would shrink to its own width and hang in the middle of the page.
+	 */
+	const emptyConversation = $derived(turns.length === 0 && !notice);
 	const selectedModel = $derived(models.find((candidate) => candidate.id === model));
 	/**
 	 * Whether the effort control does anything for the selected model.
@@ -496,6 +505,21 @@
 		voice.feedReplyText(content, finalized);
 		if (finalized) narratingTurnId = null;
 	});
+
+	/**
+	 * A welcome-text chip is one click to the turn it names.
+	 *
+	 * What the person had already typed is not thrown away: it comes back into
+	 * the composer afterwards, so a click never costs a half-written message.
+	 */
+	async function sendPrompt(text: string) {
+		if (sending || !canWrite || paused || !model.trim()) return;
+		const typed = draft.trim();
+		draft = text;
+		if (!(await send()) || !typed) return;
+		draft = draft.trim() ? `${typed}\n${draft}` : typed;
+		focusComposer();
+	}
 
 	/**
 	 * Send what is in the composer.
@@ -957,28 +981,32 @@
 
 	<div class="flex min-h-0 flex-1 gap-3" data-chat-workspace>
 		<main bind:this={transcript} onscroll={onTranscriptScroll} data-chat-transcript class="min-h-0 min-w-0 flex-1 overflow-y-auto pe-1 xl:min-w-[35rem]">
-		<div bind:this={transcriptBody}>
+		<div bind:this={transcriptBody} class={emptyConversation ? 'flex min-h-full flex-col items-center justify-center' : ''}>
 
 {#if notice}
 	<div class="alert alert-warning mb-4"><span>{notice}</span></div>
 {/if}
 
-{#if turns.length === 0 && welcome.trim()}
-	<div class="mx-auto mb-6 mt-10 max-w-2xl text-center" data-chat-welcome>
-		<Markdown
-			content={renderWelcome(welcome, {
-				name: me.value?.name,
-				email: me.value?.email,
-				language: locale.current
-			})}
-			class="prose prose-sm mx-auto max-w-none text-base-content/70"
-			images={[]}
-			hiddenImageUrls={new Set()}
-		/>
+{#if showsWelcome}
+	<div class="card w-full max-w-xl border border-base-300 bg-base-200/40" data-chat-welcome>
+		<div class="card-body gap-2 p-5 sm:p-6">
+			<Markdown
+				content={renderWelcome(welcome, {
+					name: me.value?.name,
+					email: me.value?.email,
+					language: locale.current
+				})}
+				class="prose prose-sm welcome-prose max-w-none text-base-content/80"
+				prompts
+				onprompt={sendPrompt}
+				images={[]}
+				hiddenImageUrls={new Set()}
+			/>
+		</div>
 	</div>
 {/if}
 
-<div class="mb-4 flex flex-1 flex-col gap-4">
+<div class="flex flex-col gap-4 {turns.length > 0 ? 'mb-4' : ''}">
 	{#each turns as entry, index (entry.turn.id)}
 		{#if index > 0 && compactedUpToSeq !== null && turns[index - 1].turn.seq <= compactedUpToSeq && entry.turn.seq > compactedUpToSeq}
 			<div class="divider my-2 text-xs opacity-60" role="separator" aria-label={t('render-compaction-divider')}>

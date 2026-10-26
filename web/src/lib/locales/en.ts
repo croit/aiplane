@@ -2551,7 +2551,7 @@ export const en: Catalog = {
  "settings-f-chat-voice-directive": "Voice directive",
  "settings-f-chat-voice-directive-help": "Standing instructions for voice turns, added to the system message. Leave empty to use the built-in directive.",
  "settings-f-chat-welcome-text": "Welcome text",
- "settings-f-chat-welcome-text-help": "Centred in an empty chat. Markdown is supported; empty means no welcome text. Placeholders: {name} (display name), {first_name}, {email}, {language} (interface language).",
+ "settings-f-chat-welcome-text-help": "Centred on a card in an empty chat. Markdown is supported; empty means no welcome text. Placeholders: {name} (display name), {first_name}, {email}, {language} (interface language). Text wrapped in <prompt>…</prompt> becomes a button that sends it.",
  "settings-f-comfyui-base_url": "ComfyUI URL",
  "settings-f-comfyui-base_url-help": "Base URL of the ComfyUI instance. It has no authentication, so it must be reachable only from the gateway.",
  "settings-f-comfyui-content_dir": "Workflow directory",

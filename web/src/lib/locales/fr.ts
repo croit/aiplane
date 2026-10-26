@@ -2551,7 +2551,7 @@ export const fr: Catalog = {
  "settings-f-chat-voice-directive": "Directif de voix",
  "settings-f-chat-voice-directive-help": "Instructions permanentes des tours vocaux, ajoutées au message système. Laisser vide pour utiliser le directif intégré.",
  "settings-f-chat-welcome-text": "Message d'accueil",
- "settings-f-chat-welcome-text-help": "Au centre d'un chat vide. Le Markdown est pris en charge ; vide signifie aucun message d'accueil. Variables : {name} (nom affiché), {first_name}, {email}, {language} (langue de l'interface).",
+ "settings-f-chat-welcome-text-help": "Au centre d'une carte dans un chat vide. Le Markdown est pris en charge ; vide signifie aucun message d'accueil. Variables : {name} (nom affiché), {first_name}, {email}, {language} (langue de l'interface). Le texte entre <prompt>…</prompt> devient un bouton qui l'envoie.",
  "settings-f-comfyui-base_url": "URL de ComfyUI",
  "settings-f-comfyui-base_url-help": "URL de base de l'instance ComfyUI. Elle n'a aucune authentification et ne doit donc être joignable que depuis la passerelle.",
  "settings-f-comfyui-content_dir": "Répertoire des workflows",

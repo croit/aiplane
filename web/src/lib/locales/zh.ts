@@ -2530,7 +2530,7 @@ export const zh: Catalog = {
  "settings-f-chat-voice-directive": "语音指令",
  "settings-f-chat-voice-directive-help": "语音回合的常驻指令，附加到系统消息中。留空则使用内置指令。",
  "settings-f-chat-welcome-text": "欢迎语",
- "settings-f-chat-welcome-text-help": "显示在空聊天中央。支持 Markdown；留空则不显示。变量：{name}（显示名称）、{first_name}、{email}、{language}（界面语言）。",
+ "settings-f-chat-welcome-text-help": "显示在空聊天中的卡片上。支持 Markdown；留空则不显示。变量：{name}（显示名称）、{first_name}、{email}、{language}（界面语言）。<prompt>…</prompt> 中的文字会变成发送它的按钮。",
  "settings-f-comfyui-base_url": "ComfyUI URL",
  "settings-f-comfyui-base_url-help": "ComfyUI 实例的基础 URL。它没有任何认证，因此只能从网关访问。",
  "settings-f-comfyui-content_dir": "工作流目录",

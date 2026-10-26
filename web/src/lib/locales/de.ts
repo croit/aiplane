@@ -2551,7 +2551,7 @@ export const de: Catalog = {
  "settings-f-chat-voice-directive": "Sprach-Anweisung",
  "settings-f-chat-voice-directive-help": "Stehende Anweisung für Sprach-Züge, ergänzt zur Systemmeldung. Leer lassen für die eingebaute Anweisung.",
  "settings-f-chat-welcome-text": "Begrüßungstext",
- "settings-f-chat-welcome-text-help": "Mittig in einem leeren Chat. Markdown wird unterstützt; leer bedeutet: kein Begrüßungstext. Platzhalter: {name} (Anzeigename), {first_name}, {email}, {language} (Sprachcode).",
+ "settings-f-chat-welcome-text-help": "Mittig auf einer Karte in einem leeren Chat. Markdown wird unterstützt; leer bedeutet: kein Begrüßungstext. Platzhalter: {name} (Anzeigename), {first_name}, {email}, {language} (Sprachcode). Text in <prompt>…</prompt> wird zu einem Knopf, der ihn sendet.",
  "settings-f-comfyui-base_url": "ComfyUI-URL",
  "settings-f-comfyui-base_url-help": "Basis-URL der ComfyUI-Instanz. Sie hat keine Authentifizierung und darf deshalb nur vom Gateway erreichbar sein.",
  "settings-f-comfyui-content_dir": "Workflow-Verzeichnis",

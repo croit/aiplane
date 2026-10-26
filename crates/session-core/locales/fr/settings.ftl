@@ -325,7 +325,7 @@ branding-error-store = Le logo n'a pas pu être enregistré — réessayez.
 settings-s-chat-welcome = Message d'accueil
 settings-s-chat-welcome-blurb = Affiché dans une conversation vide avant le premier message.
 settings-f-chat-welcome-text = Message d'accueil
-settings-f-chat-welcome-text-help = Au centre d'un chat vide. Le Markdown est pris en charge ; vide signifie aucun message d'accueil. Variables : { "{" }name{ "}" } (nom affiché), { "{" }first_name{ "}" }, { "{" }email{ "}" }, { "{" }language{ "}" } (langue de l'interface).
+settings-f-chat-welcome-text-help = Au centre d'une carte dans un chat vide. Le Markdown est pris en charge ; vide signifie aucun message d'accueil. Variables : { "{" }name{ "}" } (nom affiché), { "{" }first_name{ "}" }, { "{" }email{ "}" }, { "{" }language{ "}" } (langue de l'interface). Le texte entre <prompt>…</prompt> devient un bouton qui l'envoie.
 
 settings-s-chat-confidential = Chats confidentiels
 settings-s-chat-confidential-blurb = Une conversation confidentielle n'est routée que vers des modèles autorisés et ne redevient jamais non confidentielle.

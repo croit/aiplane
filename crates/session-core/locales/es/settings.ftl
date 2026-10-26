@@ -327,7 +327,7 @@ branding-error-store = No se pudo guardar el logotipo: reinténtalo.
 settings-s-chat-welcome = Texto de bienvenida
 settings-s-chat-welcome-blurb = Se muestra en una conversación vacía antes del primer mensaje.
 settings-f-chat-welcome-text = Texto de bienvenida
-settings-f-chat-welcome-text-help = Centrado en un chat vacío. Se admite Markdown; vacío significa sin texto de bienvenida. Variables: { "{" }name{ "}" } (nombre visible), { "{" }first_name{ "}" }, { "{" }email{ "}" }, { "{" }language{ "}" } (idioma de la interfaz).
+settings-f-chat-welcome-text-help = Centrado en una tarjeta en un chat vacío. Se admite Markdown; vacío significa sin texto de bienvenida. Variables: { "{" }name{ "}" } (nombre visible), { "{" }first_name{ "}" }, { "{" }email{ "}" }, { "{" }language{ "}" } (idioma de la interfaz). El texto entre <prompt>…</prompt> se convierte en un botón que lo envía.
 
 settings-s-chat-confidential = Chats confidenciales
 settings-s-chat-confidential-blurb = Una conversación confidencial solo se enruta a modelos autorizados y nunca vuelve a ser no confidencial.

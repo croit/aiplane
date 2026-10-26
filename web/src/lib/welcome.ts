@@ -1,3 +1,5 @@
+import { escapeMarkdown } from './markdown.ts';
+
 /**
  * The operator's welcome text with the signed-in person's data filled in.
  *
@@ -32,9 +34,4 @@ export function renderWelcome(text: string, user: WelcomeUser): string {
 	return text.replace(PLACEHOLDER, (whole, key: string) =>
 		key in values ? escapeMarkdown(values[key]) : whole
 	);
-}
-
-/** CommonMark's escapable punctuation, so a substituted value stays text. */
-function escapeMarkdown(value: string): string {
-	return value.replace(/[\\`*_{}[\]()#+\-.!|>~]/g, (character) => `\\${character}`);
 }

@@ -335,7 +335,7 @@ branding-error-store = The logo could not be stored — try again.
 settings-s-chat-welcome = Welcome text
 settings-s-chat-welcome-blurb = Shown on an empty conversation before the first message.
 settings-f-chat-welcome-text = Welcome text
-settings-f-chat-welcome-text-help = Centred in an empty chat. Markdown is supported; empty means no welcome text. Placeholders: { "{" }name{ "}" } (display name), { "{" }first_name{ "}" }, { "{" }email{ "}" }, { "{" }language{ "}" } (interface language).
+settings-f-chat-welcome-text-help = Centred on a card in an empty chat. Markdown is supported; empty means no welcome text. Placeholders: { "{" }name{ "}" } (display name), { "{" }first_name{ "}" }, { "{" }email{ "}" }, { "{" }language{ "}" } (interface language). Text wrapped in <prompt>…</prompt> becomes a button that sends it.
 
 settings-s-chat-confidential = Confidential chats
 settings-s-chat-confidential-blurb = A confidential conversation may only be routed to models cleared for it, and it never becomes non-confidential again.

@@ -9,6 +9,7 @@
  */
 import { marked, Renderer } from 'marked';
 import DOMPurify from 'dompurify';
+import { chipClass } from './ui-variants.ts';
 
 marked.setOptions({ gfm: true, breaks: true });
 
@@ -25,6 +26,26 @@ export interface MarkdownImage {
 export interface MarkdownOptions {
 	images?: MarkdownImage[];
 	hiddenImageUrls?: ReadonlySet<string>;
+	/**
+	 * Render `<prompt>…</prompt>` as a chip that sends what it says. Opt-in:
+	 * operator content (the welcome text) passes it, so a model's answer can
+	 * never grow buttons of its own.
+	 */
+	prompts?: boolean;
+}
+
+const PROMPT = /<prompt>([\s\S]*?)<\/prompt>/g;
+
+/**
+ * `<prompt>…</prompt>` → a chip button, replaced before parsing so the chip
+ * carries plain text rather than markdown of its own.
+ */
+function promptChips(md: string): string {
+	return md.replace(PROMPT, (_match, label: string) => {
+		const text = label.trim();
+		if (!text) return '';
+		return `<button type="button" class="${chipClass(false)} h-auto min-h-0 justify-start whitespace-normal text-start" data-prompt="${escapeHtml(text)}">${escapeHtml(escapeMarkdown(text))}</button>`;
+	});
 }
 
 function escapeHtml(value: string): string {
@@ -34,6 +55,11 @@ function escapeHtml(value: string): string {
 		.replaceAll('>', '&gt;')
 		.replaceAll('"', '&quot;')
 		.replaceAll("'", '&#39;');
+}
+
+/** CommonMark's escapable punctuation, so a value stays text and never markup. */
+export function escapeMarkdown(value: string): string {
+	return value.replace(/[\\`*_{}[\]()#+\-.!|>~]/g, (character) => `\\${character}`);
 }
 
 function relativeFilename(href: string): string | null {
@@ -72,7 +98,7 @@ export function markdownMarkup(md: string | null | undefined, labels?: CodeCopyL
 			return `<div class="relative"><button type="button" class="btn btn-ghost btn-xs absolute right-1 top-1" data-code-copy aria-label="${escapeHtml(labels.copy)}" title="${escapeHtml(labels.copy)}" data-copied-label="${escapeHtml(labels.copied)}">${escapeHtml(labels.copy)}</button><pre><code${language}>${escapeHtml(text)}\n</code></pre></div>`;
 		};
 	}
-	return marked.parse(md, { async: false, renderer }) as string;
+	return marked.parse(options.prompts ? promptChips(md) : md, { async: false, renderer }) as string;
 }
 
 export function renderMarkdown(md: string | null | undefined, labels?: CodeCopyLabels, options?: MarkdownOptions): string {

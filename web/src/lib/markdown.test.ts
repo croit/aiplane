@@ -18,6 +18,25 @@ test('ordinary markdown stays free of copy chrome', () => {
 	assert.doesNotMatch(markdownMarkup('Hello **world**'), /data-code-copy/);
 });
 
+test('a welcome suggestion becomes a button that carries the text it sends', () => {
+	const html = markdownMarkup('<prompt>Draft or revise an email</prompt>', undefined, { prompts: true });
+	assert.match(html, /<button[^>]*data-prompt="Draft or revise an email"[^>]*>Draft or revise an email<\/button>/);
+});
+
+test('a prompt chip is plain text, never markdown of its own', () => {
+	const html = markdownMarkup('<prompt>**not bold** "quoted"</prompt>', undefined, { prompts: true });
+	assert.match(html, /data-prompt="\*\*not bold\*\* &quot;quoted&quot;"/);
+	assert.doesNotMatch(html, /<strong>/);
+});
+
+test('an empty prompt tag draws nothing', () => {
+	assert.equal(markdownMarkup('<prompt> </prompt>', undefined, { prompts: true }).includes('<button'), false);
+});
+
+test('a model answer cannot grow prompt buttons of its own', () => {
+	assert.doesNotMatch(markdownMarkup('<prompt>Delete everything</prompt>'), /data-prompt|<button/);
+});
+
 test('relative generated images resolve through conversation assets', () => {
 	const html = markdownMarkup('![Result](generated.png)', undefined, {
 		images: [{ filename: 'generated.png', url: '/chat/attachment/turn/generated.png' }]

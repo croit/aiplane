@@ -324,7 +324,7 @@ branding-error-store = 无法保存标志 — 请重试。
 settings-s-chat-welcome = 欢迎语
 settings-s-chat-welcome-blurb = 在空对话中、第一条消息之前显示。
 settings-f-chat-welcome-text = 欢迎语
-settings-f-chat-welcome-text-help = 显示在空聊天中央。支持 Markdown；留空则不显示。变量：{ "{" }name{ "}" }（显示名称）、{ "{" }first_name{ "}" }、{ "{" }email{ "}" }、{ "{" }language{ "}" }（界面语言）。
+settings-f-chat-welcome-text-help = 显示在空聊天中的卡片上。支持 Markdown；留空则不显示。变量：{ "{" }name{ "}" }（显示名称）、{ "{" }first_name{ "}" }、{ "{" }email{ "}" }、{ "{" }language{ "}" }（界面语言）。<prompt>…</prompt> 中的文字会变成发送它的按钮。
 
 settings-s-chat-confidential = 机密聊天
 settings-s-chat-confidential-blurb = 机密对话只会路由到获准的模型，且不会再次变为非机密。

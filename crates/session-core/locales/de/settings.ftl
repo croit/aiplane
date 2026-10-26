@@ -325,7 +325,7 @@ branding-error-store = Das Logo konnte nicht gespeichert werden — versuche es 
 settings-s-chat-welcome = Begrüßungstext
 settings-s-chat-welcome-blurb = Wird in einer leeren Unterhaltung vor der ersten Nachricht angezeigt.
 settings-f-chat-welcome-text = Begrüßungstext
-settings-f-chat-welcome-text-help = Mittig in einem leeren Chat. Markdown wird unterstützt; leer bedeutet: kein Begrüßungstext. Platzhalter: { "{" }name{ "}" } (Anzeigename), { "{" }first_name{ "}" }, { "{" }email{ "}" }, { "{" }language{ "}" } (Sprachcode).
+settings-f-chat-welcome-text-help = Mittig auf einer Karte in einem leeren Chat. Markdown wird unterstützt; leer bedeutet: kein Begrüßungstext. Platzhalter: { "{" }name{ "}" } (Anzeigename), { "{" }first_name{ "}" }, { "{" }email{ "}" }, { "{" }language{ "}" } (Sprachcode). Text in <prompt>…</prompt> wird zu einem Knopf, der ihn sendet.
 
 settings-s-chat-confidential = Vertrauliche Chats
 settings-s-chat-confidential-blurb = Eine vertrauliche Unterhaltung wird nur noch an Modelle geroutet, die dafür freigegeben sind, und wird nie wieder unvertraulich.

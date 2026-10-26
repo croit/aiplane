@@ -2573,7 +2573,7 @@ export const ru: Catalog = {
  "settings-f-chat-voice-directive": "Голосовая директива",
  "settings-f-chat-voice-directive-help": "Постоянные инструкции для голосовых ходов, добавляемые к системному сообщению. Оставьте пустым, чтобы использовать встроенную директиву.",
  "settings-f-chat-welcome-text": "Приветственный текст",
- "settings-f-chat-welcome-text-help": "По центру пустого чата. Поддерживается Markdown; пусто — без приветствия. Переменные: {name} (отображаемое имя), {first_name}, {email}, {language} (язык интерфейса).",
+ "settings-f-chat-welcome-text-help": "По центру карточки в пустом чате. Поддерживается Markdown; пусто — без приветствия. Переменные: {name} (отображаемое имя), {first_name}, {email}, {language} (язык интерфейса). Текст в <prompt>…</prompt> становится кнопкой, которая его отправляет.",
  "settings-f-comfyui-base_url": "URL ComfyUI",
  "settings-f-comfyui-base_url-help": "Базовый URL экземпляра ComfyUI. Аутентификации у него нет, поэтому он должен быть доступен только со шлюза.",
  "settings-f-comfyui-content_dir": "Каталог рабочих процессов",
