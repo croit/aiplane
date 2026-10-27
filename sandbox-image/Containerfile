@@ -14,8 +14,9 @@
 # `/usr/local/bin/sandbox-agent`.
 #
 # It is deliberately large (LibreOffice + Chromium + data libs). Pull it
-# once; runs are then cold-start only. amd64-targeted binary downloads
-# (typst/duckdb/yq) match the production host; adjust for other arches.
+# once; runs are then cold-start only. The CLI downloads (typst/duckdb/yq)
+# are arch-aware via TARGETARCH, so the image builds natively on amd64 and
+# arm64; the pandoc step is amd64-only (the production host arch).
 #
 # Build:
 #   podman build -t ghcr.io/croit/aiplane-sandbox:latest sandbox-image/
