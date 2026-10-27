@@ -39,7 +39,7 @@ permissions:
 
 jobs:
   auto-merge:
-    if: github.actor == 'dependabot[bot]' || github.event_name == 'workflow_dispatch'
+    if: github.actor == 'dependabot[bot]' || github.actor == 'app/dependabot' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -64,10 +64,13 @@ jobs:
             exit 0
           fi
           author=$(printf '%s' "$meta" | jq -r '.author.login')
-          if [ "$author" != "dependabot[bot]" ]; then
-            echo "PR #$pr is by $author, not dependabot — skipping."
-            exit 0
-          fi
+          case "$author" in
+            dependabot[bot]|app/dependabot) ;;
+            *)
+              echo "PR #$pr is by $author, not dependabot — skipping."
+              exit 0
+              ;;
+          esac
           if printf '%s' "$meta" | jq -r '.labels[].name' | grep -qx 'security'; then
             echo "PR #$pr is a security update — native auto_merge owns it."
             exit 0
