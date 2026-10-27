@@ -8,6 +8,11 @@
 #
 # Security *alerts* are a separate switch (repo Settings → Code security) and
 # are already on; this file adds the version-update PRs they don't cover.
+#
+# Merging: security updates auto-merge natively (`auto_merge: true` below,
+# once "Dependabot Security updates" is on in the repo settings). Version
+# updates are merged by the `dependabot-auto-merge.yml` workflow — patch/minor
+# only, once all checks are green; majors stay manual.
 version: 2
 updates:
   # GitHub Actions — the highest-value ecosystem here. A workflow action runs
@@ -15,6 +20,7 @@ updates:
   # more to an attacker than a stale build-time npm package.
   - package-ecosystem: github-actions
     directory: /
+    auto_merge: true
     schedule:
       interval: weekly
     commit-message:
@@ -30,6 +36,7 @@ updates:
   # these PRs are the only way the lockfile moves.
   - package-ecosystem: npm
     directory: /web
+    auto_merge: true
     schedule:
       interval: weekly
     commit-message:
@@ -57,6 +64,7 @@ updates:
   # count is large, so group by cadence rather than opening dozens of PRs.
   - package-ecosystem: cargo
     directory: /
+    auto_merge: true
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
@@ -72,24 +80,28 @@ updates:
   # on its own.
   - package-ecosystem: docker
     directory: /
+    auto_merge: true
     schedule:
       interval: weekly
     commit-message:
       prefix: "chore(docker)"
   - package-ecosystem: docker
     directory: /sandbox-image
+    auto_merge: true
     schedule:
       interval: weekly
     commit-message:
       prefix: "chore(docker)"
   - package-ecosystem: docker
     directory: /deploy/sandbox-runner
+    auto_merge: true
     schedule:
       interval: weekly
     commit-message:
       prefix: "chore(docker)"
   - package-ecosystem: docker
     directory: /deploy/ocr-sidecar
+    auto_merge: true
     schedule:
       interval: weekly
     commit-message:
@@ -102,6 +114,7 @@ updates:
   # (`mise run lock-sandbox-python --upgrade`).
   - package-ecosystem: pip
     directory: /sandbox-image
+    auto_merge: true
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
@@ -115,12 +128,14 @@ updates:
   # (`mise run lock-docs --upgrade`, `mise run lock-ocr-sidecar --upgrade`).
   - package-ecosystem: pip
     directory: /docs/site-support
+    auto_merge: true
     schedule:
       interval: weekly
     commit-message:
       prefix: "chore(docs)"
   - package-ecosystem: pip
     directory: /deploy/ocr-sidecar
+    auto_merge: true
     schedule:
       interval: weekly
     commit-message:

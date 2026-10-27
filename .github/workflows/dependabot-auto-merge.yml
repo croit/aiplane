@@ -1,0 +1,141 @@
+# Dependabot auto-merge for version updates.
+#
+# Merges Dependabot version-update PRs automatically — patch/minor only, and
+# only once every check on the PR is green. Major version bumps are left for
+# a human: this repo has needed real migration work for majors (API changes,
+# image-size trade-offs), and those are maintainer decisions, not automations.
+#
+# Security updates do NOT go through this workflow — they use Dependabot's
+# native auto_merge (`auto_merge: true` in dependabot.yml, which requires
+# "Dependabot Security updates" in the repo settings). Such PRs carry the
+# `security` label and are skipped here so the two paths never race.
+#
+# CI-green is the gate, so a breaking change blocks itself: the PR stays
+# open and red for a human. CI-green is NOT a supply-chain guarantee — a
+# compromised upstream release passes its own CI — which is why `mise run
+# audit` stays out of CI on purpose and a human still reads what lands.
+#
+# The "main: maintainer updates only" ruleset restricts direct pushes
+# (update/creation/deletion), not PR merges, so the workflow's GITHUB_TOKEN
+# merges without bypassing anything.
+#
+# Testing / one-off processing of an existing PR:
+#   gh workflow run dependabot-auto-merge.yml -f pr_number=123
+
+name: Dependabot auto-merge
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to process"
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: github.actor == 'dependabot[bot]' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Decide and merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ (github.event_name == 'workflow_dispatch' && inputs.pr_number) || github.event_number }}
+        run: |
+          set -euo pipefail
+
+          pr="${PR_NUMBER:-}"
+          if [ -z "$pr" ] || [ "$pr" = "null" ]; then
+            echo "No PR number — nothing to do."
+            exit 0
+          fi
+          echo "Processing PR #$pr"
+
+          meta=$(gh pr view "$pr" --json state,author,labels)
+          state=$(printf '%s' "$meta" | jq -r '.state')
+          if [ "$state" != "OPEN" ]; then
+            echo "PR #$pr is $state — nothing to do."
+            exit 0
+          fi
+          author=$(printf '%s' "$meta" | jq -r '.author.login')
+          if [ "$author" != "dependabot[bot]" ]; then
+            echo "PR #$pr is by $author, not dependabot — skipping."
+            exit 0
+          fi
+          if printf '%s' "$meta" | jq -r '.labels[].name' | grep -qx 'security'; then
+            echo "PR #$pr is a security update — native auto_merge owns it."
+            exit 0
+          fi
+
+          # --- Version gate: every bump must be patch/minor ----------------
+          # The PR body lists each dependency as "from `old` to `new`" —
+          # grouped PRs include all their members, so one uniform check
+          # covers single and grouped updates alike. Docker digest-only
+          # bumps keep the tag and move the digest; a tag change is a
+          # distribution/major decision and stays manual.
+          body=$(gh pr view "$pr" --json body --jq '.body')
+          bumps=$(printf '%s\n' "$body" | grep -o 'from `[^`]*` to `[^`]*`' || true)
+          if [ -z "$bumps" ]; then
+            echo "No version pairs found in the PR body — leaving for a human."
+            exit 0
+          fi
+          while IFS= read -r line; do
+            old_v=${line#*from `}; old_v=${old_v%%`*}
+            new_v=${line#*to `};   new_v=${new_v%%`*}
+            if [[ "$old_v" == *@sha256:* && "$new_v" == *@sha256:* ]]; then
+              if [ "${old_v%%@*}" != "${new_v%%@*}" ]; then
+                echo "Base tag changes (${old_v%%@*} -> ${new_v%%@*}) — leaving for a human."
+                exit 0
+              fi
+              continue
+            fi
+            old_v=${old_v#v}; new_v=${new_v#v}
+            old_major=${old_v%%.*}; new_major=${new_v%%.*}
+            if ! [[ "$old_major" =~ ^[0-9]+$ && "$new_major" =~ ^[0-9]+$ ]]; then
+              echo "Non-numeric version (${old_v} -> ${new_v}) — leaving for a human."
+              exit 0
+            fi
+            if [ "$new_major" -gt "$old_major" ]; then
+              echo "Major bump ${old_v} -> ${new_v} — leaving for a human."
+              exit 0
+            fi
+          done <<< "$bumps"
+          echo "All bumps are patch/minor — proceeding."
+
+          # --- Check gate: wait until every check is green (max 45 min) ----
+          deadline=$(( $(date +%s) + 45 * 60 ))
+          while :; do
+            if out=$(gh pr checks "$pr" 2>&1); then
+              break
+            fi
+            if grep -q 'no completed check runs' <<< "$out"; then
+              echo "No check runs found yet — waiting for CI to start."
+            elif grep -qE ' (fail|failure|cancelled)$' <<< "$out"; then
+              echo "Checks failed:"
+              printf '%s\n' "$out"
+              exit 1
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "Checks not green after 45 minutes — giving up."
+              exit 1
+            fi
+            sleep 60
+          done
+          echo "All checks green."
+
+          # mergeable is computed asynchronously; re-read it now that the
+          # checks have settled, not from the snapshot taken at the top.
+          mergeable=$(gh pr view "$pr" --json mergeable --jq '.mergeable')
+          if [ "$mergeable" != "MERGEABLE" ]; then
+            echo "PR is not mergeable ($mergeable) — leaving for a human."
+            exit 1
+          fi
+
+          gh pr merge "$pr" --squash --delete-branch
+          echo "Merged PR #$pr."
