@@ -908,9 +908,9 @@ isodate==0.7.2 \
     --hash=sha256:28009937d8031054830160fce6d409ed342816b543597cece116d966c6d99e15 \
     --hash=sha256:4cd1aa0f43ca76f4a6c6c0292a85f40b35ec2e43e315b59f06e6d32171a953e6
     # via agate
-jc==1.26.0 \
-    --hash=sha256:2f0ef33cfafcbfc3c756ca2bd6df57c310e24f6cd5cc5e8322f7a442fd33f7ad \
-    --hash=sha256:576b5615b5677c7bf4aacf97dcc6c6b4bf437bbc420c7db77b43ae1785372c9e
+jc==1.26.1 \
+    --hash=sha256:cc71bc981ac38c77b1c2b34db73228227460f2b3c61b882db3e4ae9a804a9c57 \
+    --hash=sha256:fdf1a58d05db351bd597438cf3b67ff7a9653cc0da4c63234ce77fe26051a4dc
     # via -r requirements.in
 joblib==1.6.0 \
     --hash=sha256:2ccc96785b12046c08fd6d55839c12857831b54a3c1673ffadd2f04bfc4eda03 \
