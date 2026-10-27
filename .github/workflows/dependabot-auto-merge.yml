@@ -77,20 +77,21 @@ jobs:
           fi
 
           # --- Version gate: every bump must be patch/minor ----------------
-          # The PR body lists each dependency as "from `old` to `new`" —
-          # grouped PRs include all their members, so one uniform check
-          # covers single and grouped updates alike. Docker digest-only
-          # bumps keep the tag and move the digest; a tag change is a
-          # distribution/major decision and stays manual.
+          # The body opens with one "Bumps [dep](link) from OLD to NEW" line
+          # per dependency (grouped PRs have several) — those are the only
+          # lines that state versions, so release-note prose below cannot
+          # trip the gate. Docker digest-only bumps keep the tag and move
+          # the digest; a tag change is a distribution/major decision and
+          # stays manual.
           body=$(gh pr view "$pr" --json body --jq '.body')
-          bumps=$(printf '%s\n' "$body" | grep -o 'from `[^`]*` to `[^`]*`' || true)
+          bumps=$(printf '%s\n' "$body" | grep -E '^Bumps \[' | grep -oE 'from [^ ]+ to [^ ]+' || true)
           if [ -z "$bumps" ]; then
             echo "No version pairs found in the PR body — leaving for a human."
             exit 0
           fi
           while IFS= read -r line; do
-            old_v=${line#*from `}; old_v=${old_v%%`*}
-            new_v=${line#*to `};   new_v=${new_v%%`*}
+            old_v=${line#from }; old_v=${old_v%% *}
+            new_v=${line#* to }; new_v=${new_v%.}
             if [[ "$old_v" == *@sha256:* && "$new_v" == *@sha256:* ]]; then
               if [ "${old_v%%@*}" != "${new_v%%@*}" ]; then
                 echo "Base tag changes (${old_v%%@*} -> ${new_v%%@*}) — leaving for a human."
