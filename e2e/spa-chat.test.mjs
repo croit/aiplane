@@ -363,16 +363,23 @@ test("conversation tools use a responsive full-screen selector", async () => {
     await page.getByRole("button", { name: "Tools", exact: true }).click();
 
     const dialog = page.getByRole("dialog");
+    const search = dialog.getByPlaceholder("Search tools…");
+    await search.waitFor();
+    assert.equal(
+        await search.evaluate((el) => el === document.activeElement),
+        true,
+        "opening the tool selector puts focus in its search field",
+    );
     const desktopBox = await dialog.boundingBox();
     assert.deepEqual(desktopBox, { x: 0, y: 0, width: 1400, height: 900 });
-    await dialog.getByRole("button", { name: /^All tools/ }).waitFor();
+    await dialog.getByRole("button", { name: /^All\b/ }).waitFor();
     assert.equal(await dialog.getByRole("combobox", { name: "Tool category" }).isVisible(), false);
 
     await page.setViewportSize({ width: 390, height: 844 });
     const mobileBox = await dialog.boundingBox();
     assert.deepEqual(mobileBox, { x: 0, y: 0, width: 390, height: 844 });
     await dialog.getByRole("combobox", { name: "Tool category" }).waitFor();
-    assert.equal(await dialog.getByRole("button", { name: /^All tools/ }).isVisible(), false);
+    assert.equal(await dialog.getByRole("button", { name: /^All\b/ }).isVisible(), false);
 
     await page.getByPlaceholder("Search tools…").fill("web search");
 

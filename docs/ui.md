@@ -607,11 +607,12 @@ its group, description, ordering metadata, and explicit `off` / `auto` / `on`
 state. The picker searches and groups this response; it does not reconstruct
 capabilities from unrelated endpoints.
 
-The capability picker is a full-screen dialog at every viewport size. Search
-is global, state filters expose `off` / `auto` / `on` in words, and the desktop
-category rail becomes a labelled category select on narrow screens. Changes
-save immediately; category-level controls use the same mutation path as an
-individual tool and preserve `can_disable` by falling back to `auto`.
+The capability picker is a full-screen dialog at every viewport size. Opening
+it puts focus in its search field, so typing narrows the list immediately.
+Search is global, state filters expose `off` / `auto` / `on` in words, and the
+desktop category rail becomes a labelled category select on narrow screens.
+Changes save immediately; category-level controls use the same mutation path as
+an individual tool and preserve `can_disable` by falling back to `auto`.
 
 The list itself — group rail, search, one row per resource — is
 `components/capabilities/CapabilityBrowser.svelte` (logic in

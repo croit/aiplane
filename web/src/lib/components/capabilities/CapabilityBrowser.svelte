@@ -25,7 +25,8 @@
 		filter = () => true,
 		order = (rows) => rows,
 		groupLabel = toolCategoryLabel,
-		searchPlaceholder = t('chat-render-tools-search-placeholder')
+		searchPlaceholder = t('chat-render-tools-search-placeholder'),
+		focusSearch = false
 	}: {
 		items: T[];
 		labelledby: string;
@@ -37,6 +38,7 @@
 		order?: (rows: T[]) => T[];
 		groupLabel?: (group: string) => string;
 		searchPlaceholder?: string;
+		focusSearch?: boolean;
 	} = $props();
 
 	let query = $state('');
@@ -60,7 +62,10 @@
 <div class="flex flex-col gap-3 border-b border-base-300 px-4 py-3 sm:px-6 lg:flex-row lg:items-center">
 	<label class="input w-full lg:max-w-xl">
 		<span aria-hidden="true">⌕</span>
-		<input bind:value={query} placeholder={searchPlaceholder} aria-label={searchPlaceholder} />
+		<!-- A dialog hands focus to its first focusable element; `focusSearch`
+		     makes the search field that element instead of the close button. -->
+		<!-- svelte-ignore a11y_autofocus -->
+		<input bind:value={query} placeholder={searchPlaceholder} aria-label={searchPlaceholder} autofocus={focusSearch} />
 	</label>
 	{@render toolbar?.()}
 </div>

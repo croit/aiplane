@@ -99,7 +99,7 @@
 			</header>
 
 			{#if capabilities.length > 0}
-				<CapabilityBrowser items={capabilities} labelledby={dialogId} filter={(capability) => stateFilter === 'all' || capability.state === stateFilter}>
+				<CapabilityBrowser items={capabilities} labelledby={dialogId} focusSearch filter={(capability) => stateFilter === 'all' || capability.state === stateFilter}>
 					{#snippet toolbar()}
 						<div role="tablist" class="tabs tabs-box tabs-sm max-w-full overflow-x-auto">
 							{#each stateFilters as state (state)}
