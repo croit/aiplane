@@ -15,9 +15,13 @@
 # compromised upstream release passes its own CI — which is why `mise run
 # audit` stays out of CI on purpose and a human still reads what lands.
 #
-# The "main: maintainer updates only" ruleset restricts direct pushes
-# (update/creation/deletion), not PR merges, so the workflow's GITHUB_TOKEN
-# merges without bypassing anything.
+# Merging requires the GitHub Actions app and the Dependabot app as
+# bypass actors on the ruleset's update rule ("main: maintainer updates
+# + dep auto-merge"). The ruleset API silently drops bypass_actors for
+# non-org-owners, so add them in the ruleset UI:
+#   github.com/croit/aiplane/rules → edit the rule → allowed actors.
+# Until then the workflow fails visibly at the merge step and the PR
+# stays open for a human — no silent no-op.
 #
 # Testing / one-off processing of an existing PR:
 #   gh workflow run dependabot-auto-merge.yml -f pr_number=123
