@@ -133,13 +133,28 @@ jobs:
           done
           echo "All checks green."
 
-          # mergeable is computed asynchronously; re-read it now that the
-          # checks have settled, not from the snapshot taken at the top.
-          mergeable=$(gh pr view "$pr" --json mergeable --jq '.mergeable')
-          if [ "$mergeable" != "MERGEABLE" ]; then
-            echo "PR is not mergeable ($mergeable) — leaving for a human."
-            exit 1
-          fi
+          # mergeable is computed asynchronously — and recomputed whenever
+          # main moves, which invalidates open PRs' state (a push to main
+          # right before this run lands you in the middle of it). Retry
+          # while UNKNOWN, bounded.
+          merge_deadline=$(( $(date +%s) + 10 * 60 ))
+          while :; do
+            mergeable=$(gh pr view "$pr" --json mergeable --jq '.mergeable')
+            case "$mergeable" in
+              MERGEABLE) break ;;
+              NOT_MERGEABLE)
+                echo "PR has a merge conflict — leaving for a human."
+                exit 1
+                ;;
+              *)
+                if [ "$(date +%s)" -ge "$merge_deadline" ]; then
+                  echo "Mergeable state still $mergeable after 10 minutes — leaving for a human."
+                  exit 1
+                fi
+                sleep 15
+                ;;
+            esac
+          done
 
           gh pr merge "$pr" --squash --delete-branch
           echo "Merged PR #$pr."
