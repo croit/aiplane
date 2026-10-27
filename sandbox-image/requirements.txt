@@ -2890,9 +2890,9 @@ xlrd==2.0.2 \
     #   -r requirements.in
     #   agate-excel
     #   csvkit
-xlsxwriter==3.2.9 \
-    --hash=sha256:254b1c37a368c444eac6e2f867405cc9e461b0ed97a3233b2ac1e574efb4140c \
-    --hash=sha256:9a5db42bc5dff014806c58a20b9eae7322a134abb6fce3c92c181bfb275ec5b3
+xlsxwriter==3.3.0 \
+    --hash=sha256:0a6bf2e4dcec8b29dd9b86d1e622132134c48bb6fd10f925fdfb229f0447199a \
+    --hash=sha256:5f04772d43281da5109af66f39b65153359a203e896847c416476e709b024469
     # via
     #   -r requirements.in
     #   python-pptx
