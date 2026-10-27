@@ -1,0 +1,9 @@
+# Direct Python dependencies of the OCR sidecar. This file is the one humans
+# edit; requirements.txt is the compiled, hash-pinned lock the Containerfile
+# installs. Regenerate after ANY change here:
+#
+#   mise run lock-ocr-sidecar
+#
+# PyMuPDF does the PDF rasterisation (what Unlimited-OCR's own `infer.py --pdf`
+# does internally) and ships the `fitz` module the server imports.
+pymupdf

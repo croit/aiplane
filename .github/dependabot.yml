@@ -88,6 +88,12 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(docker)"
+  - package-ecosystem: docker
+    directory: /deploy/ocr-sidecar
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(docker)"
 
   # The sandbox gold image's Python lock. Dependabot updates requirements.txt
   # directly; the hashes come along, because the lock carries them. Note it
@@ -101,3 +107,21 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(sandbox)"
+
+  # The documentation builder's lock (docs/site-support) and the OCR sidecar's
+  # lock (deploy/ocr-sidecar) are uv-compiled hash pins, the same shape as the
+  # sandbox one. Dependabot moves a package and its hashes in place; a
+  # multi-package change or a major is regenerated from requirements.in
+  # (`mise run lock-docs --upgrade`, `mise run lock-ocr-sidecar --upgrade`).
+  - package-ecosystem: pip
+    directory: /docs/site-support
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(docs)"
+  - package-ecosystem: pip
+    directory: /deploy/ocr-sidecar
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(ocr)"

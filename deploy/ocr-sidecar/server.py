@@ -24,7 +24,7 @@ import urllib.request
 from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import fitz
+import pymupdf
 
 # Ceiling on the multipart body we will read at all. The gateway enforces its
 # own (smaller, configurable) limit first; this one exists so a stray client
@@ -113,9 +113,9 @@ def document_pages(filename, mime, data, max_pages, dpi):
     beats no answer at all for a 300-page scan.
     """
     if mime == "application/pdf" or filename.lower().endswith(".pdf"):
-        document = fitz.open(stream=data, filetype="pdf")
+        document = pymupdf.open(stream=data, filetype="pdf")
         total = len(document)
-        matrix = fitz.Matrix(dpi / 72, dpi / 72)
+        matrix = pymupdf.Matrix(dpi / 72, dpi / 72)
         pages = []
         for number, page in enumerate(document, start=1):
             if number > max_pages:

@@ -527,7 +527,7 @@ mise x kubeconform@0.7.0 -- kubeconform -strict -summary "$out/default.yaml" "$o
 '''
 
 [tasks.audit]
-description = "Vulnerability audit across every dependency ecosystem: Rust (cargo-audit vs RustSec), npm (npm audit), and the sandbox image's Python lock (pip-audit, in a container). Residual, justified Rust advisories live in .cargo/audit.toml — each with the reason it cannot be fixed by upgrading. Not wired into `ci` on purpose: an advisory published overnight would turn an unrelated PR red, and a supply-chain finding deserves a human reading it rather than a reflexive re-run."
+description = "Vulnerability audit across every dependency ecosystem: Rust (cargo-audit vs RustSec), npm (npm audit), and the three hash-pinned Python locks (sandbox image, docs builder, OCR sidecar — pip-audit, in a container). Residual, justified Rust advisories live in .cargo/audit.toml — each with the reason it cannot be fixed by upgrading. Not wired into `ci` on purpose: an advisory published overnight would turn an unrelated PR red, and a supply-chain finding deserves a human reading it rather than a reflexive re-run."
 dir = "{{ config_root }}"
 run = '''
 set -eu
@@ -546,8 +546,17 @@ if command -v docker >/dev/null 2>&1; then
     base=$(sed -n 's|^FROM \(debian:[^ ]*\).*|\1|p' sandbox-image/Containerfile | head -1)
     docker run --rm --platform linux/amd64 -v "$PWD/sandbox-image:/w:ro" -w /w "$base" \
         sh -c 'export DEBIAN_FRONTEND=noninteractive; apt-get update -qq >/dev/null; apt-get install -y -qq --no-install-recommends python3 python3-venv >/dev/null 2>&1; python3 -m venv /tmp/v; /tmp/v/bin/pip install -q pip-audit >/dev/null 2>&1; /tmp/v/bin/pip-audit -r requirements.txt' || fail=1
+
+    echo
+    echo "=== Python (docs/site-support + deploy/ocr-sidecar) ==="
+    python_base=$(sed -n 's|^FROM \(python:[^ ]*\).*|\1|p' deploy/ocr-sidecar/Containerfile | head -1)
+    for lock in docs/site-support deploy/ocr-sidecar; do
+        echo "--- $lock ---"
+        docker run --rm --platform linux/amd64 -v "$PWD/$lock:/w:ro" -w /w "$python_base" \
+            sh -c 'python3 -m pip install -q pip-audit >/dev/null 2>&1; python3 -m pip_audit -r requirements.txt' || fail=1
+    done
 else
-    echo "docker unavailable — skipping the Python lock audit" >&2
+    echo "docker unavailable — skipping the Python lock audits" >&2
 fi
 
 echo
@@ -673,8 +682,27 @@ run = "python3 -m unittest discover -s docs/site-support -p 'test_*.py'"
 
 [tasks.lock-docs]
 description = "Resolve the documentation builder's hash-pinned Python dependencies."
+usage = 'flag "--upgrade" help="re-resolve every package to its latest release instead of keeping the current pins"'
 tools = { uv = "0.12.21" }
-run = "RUST_LOG=warn uv pip compile --quiet --generate-hashes --universal --python-version 3.12 docs/site-support/requirements.in -o docs/site-support/requirements.txt"
+run = '''
+set -eu
+# uv treats the existing lock as preferences, so without --upgrade a recompile
+# only moves what requirements.in forces to move.
+upgrade=""
+if [ "${usage_upgrade:-false}" = "true" ]; then upgrade="--upgrade"; fi
+RUST_LOG=warn uv pip compile --quiet --generate-hashes --universal --python-version 3.12 $upgrade docs/site-support/requirements.in -o docs/site-support/requirements.txt
+'''
+
+[tasks.lock-ocr-sidecar]
+description = "Resolve the OCR sidecar's hash-pinned Python dependencies."
+usage = 'flag "--upgrade" help="re-resolve every package to its latest release instead of keeping the current pins"'
+tools = { uv = "0.12.21" }
+run = '''
+set -eu
+upgrade=""
+if [ "${usage_upgrade:-false}" = "true" ]; then upgrade="--upgrade"; fi
+RUST_LOG=warn uv pip compile --quiet --generate-hashes --universal --python-version 3.12 $upgrade deploy/ocr-sidecar/requirements.in -o deploy/ocr-sidecar/requirements.txt
+'''
 
 [tasks.docs-install]
 description = "Install the documentation builder into an isolated, hash-verified environment."

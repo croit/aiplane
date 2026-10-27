@@ -196,11 +196,8 @@ fn parse_one(raw: &[u8]) -> Option<Message> {
             .and_then(|d| Timestamp::from_second(d.to_timestamp()).ok()),
         in_reply_to: parsed
             .in_reply_to()
-            .as_text_list()
-            .and_then(|l| {
-                l.first()
-                    .map(|s| s.trim().trim_matches(['<', '>']).to_string())
-            })
+            .and_then(|l| l.first())
+            .map(|s| s.trim().trim_matches(['<', '>']).to_string())
             .filter(|s| !s.is_empty()),
         body,
     })

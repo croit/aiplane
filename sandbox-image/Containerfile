@@ -28,7 +28,7 @@
 # resolves the right architecture. Dependabot's docker ecosystem bumps the
 # digest while keeping the tag readable; do not drop the tag, it is what makes
 # the pin reviewable.
-FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
+FROM debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -224,22 +224,23 @@ RUN printf '= Warm up\n\nPre-fetching the typst-ts-cli helper.\n' > /tmp/warm.ty
 # complaint — in an image whose entire job is executing model-authored code.
 # The checksums are per-arch because the artifacts are; `sha256sum -c` fails
 # the BUILD rather than shipping an unverified binary. To upgrade: bump the
-# VERSION arg and replace the matching hashes (the digests GitHub publishes on
-# the release assets are the same values).
+# VERSION arg and replace the matching hashes. yq publishes them in its
+# release's `checksums` file; DuckDB publishes none, so its values are the
+# sha256 of the downloaded asset itself.
 ARG TARGETARCH
 ARG TYPST_VERSION=v0.15.1
-ARG DUCKDB_VERSION=v1.5.5
-ARG YQ_VERSION=v4.53.6
+ARG DUCKDB_VERSION=v2.0.0
+ARG YQ_VERSION=v4.54.1
 RUN set -eux; \
     case "${TARGETARCH:-amd64}" in \
         amd64) typst_arch=x86_64;  dl_arch=amd64; \
                typst_sha=a6d077d0a95eed5a2eba715b2dae06be954f624ccbf85758a03f389ded33118c; \
-               duckdb_sha=08c0ca117111fcede14239d0093792352befdc174218c344d232c13279643d05; \
-               yq_sha=c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385 ;; \
+               duckdb_sha=c6507206baf7793c6013dbd82368469a45f20dc0e17a6f92f204602f652ed2bc; \
+               yq_sha=8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f ;; \
         arm64) typst_arch=aarch64; dl_arch=arm64; \
                typst_sha=5aa8d74a3d906e60ea12a66ac2f37f8eef1b14cbad7182a745e393a10c23dcee; \
-               duckdb_sha=02163197027a42149147364d31fa67cac82108517a4be43304a1cc226eaef07a; \
-               yq_sha=88a1016bc1d657375a35864e4f44b6f333df8ff97b559f51bba0adcb2169df09 ;; \
+               duckdb_sha=859e1875d2a9515fbb4bf8871061437a14af82320da68c753f094c4b776348fe; \
+               yq_sha=189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b ;; \
         *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     verify() { echo "$2  $1" | sha256sum -c - >/dev/null \
@@ -250,11 +251,11 @@ RUN set -eux; \
     tar -xJ -C /tmp -f /tmp/typst.tar.xz; \
     install -m 0755 "/tmp/typst-${typst_arch}-unknown-linux-musl/typst" /usr/local/bin/typst; \
     rm -rf /tmp/typst.tar.xz /tmp/typst-*; \
-    curl -fsSL -o /tmp/duckdb.zip \
-        "https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/duckdb_cli-linux-${dl_arch}.zip"; \
-    verify /tmp/duckdb.zip "$duckdb_sha"; \
-    unzip -o /tmp/duckdb.zip -d /usr/local/bin; \
-    rm /tmp/duckdb.zip; \
+    curl -fsSL -o /tmp/duckdb.tar.gz \
+        "https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/duckdb-cli-linux-${dl_arch}.tar.gz"; \
+    verify /tmp/duckdb.tar.gz "$duckdb_sha"; \
+    tar -xzf /tmp/duckdb.tar.gz -C /usr/local/bin duckdb; \
+    rm /tmp/duckdb.tar.gz; \
     curl -fsSL -o /tmp/yq \
         "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${dl_arch}"; \
     verify /tmp/yq "$yq_sha"; \

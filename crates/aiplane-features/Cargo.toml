@@ -42,7 +42,7 @@ hkdf = "0.13"
 sha2 = { workspace = true }
 sha1 = "0.11"
 data-encoding = "2.11"
-mail-parser = "0.11"
+mail-parser = "1.0"
 flate2 = "1.1"
 # GeoIP: the LITE DB11 BIN reader, its hot-reload watcher, and the unpacker for
 # the optional weekly updater.

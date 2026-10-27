@@ -1,11 +1,25 @@
-FROM python:3.12-slim
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 croit GmbH
+#
+# PDF-aware Unlimited-OCR sidecar.
+#
+# Base image is pinned by digest, not just by tag: `python:3.12-slim` is a
+# moving target, so a tag alone means two builds of the same commit are not the
+# same image. Dependabot's docker ecosystem bumps the digest while keeping the
+# tag readable (`.github/dependabot.yml`); do not drop the tag, it is what makes
+# the pin reviewable.
+FROM python:3.12-slim@sha256:12316debbfb86890f6b2d825820612741ba527ad5a44e3902759141d572bfe8f
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 WORKDIR /app
+# requirements.txt is a COMPILED lock: every package pinned to an exact version
+# with every acceptable sha256, installed under `--require-hashes` so pip
+# refuses anything whose bytes do not match. Edit requirements.in and run
+# `mise run lock-ocr-sidecar` to regenerate; never hand-edit the lock.
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r requirements.txt
 COPY server.py .
 
 USER 65532:65532

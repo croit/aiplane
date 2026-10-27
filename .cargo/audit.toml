@@ -47,4 +47,18 @@ ignore = [
     # `cargo tree -i lru -e normal` prints nothing, so it is not in the shipped
     # binary — and no dependent has released against a fixed `lru`.
     "RUSTSEC-2026-0253",
+
+    # RUSTSEC-2026-0391 / -0398 / -0403 — `zstd` 0.13.3 and its `zstd-safe`
+    # 7.3.0 (abandoned-stream leak; uninitialized memory / out-of-bounds Vec
+    # length on failed legacy-frame decompression).
+    #
+    # Not in the shipped binary. The only path to them is rama's `grpc` and
+    # `tls-boring` features (rama-grpc / rama-tls-boring require zstd ^0.13),
+    # which are OFF: rama is pinned with `features = ["http-full", "tower"]`.
+    # Verify with: cargo tree -i zstd@0.13.3 -e normal  (must print nothing).
+    # The 0.13 pin lives in rama's git rev, so it cannot be moved from here —
+    # these ignores come out the day the rama pin moves to a rev on zstd >= 0.14.3.
+    "RUSTSEC-2026-0391",
+    "RUSTSEC-2026-0398",
+    "RUSTSEC-2026-0403",
 ]
