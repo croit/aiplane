@@ -391,9 +391,13 @@ async fn creating_an_agent_creates_a_principal_without_rights_and_a_write_share(
     let agent = &detail["agent"];
     assert_eq!(agent["draft_spec"]["profile"]["display"], "Hi");
     assert_eq!(agent["grants"], json!([]));
+    let mut shares = agent["shares"].clone();
+    assert!(shares[0]["granted"]["at"].is_string(), "{shares}");
+    shares[0]["granted"]["at"] = Value::Null;
     assert_eq!(
-        agent["shares"],
-        json!([{ "subject_kind": "user", "subject_id": "alice", "access": "write", "name": null }])
+        shares,
+        json!([{ "subject_kind": "user", "subject_id": "alice", "access": "write", "name": null,
+                 "granted": { "by": { "kind": "user", "id": "alice", "name": null, "email": "alice@example.com" }, "at": null } }])
     );
     assert_eq!(agent["publish_issues"][0]["path"], "main");
 
@@ -1052,6 +1056,59 @@ async fn a_non_admin_asking_for_every_users_agents_gets_their_own() {
     assert_eq!(list["agents"].as_array().unwrap().len(), 1);
     assert_eq!(list["agents"][0]["id"], own.as_str());
     assert_eq!(list["agents"][0]["kind"], "public");
+}
+
+#[tokio::test]
+async fn an_agent_shared_with_you_names_who_shared_it_and_when() {
+    let fx = fixture().await;
+    let id = fx.create(&fx.alice, "support").await;
+    let before = jiff::Timestamp::now();
+    let (status, body) = fx.share(&fx.alice, &id, "user", "bob", "read").await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+
+    let (_, bobs) = fx.get(&fx.bob, "/api/v0/agents").await;
+    let agent = listed(&bobs, &id).expect("the shared agent");
+    assert_eq!(
+        agent["shared_by"]["by"],
+        json!({ "kind": "user", "id": "alice", "name": null, "email": "alice@example.com" })
+    );
+    let at: jiff::Timestamp = agent["shared_by"]["at"].as_str().unwrap().parse().unwrap();
+    assert!(at >= before, "{at} is when the share was given");
+
+    let (_, alices) = fx.get(&fx.alice, "/api/v0/agents").await;
+    assert_eq!(
+        listed(&alices, &id).unwrap()["shared_by"],
+        Value::Null,
+        "the creator's own share names no one"
+    );
+
+    let (status, shares) = fx
+        .get(&fx.alice, &format!("/api/v0/agents/{id}/shares"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{shares}");
+    let bob = shares["shares"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|share| share["subject_id"] == "bob")
+        .unwrap();
+    assert_eq!(bob["granted"]["by"]["id"], "alice");
+    let creator = shares["shares"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|share| share["subject_id"] == "alice")
+        .unwrap();
+    assert_eq!(creator["granted"]["by"]["id"], "alice");
+
+    let (status, body) = fx.share(&fx.root, &id, "user", "bob", "write").await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (_, bobs) = fx.get(&fx.bob, "/api/v0/agents").await;
+    assert_eq!(
+        listed(&bobs, &id).unwrap()["shared_by"]["by"]["id"],
+        "root",
+        "changing a share makes its changer the one who gave it"
+    );
 }
 
 #[tokio::test]

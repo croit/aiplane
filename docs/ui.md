@@ -718,7 +718,8 @@ are in `web/src/lib/components/agents/`.
 - **`/agents`**: the caller's workspace in groups — *My agents* (their
   personal agents and the ones they created), *Team agents* and *Shared with
   me* — each card badged *Personal*, *Team · organization* or *Public*, with
-  the owner named on agents that are not the caller's. An admin gets the
+  the owner named on agents that are not the caller's and, on an agent
+  shared with them, who shared it and when. An admin gets the
   usage page's *Mine / All users* switch: *All users* (`?scope=all`) lists
   every user's agent, sorted by owner, each naming its owner. A dialog
   creates an agent.
@@ -825,8 +826,9 @@ are in `web/src/lib/components/agents/`.
     *Verify chain* shows the verify result as an alert. The pure half,
     `web/src/lib/agent-activity.ts` (query, kind groups, turn grouping,
     summaries), is unit-tested.
-  - *Sharing*: shares with access change and revoke; `share_needs_agent_manager`
-    and `last_writer` are shown verbatim. A `read` share sees everything
+  - *Sharing*: shares with access change and revoke, each naming who gave
+    it and when; `share_needs_agent_manager` and `last_writer` are shown
+    verbatim. A `read` share sees everything
     read-only (the editor is a disabled `fieldset`).
 - **Validation errors by path.** The 422 `invalid_agent_spec` carries
   `{path, message}` issues (`main.tools[0]`, `routes.billing.when.all[1].slot`).

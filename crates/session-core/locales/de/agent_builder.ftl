@@ -40,6 +40,7 @@ agents-group-mine = Meine Agenten
 agents-group-team = Team-Agenten
 agents-group-shared = Mit mir geteilt
 agents-owner = Eigentümer: { $name }
+agents-shared-by = Geteilt von { $name } am { $date }
 agents-error-personal-not-shareable = Ein persönlicher Agent arbeitet nur für seinen Eigentümer und kann nicht geteilt werden. Legen Sie für gemeinsame Arbeit einen Team-Agenten an.
 dots-create-submit = Erstellen
 dots-create-cancel = Abbrechen

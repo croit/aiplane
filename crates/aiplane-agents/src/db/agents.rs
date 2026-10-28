@@ -125,6 +125,16 @@ pub struct ShareRow {
     pub subject_kind: SubjectKind,
     pub subject_id: String,
     pub access: Access,
+    /// Who gave the share; `None` for a share older than the record.
+    pub granted_by: Option<String>,
+    pub granted_at: Option<Timestamp>,
+}
+
+/// Who gave the share through which a person sees an agent, and when.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShareOrigin {
+    pub granted_by: String,
+    pub granted_at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
@@ -276,6 +286,11 @@ fn decode_share(row: &SqliteRow) -> Result<ShareRow, DbError> {
             column: "access",
             source: anyhow::anyhow!("unknown share access `{access}`"),
         })?,
+        granted_by: row.try_get("granted_by")?,
+        granted_at: row
+            .try_get::<Option<String>, _>("granted_at")?
+            .map(|at| super::parse_ts(at, "granted_at"))
+            .transpose()?,
     })
 }
 
@@ -304,11 +319,13 @@ pub async fn create(
     .execute(&mut *tx)
     .await?;
     sqlx::query(
-        "INSERT INTO agent_shares (principal_id, subject_kind, subject_id, access)
-         VALUES (?, 'user', ?, 'write')",
+        "INSERT INTO agent_shares (principal_id, subject_kind, subject_id, access, granted_by, granted_at)
+         VALUES (?, 'user', ?, 'write', ?, ?)",
     )
     .bind(&id)
     .bind(actor_id)
+    .bind(actor_id)
+    .bind(&now)
     .execute(&mut *tx)
     .await?;
     agent_audit::append(
@@ -430,8 +447,8 @@ async fn create_dot_in(
     sqlx::query("INSERT INTO dots(principal_id,owner_user_id,organization_id,name,active,created_at,updated_at) VALUES(?,?,?,?,1,?,?)")
         .bind(&id).bind(user).bind(organization).bind(new.name).bind(&now).bind(&now).execute(&mut **tx).await?;
     if matches!(owner, DotOwner::Organization(_)) {
-        sqlx::query("INSERT INTO agent_shares(principal_id,subject_kind,subject_id,access) VALUES(?,'user',?,'write')")
-            .bind(&id).bind(creator).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO agent_shares(principal_id,subject_kind,subject_id,access,granted_by,granted_at) VALUES(?,'user',?,'write',?,?)")
+            .bind(&id).bind(creator).bind(creator).bind(&now).execute(&mut **tx).await?;
     }
     agent_audit::append(
         tx,
@@ -686,6 +703,37 @@ where
         held.extend(Access::parse(&access));
     }
     Ok(held)
+}
+
+/// For each agent a person holds a share on, directly or through any of
+/// `group_ids`, who gave the most recent of those shares and when. Shares
+/// older than the record name no one and are left out.
+pub async fn share_origins_in(
+    tx: &mut WriteTx,
+    user_id: &str,
+    group_ids: &[String],
+) -> Result<HashMap<String, ShareOrigin>, DbError> {
+    let (holder, binds) = holder_clause(user_id, group_ids);
+    let sql = format!(
+        "SELECT s.principal_id, s.granted_by, s.granted_at FROM agent_shares s
+          WHERE {holder} AND s.granted_by IS NOT NULL AND s.granted_at IS NOT NULL
+          ORDER BY s.granted_at"
+    );
+    let mut query = sqlx::query(&sql);
+    for b in &binds {
+        query = query.bind(b);
+    }
+    let mut origins = HashMap::new();
+    for row in query.fetch_all(&mut **tx).await? {
+        origins.insert(
+            row.try_get("principal_id")?,
+            ShareOrigin {
+                granted_by: row.try_get("granted_by")?,
+                granted_at: super::parse_ts(row.try_get("granted_at")?, "granted_at")?,
+            },
+        );
+    }
+    Ok(origins)
 }
 
 /// The agents a person holds a `read` or `write` share on, by name, with
@@ -1206,7 +1254,7 @@ where
     E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
 {
     let rows = sqlx::query(
-        "SELECT subject_kind, subject_id, access FROM agent_shares
+        "SELECT subject_kind, subject_id, access, granted_by, granted_at FROM agent_shares
           WHERE principal_id = ? ORDER BY subject_kind, subject_id",
     )
     .bind(id)
@@ -1287,14 +1335,17 @@ pub async fn set_share_in(
         return Ok(ShareChange::LastWriter);
     }
     sqlx::query(
-        "INSERT INTO agent_shares (principal_id, subject_kind, subject_id, access)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(principal_id, subject_kind, subject_id) DO UPDATE SET access = excluded.access",
+        "INSERT INTO agent_shares (principal_id, subject_kind, subject_id, access, granted_by, granted_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(principal_id, subject_kind, subject_id) DO UPDATE SET
+             access = excluded.access, granted_by = excluded.granted_by, granted_at = excluded.granted_at",
     )
     .bind(id)
     .bind(kind.as_str())
     .bind(subject_id)
     .bind(access.as_str())
+    .bind(actor_id)
+    .bind(Timestamp::now().to_string())
     .execute(&mut **tx)
     .await?;
     agent_audit::append(tx, agent_audit::NewEvent::new(AuditKind::AgentShareSet, id, json!({ "subject_kind": kind.as_str(), "subject_id": subject_id, "access": access.as_str() })).by(Some(actor_id)))
@@ -1721,13 +1772,20 @@ mod tests {
             "the principal exists"
         );
         assert!(sp::grants(&pool, &a.principal.id).await.unwrap().is_empty());
+        let created = shares(&pool, &a.principal.id).await.unwrap();
         assert_eq!(
-            shares(&pool, &a.principal.id).await.unwrap(),
+            created,
             [ShareRow {
                 subject_kind: SubjectKind::User,
                 subject_id: "alice".into(),
                 access: Access::Write,
+                granted_by: Some("alice".into()),
+                granted_at: created[0].granted_at,
             }]
+        );
+        assert!(
+            created[0].granted_at.is_some(),
+            "the creator's share is dated"
         );
         let audit = agent_audit::for_principal(&pool, &a.principal.id)
             .await

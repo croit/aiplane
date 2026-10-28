@@ -40,6 +40,7 @@ agents-group-mine = 我的智能体
 agents-group-team = 团队智能体
 agents-group-shared = 与我共享
 agents-owner = 所有者：{ $name }
+agents-shared-by = 由 { $name } 于 { $date } 共享
 agents-error-personal-not-shareable = 个人智能体只为其所有者工作，不能共享。若要共享工作，请创建团队智能体。
 dots-create-submit = 创建
 dots-create-cancel = 取消

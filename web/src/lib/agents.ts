@@ -33,6 +33,8 @@ export interface AgentSummary {
 	kind: AgentKind;
 	/** The user or organization it belongs to; a public agent's creator. */
 	owner: UserOwner | OrganizationOwner;
+	/** Who shared it with the caller; set only in the caller's workspace on an agent that is not theirs. */
+	shared_by: ShareOrigin | null;
 	dot: AgentDotMetadata | null;
 	id: string;
 	name: string;
@@ -107,6 +109,14 @@ export interface Share {
 	access: ShareAccess;
 	/** A person's display name, when they have one. */
 	name?: string | null;
+	/** Who gave the share and when; null on a share older than the record. */
+	granted: ShareOrigin | null;
+}
+
+/** Who gave a share, and when. */
+export interface ShareOrigin {
+	by: UserOwner;
+	at: string;
 }
 
 /** What `GET /api/v0/agents/{id}/share-subjects?q=` found: a search, never the roster (nothing under two characters, a few matches, an address only for an exact one). */
@@ -406,7 +416,7 @@ export const agentsApi = {
 	testRuns: (id: string) => call<{ runs: TestRun[] }>(`/api/v0/agents/${id}/test-runs`),
 	testRun: (id: string, runId: string) => call<TestRun>(`/api/v0/agents/${id}/test-runs/${runId}`),
 	remove: (id: string) => call<void>(`/api/v0/agents/${id}`, json('DELETE')),
-	share: (id: string, share: Share) => call<Share>(`/api/v0/agents/${id}/shares`, json('POST', share)),
+	share: (id: string, share: Pick<Share, 'subject_kind' | 'subject_id' | 'access'>) => call<Share>(`/api/v0/agents/${id}/shares`, json('POST', share)),
 	revokeShare: (id: string, share: Pick<Share, 'subject_kind' | 'subject_id'>) =>
 		call<void>(`/api/v0/agents/${id}/shares/revoke`, json('POST', share)),
 	shareSubjects: (id: string, q: string) =>

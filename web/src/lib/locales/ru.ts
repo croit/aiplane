@@ -856,6 +856,7 @@ export const ru: Catalog = {
  "agents-share-subject": "Доступ у",
  "agents-share-subject-kind": "Предоставить",
  "agents-share-write": "Запись",
+ "agents-shared-by": "Поделился: {name}, {date}",
  "agents-slot-description": "Описание (показывается модели)",
  "agents-slot-label-request": "Запрос",
  "agents-slot-label-topic": "Тема",

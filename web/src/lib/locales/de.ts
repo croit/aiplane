@@ -844,6 +844,7 @@ export const de: Catalog = {
  "agents-share-subject": "Freigegeben für",
  "agents-share-subject-kind": "Freigeben für",
  "agents-share-write": "Schreiben",
+ "agents-shared-by": "Geteilt von {name} am {date}",
  "agents-slot-description": "Beschreibung (dem Modell angezeigt)",
  "agents-slot-label-request": "Anliegen",
  "agents-slot-label-topic": "Thema",

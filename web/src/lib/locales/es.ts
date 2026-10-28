@@ -844,6 +844,7 @@ export const es: Catalog = {
  "agents-share-subject": "Compartido con",
  "agents-share-subject-kind": "Compartir con",
  "agents-share-write": "Escritura",
+ "agents-shared-by": "Compartido por {name} el {date}",
  "agents-slot-description": "Descripción (se muestra al modelo)",
  "agents-slot-label-request": "Solicitud",
  "agents-slot-label-topic": "Tema",

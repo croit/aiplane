@@ -1,7 +1,7 @@
 <script lang="ts">
 	import SearchableSelect from '#lib/components/SearchableSelect.svelte';
-	import { agentsApi, SHARE_ACCESS, shareSubjectLabel, shareSubjectOptions, type AgentError, type Share, type ShareAccess, type ShareSubjectMatches } from '#lib/agents.js';
-	import { t } from '#lib/i18n.svelte.js';
+	import { agentsApi, ownerLabel, SHARE_ACCESS, shareSubjectLabel, shareSubjectOptions, type AgentError, type Share, type ShareAccess, type ShareSubjectMatches } from '#lib/agents.js';
+	import { locale, t } from '#lib/i18n.svelte.js';
 
 	/**
 	 * Who else may work on this agent, and who answers its inbox. `read` and
@@ -89,6 +89,7 @@
 						<td>
 							<span class="badge badge-outline mr-2">{t(`agents-share-kind-${share.subject_kind}`)}</span>
 							<span class="text-sm break-all">{shareSubjectLabel(share)}</span>
+							{#if share.granted}<p class="text-xs text-base-content/60">{t('agents-shared-by', { name: ownerLabel(share.granted.by), date: new Date(share.granted.at).toLocaleDateString(locale.current) })}</p>{/if}
 						</td>
 						<td>
 							{#if writable}

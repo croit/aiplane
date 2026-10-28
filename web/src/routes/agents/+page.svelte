@@ -144,6 +144,9 @@
 			{#if scope === 'all' || (agent.kind !== 'team' && agent.owner.kind === 'user' && agent.owner.id !== me.value?.id)}
 				<p class="text-xs text-base-content/60">{t('agents-owner', { name: ownerLabel(agent.owner) })}</p>
 			{/if}
+			{#if agent.shared_by}
+				<p class="text-xs text-base-content/60">{t('agents-shared-by', { name: ownerLabel(agent.shared_by.by), date: when(agent.shared_by.at) })}</p>
+			{/if}
 			<div class="mt-1 flex items-center gap-2 text-xs text-base-content/50">
 				{#if agent.access === 'read'}<span class="badge badge-outline badge-xs">{t('agents-read-only')}</span>{/if}
 				<span>{t('agents-updated', { date: when(agent.updated_at) })}</span>

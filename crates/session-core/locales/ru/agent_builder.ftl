@@ -40,6 +40,7 @@ agents-group-mine = Мои агенты
 agents-group-team = Командные агенты
 agents-group-shared = Доступные мне
 agents-owner = Владелец: { $name }
+agents-shared-by = Поделился: { $name }, { $date }
 agents-error-personal-not-shareable = Личный агент работает только на своего владельца, и им нельзя поделиться. Для совместной работы создайте командного агента.
 dots-create-submit = Создать
 dots-create-cancel = Отмена

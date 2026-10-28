@@ -838,6 +838,7 @@ export const zh: Catalog = {
  "agents-share-subject": "共享对象",
  "agents-share-subject-kind": "共享给",
  "agents-share-write": "写入",
+ "agents-shared-by": "由 {name} 于 {date} 共享",
  "agents-slot-description": "描述（显示给模型）",
  "agents-slot-label-request": "请求",
  "agents-slot-label-topic": "主题",

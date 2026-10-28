@@ -261,6 +261,8 @@ CREATE TABLE agent_shares (
     subject_kind  TEXT NOT NULL CHECK (subject_kind IN ('user', 'group')),
     subject_id    TEXT NOT NULL,
     access        TEXT NOT NULL CHECK (access IN ('respond', 'read', 'write')),
+    granted_by    TEXT,   -- who gave the share; NULL when older than the record
+    granted_at    TEXT,
     PRIMARY KEY (principal_id, subject_kind, subject_id)
 ) STRICT;
 ```
@@ -315,6 +317,13 @@ log event on the same transaction (`agent_created`, `agent_draft_updated`,
   when they lose the permission). Every other agent route treats it as no
   access (`404`), and `GET /api/v0/agents` does not list the agent.
 - **Without a share an agent answers 404**, not 403.
+- **A share records who gave it and when** (`agent_shares.granted_by`,
+  `granted_at`): changing a share's access makes its changer the giver. The
+  agent list names them on an agent shared with you (`shared_by`), the share
+  list on every share (`granted`). A share older than the record names no
+  one: migration `0088` took each origin from the activity log, the latest
+  `agent_share_set` for the subject, else the agent's creation for the
+  creator's own share.
 - **A personal agent answers only its owner.** It cannot be shared
   (`422 personal_agent_not_shareable`), and a share on one never takes effect
   for its holder. Only an admin reaches another user's personal agent.
@@ -369,7 +378,7 @@ activity log like any other change.
 
 | Method | Path | Share | Purpose |
 |---|---|---|---|
-| GET | `/api/v0/agents` | any | `{scope, can_view_all, agents}`: your workspace ([who sees an agent](#who-sees-an-agent)), or every user's agent for an admin with `?scope=all`; each with your `access`, its `kind` and `owner` |
+| GET | `/api/v0/agents` | any | `{scope, can_view_all, agents}`: your workspace ([who sees an agent](#who-sees-an-agent)), or every user's agent for an admin with `?scope=all`; each with your `access`, its `kind`, `owner` and, in your workspace, `shared_by` |
 | POST | `/api/v0/agents` | — | Create `{name, display?, description?, spec?}`; 201, 409 on a taken principal name |
 | GET | `/api/v0/agents/{id}` | read | `{agent}`: the agent, `draft_spec`, `live_spec`, `publish_issues`, `limits` ([`agent-visitors.md`](agent-visitors.md#owner-budget)), grants, shares, the decision trail |
 | PUT | `/api/v0/agents/{id}/draft` | write | Replace the draft `{spec}`; the live version is untouched |

@@ -187,7 +187,16 @@ pub struct AgentView {
     /// Who the agent belongs to: its user or organization, and for a public
     /// agent the person who created it.
     pub owner: OwnerView,
+    /// Who shared the agent with the caller, and when: set in the caller's
+    /// workspace on an agent that is not their own.
+    pub shared_by: Option<ShareOriginView>,
     pub dot: Option<AgentDotView>,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct ShareOriginView {
+    pub by: OwnerView,
+    pub at: Timestamp,
 }
 
 /// Whom an agent works for (`docs/agents.md` → "Agent kinds").
@@ -253,26 +262,20 @@ pub(super) async fn agent_views_in(
         .into_iter()
         .map(|row| (row.organization.id, row.organization.name))
         .collect::<std::collections::HashMap<_, _>>();
-    let mut people = HashMap::new();
-    for (agent, _) in rows {
-        let person = match metadata.get(&agent.principal.id).map(|dot| &dot.owner) {
-            Some(agents_db::DotOwner::User(id)) => id,
-            Some(agents_db::DotOwner::Organization(_)) => continue,
-            None => &agent.principal.created_by,
-        };
-        if !people.contains_key(person) {
-            let found = users::find_by_id_in(tx, person).await.map_err(internal)?;
-            people.insert(person.clone(), found);
-        }
-    }
-    let person_view = |id: &String| {
-        let found = people.get(id).and_then(Option::as_ref);
-        OwnerView::User {
-            id: id.clone(),
-            name: found.and_then(|user| user.name.clone()),
-            email: found.map(|user| user.email.clone()),
-        }
-    };
+    let people = people_in(
+        tx,
+        rows.iter()
+            .filter_map(|(agent, _)| {
+                match metadata.get(&agent.principal.id).map(|dot| &dot.owner) {
+                    Some(agents_db::DotOwner::User(id)) => Some(id.clone()),
+                    Some(agents_db::DotOwner::Organization(_)) => None,
+                    None => Some(agent.principal.created_by.clone()),
+                }
+            })
+            .collect(),
+    )
+    .await?;
+    let person_view = |id: &String| person_view(&people, id);
     rows.iter()
         .map(|(agent, access)| {
             let (kind, owner) = match metadata.get(&agent.principal.id).map(|dot| &dot.owner) {
@@ -307,6 +310,7 @@ pub(super) async fn agent_views_in(
                 access: access.as_str(),
                 kind,
                 owner,
+                shared_by: None,
                 dot: metadata.get(&p.id).map(|dot| AgentDotView {
                     name: dot.name.clone(),
                     active: dot.active,
@@ -314,6 +318,32 @@ pub(super) async fn agent_views_in(
             })
         })
         .collect()
+}
+
+/// The users behind `ids`, each looked up once; `None` for one no longer known.
+async fn people_in(
+    tx: &mut aiplane_core::server::db::WriteTx,
+    ids: Vec<String>,
+) -> Result<HashMap<String, Option<users::User>>, Response> {
+    let mut people = HashMap::new();
+    for id in ids {
+        if let std::collections::hash_map::Entry::Vacant(slot) = people.entry(id) {
+            let found = users::find_by_id_in(tx, slot.key())
+                .await
+                .map_err(internal)?;
+            slot.insert(found);
+        }
+    }
+    Ok(people)
+}
+
+fn person_view(people: &HashMap<String, Option<users::User>>, id: &String) -> OwnerView {
+    let found = people.get(id).and_then(Option::as_ref);
+    OwnerView::User {
+        id: id.clone(),
+        name: found.and_then(|user| user.name.clone()),
+        email: found.map(|user| user.email.clone()),
+    }
 }
 
 pub(super) async fn agent_view_for(
@@ -346,6 +376,8 @@ pub struct ShareView {
     /// or a user no longer known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<Option<String>>,
+    /// Who gave the share and when; absent on a share older than the record.
+    pub granted: Option<ShareOriginView>,
 }
 
 /// The shares as the API shows them: a person's share carries their display
@@ -365,11 +397,23 @@ async fn share_views(
         } else {
             None
         };
+        let granted = match (&s.granted_by, s.granted_at) {
+            (Some(by), Some(at)) => {
+                let found = users::find_by_id(&state.db, by).await.map_err(internal)?;
+                let people = HashMap::from([(by.clone(), found)]);
+                Some(ShareOriginView {
+                    by: person_view(&people, by),
+                    at,
+                })
+            }
+            _ => None,
+        };
         out.push(ShareView {
             subject_kind: s.subject_kind.as_str(),
             subject_id: s.subject_id.clone(),
             access: s.access.as_str(),
             name,
+            granted,
         });
     }
     Ok(out)
@@ -543,7 +587,7 @@ pub async fn list(State(state): State<Arc<RamaState>>, req: Request) -> Response
             .await
             .map_err(internal)
     );
-    let can_view_all = or_return!(is_admin_in(&state, &mut tx, &user.id).await);
+    let (can_view_all, groups) = or_return!(caller_in(&state, &mut tx, &user.id).await);
     let show_all = can_view_all && wants_all;
     let rows = if show_all {
         or_return!(agents_db::list_all_in(&mut tx).await.map_err(internal))
@@ -553,7 +597,10 @@ pub async fn list(State(state): State<Arc<RamaState>>, req: Request) -> Response
     } else {
         or_return!(visible_agents_in(&state, &mut tx, &user.id).await)
     };
-    let agents = or_return!(agent_views_in(&mut tx, &rows).await);
+    let mut agents = or_return!(agent_views_in(&mut tx, &rows).await);
+    if !show_all {
+        or_return!(attach_share_origins_in(&mut tx, &mut agents, &user.id, &groups).await);
+    }
     or_return!(tx.commit().await.map_err(internal));
     json_ok(
         StatusCode::OK,
@@ -574,17 +621,56 @@ pub struct AgentList {
     pub agents: Vec<AgentView>,
 }
 
-async fn is_admin_in(
+/// Whether the caller is an admin, and the groups they resolve to.
+async fn caller_in(
     state: &RamaState,
     tx: &mut aiplane_core::server::db::WriteTx,
     user_id: &str,
-) -> Result<bool, Response> {
+) -> Result<(bool, Vec<String>), Response> {
     Ok(
-        aiplane_runtime::agents::access::current_user_policy_in(state, tx, user_id)
+        match aiplane_runtime::agents::access::current_user_policy_in(state, tx, user_id)
             .await
             .map_err(internal)?
-            .is_some_and(|(user, policy)| policy.is_admin(&policy.role_ids_for(&user.roles))),
+        {
+            Some((user, policy)) => {
+                let groups = policy.role_ids_for(&user.roles);
+                (policy.is_admin(&groups), groups)
+            }
+            None => (false, Vec::new()),
+        },
     )
+}
+
+/// Names who shared each agent with `user_id`, on the agents that are not
+/// theirs: a share they gave themselves (an agent's creator) names no one.
+async fn attach_share_origins_in(
+    tx: &mut aiplane_core::server::db::WriteTx,
+    views: &mut [AgentView],
+    user_id: &str,
+    groups: &[String],
+) -> Result<(), Response> {
+    let origins = agents_db::share_origins_in(tx, user_id, groups)
+        .await
+        .map_err(internal)?;
+    let people = people_in(
+        tx,
+        origins
+            .values()
+            .map(|origin| origin.granted_by.clone())
+            .collect(),
+    )
+    .await?;
+    for view in views {
+        if let Some(origin) = origins.get(&view.id)
+            && origin.granted_by != user_id
+        {
+            view.shared_by = Some(ShareOriginView {
+                by: person_view(&people, &origin.granted_by),
+                at: origin.granted_at,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// The agents in `user`'s own workspace, with their access — admins
