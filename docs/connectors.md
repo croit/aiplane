@@ -102,6 +102,19 @@ when only system principals should ever reach it.
 
 ---
 
+## How the tool list stays current
+
+A connector's tools are listed from the server on first use and cached for ten
+minutes (`manager::CACHE_TTL`) so an active conversation reuses the connection
+rather than re-handshaking every turn. A server that changes what it offers
+while a connection is live — e.g. GitLab's `discover_tools` activating a tool
+category — tells the client with a `tools/list_changed` notification; AIplane
+re-lists on the existing connection the next time the tool overlay is built,
+so the refreshed tools are visible from the next turn on, without waiting out
+the cache. Newly listed tools get their default mode like any other
+(destructive → `ask`), and the admin-facing catalog record
+(`mcp_connector_tools`) updates with them.
+
 ## Tool modes: always, ask, off
 
 Each connector tool has a mode, which the person sets on their Tools page;

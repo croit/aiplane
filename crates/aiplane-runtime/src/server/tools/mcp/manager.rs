@@ -7,7 +7,11 @@
 //! (keyed `(user_id, connector_key)`), lazily (re)establishing them with the
 //! user's own OAuth access token — refreshing the token first when it's
 //! expired. Connections are cached for [`CACHE_TTL`] so an active conversation
-//! reuses one rather than re-handshaking every turn.
+//! reuses one rather than re-handshaking every turn. A server's
+//! `tools/list_changed` notification (e.g. GitLab's `discover_tools`
+//! activating a tool category) bumps the connection's list generation, so the
+//! next use re-lists on the live connection — the refreshed tools are visible
+//! from the next turn on, without waiting out the cache TTL.
 //!
 //! Per request, [`McpConnectionManager::layer_for_user`] produces a
 //! [`UserMcpLayer`] — a [`ToolSource`] overlay of the user's connected-connector
@@ -33,7 +37,7 @@ use tokio::sync::Mutex;
 use serde_json::Value;
 
 use super::identities::StoredMcpIdentity;
-use super::{ConnectedServer, McpTool, connect_http_server};
+use super::{ConnectedServer, McpConnection, McpTool, connect_http_server};
 use crate::server::tools::ask_first::{AskFirst, DEFAULT_APPROVAL_TIMEOUT};
 use crate::server::tools::{Tool, ToolContext, ToolFuture, ToolRegistry, ToolSource};
 use aiplane_core::server::auth::mcp_oauth;
@@ -75,6 +79,10 @@ enum CacheKey {
 struct Cached {
     tools: Vec<Arc<McpTool>>,
     fetched_at: Instant,
+    /// The connection's [`McpConnection::list_generation`] at fetch time. A
+    /// newer value means the server sent `tools/list_changed` since: the
+    /// entry is stale and gets re-listed on the live connection at next use.
+    list_generation: u64,
 }
 
 /// Why a connection couldn't produce a usable access token, plus the one bit
@@ -209,13 +217,74 @@ impl McpConnectionManager {
             .map_err(|error| format!("recording connector tools: {error}"))
     }
 
-    /// Return the cached tools for `ck` if still within [`CACHE_TTL`].
+    /// Return the cached tools for `ck` if still within [`CACHE_TTL`] and the
+    /// connection has seen no `tools/list_changed` since the fetch.
     async fn cache_lookup(&self, ck: &CacheKey) -> Option<Vec<Arc<McpTool>>> {
         let cache = self.cache.lock().await;
-        cache
-            .get(ck)
-            .filter(|c| c.fetched_at.elapsed() < CACHE_TTL)
-            .map(|c| c.tools.clone())
+        let c = cache.get(ck)?;
+        if c.fetched_at.elapsed() >= CACHE_TTL {
+            return None;
+        }
+        // An empty listing has no connection to check; it stays cached.
+        if let Some(tool) = c.tools.first()
+            && tool.conn.list_generation() != c.list_generation
+        {
+            return None;
+        }
+        Some(c.tools.clone())
+    }
+
+    /// The within-TTL entry for `ck` when the server has since sent
+    /// `tools/list_changed` — the stale tools plus the live connection, so the
+    /// caller can re-list in place (no re-handshake).
+    async fn stale_entry(&self, ck: &CacheKey) -> Option<(Vec<Arc<McpTool>>, Arc<McpConnection>)> {
+        let cache = self.cache.lock().await;
+        let c = cache.get(ck)?;
+        if c.fetched_at.elapsed() >= CACHE_TTL {
+            return None;
+        }
+        // An empty listing has no live connection to re-list on.
+        let tool = c.tools.first()?;
+        let conn = tool.conn.clone();
+        if conn.list_generation() == c.list_generation {
+            return None;
+        }
+        Some((c.tools.clone(), conn))
+    }
+
+    /// A stale entry's connection pushed a newer tool listing: re-list on it
+    /// and serve the result. Returns `Some(stale tools)` when the re-list
+    /// fails — the connection is alive (it just sent the notification), so
+    /// the previous listing stays usable until the next attempt. `None` when
+    /// there is no stale entry: the caller falls through to a full connect.
+    async fn relist_stale(
+        &self,
+        ck: &CacheKey,
+        connector: &Connector,
+        build: impl FnOnce(&Arc<McpConnection>, Vec<rmcp::model::Tool>) -> Vec<Arc<McpTool>>,
+    ) -> Option<Vec<Arc<McpTool>>> {
+        let (stale, conn) = self.stale_entry(ck).await?;
+        match conn.relist().await {
+            Ok(remote) => {
+                let tools = build(&conn, remote);
+                if !self
+                    .record_catalog_tools(&connector.key, &connector.dispatch_generation, &tools)
+                    .await
+                    .unwrap_or(false)
+                {
+                    // The connector changed mid-refresh: drop the refresh and
+                    // let the caller's full path re-validate from scratch.
+                    return None;
+                }
+                self.cache_store(ck.clone(), tools.clone()).await;
+                Some(tools)
+            }
+            Err(e) => {
+                tracing::warn!(connector = %connector.key, error = %e,
+                    "MCP tools/list refresh failed; serving the previous listing");
+                Some(stale)
+            }
+        }
     }
 
     /// Insert `tools` under `ck`, bounding the cache: when full and this is a
@@ -234,11 +303,13 @@ impl McpConnectionManager {
                 cache.remove(&oldest);
             }
         }
+        let list_generation = tools.first().map(|t| t.conn.list_generation()).unwrap_or(0);
         cache.insert(
             ck,
             Cached {
                 tools,
                 fetched_at: Instant::now(),
+                list_generation,
             },
         );
     }
@@ -444,6 +515,29 @@ impl McpConnectionManager {
         if let Some(tools) = self.cache_lookup(&ck).await {
             return Ok(tools);
         }
+        // The server pushed a `tools/list_changed` since our last listing:
+        // re-list on the live connection (no re-handshake) so the refreshed
+        // set is visible from this request on.
+        if let Some(tools) = self
+            .relist_stale(&ck, connector, |conn, remote| {
+                super::build_tools(&conn.name, conn, remote)
+                    .into_iter()
+                    .map(|tool| {
+                        Arc::new(tool.with_identity(
+                            StoredMcpIdentity {
+                                connection: identity.clone(),
+                                binding_generation: None,
+                                catalog_generation: connector.dispatch_generation.clone(),
+                            },
+                            self.rbac.clone(),
+                        ))
+                    })
+                    .collect()
+            })
+            .await
+        {
+            return Ok(tools);
+        }
 
         // Open connectors carry no credentials at all — the user's "connected"
         // row exists purely so they can opt the tools in/out, not for auth.
@@ -528,6 +622,25 @@ impl McpConnectionManager {
         let connector = &current_connector;
         let ck = Self::global_cache_key(connector);
         if let Some(tools) = self.cache_lookup(&ck).await {
+            return Ok(tools);
+        }
+        if let Some(tools) = self
+            .relist_stale(&ck, connector, |conn, remote| {
+                super::build_tools(&conn.name, conn, remote)
+                    .into_iter()
+                    .map(|tool| {
+                        Arc::new(tool.with_dispatch_facts(
+                            super::McpDispatchFacts::Shared {
+                                connector_key: connector.key.clone(),
+                                catalog_generation: connector.dispatch_generation.clone(),
+                            },
+                            self.rbac.clone(),
+                        ))
+                    })
+                    .collect()
+            })
+            .await
+        {
             return Ok(tools);
         }
         let connected = match connector.auth {
@@ -1552,6 +1665,157 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    #[tokio::test]
+    async fn tool_list_changed_is_served_on_the_next_ensure_without_rehandshake() {
+        let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
+        let crypto = Arc::new(Crypto::ephemeral());
+        let mgr = McpConnectionManager::new(pool.clone(), crypto.clone(), fixture_rbac());
+
+        let server = MockServer::start().await;
+        let handshakes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let hs = handshakes.clone();
+        let mock_called = called.clone();
+        let get_called = called.clone();
+        Mock::given(method("POST"))
+            .respond_with(move |request: &wiremock::Request| {
+                let body: Value = serde_json::from_slice(&request.body).unwrap();
+                match body["method"].as_str() {
+                    Some("initialize") => {
+                        hs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        ResponseTemplate::new(200)
+                            .insert_header("content-type", "application/json")
+                            .insert_header("mcp-session-id", "test-session-1")
+                            .set_body_json(serde_json::json!({
+                                "jsonrpc": "2.0", "id": body["id"],
+                                "result": {
+                                    "protocolVersion": "2025-06-18",
+                                    "capabilities": {"tools": {}},
+                                    "serverInfo": {"name": "fixture", "version": "1"},
+                                }
+                            }))
+                    }
+                    Some("tools/list") => {
+                        let tools = if mock_called.load(std::sync::atomic::Ordering::SeqCst) {
+                            serde_json::json!([
+                                {"name": "base", "inputSchema": {"type": "object"}},
+                                {"name": "activated", "inputSchema": {"type": "object"}},
+                            ])
+                        } else {
+                            serde_json::json!([{"name": "base", "inputSchema": {"type": "object"}}])
+                        };
+                        ResponseTemplate::new(200)
+                            .insert_header("content-type", "application/json")
+                            .set_body_json(serde_json::json!({
+                                "jsonrpc": "2.0", "id": body["id"],
+                                "result": {"tools": tools}
+                            }))
+                    }
+                    Some("tools/call") => {
+                        mock_called.store(true, std::sync::atomic::Ordering::SeqCst);
+                        ResponseTemplate::new(200)
+                            .insert_header("content-type", "application/json")
+                            .set_body_json(serde_json::json!({
+                                "jsonrpc": "2.0", "id": body["id"],
+                                "result": {"content": [{"type": "text", "text": "activated"}], "isError": false}
+                            }))
+                    }
+                    Some("notifications/initialized") => ResponseTemplate::new(202),
+                    other => panic!("unexpected MCP method: {other:?}"),
+                }
+            })
+            .mount(&server)
+            .await;
+        // The server's push channel: notifications ride the GET stream, which
+        // the transport reopens (1 s backoff) after each close.
+        Mock::given(method("GET"))
+            .respond_with(move |_request: &wiremock::Request| {
+                if get_called.load(std::sync::atomic::Ordering::SeqCst) {
+                    ResponseTemplate::new(200)
+                        .insert_header("content-type", "text/event-stream")
+                        .set_body_raw(
+                            "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}\n\n",
+                            "text/event-stream",
+                        )
+                } else {
+                    ResponseTemplate::new(200)
+                        .insert_header("content-type", "text/event-stream")
+                        .set_body_raw("", "text/event-stream")
+                }
+            })
+            .mount(&server)
+            .await;
+
+        let mut connector = global_connector(AuthKind::None);
+        connector.scope = Scope::PerUser;
+        connector.url = server.uri();
+        sqlx::query("INSERT INTO mcp_catalog_connectors(key,name,url,auth,scope,enabled,created_at,updated_at,dispatch_generation) VALUES(?,?,?,'none','per_user',1,?,?,?)")
+            .bind(&connector.key)
+            .bind(&connector.name)
+            .bind(&connector.url)
+            .bind(connector.created_at.to_string())
+            .bind(connector.updated_at.to_string())
+            .bind(&connector.dispatch_generation)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO users (id, email, roles_json, created_at, updated_at) VALUES ('alice', 'alice@example.com', '[]', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let sealed = crypto.seal_str("unused").unwrap();
+        mcp_connections::upsert_connection(
+            &pool,
+            mcp_connections::NewConnection {
+                owner: ConnectionOwner::User("alice".into()),
+                connector_key: connector.key.clone(),
+                catalog_generation: connector.dispatch_generation.clone(),
+                access_token_ct: sealed.ciphertext,
+                access_token_nonce: sealed.nonce,
+                refresh_token_ct: None,
+                refresh_token_nonce: None,
+                token_expires_at: None,
+                scopes: vec![],
+                dcr_client_id: None,
+                dcr_client_secret_ct: None,
+                dcr_client_secret_nonce: None,
+                token_url: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let owner = ConnectionOwner::User("alice".into());
+        let first = mgr.ensure_connection(&owner, &connector).await.unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(handshakes.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        let mut ctx = ToolContext::for_test(pool.clone());
+        ctx.principal = ToolContext::test_user("alice");
+        first[0].run(ctx, serde_json::json!({})).await.unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while first[0].conn.list_generation() == 0 && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(first[0].conn.list_generation(), 1);
+
+        let second = mgr.ensure_connection(&owner, &connector).await.unwrap();
+        assert_eq!(second.len(), 2, "the refreshed listing must be served");
+        assert_eq!(
+            handshakes.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the refresh must reuse the live connection, not re-handshake"
+        );
+        let cataloged: Vec<String> =
+            sqlx::query_scalar("SELECT tool_id FROM mcp_connector_tools WHERE connector_key = ?")
+                .bind(&connector.key)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(cataloged.len(), 2, "the refreshed listing must be recorded");
     }
 
     /// A shared-identity connector whose one tool its server marks

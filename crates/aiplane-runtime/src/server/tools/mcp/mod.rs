@@ -28,13 +28,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rmcp::RoleClient;
+use rmcp::handler::client::ClientHandler;
 use rmcp::model::{CallToolRequestParams, CallToolResult};
 use rmcp::serve_client;
-use rmcp::service::RunningService;
+use rmcp::service::{NotificationContext, RunningService};
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use serde_json::{Value, json};
 use shared::api::ToolDef;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::{Tool, ToolContext, ToolError, ToolFuture, ToolResult, tool_content_parts};
 
@@ -59,12 +61,49 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 /// being force-cancelled mid-round.
 const CALL_TIMEOUT: Duration = Duration::from_secs(25);
 
+/// Client handler that tracks server-side tool-list changes: every
+/// `tools/list_changed` notification bumps a generation counter, so the
+/// manager re-lists on the live connection at its next use instead of
+/// serving a stale listing for the full [`manager::CACHE_TTL`]. This is what
+/// makes a server's on-demand tool activation (e.g. GitLab's `discover_tools`)
+/// visible from the next turn on.
+struct McpClientHandler {
+    list_generation: Arc<AtomicU64>,
+}
+
+impl ClientHandler for McpClientHandler {
+    fn on_tool_list_changed(
+        &self,
+        _context: NotificationContext<RoleClient>,
+    ) -> impl std::future::Future<Output = ()> + rmcp::service::MaybeSendFuture + '_ {
+        self.list_generation.fetch_add(1, Ordering::Relaxed);
+        std::future::ready(())
+    }
+}
+
 /// A live session to one MCP server. The `Arc` each [`McpTool`] holds keeps
 /// it (and its background transport task) alive for the life of the registry
 /// — i.e. the process. Dropping the last reference closes the connection.
 pub(crate) struct McpConnection {
     name: String,
-    service: RunningService<RoleClient, ()>,
+    service: RunningService<RoleClient, McpClientHandler>,
+    list_generation: Arc<AtomicU64>,
+}
+
+impl McpConnection {
+    /// The tool-listing generation this connection has seen: bumped by every
+    /// `tools/list_changed` notification the server sends.
+    pub(crate) fn list_generation(&self) -> u64 {
+        self.list_generation.load(Ordering::Relaxed)
+    }
+
+    /// Re-list the server's tools on the live connection — no re-handshake.
+    pub(crate) async fn relist(&self) -> Result<Vec<rmcp::model::Tool>, String> {
+        tokio::time::timeout(CONNECT_TIMEOUT, self.service.list_all_tools())
+            .await
+            .map_err(|_| format!("tools/list on `{}` timed out", self.name))?
+            .map_err(|e| format!("tools/list on `{}` failed: {e}", self.name))
+    }
 }
 
 /// One MCP-server tool, adapted to the gateway's [`Tool`] trait.
@@ -194,7 +233,7 @@ impl Tool for McpTool {
 }
 
 /// Build [`McpTool`]s from a connection's listed tools.
-fn build_tools(
+pub(crate) fn build_tools(
     name: &str,
     conn: &Arc<McpConnection>,
     remote_tools: Vec<rmcp::model::Tool>,
@@ -278,13 +317,23 @@ pub(crate) async fn connect_http_server(
         config = config.auth_header(token.to_string());
     }
     let transport = StreamableHttpClientTransport::from_config(config);
-    let service = tokio::time::timeout(CONNECT_TIMEOUT, serve_client((), transport))
-        .await
-        .map_err(|_| format!("MCP handshake to `{name}` timed out"))?
-        .map_err(|e| format!("MCP handshake to `{name}` failed: {e}"))?;
+    let list_generation = Arc::new(AtomicU64::new(0));
+    let service = tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        serve_client(
+            McpClientHandler {
+                list_generation: list_generation.clone(),
+            },
+            transport,
+        ),
+    )
+    .await
+    .map_err(|_| format!("MCP handshake to `{name}` timed out"))?
+    .map_err(|e| format!("MCP handshake to `{name}` failed: {e}"))?;
     let conn = Arc::new(McpConnection {
         name: name.to_string(),
         service,
+        list_generation,
     });
     let remote_tools = tokio::time::timeout(CONNECT_TIMEOUT, conn.service.list_all_tools())
         .await
@@ -645,6 +694,111 @@ mod tests {
         assert_eq!(
             response["choices"][0]["message"]["content"],
             "fixture found"
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_list_changed_notification_bumps_the_generation_and_relists() {
+        let server = MockServer::start().await;
+        let called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mock_called = called.clone();
+        let get_called = called.clone();
+        Mock::given(method("POST"))
+            .respond_with(move |request: &wiremock::Request| {
+                let body: Value = serde_json::from_slice(&request.body).unwrap();
+                match body["method"].as_str() {
+                    Some("initialize") => ResponseTemplate::new(200)
+                        .insert_header("content-type", "application/json")
+                        .insert_header("mcp-session-id", "test-session-1")
+                        .set_body_json(json!({
+                            "jsonrpc": "2.0", "id": body["id"],
+                            "result": {
+                                "protocolVersion": "2025-06-18",
+                                "capabilities": {"tools": {}},
+                                "serverInfo": {"name": "fixture", "version": "1"},
+                            }
+                        })),
+                    Some("tools/list") => {
+                        let tools = if mock_called.load(std::sync::atomic::Ordering::SeqCst) {
+                            json!([
+                                {"name": "first", "inputSchema": {"type": "object"}},
+                                {"name": "second", "inputSchema": {"type": "object"}},
+                            ])
+                        } else {
+                            json!([{"name": "first", "inputSchema": {"type": "object"}}])
+                        };
+                        ResponseTemplate::new(200)
+                            .insert_header("content-type", "application/json")
+                            .set_body_json(json!({
+                                "jsonrpc": "2.0", "id": body["id"],
+                                "result": {"tools": tools}
+                            }))
+                    }
+                    Some("tools/call") => {
+                        mock_called.store(true, std::sync::atomic::Ordering::SeqCst);
+                        ResponseTemplate::new(200)
+                            .insert_header("content-type", "application/json")
+                            .set_body_json(json!({
+                                "jsonrpc": "2.0", "id": body["id"],
+                                "result": {"content": [{"type": "text", "text": "done"}], "isError": false}
+                            }))
+                    }
+                    Some("notifications/initialized") => ResponseTemplate::new(202),
+                    other => panic!("unexpected MCP method: {other:?}"),
+                }
+            })
+            .mount(&server)
+            .await;
+        // The server's push channel: notifications ride the GET stream, which
+        // the transport reopens (1 s backoff) after each close.
+        Mock::given(method("GET"))
+            .respond_with(move |_request: &wiremock::Request| {
+                if get_called.load(std::sync::atomic::Ordering::SeqCst) {
+                    ResponseTemplate::new(200)
+                        .insert_header("content-type", "text/event-stream")
+                        .set_body_raw(
+                            "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}\n\n",
+                            "text/event-stream",
+                        )
+                } else {
+                    ResponseTemplate::new(200)
+                        .insert_header("content-type", "text/event-stream")
+                        .set_body_raw("", "text/event-stream")
+                }
+            })
+            .mount(&server)
+            .await;
+
+        let connected = connect_http_server("fixture", &server.uri(), None)
+            .await
+            .unwrap();
+        assert_eq!(connected.tools.len(), 1);
+        let conn = connected.conn.clone();
+        assert_eq!(conn.list_generation(), 0);
+
+        let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        connected.tools[0]
+            .run(ToolContext::for_test(db), json!({}))
+            .await
+            .unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while conn.list_generation() == 0 && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            conn.list_generation(),
+            1,
+            "the tools/list_changed notification must bump the generation"
+        );
+
+        let relisted = conn.relist().await.unwrap();
+        assert_eq!(
+            relisted.len(),
+            2,
+            "the re-list must see the newly activated tool"
         );
     }
 
