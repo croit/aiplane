@@ -3,7 +3,7 @@
 # tabs, and the internal test chat with its debug view.
 
 agents-heading = 智能体
-agents-intro = 智能体是负责某项具体工作的 AI 助手，例如在您的网站上回答客户的问题。在这里设置、试用，满意后再发布。
+agents-intro = 你的智能体以及与你共享的智能体。个人智能体只为你工作，使用你的工具和账户。团队智能体属于某个组织。公开智能体在网站上回答访客的问题。
 nav-dots = Dots
 dots-heading = 个人 Dots
 dots-intro = 创建和管理命名的个人 Dot。已启用的 Dot 计入账户数量上限。
@@ -32,8 +32,15 @@ dots-workspace-open = 打开工作区
 dots-scheduled-tab-help = 查看和管理分配给此 Dot 的计划任务。
 dots-webhooks-tab-help = 查看和管理分配给此 Dot 的事件触发器。
 dots-automation-manage = 管理
-agents-dot-personal = 个人 Dot
-agents-dot-organization = 组织 Dot · { $name }
+agents-kind-personal = 个人
+agents-kind-team = 团队 · { $name }
+agents-kind-public = 公开
+agents-intro-all = 所有用户的智能体。作为管理员，你可以打开并更改其中任何一个；每次更改都会记录在该智能体的活动日志中。
+agents-group-mine = 我的智能体
+agents-group-team = 团队智能体
+agents-group-shared = 与我共享
+agents-owner = 所有者：{ $name }
+agents-error-personal-not-shareable = 个人智能体只为其所有者工作，不能共享。若要共享工作，请创建团队智能体。
 dots-create-submit = 创建
 dots-create-cancel = 取消
 dots-empty = 尚无 Dot。创建一个即可开始。

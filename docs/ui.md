@@ -715,7 +715,13 @@ in [`agents.md`](agents.md#agent-definition). The data layer and the pure helper
 are `web/src/lib/agents.ts` (unit-tested in `agents.test.ts`); the components
 are in `web/src/lib/components/agents/`.
 
-- **`/agents`**: the agents shared with the caller, and a dialog to create one.
+- **`/agents`**: the caller's workspace in groups — *My agents* (their
+  personal agents and the ones they created), *Team agents* and *Shared with
+  me* — each card badged *Personal*, *Team · organization* or *Public*, with
+  the owner named on agents that are not the caller's. An admin gets the
+  usage page's *Mine / All users* switch: *All users* (`?scope=all`) lists
+  every user's agent, sorted by owner, each naming its owner. A dialog
+  creates an agent.
   A new agent opens in the setup assistant (`/agents/{id}/setup/start`).
 - **`/agents/{id}`** (`AgentShell` from the route's layout, `AgentWorkbench` as
   the page): header with live/draft badges, the open-points pill and Save

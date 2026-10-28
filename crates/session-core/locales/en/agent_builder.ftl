@@ -2,7 +2,7 @@
 # tabs, and the internal test chat with its debug view.
 
 agents-heading = Agents
-agents-intro = Agents are AI assistants for one specific job, such as answering customer questions on your website. Set one up here, try it out, and publish it when you are happy with it.
+agents-intro = Your agents and the agents shared with you. A personal agent works only for you, with your tools and accounts. A team agent belongs to an organization. A public agent answers visitors on a website.
 nav-dots = Dots
 dots-heading = Personal Dots
 dots-intro = Create and manage named personal Dots. Active Dots count toward your account limit.
@@ -31,8 +31,15 @@ dots-workspace-open = Open workspace
 dots-scheduled-tab-help = View and manage scheduled work assigned to this Dot.
 dots-webhooks-tab-help = View and manage event triggers assigned to this Dot.
 dots-automation-manage = Manage
-agents-dot-personal = Personal Dot
-agents-dot-organization = Organization Dot · { $name }
+agents-kind-personal = Personal
+agents-kind-team = Team · { $name }
+agents-kind-public = Public
+agents-intro-all = Every user’s agents. As an administrator you can open and change any of them; each change is recorded in the agent’s activity log.
+agents-group-mine = My agents
+agents-group-team = Team agents
+agents-group-shared = Shared with me
+agents-owner = Owner: { $name }
+agents-error-personal-not-shareable = A personal agent works only for its owner and cannot be shared. Create a team agent for work you want to share.
 dots-create-submit = Create
 dots-create-cancel = Cancel
 dots-empty = No Dots yet. Create one to get started.

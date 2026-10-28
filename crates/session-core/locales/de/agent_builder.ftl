@@ -3,7 +3,7 @@
 # tabs, and the internal test chat with its debug view.
 
 agents-heading = Agenten
-agents-intro = Agenten sind KI-Assistenten für eine bestimmte Aufgabe, zum Beispiel Kundenfragen auf Ihrer Website zu beantworten. Richten Sie hier einen ein, testen Sie ihn und veröffentlichen Sie ihn, wenn er Ihnen gefällt.
+agents-intro = Ihre Agenten und die, die mit Ihnen geteilt wurden. Ein persönlicher Agent arbeitet nur für Sie, mit Ihren Werkzeugen und Konten. Ein Team-Agent gehört einer Organisation. Ein öffentlicher Agent beantwortet Besucher auf einer Website.
 nav-dots = Dots
 dots-heading = Persönliche Dots
 dots-intro = Erstellen und verwalten Sie benannte persönliche Dots. Aktive Dots zählen zu Ihrem Kontingent.
@@ -32,8 +32,15 @@ dots-workspace-open = Arbeitsbereich öffnen
 dots-scheduled-tab-help = Geplante Arbeiten dieses Dots ansehen und verwalten.
 dots-webhooks-tab-help = Ereignisauslöser dieses Dots ansehen und verwalten.
 dots-automation-manage = Verwalten
-agents-dot-personal = Persönlicher Dot
-agents-dot-organization = Organisations-Dot · { $name }
+agents-kind-personal = Persönlich
+agents-kind-team = Team · { $name }
+agents-kind-public = Öffentlich
+agents-intro-all = Die Agenten aller Benutzer. Als Administrator können Sie jeden öffnen und ändern; jede Änderung wird im Aktivitätsprotokoll des Agenten festgehalten.
+agents-group-mine = Meine Agenten
+agents-group-team = Team-Agenten
+agents-group-shared = Mit mir geteilt
+agents-owner = Eigentümer: { $name }
+agents-error-personal-not-shareable = Ein persönlicher Agent arbeitet nur für seinen Eigentümer und kann nicht geteilt werden. Legen Sie für gemeinsame Arbeit einen Team-Agenten an.
 dots-create-submit = Erstellen
 dots-create-cancel = Abbrechen
 dots-empty = Noch keine Dots. Erstellen Sie Ihren ersten Dot.

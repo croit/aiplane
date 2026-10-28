@@ -4,10 +4,26 @@
 	import StatusPill from '#lib/components/ui/StatusPill.svelte';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { agentIdFromName, agentsApi, type AgentError, type AgentSummary } from '#lib/agents.js';
+	import { page } from '$app/state';
+	import { agentIdFromName, agentsApi, ownerLabel, type AgentError, type AgentSummary } from '#lib/agents.js';
 	import { locale, t } from '#lib/i18n.svelte.js';
+	import { me } from '#lib/session.svelte.js';
 
 	let agents = $state<AgentSummary[]>([]);
+	let canViewAll = $state(false);
+	const scope = $derived<'self' | 'all'>(page.url.searchParams.get('scope') === 'all' ? 'all' : 'self');
+	const groups = $derived.by(() => {
+		if (scope === 'all') {
+			const sorted = [...agents].sort((a, b) => ownerLabel(a.owner).localeCompare(ownerLabel(b.owner), locale.current) || (a.display || a.name).localeCompare(b.display || b.name, locale.current));
+			return [{ key: 'all', title: null, agents: sorted }];
+		}
+		const mine = (a: AgentSummary) => a.kind !== 'team' && a.owner.kind === 'user' && a.owner.id === me.value?.id;
+		return [
+			{ key: 'mine', title: t('agents-group-mine'), agents: agents.filter(mine) },
+			{ key: 'team', title: t('agents-group-team'), agents: agents.filter((a) => a.kind === 'team') },
+			{ key: 'shared', title: t('agents-group-shared'), agents: agents.filter((a) => a.kind !== 'team' && !mine(a)) }
+		].filter((group) => group.agents.length > 0);
+	});
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
@@ -24,7 +40,9 @@
 
 	async function reload() {
 		try {
-			agents = await agentsApi.list();
+			const list = await agentsApi.list(scope);
+			agents = list.agents;
+			canViewAll = list.can_view_all;
 		} catch (err) {
 			error = (err as AgentError).message;
 		} finally {
@@ -33,6 +51,18 @@
 	}
 
 	onMount(reload);
+
+	async function changeScope(next: 'self' | 'all') {
+		if (next === scope) return;
+		loading = true;
+		await goto(next === 'all' ? '/agents?scope=all' : '/agents', { replace: true, reset: false });
+		await reload();
+	}
+
+	function kindLabel(agent: AgentSummary): string {
+		if (agent.kind === 'team' && agent.owner.kind === 'organization') return t('agents-kind-team', { name: agent.owner.name });
+		return t(agent.kind === 'personal' ? 'agents-kind-personal' : 'agents-kind-public');
+	}
 
 	function planInstead() {
 		creating = false;
@@ -57,9 +87,15 @@
 	<header class="flex flex-wrap items-start justify-between gap-3">
 		<div>
 			<h1 class="text-2xl font-bold">{t('agents-heading')}</h1>
-			<p class="mt-2 max-w-3xl text-sm text-base-content/60">{t('agents-intro')}</p>
+			<p class="mt-2 max-w-3xl text-sm text-base-content/60">{t(scope === 'all' ? 'agents-intro-all' : 'agents-intro')}</p>
 		</div>
-		<div class="flex flex-wrap gap-2">
+		<div class="flex flex-wrap items-center gap-2">
+			{#if canViewAll}
+				<div class="join">
+					<button class="btn join-item btn-sm" class:btn-active={scope === 'self'} class:btn-primary={scope === 'self'} onclick={() => void changeScope('self')}>{t('usage-toggle-mine')}</button>
+					<button class="btn join-item btn-sm" class:btn-active={scope === 'all'} class:btn-primary={scope === 'all'} onclick={() => void changeScope('all')}>{t('usage-toggle-all')}</button>
+				</div>
+			{/if}
 			<button class="btn btn-sm" type="button" onclick={() => (planning = true)}>🎙 {t('architect-open')}</button>
 			<button class="btn btn-primary btn-sm" type="button" onclick={() => (creating = true)}>{t('agents-create')}</button>
 		</div>
@@ -72,41 +108,50 @@
 	{:else if !agents.length && !error}
 		<div class="card card-border"><div class="card-body text-sm text-base-content/60">{t('agents-list-empty')}</div></div>
 	{:else}
-		<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-			{#each agents as agent (agent.id)}
-				<a class="card card-border transition-colors hover:border-primary" href="/agents/{agent.id}">
-					<div class="card-body gap-2 p-4">
-						<div class="flex items-start justify-between gap-2">
-							<h2 class="card-title text-base">{agent.display || agent.name}</h2>
-							{#if agent.dot}
-								<span class="badge badge-outline badge-sm">{agent.dot.owner.kind === 'organization' ? t('agents-dot-organization', { name: agent.dot.owner.name }) : t('agents-dot-personal')}</span>
-							{:else if agent.live_version === null}
-								<StatusPill size="sm">{t('agents-never-published')}</StatusPill>
-							{:else}
-								<StatusPill tone="ok" size="sm">{t('agents-live-badge', { version: agent.live_version })}</StatusPill>
-							{/if}
-						</div>
-						{#if agent.dot}
-							<div class="flex flex-wrap items-center gap-2">
-								<StatusPill size="sm" tone={agent.dot.active ? 'ok' : 'warn'}>{t(agent.dot.active ? 'dots-status-active' : 'dots-status-inactive')}</StatusPill>
-								{#if agent.dot.owner.kind === 'organization' && agent.live_version === null}<StatusPill size="sm">{t('agents-never-published')}</StatusPill>{/if}
-								{#if agent.dot.owner.kind === 'organization' && agent.live_version !== null}<StatusPill size="sm" tone="ok">{t('agents-live-badge', { version: agent.live_version })}</StatusPill>{/if}
-							</div>
-						{:else}
-							<p class="font-mono text-xs text-base-content/60">{agent.name}</p>
-						{/if}
-						{#if agent.description}<p class="line-clamp-2 text-sm text-base-content/70">{agent.description}</p>{/if}
-						<div class="mt-1 flex items-center gap-2 text-xs text-base-content/50">
-							{#if agent.access === 'read'}<span class="badge badge-outline badge-xs">{t('agents-read-only')}</span>{/if}
-							<span>{t('agents-updated', { date: when(agent.updated_at) })}</span>
-							{#if agent.disabled_at}<span class="badge badge-error badge-xs">{t('agents-disabled')}</span>{/if}
-						</div>
-					</div>
-				</a>
-			{/each}
-		</div>
+		{#each groups as group (group.key)}
+			<section class="space-y-3">
+				{#if group.title}<h2 class="text-sm font-semibold uppercase tracking-wide text-base-content/60">{group.title}</h2>{/if}
+				<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+					{#each group.agents as agent (agent.id)}
+						{@render card(agent)}
+					{/each}
+				</div>
+			</section>
+		{/each}
 	{/if}
 </div>
+
+{#snippet card(agent: AgentSummary)}
+	<a class="card card-border transition-colors hover:border-primary" href="/agents/{agent.id}">
+		<div class="card-body gap-2 p-4">
+			<div class="flex items-start justify-between gap-2">
+				<h3 class="card-title text-base">{agent.display || agent.name}</h3>
+				<span class="badge badge-outline badge-sm shrink-0">{kindLabel(agent)}</span>
+			</div>
+			<div class="flex flex-wrap items-center gap-2">
+				{#if agent.dot}
+					<StatusPill size="sm" tone={agent.dot.active ? 'ok' : 'warn'}>{t(agent.dot.active ? 'dots-status-active' : 'dots-status-inactive')}</StatusPill>
+				{/if}
+				{#if agent.kind !== 'personal'}
+					{#if agent.live_version === null}
+						<StatusPill size="sm">{t('agents-never-published')}</StatusPill>
+					{:else}
+						<StatusPill tone="ok" size="sm">{t('agents-live-badge', { version: agent.live_version })}</StatusPill>
+					{/if}
+				{/if}
+			</div>
+			{#if agent.description}<p class="line-clamp-2 text-sm text-base-content/70">{agent.description}</p>{/if}
+			{#if scope === 'all' || (agent.kind !== 'team' && agent.owner.kind === 'user' && agent.owner.id !== me.value?.id)}
+				<p class="text-xs text-base-content/60">{t('agents-owner', { name: ownerLabel(agent.owner) })}</p>
+			{/if}
+			<div class="mt-1 flex items-center gap-2 text-xs text-base-content/50">
+				{#if agent.access === 'read'}<span class="badge badge-outline badge-xs">{t('agents-read-only')}</span>{/if}
+				<span>{t('agents-updated', { date: when(agent.updated_at) })}</span>
+				{#if agent.disabled_at}<span class="badge badge-error badge-xs">{t('agents-disabled')}</span>{/if}
+			</div>
+		</div>
+	</a>
+{/snippet}
 
 {#snippet createActions()}
 	<button class="btn btn-ghost" type="button" onclick={() => (creating = false)}>{t('admin-cancel')}</button>

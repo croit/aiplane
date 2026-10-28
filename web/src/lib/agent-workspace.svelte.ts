@@ -137,7 +137,7 @@ export class AgentWorkspace {
 			await this.refresh();
 			const [r, a] = await Promise.all([agentsApi.resources(this.id), agentsApi.list()]);
 			this.resources = r;
-			this.agents = a.filter((x) => x.id !== this.id);
+			this.agents = a.agents.filter((x) => x.id !== this.id);
 		} catch (err) {
 			this.loadError = setupErrorMessage(err as AgentError, t);
 		} finally {

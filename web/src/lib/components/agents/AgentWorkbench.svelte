@@ -33,7 +33,7 @@
 	const ws = useWorkspace();
 
 	const capabilities = $derived(agentUiCapabilities(ws.detail));
-	const organizationDot = $derived<Dot | null>(ws.detail?.dot?.owner.kind === 'organization' ? {
+	const organizationDot = $derived<Dot | null>(ws.detail?.dot && ws.detail.kind === 'team' ? {
 		id: ws.detail.id, name: ws.detail.dot.name, display: ws.detail.display,
 		description: ws.detail.description, active: ws.detail.dot.active,
 	} : null);

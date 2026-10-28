@@ -960,7 +960,7 @@ async fn an_admin_holds_write_on_every_agent_without_a_share() {
     let fx = fixture().await;
     let id = fx.runnable("support").await;
 
-    let (_, list) = fx.get(&fx.root, "/api/v0/agents").await;
+    let (_, list) = fx.get(&fx.root, "/api/v0/agents?scope=all").await;
     assert_eq!(list["agents"][0]["id"], id.as_str());
     assert_eq!(list["agents"][0]["access"], "write");
     let (status, detail) = fx.get(&fx.root, &format!("/api/v0/agents/{id}")).await;
@@ -986,6 +986,109 @@ async fn an_admin_holds_write_on_every_agent_without_a_share() {
         )
         .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
+}
+
+fn listed<'a>(list: &'a Value, id: &str) -> Option<&'a Value> {
+    list["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|agent| agent["id"] == id)
+}
+
+#[tokio::test]
+async fn an_admins_workspace_lists_their_own_agents_and_every_users_only_on_request() {
+    let fx = fixture().await;
+    let public = fx.create(&fx.alice, "support").await;
+    let (status, body) = fx
+        .post(&fx.alice, "/api/v0/dots", json!({ "name": "Harald" }))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let personal = body["dot"]["id"].as_str().unwrap().to_string();
+    let own = fx.create(&fx.root, "root-helper").await;
+
+    let (status, list) = fx.get(&fx.root, "/api/v0/agents").await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    assert_eq!(list["scope"], "self");
+    assert_eq!(list["can_view_all"], true);
+    let ids = list["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|agent| agent["id"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids,
+        [own.as_str()],
+        "another user's agents stay out of the workspace"
+    );
+
+    let (status, all) = fx.get(&fx.root, "/api/v0/agents?scope=all").await;
+    assert_eq!(status, StatusCode::OK, "{all}");
+    assert_eq!(all["scope"], "all");
+    let dot = listed(&all, &personal).expect("every user's personal agent");
+    assert_eq!(dot["kind"], "personal");
+    assert_eq!(dot["access"], "write");
+    assert_eq!(
+        dot["owner"],
+        json!({ "kind": "user", "id": "alice", "name": null, "email": "alice@example.com" })
+    );
+    assert_eq!(dot["dot"], json!({ "name": "Harald", "active": true }));
+    let agent = listed(&all, &public).expect("every user's public agent");
+    assert_eq!(agent["kind"], "public");
+    assert_eq!(agent["owner"]["id"], "alice");
+}
+
+#[tokio::test]
+async fn a_non_admin_asking_for_every_users_agents_gets_their_own() {
+    let fx = fixture().await;
+    fx.create(&fx.alice, "support").await;
+    let own = fx.create(&fx.bob, "bobs").await;
+
+    let (status, list) = fx.get(&fx.bob, "/api/v0/agents?scope=all").await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    assert_eq!(list["scope"], "self");
+    assert_eq!(list["can_view_all"], false);
+    assert_eq!(list["agents"].as_array().unwrap().len(), 1);
+    assert_eq!(list["agents"][0]["id"], own.as_str());
+    assert_eq!(list["agents"][0]["kind"], "public");
+}
+
+#[tokio::test]
+async fn a_personal_agent_answers_only_its_owner_and_an_admin() {
+    let fx = fixture().await;
+    let (status, body) = fx
+        .post(&fx.alice, "/api/v0/dots", json!({ "name": "Harald" }))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let personal = body["dot"]["id"].as_str().unwrap().to_string();
+
+    let (status, body) = fx.share(&fx.root, &personal, "user", "bob", "write").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"]["code"], "personal_agent_not_shareable");
+
+    // A share written before personal agents became unshareable must not
+    // open the agent to its holder.
+    aiplane_agents::db::agents::set_share(
+        &fx.state.db,
+        &personal,
+        aiplane_agents::db::agents::SubjectKind::User,
+        "bob",
+        aiplane_agents::db::agents::Access::Write,
+        "root",
+    )
+    .await
+    .unwrap();
+    let (status, body) = fx.get(&fx.bob, &format!("/api/v0/agents/{personal}")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(listed(&fx.get(&fx.bob, "/api/v0/agents").await.1, &personal).is_none());
+
+    let (status, body) = fx
+        .get(&fx.root, &format!("/api/v0/agents/{personal}"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["agent"]["access"], "write");
+    assert_eq!(body["agent"]["kind"], "personal");
 }
 
 #[tokio::test]

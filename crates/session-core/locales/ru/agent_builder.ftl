@@ -3,7 +3,7 @@
 # tabs, and the internal test chat with its debug view.
 
 agents-heading = Агенты
-agents-intro = Агенты — это ИИ-помощники для конкретной задачи, например для ответов на вопросы клиентов на вашем сайте. Настройте агента здесь, проверьте его и опубликуйте, когда результат вас устроит.
+agents-intro = Ваши агенты и агенты, которыми с вами поделились. Личный агент работает только на вас, с вашими инструментами и учётными записями. Командный агент принадлежит организации. Публичный агент отвечает посетителям сайта.
 nav-dots = Dots
 dots-heading = Личные Dots
 dots-intro = Создавайте и управляйте личными Dots с именами. Активные Dots учитываются в лимите вашей учётной записи.
@@ -32,8 +32,15 @@ dots-workspace-open = Открыть рабочую область
 dots-scheduled-tab-help = Просматривайте и управляйте запланированными задачами этого Dot.
 dots-webhooks-tab-help = Просматривайте и управляйте событиями, запускающими этот Dot.
 dots-automation-manage = Управлять
-agents-dot-personal = Личный Dot
-agents-dot-organization = Dot организации · { $name }
+agents-kind-personal = Личный
+agents-kind-team = Команда · { $name }
+agents-kind-public = Публичный
+agents-intro-all = Агенты всех пользователей. Как администратор вы можете открыть и изменить любого из них; каждое изменение записывается в журнал активности агента.
+agents-group-mine = Мои агенты
+agents-group-team = Командные агенты
+agents-group-shared = Доступные мне
+agents-owner = Владелец: { $name }
+agents-error-personal-not-shareable = Личный агент работает только на своего владельца, и им нельзя поделиться. Для совместной работы создайте командного агента.
 dots-create-submit = Создать
 dots-create-cancel = Отмена
 dots-empty = Пока нет Dots. Создайте первый.

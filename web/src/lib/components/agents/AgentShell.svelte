@@ -28,7 +28,7 @@
 	const todos = $derived(checklist(ws.spec, ws.dirty ? [] : (ws.detail?.publish_issues ?? []), ws.resources?.defaults, ws.detail));
 	const owner = $derived(organizationOwner(ws.detail));
 	const isDot = $derived(ws.detail?.dot !== null && ws.detail?.dot !== undefined);
-	const personalDot = $derived(ws.detail?.dot?.owner.kind === 'user');
+	const personalDot = $derived(ws.detail?.kind === 'personal');
 	const returnPath = $derived(owner ? `/organizations/${encodeURIComponent(owner.id)}` : '/agents');
 	const open = $derived(todos.filter((x) => x.blocking).length);
 	const state = $derived(publishState(todos));
@@ -65,7 +65,7 @@
 			<div class="min-w-0">
 				<h1 class="m-0 truncate text-2xl font-bold">{ws.spec.profile?.display || ws.detail.display || agentPublicName(ws.detail)}</h1>
 				{#if isDot}
-					<span class="badge badge-outline badge-sm max-w-full whitespace-normal">{owner ? t('agents-dot-organization', { name: owner.name }) : t('agents-dot-personal')}</span>
+					<span class="badge badge-outline badge-sm max-w-full whitespace-normal">{owner ? t('agents-kind-team', { name: owner.name }) : t('agents-kind-personal')}</span>
 				{:else}
 					<p class="m-0 font-mono text-xs text-base-content/60">{agentPublicName(ws.detail)}</p>
 				{/if}

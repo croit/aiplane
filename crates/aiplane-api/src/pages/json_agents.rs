@@ -183,19 +183,42 @@ pub struct AgentView {
     pub live_version: Option<i64>,
     /// The caller's access to the agent.
     pub access: &'static str,
+    pub kind: AgentKind,
+    /// Who the agent belongs to: its user or organization, and for a public
+    /// agent the person who created it.
+    pub owner: OwnerView,
     pub dot: Option<AgentDotView>,
+}
+
+/// Whom an agent works for (`docs/agents.md` → "Agent kinds").
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentKind {
+    /// Owned by one user, acting with that user's own rights.
+    Personal,
+    /// Owned by an organization, acting as its own principal.
+    Team,
+    /// Answers outside visitors, acting as its own principal.
+    Public,
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum DotOwnerView {
-    User { id: String },
-    Organization { id: String, name: String },
+pub enum OwnerView {
+    /// `name` and `email` are absent when the user is no longer known.
+    User {
+        id: String,
+        name: Option<String>,
+        email: Option<String>,
+    },
+    Organization {
+        id: String,
+        name: String,
+    },
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct AgentDotView {
-    pub owner: DotOwnerView,
     pub name: String,
     pub active: bool,
 }
@@ -230,31 +253,65 @@ pub(super) async fn agent_views_in(
         .into_iter()
         .map(|row| (row.organization.id, row.organization.name))
         .collect::<std::collections::HashMap<_, _>>();
+    let mut people = HashMap::new();
+    for (agent, _) in rows {
+        let person = match metadata.get(&agent.principal.id).map(|dot| &dot.owner) {
+            Some(agents_db::DotOwner::User(id)) => id,
+            Some(agents_db::DotOwner::Organization(_)) => continue,
+            None => &agent.principal.created_by,
+        };
+        if !people.contains_key(person) {
+            let found = users::find_by_id_in(tx, person).await.map_err(internal)?;
+            people.insert(person.clone(), found);
+        }
+    }
+    let person_view = |id: &String| {
+        let found = people.get(id).and_then(Option::as_ref);
+        OwnerView::User {
+            id: id.clone(),
+            name: found.and_then(|user| user.name.clone()),
+            email: found.map(|user| user.email.clone()),
+        }
+    };
     rows.iter()
         .map(|(agent, access)| {
-            let mut view = agent_view(agent, *access);
-            if let Some(dot) = metadata.get(&agent.principal.id) {
-                let owner = match &dot.owner {
-                    agents_db::DotOwner::User(id) => DotOwnerView::User { id: id.clone() },
-                    agents_db::DotOwner::Organization(id) => {
-                        let Some(name) = names.get(id) else {
-                            return Err(internal(
-                                "organization owner disappeared while reading agent metadata",
-                            ));
-                        };
-                        DotOwnerView::Organization {
+            let (kind, owner) = match metadata.get(&agent.principal.id).map(|dot| &dot.owner) {
+                Some(agents_db::DotOwner::User(id)) => (AgentKind::Personal, person_view(id)),
+                Some(agents_db::DotOwner::Organization(id)) => {
+                    let Some(name) = names.get(id) else {
+                        return Err(internal(
+                            "organization owner disappeared while reading agent metadata",
+                        ));
+                    };
+                    (
+                        AgentKind::Team,
+                        OwnerView::Organization {
                             id: id.clone(),
                             name: name.clone(),
-                        }
-                    }
-                };
-                view.dot = Some(AgentDotView {
-                    owner,
+                        },
+                    )
+                }
+                None => (AgentKind::Public, person_view(&agent.principal.created_by)),
+            };
+            let p = &agent.principal;
+            Ok(AgentView {
+                id: p.id.clone(),
+                name: p.name.clone(),
+                display: p.display.clone(),
+                description: p.description.clone(),
+                created_by: p.created_by.clone(),
+                created_at: agent.created_at,
+                updated_at: agent.updated_at,
+                disabled_at: p.disabled_at,
+                live_version: agent.live_version,
+                access: access.as_str(),
+                kind,
+                owner,
+                dot: metadata.get(&p.id).map(|dot| AgentDotView {
                     name: dot.name.clone(),
                     active: dot.active,
-                });
-            }
-            Ok(view)
+                }),
+            })
         })
         .collect()
 }
@@ -267,23 +324,6 @@ pub(super) async fn agent_view_for(
     Ok(agent_views(state, &[(agent.clone(), access)])
         .await?
         .remove(0))
-}
-
-pub(super) fn agent_view(a: &agents_db::AgentRow, access: Access) -> AgentView {
-    let p = &a.principal;
-    AgentView {
-        id: p.id.clone(),
-        name: p.name.clone(),
-        display: p.display.clone(),
-        description: p.description.clone(),
-        created_by: p.created_by.clone(),
-        created_at: a.created_at,
-        updated_at: a.updated_at,
-        disabled_at: p.disabled_at,
-        live_version: a.live_version,
-        access: access.as_str(),
-        dot: None,
-    }
 }
 
 pub(super) async fn agent_json(
@@ -491,26 +531,64 @@ async fn require_valid(
 
 /// GET /api/v0/agents — the agents shared with the caller; every agent for
 /// an admin.
+/// GET /api/v0/agents — the caller's own agents and those shared with them;
+/// with `?scope=all`, every user's agent for an admin (`docs/agents.md` →
+/// "Who sees an agent"). A non-admin's `scope=all` is ignored, as on the
+/// usage page.
 pub async fn list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let user = or_return!(require_agent_manager(&state, &req).await);
+    let wants_all = super::query_map(&req).get("scope").map(String::as_str) == Some("all");
     let mut tx = or_return!(
         aiplane_core::server::db::WriteTx::begin(&state.db)
             .await
             .map_err(internal)
     );
-    let rows = or_return!(visible_agents_in(&state, &mut tx, &user.id).await);
+    let can_view_all = or_return!(is_admin_in(&state, &mut tx, &user.id).await);
+    let show_all = can_view_all && wants_all;
+    let rows = if show_all {
+        or_return!(agents_db::list_all_in(&mut tx).await.map_err(internal))
+            .into_iter()
+            .map(|row| (row, Access::Write))
+            .collect()
+    } else {
+        or_return!(visible_agents_in(&state, &mut tx, &user.id).await)
+    };
     let agents = or_return!(agent_views_in(&mut tx, &rows).await);
     or_return!(tx.commit().await.map_err(internal));
-    json_ok(StatusCode::OK, AgentList { agents })
+    json_ok(
+        StatusCode::OK,
+        AgentList {
+            scope: if show_all { "all" } else { "self" },
+            can_view_all,
+            agents,
+        },
+    )
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct AgentList {
+    /// `all` or `self`.
+    pub scope: &'static str,
+    /// Whether the caller may ask for `scope=all`.
+    pub can_view_all: bool,
     pub agents: Vec<AgentView>,
 }
 
-/// The agents shared with `user`, with their access; every agent for an
-/// admin.
+async fn is_admin_in(
+    state: &RamaState,
+    tx: &mut aiplane_core::server::db::WriteTx,
+    user_id: &str,
+) -> Result<bool, Response> {
+    Ok(
+        aiplane_runtime::agents::access::current_user_policy_in(state, tx, user_id)
+            .await
+            .map_err(internal)?
+            .is_some_and(|(user, policy)| policy.is_admin(&policy.role_ids_for(&user.roles))),
+    )
+}
+
+/// The agents in `user`'s own workspace, with their access — admins
+/// included: another user's agent reaches an admin only through `scope=all`.
 pub(super) async fn visible_agents(
     state: &RamaState,
     user: &users::User,
@@ -536,25 +614,12 @@ pub(super) async fn visible_agents_in(
         return Ok(Vec::new());
     };
     let groups = policy.role_ids_for(&current.roles);
-    let admin = policy.is_admin(&groups);
     if !policy.can_manage_agents(&groups) {
         return Ok(Vec::new());
     }
-    let rows = if admin {
-        agents_db::list_all_in(tx)
-            .await
-            .map_err(internal)?
-            .into_iter()
-            .map(|row| (row, Access::Write))
-            .collect::<Vec<_>>()
-    } else {
-        agents_db::list_shared_with_in(tx, user_id, &groups)
-            .await
-            .map_err(internal)?
-    };
-    if admin {
-        return Ok(rows);
-    }
+    let rows = agents_db::list_shared_with_in(tx, user_id, &groups)
+        .await
+        .map_err(internal)?;
     let ids = rows
         .iter()
         .map(|(row, _)| row.principal.id.clone())
@@ -575,7 +640,7 @@ pub(super) async fn visible_agents_in(
                 && metadata
                     .get(&row.principal.id)
                     .is_none_or(|dot| match &dot.owner {
-                        agents_db::DotOwner::User(_) => true,
+                        agents_db::DotOwner::User(owner) => owner == user_id,
                         agents_db::DotOwner::Organization(id) => memberships.contains(id),
                     })
         })
@@ -1410,7 +1475,14 @@ async fn require_share_subject_in(
         .map_err(internal)?;
     let org = match owner {
         Some(agents_db::DotOwner::Organization(id)) => Some(id),
-        _ => None,
+        Some(agents_db::DotOwner::User(_)) => {
+            return Err(json_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "personal_agent_not_shareable",
+                &t(lang, "agents-error-personal-not-shareable"),
+            ));
+        }
+        None => None,
     };
     let held = match kind {
         SubjectKind::User => {

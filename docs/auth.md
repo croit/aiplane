@@ -183,7 +183,9 @@ An agent's principal (created by `POST /api/v0/agents`, see
 [`agents.md`](agents.md#agent-definition)) is reachable here too. For one of
 those, the caller also needs a share on the agent: `read` for `GET`, `write`
 for every change. Without one it answers 404 and is left out of the list.
-Admins need no share: they hold `write` on every agent.
+Admins need no share: they hold `write` on every agent, and reach another
+user's agent from the agent list's *All users* switch
+([`agents.md`](agents.md#who-sees-an-agent)).
 
 Any other principal belongs to the manager who created it
 (`system_principals.created_by`): only that user and admins see or change it.

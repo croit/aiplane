@@ -61,7 +61,9 @@ is a bug, even if it works.
 |---|---|
 | **System principal** | An identity that is not a person: an agent, a CI job, an integration. Holds exactly its grants |
 | **Agent** | A system principal plus a spec: a mutable draft and immutable published versions |
-| **Organization Dot** | A named agent with an immutable organization owner, independent active-slot accounting and access narrowed by current membership and existing shares |
+| **Personal agent** | A named agent owned by one user (a personal Dot, [`dots.md`](dots.md)); it acts with its owner's own rights and answers no one else |
+| **Team agent** | A named agent with an immutable organization owner, independent active-slot accounting and access narrowed by current membership and existing shares (an organization Dot) |
+| **Public agent** | An agent without a Dot owner: it answers visitors, A2A callers and hand-offs as its own principal |
 | **Manager** | A person whose groups have `can_manage_agents` (admins have it), acting on an agent through a share |
 | **Share** | `respond` < `read` < `write` on one agent, held by a user or a group |
 | **Conversation** | A `chat_sessions` row owned by the agent's principal; a visitor's, an A2A context, or a test conversation (version 0) |
@@ -313,6 +315,9 @@ log event on the same transaction (`agent_created`, `agent_draft_updated`,
   when they lose the permission). Every other agent route treats it as no
   access (`404`), and `GET /api/v0/agents` does not list the agent.
 - **Without a share an agent answers 404**, not 403.
+- **A personal agent answers only its owner.** It cannot be shared
+  (`422 personal_agent_not_shareable`), and a share on one never takes effect
+  for its holder. Only an admin reaches another user's personal agent.
 - **A share names a subject that exists**: a user id from `users`, or a group
   the RBAC resolver knows (`Resolver::has_group`: database groups and the
   bootstrap admin group). For `read` and
@@ -330,6 +335,33 @@ log event on the same transaction (`agent_created`, `agent_draft_updated`,
   whether a subject holds the agent-management permission. A share in the
   list carries the person's display name.
 
+### Agent kinds
+
+Every agent row is one of three kinds, read from its `dots` row
+(`AgentView.kind`, `AgentView.owner`):
+
+| Kind | Owner | Acts as | Shared with |
+|---|---|---|---|
+| `personal` | one user (`dots.owner_user_id`) | that user's own rights ([`dots-identities.md`](dots-identities.md)) | nobody |
+| `team` | an organization (`dots.organization_id`) | its own principal | current members, through shares |
+| `public` | the creator (`system_principals.created_by`) is shown as owner | its own principal | managers, through shares |
+
+### Who sees an agent
+
+`GET /api/v0/agents` is the caller's workspace, admins included: their own
+agents and the ones shared with them `read` or `write`, a personal agent only
+for its owner, a team agent only for a current member. An admin's workspace
+holds no other user's agent. *Chosen (privacy):* another user's personal
+agent in an admin's own list looked like the admin's own and invited changes
+by mistake.
+
+Every user's agents are one switch away for an admin, as on the usage page:
+`?scope=all` answers every agent with `write` and its owner's name and
+address. The answer says which it gave (`scope`: `self` or `all`) and
+whether the caller may switch (`can_view_all`); a non-admin's `scope=all` is
+ignored. An admin's change to an agent is recorded with its actor in the
+activity log like any other change.
+
 ### API
 
 `aiplane-api::pages::json_agents`. Every route needs a session with
@@ -337,7 +369,7 @@ log event on the same transaction (`agent_created`, `agent_draft_updated`,
 
 | Method | Path | Share | Purpose |
 |---|---|---|---|
-| GET | `/api/v0/agents` | any | Agents shared with you `read` or `write` (every agent for an admin), with your `access` |
+| GET | `/api/v0/agents` | any | `{scope, can_view_all, agents}`: your workspace ([who sees an agent](#who-sees-an-agent)), or every user's agent for an admin with `?scope=all`; each with your `access`, its `kind` and `owner` |
 | POST | `/api/v0/agents` | — | Create `{name, display?, description?, spec?}`; 201, 409 on a taken principal name |
 | GET | `/api/v0/agents/{id}` | read | `{agent}`: the agent, `draft_spec`, `live_spec`, `publish_issues`, `limits` ([`agent-visitors.md`](agent-visitors.md#owner-budget)), grants, shares, the decision trail |
 | PUT | `/api/v0/agents/{id}/draft` | write | Replace the draft `{spec}`; the live version is untouched |

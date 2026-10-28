@@ -23,9 +23,16 @@ export type Spec = Record<string, any>;
 export type SpecIssue = ApiIssue;
 
 export type OrganizationOwner = { kind: 'organization'; id: string; name: string };
-export interface AgentDotMetadata { owner: OrganizationOwner | { kind: 'user'; id: string }; name: string; active: boolean }
+/** A person; `name` and `email` are null once the user is no longer known. */
+export type UserOwner = { kind: 'user'; id: string; name: string | null; email: string | null };
+export interface AgentDotMetadata { name: string; active: boolean }
+/** Whom an agent works for: its owner alone, an organization's members, or outside visitors. */
+export type AgentKind = 'personal' | 'team' | 'public';
 
 export interface AgentSummary {
+	kind: AgentKind;
+	/** The user or organization it belongs to; a public agent's creator. */
+	owner: UserOwner | OrganizationOwner;
 	dot: AgentDotMetadata | null;
 	id: string;
 	name: string;
@@ -40,15 +47,27 @@ export interface AgentSummary {
 	access: 'read' | 'write';
 }
 
-export function organizationOwner(agent: Pick<AgentSummary, 'dot'> | null | undefined): OrganizationOwner | null {
-    return agent?.dot?.owner.kind === 'organization' ? agent.dot.owner : null;
+/** `GET /api/v0/agents`: the caller's workspace, or every user's agents for an admin who asked. */
+export interface AgentList {
+	scope: 'self' | 'all';
+	can_view_all: boolean;
+	agents: AgentSummary[];
+}
+
+export function organizationOwner(agent: Pick<AgentSummary, 'owner'> | null | undefined): OrganizationOwner | null {
+    return agent?.owner.kind === 'organization' ? agent.owner : null;
+}
+
+/** How an owner is named on screen: their name, else their address, else their id. */
+export function ownerLabel(owner: AgentSummary['owner']): string {
+    return owner.kind === 'organization' ? owner.name : (owner.name ?? owner.email ?? owner.id);
 }
 
 export function agentPublicName(agent: Pick<AgentSummary, 'dot' | 'name'>): string {
     return agent.dot?.name ?? agent.name;
 }
 
-export function agentUiCapabilities(agent: (Pick<AgentSummary, 'dot'> & Partial<Pick<AgentSummary, 'access'>>) | null | undefined) {
+export function agentUiCapabilities(agent: (Pick<AgentSummary, 'owner'> & Partial<Pick<AgentSummary, 'access'>>) | null | undefined) {
     const enabled = !!agent && !organizationOwner(agent);
     const draftChat = enabled || (!!organizationOwner(agent) && agent?.access === 'write');
     return { draftChat, execution: enabled, site: enabled, channels: enabled, embed: enabled };
@@ -56,7 +75,7 @@ export function agentUiCapabilities(agent: (Pick<AgentSummary, 'dot'> & Partial<
 
 export type PrivateChatSource = 'draft' | 'published';
 
-export function testChatSources(agent: Pick<AgentSummary, 'dot' | 'live_version'> | null | undefined): PrivateChatSource[] {
+export function testChatSources(agent: Pick<AgentSummary, 'owner' | 'live_version'> | null | undefined): PrivateChatSource[] {
 	return organizationOwner(agent) && agent?.live_version != null && agent.live_version > 0
 		? ['draft', 'published'] : ['draft'];
 }
@@ -348,7 +367,8 @@ const json = (method: string, body?: unknown): RequestInit => ({
 
 /** Every call rejects with an [`AgentError`]. */
 export const agentsApi = {
-	list: () => call<{ agents: AgentSummary[] }>('/api/v0/agents').then((r) => r.agents),
+	list: (scope: 'self' | 'all' = 'self') =>
+		call<AgentList>(scope === 'all' ? '/api/v0/agents?scope=all' : '/api/v0/agents'),
 	create: (body: { name: string; display?: string; description?: string; spec?: Spec }) =>
 		call<{ agent: AgentSummary }>('/api/v0/agents', json('POST', body)).then((r) => r.agent),
 	get: (id: string) => call<{ agent: AgentDetail }>(`/api/v0/agents/${id}`).then((r) => r.agent),

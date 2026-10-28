@@ -27,7 +27,7 @@ const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 /* ---- steps ---------------------------------------------------------- */
 
 export const STEPS = ['start', 'basics', 'scope', 'abilities', 'slots', 'identity', 'routes', 'site', 'review'] as const;
-export function visibleSetupSteps(agent: Pick<AgentSummary, 'dot'> | null | undefined): readonly StepKey[] {
+export function visibleSetupSteps(agent: Pick<AgentSummary, 'owner'> | null | undefined): readonly StepKey[] {
     if (!agent) return [];
     return agentUiCapabilities(agent).site ? STEPS : STEPS.filter((step) => step !== 'site');
 }
@@ -1171,7 +1171,7 @@ export function stepForPath(path: string): StepKey | null {
 	return null;
 }
 
-export function checklist(spec: Spec, publishIssues: SpecIssue[] = [], defaults?: ModelDefaults | null, agent?: Pick<AgentSummary, 'dot'> | null): Todo[] {
+export function checklist(spec: Spec, publishIssues: SpecIssue[] = [], defaults?: ModelDefaults | null, agent?: Pick<AgentSummary, 'owner'> | null): Todo[] {
 	const todos: Todo[] = [];
 	const basics = readBasics(spec);
 	if (!basics.model && !defaults?.chat) todos.push({ step: 'basics', key: 'agents-setup-todo-model', blocking: true });

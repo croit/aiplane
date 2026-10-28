@@ -797,8 +797,9 @@ async fn foundation_dot_creation_uses_member_manager_permission_not_personal_dot
     let (status, created) = create_dot(&fx, &fx.alice, &org, "Harald").await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
     let agent = &created["agent"];
+    assert_eq!(agent["kind"], "team");
     assert_eq!(
-        agent["dot"]["owner"],
+        agent["owner"],
         json!({"kind":"organization","id":org["id"],"name":org["name"]})
     );
     assert_eq!(agent["dot"]["name"], "Harald");
@@ -1104,7 +1105,7 @@ async fn organization_member_revocation_blocks_existing_agent_share_and_principa
         .get(&fx.root, &format!("/api/v0/agents/{agent_id}"))
         .await;
     assert_eq!(status, StatusCode::OK, "{recovery}");
-    assert_eq!(recovery["agent"]["dot"]["owner"]["name"], "Acme Support");
+    assert_eq!(recovery["agent"]["owner"]["name"], "Acme Support");
 }
 
 #[tokio::test]
