@@ -51,6 +51,8 @@ Environment=GITLAB_PERMISSION_MODE=readonly
 
 NoNewPrivileges=true
 DropCapability=ALL
+# Track upstream releases: re-pull the (pinned-:latest) image on unit (re)load.
+AutoUpdate=registry
 
 [Service]
 Restart=on-failure

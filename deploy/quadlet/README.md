@@ -148,7 +148,9 @@ The unit joins `llm.network` (same as AIplane + other MCP sidecars) with no
 published host port, so AIplane resolves it by name. It sets
 `MCP_ALLOWED_HOSTS=gitlab-mcp:3002` — without it the bridge's DNS-rebinding guard
 403s (`Host header is not allowed`) on any non-loopback host, and that network
-name is non-loopback.
+name is non-loopback. `AutoUpdate=registry` re-pulls the `:latest` image on
+`daemon-reload`, so upstream bridge releases are picked up on the next
+`systemctl restart gitlab-mcp`.
 
 Then in AIplane's `/admin/connectors`, point **GitLab (self-managed / CE)**
 at `http://gitlab-mcp:3002/mcp` → Save → Enable. Each user connects at
