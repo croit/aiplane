@@ -87,7 +87,7 @@ pub enum AgentResumeError {
     #[error("A child conversation already has a running worker. Retry after it finishes.")]
     Busy,
     #[error(
-        "The personal Dot run is unavailable under its current ownership, consent or access. Review its settings before retrying."
+        "The personal agent run is unavailable under its current ownership, consent or access. Review its settings before retrying."
     )]
     Unavailable,
     #[error(transparent)]

@@ -219,8 +219,8 @@ settings-f-usage-currency-help = Currency that costs are reported in.
 
 settings-f-limits-enabled = Enforce limits and quotas
 settings-f-limits-enabled-help = Off means the rules at /admin/limits are ignored.
-settings-f-dots-max_active_per_user = Active personal Dots per user
-settings-f-dots-max_active_per_user-help = Maximum number of active personal Dots a user may own. Default: 4.
+settings-f-dots-max_active_per_user = Active personal agents per user
+settings-f-dots-max_active_per_user-help = Maximum number of active personal agents a user may own. Default: 4.
 
 settings-f-feedback-enabled = Offer the feedback widget
 settings-f-feedback-enabled-help = Master switch for the in-app feedback button.
@@ -310,8 +310,8 @@ settings-f-gateway-default_priority-opt-low = Low
 settings-f-gateway-default_priority-opt-medium = Medium
 settings-f-gateway-default_priority-opt-high = High
 
-settings-f-dots-max_active_per_organization = Active Dots per organization
-settings-f-dots-max_active_per_organization-help = Maximum number of active Dots an organization may own, including idle Dots. Default: 4.
+settings-f-dots-max_active_per_organization = Active agents per organization
+settings-f-dots-max_active_per_organization-help = Maximum number of active agents an organization may own, including idle agents. Default: 4.
 
 # Branding — the operator-uploaded company logo. A hand-rolled admin card,
 # not a settings.rs section, so its keys are plain names.

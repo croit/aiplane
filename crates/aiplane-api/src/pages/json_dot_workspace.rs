@@ -210,7 +210,7 @@ async fn owned_dot(
         Ok(Some(dot)) => Ok(dot),
         Ok(None) => Err(super::not_found(t(lang, "dot-error-not-found"))),
         Err(error) => {
-            tracing::warn!(error = %error, "reading personal Dot workspace ownership failed");
+            tracing::warn!(error = %error, "reading personal agent workspace ownership failed");
             Err(super::json_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "workspace_failed",
@@ -510,7 +510,7 @@ mod tests {
     fn workspace_listing_preserves_actual_nullable_metadata_and_encodes_cursor() {
         let view = listing_view(
             "actual-dot",
-            "Actual Dot",
+            "Actual agent",
             "project",
             shared::sandbox::WorkspaceListResponse {
                 busy: true,
@@ -528,7 +528,7 @@ mod tests {
         .unwrap();
         let value = serde_json::to_value(view).unwrap();
         assert_eq!(value["dot_id"], "actual-dot");
-        assert_eq!(value["dot_name"], "Actual Dot");
+        assert_eq!(value["dot_name"], "Actual agent");
         assert_eq!(value["available"], true);
         assert_eq!(value["busy"], true);
         assert_eq!(value["entries"][0]["name"], "actual-name");
@@ -540,7 +540,8 @@ mod tests {
             Some("actual-name".into())
         );
         let unavailable =
-            serde_json::to_value(unavailable_view("actual-dot", "Actual Dot", "project")).unwrap();
+            serde_json::to_value(unavailable_view("actual-dot", "Actual agent", "project"))
+                .unwrap();
         assert_eq!(unavailable["available"], false);
         for field in ["busy", "entries", "next_cursor"] {
             assert!(unavailable[field].is_null());

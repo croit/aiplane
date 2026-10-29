@@ -60,7 +60,7 @@ A skill provides reusable instructions and supporting files. Personal skills req
 
 1. Open **Tools → Skills** (`/tools/skills`).
 2. Select **New skill** to write one yourself, **Draft from workflow** to describe a repeatable task, or upload a `.skill` archive.
-3. For a workflow draft, enter its name, goal, ordered steps, and when the Dot must stop or ask for approval. Choose a chat model available to your account. These fields are sent to that model to create an unsaved draft; AIplane does not run the workflow.
+3. For a workflow draft, enter its name, goal, ordered steps, and when the agent must stop or ask for approval. Choose a chat model available to your account. These fields are sent to that model to create an unsaved draft; AIplane does not run the workflow.
 4. Review and edit the generated `SKILL.md` in the existing editor, then select **Save** yourself. Cancel to discard the draft. Creating a skill in the editor cannot overwrite an existing personal skill; open that skill's **Edit** action to replace its contents.
 5. For a skill you write yourself, fill in the manifest's `name`, `title` and `description`, then write its instructions in Markdown.
 6. Save and inspect its rendered instructions and file list.

@@ -928,7 +928,7 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
         &state.db,
         &aiplane_agents::db::system_principals::NewPrincipal {
             name: "memory-dot",
-            display: "Memory Dot",
+            display: "Memory agent",
             description: "",
         },
         r#"{"main":{"tools":["remember","recall","update_memory","forget"],"tool_resources":{"remember":{"permission":"always_allow"},"update_memory":{"permission":"always_allow"},"forget":{"permission":"always_allow"}}}}"#,
@@ -978,7 +978,7 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
         frames
             .iter()
             .any(|(name, frame)| { name == "turn_finalized" && frame["status"] == "completed" }),
-        "unexpected Dot chat frames: {frames:?}"
+        "unexpected agent chat frames: {frames:?}"
     );
 
     let requests = upstream.received_requests().await.unwrap();
@@ -992,7 +992,7 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
                     .any(|tool| tool["function"]["name"] == "remember")
             })
         })
-        .expect("the Dot turn sent its offered memory tools to the configured model upstream");
+        .expect("the agent turn sent its offered memory tools to the configured model upstream");
     let offered: Vec<&str> = body["tools"]
         .as_array()
         .unwrap()
@@ -1016,12 +1016,12 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
         .map(|message| message["content"].as_str().unwrap_or_default())
         .collect::<String>();
     assert!(
-        system.contains("named \"Memory Dot\""),
+        system.contains("named \"Memory agent\""),
         "the model knows the agent by the name people use for it: {system}"
     );
     assert!(
         system.contains("prefers concise replies"),
-        "the Dot receives the user's shared preference: {system}"
+        "the agent receives the user's shared preference: {system}"
     );
     let memories = aiplane_agents::db::dot_memories::list(
         &state.db,
@@ -1033,7 +1033,7 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
     )
     .await
     .unwrap()
-    .expect("the Dot remains owned by alice");
+    .expect("the agent remains owned by alice");
     assert_eq!(memories.len(), 1);
     assert_eq!(memories[0].content, "avoid the verified deployment pitfall");
     assert_eq!(
@@ -1059,7 +1059,7 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
     let call = activity_events
         .iter()
         .find(|event| event["kind"] == "tool_call" && event["detail"]["tool"] == "remember")
-        .expect("the personal Dot activity feed includes the tool decision");
+        .expect("the personal agent activity feed includes the tool decision");
     assert_eq!(call["principal_id"], "alice");
     assert_eq!(call["actor_id"], "alice");
     assert_eq!(call["agent_id"], dot.principal.id);
@@ -1067,7 +1067,7 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
     let result = activity_events
         .iter()
         .find(|event| event["kind"] == "tool_result" && event["detail"]["tool"] == "remember")
-        .expect("the personal Dot activity feed includes the tool outcome");
+        .expect("the personal agent activity feed includes the tool outcome");
     assert_eq!(result["agent_id"], dot.principal.id);
     assert_eq!(result["detail"]["status"], "completed");
     assert!(
@@ -1111,7 +1111,7 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
         frames
             .iter()
             .any(|(name, frame)| { name == "turn_finalized" && frame["status"] == "completed" }),
-        "the next Dot chat should complete: {frames:?}"
+        "the next agent chat should complete: {frames:?}"
     );
     let requests = upstream.received_requests().await.unwrap();
     let next_turn = requests
@@ -1129,7 +1129,7 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
                     })
                 })
         })
-        .expect("a later chat with the same Dot receives its saved memory");
+        .expect("a later chat with the same agent receives its saved memory");
     let system = next_turn["messages"]
         .as_array()
         .unwrap()
@@ -4055,7 +4055,7 @@ impl wiremock::Respond for RemembersDotMemory {
         let body: Value = serde_json::from_slice(&req.body).unwrap();
         if body["stream"] != true {
             return ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "choices": [{"message": {"role": "assistant", "content": "Dot chat"}}]
+                "choices": [{"message": {"role": "assistant", "content": "Agent chat"}}]
             }));
         }
         let round = self
@@ -5217,7 +5217,7 @@ async fn assert_personal_forward_capability(
             &state.db,
             &NewPrincipal {
                 name: "capability-dot",
-                display: "Capability Dot",
+                display: "Capability agent",
                 description: "",
             },
             spec,

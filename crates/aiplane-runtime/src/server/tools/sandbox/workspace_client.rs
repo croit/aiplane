@@ -18,7 +18,7 @@ pub enum WorkspaceReply {
 
 #[derive(Debug, thiserror::Error)]
 pub enum WorkspaceClientError {
-    #[error("Persistent Dot storage is unavailable. Check runner storage and retry.")]
+    #[error("Persistent agent storage is unavailable. Check runner storage and retry.")]
     Unavailable,
     #[error(
         "The workspace operation conflicts with current storage or execution. Reload and retry when idle."

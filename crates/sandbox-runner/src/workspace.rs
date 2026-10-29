@@ -26,10 +26,10 @@ pub enum WorkspaceError {
     #[error("workspace path is invalid: {0}; use a relative UTF-8 path within the workspace")]
     InvalidPath(&'static str),
     #[error(
-        "workspace identity does not match its private owner manifest; check the Dot owner and workspace storage"
+        "workspace identity does not match its private owner manifest; check the agent owner and workspace storage"
     )]
     OwnerMismatch,
-    #[error("workspace is permanently retired; use a different active Dot")]
+    #[error("workspace is permanently retired; use a different active agent")]
     Retired,
     #[error(
         "retired workspace exceeds the cleanup depth limit; ask the operator to inspect the protected storage"
@@ -614,7 +614,9 @@ fn validate_identity(identity: &DotWorkspace) -> Result<(), WorkspaceError> {
             }
         })
     {
-        return Err(WorkspaceError::InvalidPath("Dot identity is not canonical"));
+        return Err(WorkspaceError::InvalidPath(
+            "Agent identity is not canonical",
+        ));
     }
     Ok(())
 }

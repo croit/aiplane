@@ -843,7 +843,7 @@ const DIRECT_TOOL_RUNS: &[Allowed] = &[
     },
     Allowed {
         path: "aiplane-runtime/src/persona/live.rs",
-        why: "a personal Dot wrapper reloads owner grants, active selection and approval rules before dispatch through GrantedToolSource",
+        why: "a personal agent wrapper reloads owner grants, active selection and approval rules before dispatch through GrantedToolSource",
     },
     Allowed {
         path: "aiplane-runtime/src/server/tools/runner.rs",
@@ -938,7 +938,7 @@ fn personal_dot_calls_revalidate_access_before_execution() {
     let source = production_sources()
         .iter()
         .find(|source| source.rel == "aiplane-runtime/src/persona/live.rs")
-        .expect("the personal Dot dispatch wrapper must exist");
+        .expect("the personal agent dispatch wrapper must exist");
     for mechanism in [
         "users::find_by_id",
         "agents::get_personal_dot",
@@ -949,12 +949,12 @@ fn personal_dot_calls_revalidate_access_before_execution() {
     ] {
         assert!(
             source.code.contains(mechanism),
-            "personal Dot dispatch must keep {mechanism} before executing a tool"
+            "personal agent dispatch must keep {mechanism} before executing a tool"
         );
     }
     let wrapping = scan(&["LivePersonalDotTool {"], |source| source.code.as_str());
     assert_within(
-        "Only the grant-filtered personal Dot source may wrap a tool for live dispatch.",
+        "Only the grant-filtered personal agent source may wrap a tool for live dispatch.",
         &[
             Allowed {
                 path: "aiplane-runtime/src/persona.rs",
@@ -974,7 +974,7 @@ fn organization_dot_calls_revalidate_private_authority_before_execution() {
     let source = production_sources()
         .iter()
         .find(|source| source.rel == "aiplane-runtime/src/agents/profile.rs")
-        .expect("the organization Dot dispatch wrapper must exist");
+        .expect("the organization agent dispatch wrapper must exist");
     for mechanism in [
         "validate_organization_turn_in",
         "validate_organization_identity_in",
@@ -984,7 +984,7 @@ fn organization_dot_calls_revalidate_private_authority_before_execution() {
     ] {
         assert!(
             source.code.contains(mechanism),
-            "organization Dot dispatch must keep {mechanism}"
+            "organization agent dispatch must keep {mechanism}"
         );
     }
     let implementation = source
@@ -1268,7 +1268,7 @@ const ACTIVITY_LOG_WRITERS: &[Allowed] = &[
     },
     Allowed {
         path: "aiplane-agents/src/db/dot_sessions.rs",
-        why: "private Dot session binding and its event share one write transaction",
+        why: "private agent session binding and its event share one write transaction",
     },
     Allowed {
         path: "aiplane-agents/src/db/dot_delegation.rs",

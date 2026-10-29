@@ -1289,13 +1289,13 @@ mod tests {
             session_matches(&mut connection, "alice", &ordinary.id, Some(&dot_id))
                 .await
                 .unwrap(),
-            "a Dot-configured run may use an unbound session"
+            "an agent-configured run may use an unbound session"
         );
         assert!(
             session_matches(&mut connection, "alice", &ordinary.id, None)
                 .await
                 .unwrap(),
-            "a no-Dot run uses an unbound session"
+            "a no-agent run uses an unbound session"
         );
     }
 }

@@ -44,14 +44,14 @@ pub enum RunnerError {
     #[error("network egress requested but not configured on this runner")]
     NetworkUnavailable,
     #[error(
-        "persistent Dot workspace storage is unavailable; configure and verify the runner's persistent storage"
+        "persistent agent workspace storage is unavailable; configure and verify the runner's persistent storage"
     )]
     WorkspaceUnavailable,
-    #[error("sandbox lease does not match this Dot, turn or purpose")]
+    #[error("sandbox lease does not match this agent, turn or purpose")]
     WorkspaceMismatch,
     #[error("workspace filesystem operation failed: {0}")]
     Workspace(#[from] crate::workspace::WorkspaceError),
-    #[error("the Dot browser handover is expired or unavailable")]
+    #[error("the agent browser handover is expired or unavailable")]
     BrowserUnavailable,
 }
 

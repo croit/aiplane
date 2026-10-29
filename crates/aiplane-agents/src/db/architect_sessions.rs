@@ -221,8 +221,8 @@ mod tests {
             &mut tx,
             "alice",
             &NewPrincipal {
-                name: "Dot",
-                display: "Dot",
+                name: "Agent",
+                display: "Agent",
                 description: "",
             },
             "{}",

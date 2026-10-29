@@ -680,7 +680,7 @@ mod tests {
             &mut tx,
             &organization.organization.id,
             &NewPrincipal {
-                name: "Inventory Dot",
+                name: "Inventory agent",
                 display: "Support",
                 description: "Tickets",
             },
@@ -726,7 +726,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(metadata.len(), 1);
-        assert_eq!(metadata[&dot.principal.id].name, "Inventory Dot");
+        assert_eq!(metadata[&dot.principal.id].name, "Inventory agent");
         assert_eq!(
             metadata[&dot.principal.id].owner,
             agents::DotOwner::Organization(organization.organization.id.clone())

@@ -167,7 +167,9 @@ async fn validate_configuration_in(
                 || version.is_some()
                 || !dot_sessions::binding_valid(tx, user, dot_id, previous_dot).await?
             {
-                return Err(invalid("The schedule model or Dot binding is unavailable"));
+                return Err(invalid(
+                    "The schedule model or agent binding is unavailable",
+                ));
             }
             if let Some(session) = linked
                 && (!reuse || !dot_sessions::session_matches(tx, user, session, dot_id).await?)
@@ -1606,7 +1608,7 @@ mod tests {
         )
         .await
         .unwrap() else {
-            panic!("Dot fixture")
+            panic!("Agent fixture")
         };
         let version = agents::publish_in(&mut tx, &dot.principal.id, &spec, "schedule-creator")
             .await

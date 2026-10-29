@@ -1270,7 +1270,7 @@ async fn run_one_turn(
         )
         .await
         .map_err(|error| TurnError::Upstream {
-            message: format!("Could not load the personal Dot owner's tool settings: {error}. Retry the turn after the database is available."),
+            message: format!("Could not load the personal agent owner's tool settings: {error}. Retry the turn after the database is available."),
         })?;
         crate::server::tools::catalog::retain_enabled(&mut granted, &disabled);
     }
@@ -1776,7 +1776,7 @@ async fn run_one_turn(
                 .map_err(persist_err("find_by_id", &ctx.assistant_turn_id))?
                 .ok_or_else(|| TurnError::Aborted {
                     message: concat!(
-                        "The personal Dot owner is unavailable. ",
+                        "The personal agent owner is unavailable. ",
                         "Restore its owner before continuing."
                     )
                     .into(),

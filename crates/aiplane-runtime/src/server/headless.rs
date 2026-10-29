@@ -89,7 +89,7 @@ pub enum OpenError {
     )]
     Busy,
     #[error(
-        "The selected Dot or conversation binding is unavailable. Choose an active owned Dot and a matching conversation before retrying."
+        "The selected agent or conversation binding is unavailable. Choose an active owned agent and a matching conversation before retrying."
     )]
     Unavailable,
 }
@@ -386,7 +386,7 @@ async fn person_context(
         // scheduled run never stalls on a disabled Dot.
         Some(PersonalDotContext::Unavailable) if is_background_run => Ok(None),
         Some(PersonalDotContext::Unavailable) => Err(fail(
-            "The personal Dot is unavailable. Activate it or restore its owned binding before continuing.",
+            "The personal agent is unavailable. Activate it or restore its owned binding before continuing.",
         )),
         None if !tools_enabled => Ok(Some(Arc::new(
             crate::persona::ChatPersona::new(
@@ -2182,7 +2182,7 @@ pub(crate) mod tests {
         assert_eq!(
             stored.status,
             chat::TurnStatus::Completed,
-            "the run must complete as the person, not stall on the disabled Dot: {:?}",
+            "the run must complete as the person, not stall on the disabled agent: {:?}",
             stored.error_message
         );
     }
@@ -2244,7 +2244,7 @@ pub(crate) mod tests {
                 .await
                 .unwrap()
                 .is_none(),
-            "the session must open unbound when the Dot is unavailable"
+            "the session must open unbound when the agent is unavailable"
         );
     }
 

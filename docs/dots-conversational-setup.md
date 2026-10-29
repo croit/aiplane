@@ -7,7 +7,7 @@ creates personal Dots from a reviewed proposal in the existing architect
 conversation. It reuses actual tool and knowledge resources, checks current
 permissions and active limits when applying, and uses the configured work
 instructions in personal Dot runs. The user flow is documented in
-[Automation and inbox](guide/automation-and-inbox.md#set-up-a-personal-dot-in-conversation).
+[Automation and inbox](guide/automation-and-inbox.md#set-up-a-personal-agent-in-conversation).
 
 Organization setup, conversational editing of existing Dots, guided account
 connections, automation application and chat mentions remain design work in

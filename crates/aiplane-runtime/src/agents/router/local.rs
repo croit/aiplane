@@ -124,7 +124,7 @@ async fn resolve_personal(
     let generation = selected.generation;
     let spec: AgentSpec = serde_json::from_str(&dot.agent.draft_spec).map_err(|error| {
         ToolError::Failed(format!(
-            "The receiver Dot configuration is invalid: {error}. Correct it before forwarding."
+            "The receiver agent configuration is invalid: {error}. Correct it before forwarding."
         ))
     })?;
     let selected = spec.main.model.as_deref().unwrap_or(model);
@@ -278,11 +278,11 @@ pub(crate) async fn permitted_organization_receivers(
 
 fn db_error(error: aiplane_core::server::db::DbError) -> ToolError {
     ToolError::Failed(format!(
-        "Reading the local Dot dispatch state failed: {error}. Retry after restoring the database."
+        "Reading the local agent dispatch state failed: {error}. Retry after restoring the database."
     ))
 }
 fn unavailable() -> ToolError {
-    ToolError::Failed("The receiver Dot is unavailable under current ownership, consent or model access. Review both Dots' settings before forwarding.".into())
+    ToolError::Failed("The receiver agent is unavailable under current ownership, consent or model access. Review both agents' settings before forwarding.".into())
 }
 
 pub(super) async fn dispatch_personal(
@@ -306,7 +306,7 @@ pub(super) async fn dispatch_personal(
     if execution.unknown_token_usage(execution.local_budget()) {
         return Err(unavailable());
     }
-    let remaining = execution.meter().remaining().ok_or_else(|| ToolError::Failed("The shared run budget is exhausted. Finish the current request without starting another Dot.".into()))?;
+    let remaining = execution.meter().remaining().ok_or_else(|| ToolError::Failed("The shared run budget is exhausted. Finish the current request without starting another agent.".into()))?;
     let state = &execution.state;
     let receiver = resolve(
         state,
@@ -1040,7 +1040,7 @@ mod tests {
                 .await
                 .unwrap()
                 .is_empty(),
-            "an organization Dot is not a personal caller"
+            "an organization agent is not a personal caller"
         );
     }
 }

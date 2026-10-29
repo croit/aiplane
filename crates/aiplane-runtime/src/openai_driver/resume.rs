@@ -272,7 +272,7 @@ pub(super) async fn resume_into(
         && let Some(execution) = tool_ctx.personal_execution.as_ref()
     {
         let refused = || {
-            TurnError::Aborted { message: "The cached Dot reply does not match this run's current child binding, consent or tool access. Review the run settings before continuing.".into() }
+            TurnError::Aborted { message: "The cached agent reply does not match this run's current child binding, consent or tool access. Review the run settings before continuing.".into() }
         };
         let child_turn = suspension.child_turn.as_deref().ok_or_else(refused)?;
         if suspension.tool_call.name != crate::agents::router::FORWARD_TOOL_NAME

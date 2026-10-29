@@ -112,11 +112,11 @@ impl Tool for ArchitectTool {
     fn schema(&self) -> ToolDef {
         let (description, parameters) = match self.kind {
             Kind::ProposeDotSetup => (
-                "Store a complete reviewed personal Dot proposal, without creating a Dot. Only task, tone, non-strict scope, abilities and one knowledge collection are supported. The changes field must be an actual JSON object, never a string containing JSON. Every requested prerequisite that cannot be configured must be listed in unresolved. Replaces the previous proposal.",
+                "Store a complete reviewed personal agent proposal, without creating an agent. Only task, tone, non-strict scope, abilities and one knowledge collection are supported. The changes field must be an actual JSON object, never a string containing JSON. Every requested prerequisite that cannot be configured must be listed in unresolved. Replaces the previous proposal.",
                 json!({"type":"object","additionalProperties":false,"required":["name","changes"],"properties":{"name":{"type":"string"},"display":{"type":"string"},"description":{"type":"string"},"changes":super::dot::personal_changes_schema(),"unresolved":{"type":"array","items":{"type":"string"}}}}),
             ),
             Kind::ListGrantable if self.ctx.personal => (
-                "Inspect the personal Dot's actual resources. Each ability reports read_only and default_permission: known read-only tools allow, external or unknown writes ask, permitted default_memory_tools allow only Dot-scoped memory writes. Use these existing defaults; valid defaults do not need an unresolved approval-rule prerequisite. This is resource information, not approval of a tool call.",
+                "Inspect the personal agent's actual resources. Each ability reports read_only and default_permission: known read-only tools allow, external or unknown writes ask, permitted default_memory_tools allow only agent-scoped memory writes. Use these existing defaults; valid defaults do not need an unresolved approval-rule prerequisite. This is resource information, not approval of a tool call.",
                 json!({"type":"object","properties":{},"additionalProperties":false}),
             ),
             Kind::ListAgents => (
@@ -209,7 +209,7 @@ impl Tool for ArchitectTool {
             }
             if ctx.personal && !PERSONAL_KINDS.contains(&self.kind) {
                 return Err(ToolError::Failed(
-                    "this tool is unavailable in personal Dot planning".into(),
+                    "this tool is unavailable in personal agent planning".into(),
                 ));
             }
             let out = match self.kind {

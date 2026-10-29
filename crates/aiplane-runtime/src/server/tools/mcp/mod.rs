@@ -542,7 +542,7 @@ mod tests {
         let spec =
             AgentSpec::from_value(&json!({"main": {"tools": ToolSource::ids(&registry)}})).unwrap();
         let persona =
-            ChatPersona::new("Dot", Arc::new(ToolRegistry::new())).with_tool_access(&spec);
+            ChatPersona::new("Agent", Arc::new(ToolRegistry::new())).with_tool_access(&spec);
         let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
             .await
             .unwrap();

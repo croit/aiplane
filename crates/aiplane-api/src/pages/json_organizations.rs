@@ -447,7 +447,7 @@ pub async fn create_dot(State(state): State<Arc<RamaState>>, req: Request) -> Re
         let id = raw_path_segment(&req, 1).ok_or_else(|| invalid(lang))?;
         preflight_member(&state, &user.id, &id, true, lang).await?;
         let body: OrganizationDotBody =
-            super::read_json(req.into_body(), "the organization Dot body").await?;
+            super::read_json(req.into_body(), "the organization agent body").await?;
         if !valid_name(&body.name) || body.description.len() > 16384 {
             return Err(invalid(lang));
         }
@@ -547,7 +547,7 @@ pub async fn set_active(State(state): State<Arc<RamaState>>, req: Request) -> Re
         let dot_id = raw_path_segment(&req, 1).ok_or_else(|| invalid(lang))?;
         preflight_member(&state, &user.id, &org_id, false, lang).await?;
         let body: OrganizationDotActiveBody =
-            super::read_json(req.into_body(), "the organization Dot active body").await?;
+            super::read_json(req.into_body(), "the organization agent active body").await?;
         let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
         member_in(&state, &mut tx, &user.id, &org_id, lang).await?;
         if effective_access_in(&state, &mut tx, &dot_id, &user.id)

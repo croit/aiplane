@@ -589,7 +589,7 @@ async fn personal_converse(fx: &Fx) -> (String, chat::TurnWithTools) {
         .post(
             &fx.alice,
             "/api/v0/agent-architect",
-            json!({"title":"Plan a personal Dot", "dot_owner":"personal", "fresh":true}),
+            json!({"title":"Plan a personal agent", "dot_owner":"personal", "fresh":true}),
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{started}");
@@ -627,7 +627,7 @@ async fn enable_personal(fx: &Fx) {
 
 #[tokio::test]
 async fn personal_planning_consumes_no_slot_and_applies_only_the_reviewed_revision_once() {
-    let fx=fixture(vec![call("p1","propose_dot_setup",json!({"name":"Clock","display":"My clock","description":"Time questions","changes":{"task":"Answer time questions.","abilities":[{"id":"get_current_timestamp","why":"current time"}]}})),json!({"content":"Review your Dot."})]).await;
+    let fx=fixture(vec![call("p1","propose_dot_setup",json!({"name":"Clock","display":"My clock","description":"Time questions","changes":{"task":"Answer time questions.","abilities":[{"id":"get_current_timestamp","why":"current time"}]}})),json!({"content":"Review your agent."})]).await;
     enable_personal(&fx).await;
     let (id, turn) = personal_converse(&fx).await;
     assert_eq!(
@@ -671,12 +671,12 @@ async fn personal_planning_consumes_no_slot_and_applies_only_the_reviewed_revisi
 
 #[tokio::test]
 async fn personal_planning_uses_dot_permission_without_agent_management() {
-    let fx = fixture(vec![json!({"content":"What should your Dot do?"})]).await;
+    let fx = fixture(vec![json!({"content":"What should your agent do?"})]).await;
     let (status, _) = fx
         .post(
             &fx.plain,
             "/api/v0/agent-architect",
-            json!({"title":"My Dot","dot_owner":"personal"}),
+            json!({"title":"My agent","dot_owner":"personal"}),
         )
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
@@ -688,7 +688,7 @@ async fn personal_planning_uses_dot_permission_without_agent_management() {
         .post(
             &fx.plain,
             "/api/v0/agent-architect",
-            json!({"title":"My Dot","dot_owner":"personal"}),
+            json!({"title":"My agent","dot_owner":"personal"}),
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");

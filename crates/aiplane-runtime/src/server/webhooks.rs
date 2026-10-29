@@ -163,7 +163,7 @@ async fn validate_in(
                 return Err(invalid("The user webhook requires a model"));
             };
             if !dot_sessions::binding_valid(tx, user, new.dot_id.as_deref(), previous_dot).await? {
-                return Err(invalid("The selected Dot is not owned and active"));
+                return Err(invalid("The selected agent is not owned and active"));
             };
             if let Some(session) = linked
                 && (!new.reuse_conversation

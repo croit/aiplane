@@ -67,7 +67,7 @@ async fn running_context() -> ToolContext {
     )
     .await
     .unwrap() else {
-        panic!("The owned running Dot fixture must initialize its execution");
+        panic!("The owned running agent fixture must initialize its execution");
     };
     ToolContext {
         principal: actor.principal(),

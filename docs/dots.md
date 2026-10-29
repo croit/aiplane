@@ -24,7 +24,7 @@ The short description appears on the card and to other Dots; it is not sent to
 the model as an instruction. Conversational setup saves separate work
 instructions that the personal Dot uses in its runs. The manual creation
 dialog leaves those instructions unset; give that Dot its task in chat. See
-[the setup walkthrough](guide/automation-and-inbox.md#set-up-a-personal-dot-in-conversation).
+[the setup walkthrough](guide/automation-and-inbox.md#set-up-a-personal-agent-in-conversation).
 The memory tab has
 separate preference, project and fact entries. Owners can add, edit and delete
 those notes; they remain separate from user-wide memory. The activity tab

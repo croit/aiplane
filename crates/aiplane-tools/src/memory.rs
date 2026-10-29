@@ -60,7 +60,7 @@ fn personal_dot_scope<'a>(
     match ctx.personal_dot.as_ref() {
         Some(dot) if dot.owner_user_id == user_id => Ok(Some((&dot.owner_user_id, &dot.dot_id))),
         Some(_) => Err(ToolError::Failed(format!(
-            "`{tool}` refused: the personal Dot owner does not match the acting user."
+            "`{tool}` refused: the personal agent owner does not match the acting user."
         ))),
         None => Ok(None),
     }
@@ -79,7 +79,7 @@ fn resolve_scope(
         Some("dot") if dot_scope.is_some() => Ok("dot"),
         Some("user") if dot_scope.is_none() => Ok("user"),
         Some("dot") => Err(ToolError::InvalidArgs(
-            "Dot memory is available only in a personal Dot chat".into(),
+            "Agent memory is available only in a personal agent chat".into(),
         )),
         Some("user") => Ok("user"),
         Some(other) => Err(ToolError::InvalidArgs(format!(
@@ -145,7 +145,7 @@ impl Tool for Remember {
         ToolDef::function(
             self.id(),
             "Store a short, durable fact for the acting owner so you can recall it in future \
-             conversations. In a Dot run, store lessons and project knowledge owned by that Dot; \
+             conversations. In an agent run, store lessons and project knowledge owned by that agent; \
              shared owner knowledge is read-only. Use it for information worth remembering long-term. Do not \
              store secrets, passwords, or sensitive personal data unless the user explicitly \
              asks you to. If something you already remembered has CHANGED or turned out to be \
@@ -226,9 +226,9 @@ impl Tool for Remember {
                     content,
                 )
                 .await
-                .map_err(|e| ToolError::Failed(format!("storing Dot memory: {e}")))?
+                .map_err(|e| ToolError::Failed(format!("storing agent memory: {e}")))?
                 .ok_or_else(|| {
-                    ToolError::Failed("the personal Dot is no longer available".into())
+                    ToolError::Failed("the personal agent is no longer available".into())
                 })?,
                 None => user_memories::insert(&ctx.db, ctx.person(self.id())?, kind, content)
                     .await
@@ -262,7 +262,7 @@ impl Tool for Recall {
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),
-            "Retrieve stored memories available to the acting owner. Dot runs return their own \
+            "Retrieve stored memories available to the acting owner. agent runs return their own \
              lessons together with read-only user or organization knowledge, each labeled by scope. \
              Takes no arguments and returns memories newest first — you don't need to craft a query. \
              Use the relevant notes as context. \
@@ -331,9 +331,9 @@ impl Tool for Recall {
                     MAX_RECALL_LIMIT,
                 )
                 .await
-                .map_err(|e| ToolError::Failed(format!("recalling Dot memories: {e}")))?
+                .map_err(|e| ToolError::Failed(format!("recalling agent memories: {e}")))?
                 .ok_or_else(|| {
-                    ToolError::Failed("the personal Dot is no longer available".into())
+                    ToolError::Failed("the personal agent is no longer available".into())
                 })?;
                 rows.extend(dot_rows.into_iter().map(|memory| (memory, "dot")));
             }
@@ -403,7 +403,7 @@ impl Tool for UpdateMemory {
                     "scope": {
                         "type": "string",
                         "enum": ["dot", "user"],
-                        "description": "Scope reported by `recall`; a Dot may change only `dot`."
+                        "description": "Scope reported by `recall`; an agent may change only `dot`."
                     }
                 }
             }),
@@ -470,12 +470,12 @@ impl Tool for UpdateMemory {
             let scope = resolve_scope(args.scope.as_deref(), dot_scope)?;
             if scope == "user" && dot_scope.is_some() {
                 return Err(ToolError::Failed(
-                    "user-wide memories are read-only in a personal Dot chat".into(),
+                    "user-wide memories are read-only in a personal agent chat".into(),
                 ));
             }
             if scope == "dot" && dot_scope.is_none() {
                 return Err(ToolError::Failed(
-                    "Dot memory can only be changed from that Dot's chat".into(),
+                    "Agent memory can only be changed from that agent's chat".into(),
                 ));
             }
             // Read the existing row first, scoped to this user: it gives us
@@ -492,7 +492,7 @@ impl Tool for UpdateMemory {
                     &args.id,
                 )
                 .await
-                .map_err(|e| ToolError::Failed(format!("looking up Dot memory: {e}")))?,
+                .map_err(|e| ToolError::Failed(format!("looking up agent memory: {e}")))?,
                 _ => user_memories::get(&ctx.db, ctx.person(self.id())?, &args.id)
                     .await
                     .map_err(|e| ToolError::Failed(format!("looking up memory: {e}")))?,
@@ -517,7 +517,7 @@ impl Tool for UpdateMemory {
                     content,
                 )
                 .await
-                .map_err(|e| ToolError::Failed(format!("updating Dot memory: {e}")))?,
+                .map_err(|e| ToolError::Failed(format!("updating agent memory: {e}")))?,
                 _ => {
                     user_memories::update(&ctx.db, ctx.person(self.id())?, &args.id, kind, content)
                         .await
@@ -578,7 +578,7 @@ impl Tool for Forget {
                     "scope": {
                         "type": "string",
                         "enum": ["dot", "user"],
-                        "description": "Scope reported by `recall`; a Dot may change only `dot`."
+                        "description": "Scope reported by `recall`; an agent may change only `dot`."
                     }
                 }
             }),
@@ -625,12 +625,12 @@ impl Tool for Forget {
             let scope = resolve_scope(args.scope.as_deref(), dot_scope)?;
             if scope == "user" && dot_scope.is_some() {
                 return Err(ToolError::Failed(
-                    "user-wide memories are read-only in a personal Dot chat".into(),
+                    "user-wide memories are read-only in a personal agent chat".into(),
                 ));
             }
             if scope == "dot" && dot_scope.is_none() {
                 return Err(ToolError::Failed(
-                    "Dot memory can only be changed from that Dot's chat".into(),
+                    "Agent memory can only be changed from that agent's chat".into(),
                 ));
             }
             // Fetch before deleting so the result can echo *what* was
@@ -646,7 +646,7 @@ impl Tool for Forget {
                     &args.id,
                 )
                 .await
-                .map_err(|e| ToolError::Failed(format!("looking up Dot memory: {e}")))?,
+                .map_err(|e| ToolError::Failed(format!("looking up agent memory: {e}")))?,
                 _ => user_memories::get(&ctx.db, ctx.person(self.id())?, &args.id)
                     .await
                     .map_err(|e| ToolError::Failed(format!("looking up memory: {e}")))?,
@@ -664,7 +664,7 @@ impl Tool for Forget {
                     &args.id,
                 )
                 .await
-                .map_err(|e| ToolError::Failed(format!("deleting Dot memory: {e}")))?,
+                .map_err(|e| ToolError::Failed(format!("deleting agent memory: {e}")))?,
                 _ => user_memories::delete(&ctx.db, ctx.person(self.id())?, &args.id)
                     .await
                     .map_err(|e| ToolError::Failed(format!("deleting memory: {e}")))?,
@@ -741,7 +741,7 @@ mod tests {
             pool,
             &NewPrincipal {
                 name: "memory-dot",
-                display: "Memory Dot",
+                display: "Memory agent",
                 description: "",
             },
             r#"{"main":{}}"#,
@@ -1464,7 +1464,7 @@ mod tests {
                 dot_id: &other,
             },
             MemoryKind::Fact,
-            "Other Dot lesson",
+            "Other agent lesson",
         )
         .await
         .unwrap()
@@ -1494,7 +1494,7 @@ mod tests {
             .unwrap()
             .unwrap()
             .content,
-            "Other Dot lesson"
+            "Other agent lesson"
         );
     }
 

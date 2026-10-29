@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn a_persona_can_include_the_signed_in_users_context() {
-        let persona = ChatPersona::new("You are a personal Dot.", Arc::new(ToolRegistry::new()))
+        let persona = ChatPersona::new("You are a personal agent.", Arc::new(ToolRegistry::new()))
             .with_user_context();
         assert!(persona.includes_user_context());
     }
@@ -208,7 +208,7 @@ mod tests {
             .unwrap();
         let spec=AgentSpec::from_value(&serde_json::json!({"main":{"tools":["company_echo"],"tool_resources":{"company_echo":{"permission":"always_allow","bind":{"message":{"const":"Reviewed collection"}}}}}})).unwrap();
         let persona =
-            ChatPersona::new("Dot", Arc::new(ToolRegistry::new())).with_tool_access(&spec);
+            ChatPersona::new("Agent", Arc::new(ToolRegistry::new())).with_tool_access(&spec);
         let registry = ToolRegistry::new().with(Echo);
         let source = persona.source(&registry, None);
         let definitions = source.defs_for(&["company_echo".into()]);
@@ -238,7 +238,7 @@ mod tests {
         }}))
         .unwrap();
         let persona =
-            ChatPersona::new("Dot", Arc::new(ToolRegistry::new())).with_tool_access(&spec);
+            ChatPersona::new("Agent", Arc::new(ToolRegistry::new())).with_tool_access(&spec);
         let registry = ToolRegistry::new().with(Echo).with(CurrentTimestamp);
         let granted = GrantedToolSource::new(&registry, ["company_echo".to_string()]);
         let source = persona.source(&granted, None);
@@ -252,7 +252,7 @@ mod tests {
 
     #[test]
     fn personal_dot_with_empty_selection_has_no_tools() {
-        let persona = ChatPersona::new("Dot", Arc::new(ToolRegistry::new().with(Echo)))
+        let persona = ChatPersona::new("Agent", Arc::new(ToolRegistry::new().with(Echo)))
             .with_tool_access(crate::agents::spec::AgentSpec::empty());
         let registry = ToolRegistry::new().with(Echo);
         let source = persona.source(&registry, None);
@@ -285,7 +285,7 @@ mod tests {
             }}))
             .unwrap();
             let persona =
-                ChatPersona::new("Dot", Arc::new(ToolRegistry::new())).with_tool_access(&spec);
+                ChatPersona::new("Agent", Arc::new(ToolRegistry::new())).with_tool_access(&spec);
             let body = persona
                 .source(&registry, None)
                 .get("company_echo")

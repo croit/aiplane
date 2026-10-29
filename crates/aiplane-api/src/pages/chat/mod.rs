@@ -518,7 +518,7 @@ async fn start_pending_turn(state: &Arc<RamaState>, pending: &chat::PendingTurn)
     {
         Ok(Some(link)) if !link.active => return false,
         Err(error) => {
-            tracing::warn!(session_id = %pending.session_id, %error, "waiting Dot turn has no safe runtime context");
+            tracing::warn!(session_id = %pending.session_id, %error, "waiting agent turn has no safe runtime context");
             return false;
         }
         _ => {}
@@ -898,8 +898,8 @@ async fn spawn_assistant_worker(
             crate::pages::architect::persona_for(state, user, session_id).await,
         ),
         unavailable => {
-            tracing::warn!(session_id, error = ?unavailable.err(), "personal Dot context unavailable");
-            let _ = chat::error_interrupted_turn(&state.db, assistant_turn_id, "The personal Dot context is unavailable. Activate the Dot or restore its owned binding before continuing.").await;
+            tracing::warn!(session_id, error = ?unavailable.err(), "personal agent context unavailable");
+            let _ = chat::error_interrupted_turn(&state.db, assistant_turn_id, "The personal agent context is unavailable. Activate the agent or restore its owned binding before continuing.").await;
             state.chats.clear(&user.id, worker);
             return;
         }
@@ -944,7 +944,7 @@ async fn spawn_assistant_worker(
             let _ = chat::error_interrupted_turn(
                 &state.db,
                 assistant_turn_id,
-                "The Dot browser handover no longer matches this owner and turn.",
+                "The agent browser handover no longer matches this owner and turn.",
             )
             .await;
             state.chats.clear(&user.id, worker);
@@ -954,7 +954,7 @@ async fn spawn_assistant_worker(
             let _ = chat::error_interrupted_turn(
                 &state.db,
                 assistant_turn_id,
-                "The Dot browser runner is unavailable; start a new browser session.",
+                "The agent browser runner is unavailable; start a new browser session.",
             )
             .await;
             state.chats.clear(&user.id, worker);
@@ -1283,7 +1283,7 @@ pub(crate) async fn resume_browser_handover(
             worker,
             worker_guard,
         } = reservation;
-        tracing::info!(turn = %turn.id, "resuming a Dot browser handover");
+        tracing::info!(turn = %turn.id, "resuming an agent browser handover");
         spawn_assistant_worker(
             &state,
             &user,

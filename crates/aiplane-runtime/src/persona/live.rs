@@ -144,9 +144,9 @@ impl Tool for LivePersonalDotTool {
                 .filter(|dot| dot.active && dot.agent.principal.disabled_at.is_none())
                 .ok_or_else(|| self.unavailable())?;
             let value = serde_json::from_str(&dot.agent.draft_spec)
-                .map_err(|error| ToolError::Failed(format!("Could not read the personal Dot's tool rules: {error}. Correct its access settings before retrying.")))?;
+                .map_err(|error| ToolError::Failed(format!("Could not read the personal agent's tool rules: {error}. Correct its access settings before retrying.")))?;
             let spec = AgentSpec::from_value(&value)
-                .map_err(|error| ToolError::Failed(format!("Could not read the personal Dot's tool rules: {error}. Correct its access settings before retrying.")))?;
+                .map_err(|error| ToolError::Failed(format!("Could not read the personal agent's tool rules: {error}. Correct its access settings before retrying.")))?;
             if !spec.main.tools.iter().any(|id| id == self.id()) {
                 return Err(self.unavailable());
             }
@@ -257,14 +257,14 @@ fn binding_facts(
 impl LivePersonalDotTool {
     fn unavailable(&self) -> ToolError {
         ToolError::Failed(format!(
-            "`{}` is unavailable to this personal Dot under its current access settings. Review the Dot's active state, selected tools and the owner's permissions before retrying.",
+            "`{}` is unavailable to this personal agent under its current access settings. Review the agent's active state, selected tools and the owner's permissions before retrying.",
             self.id()
         ))
     }
 
     fn load_error(error: aiplane_core::server::db::DbError) -> ToolError {
         ToolError::Failed(format!(
-            "Could not load the personal Dot's current access settings: {error}. Retry after the database is available."
+            "Could not load the personal agent's current access settings: {error}. Retry after the database is available."
         ))
     }
 }
@@ -280,7 +280,7 @@ mod tests {
             json!({"message":{"const":"Original approved collection"}});
         save(&tool, &ctx, value.clone()).await;
         let typed = AgentSpec::from_value(&value).unwrap();
-        let persona = crate::persona::ChatPersona::new("Dot", Arc::new(ToolRegistry::new()))
+        let persona = crate::persona::ChatPersona::new("Agent", Arc::new(ToolRegistry::new()))
             .with_tool_access(&typed);
         let registry = tool.state.tools();
         let source = persona.source(registry.as_ref(), Some(&tool.state));
@@ -326,7 +326,7 @@ mod tests {
             }
             save(&tool, &ctx, value.clone()).await;
             let changed = AgentSpec::from_value(&value).unwrap();
-            let persona = crate::persona::ChatPersona::new("Dot", Arc::new(ToolRegistry::new()))
+            let persona = crate::persona::ChatPersona::new("Agent", Arc::new(ToolRegistry::new()))
                 .with_tool_access(&changed);
             let changed_source = persona.source(registry.as_ref(), Some(&tool.state));
             let refused = crate::server::tools::runner::execute_tool_calls(

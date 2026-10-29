@@ -507,7 +507,7 @@ async fn granting_a2a_caller_needs_a_write_share_on_the_agent() {
         a.fx.post(
             &a.fx.root,
             &format!("/api/v0/organizations/{organization_id}/dots"),
-            json!({"name":"Private A2A guard Dot"}),
+            json!({"name":"Private A2A guard agent"}),
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{org_dot}");

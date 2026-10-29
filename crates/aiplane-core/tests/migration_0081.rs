@@ -75,9 +75,9 @@ async fn organization_dot_ownership_is_exclusive_immutable_and_independent_of_cr
 async fn dot_memory_scopes_are_exclusive_and_reject_missing_owners() {
     let pool = open(Path::new(":memory:")).await.unwrap();
     pool.execute("INSERT INTO organizations(id,name,description,revision,created_by,created_at,updated_at) VALUES('acme','Acme','','initial','creator','2026-01-01','2026-01-01')").await.unwrap();
-    pool.execute("INSERT INTO system_principals(id,name,display,created_by,created_at) VALUES('dot','dot','Dot','creator','2026-01-01')").await.unwrap();
+    pool.execute("INSERT INTO system_principals(id,name,display,created_by,created_at) VALUES('dot','dot','agent','creator','2026-01-01')").await.unwrap();
     pool.execute("INSERT INTO agents(principal_id,draft_spec,created_at,updated_at) VALUES('dot','{}','2026-01-01','2026-01-01')").await.unwrap();
-    pool.execute("INSERT INTO dots(principal_id,owner_user_id,organization_id,name,created_at,updated_at) VALUES('dot',NULL,'acme','Dot','2026-01-01','2026-01-01')").await.unwrap();
+    pool.execute("INSERT INTO dots(principal_id,owner_user_id,organization_id,name,created_at,updated_at) VALUES('dot',NULL,'acme','agent','2026-01-01','2026-01-01')").await.unwrap();
 
     for (dot, organization) in [
         (None, None),

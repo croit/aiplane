@@ -212,8 +212,8 @@ settings-f-usage-currency-help = Devise dans laquelle les coûts sont indiqués.
 
 settings-f-limits-enabled = Appliquer les limites et quotas
 settings-f-limits-enabled-help = Désactivé, les règles de /admin/limits sont ignorées.
-settings-f-dots-max_active_per_user = Dots personnels actifs par utilisateur
-settings-f-dots-max_active_per_user-help = Nombre maximal de Dots personnels actifs par utilisateur. Valeur par défaut : 4.
+settings-f-dots-max_active_per_user = Agents personnels actifs par utilisateur
+settings-f-dots-max_active_per_user-help = Nombre maximal d’agents personnels actifs par utilisateur. Valeur par défaut : 4.
 
 settings-f-feedback-enabled = Proposer le widget de retour
 settings-f-feedback-enabled-help = Interrupteur principal du bouton de retour intégré.
@@ -300,8 +300,8 @@ settings-f-gateway-default_priority-opt-low = Basse
 settings-f-gateway-default_priority-opt-medium = Moyenne
 settings-f-gateway-default_priority-opt-high = Haute
 
-settings-f-dots-max_active_per_organization = Dots actifs par organisation
-settings-f-dots-max_active_per_organization-help = Nombre maximal de Dots actifs appartenant à une organisation, y compris les Dots inactifs en attente. Valeur par défaut : 4.
+settings-f-dots-max_active_per_organization = Agents actifs par organisation
+settings-f-dots-max_active_per_organization-help = Nombre maximal d’agents actifs appartenant à une organisation, y compris les agents inactifs en attente. Valeur par défaut : 4.
 
 # Branding — le logo de l'entreprise téléversé par l'opérateur. Une carte
 # d'admin faite main, pas une section settings.rs, d'où des noms simples.

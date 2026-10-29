@@ -50,7 +50,7 @@ pub(crate) async fn personal_workspace_scope(
     }
     let unavailable = || {
         ToolError::Failed(
-            "The Dot workspace execution identity is unavailable. Start a new authorized Dot turn."
+            "The agent workspace execution identity is unavailable. Start a new authorized agent turn."
                 .into(),
         )
     };
@@ -315,7 +315,7 @@ impl SandboxClient {
             self.probe_capabilities().await;
             if !self.workspace.load(std::sync::atomic::Ordering::Acquire) {
                 return Err(ToolError::Failed(
-                    "Persistent Dot storage is unavailable. Configure and verify the sandbox runner's persistent storage."
+                    "Persistent agent storage is unavailable. Configure and verify the sandbox runner's persistent storage."
                         .into(),
                 ));
             }
@@ -645,7 +645,7 @@ impl SandboxLease {
         }
         let mut state = self.state.lock().await;
         let container_id = state.container_id.clone().ok_or_else(|| {
-            ToolError::Failed("open the Dot browser before asking for human control".into())
+            ToolError::Failed("open the agent browser before asking for human control".into())
         })?;
         let response = self
             .client

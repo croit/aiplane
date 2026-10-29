@@ -397,7 +397,7 @@ pub async fn connections_put(State(state): State<Arc<RamaState>>, req: Request) 
         return response;
     }
     let body: DotConnectionSelectionBody =
-        match super::read_json_capped(req.into_body(), "the Dot connection selection", 16 * 1024)
+        match super::read_json_capped(req.into_body(), "the agent connection selection", 16 * 1024)
             .await
         {
             Ok(body) => body,
@@ -477,7 +477,7 @@ pub async fn connections_connect(State(state): State<Arc<RamaState>>, req: Reque
         Err(response) => return response,
     };
     let body: DotConnectionVersionBody =
-        match super::read_json_capped(req.into_body(), "the Dot connection version", 16 * 1024)
+        match super::read_json_capped(req.into_body(), "the agent connection version", 16 * 1024)
             .await
         {
             Ok(body) => body,
@@ -539,7 +539,7 @@ pub async fn connections_delete(State(state): State<Arc<RamaState>>, req: Reques
         return response;
     }
     let body: DotConnectionVersionBody =
-        match super::read_json_capped(req.into_body(), "the Dot connection version", 16 * 1024)
+        match super::read_json_capped(req.into_body(), "the agent connection version", 16 * 1024)
             .await
         {
             Ok(body) => body,
@@ -996,7 +996,7 @@ pub async fn create(State(state): State<Arc<RamaState>>, req: Request) -> Respon
         Err(response) => return response,
     };
     let lang = Lang::from_request(req.headers());
-    let body: CreateDotBody = match super::read_json(req.into_body(), "the Dot body").await {
+    let body: CreateDotBody = match super::read_json(req.into_body(), "the agent body").await {
         Ok(body) => body,
         Err(response) => return response,
     };
@@ -1056,7 +1056,7 @@ pub async fn create(State(state): State<Arc<RamaState>>, req: Request) -> Respon
             "active_dot_limit",
             &t(lang, "dot-error-active-limit"),
         ),
-        Ok((DotCreate::Created, None)) => internal("created Dot could not be loaded"),
+        Ok((DotCreate::Created, None)) => internal("created agent could not be loaded"),
         Err(error) => internal(error),
     }
 }
@@ -1611,11 +1611,11 @@ pub async fn access_put(State(state): State<Arc<RamaState>>, req: Request) -> Re
         Ok(target) => target,
         Err(response) => return response,
     };
-    let body: DotAccessBody = match super::read_json(req.into_body(), "the Dot access rules").await
-    {
-        Ok(body) => body,
-        Err(response) => return response,
-    };
+    let body: DotAccessBody =
+        match super::read_json(req.into_body(), "the agent access rules").await {
+            Ok(body) => body,
+            Err(response) => return response,
+        };
     if body.revision != access_revision(&dot.agent.draft_spec) {
         return json_error(
             StatusCode::CONFLICT,
@@ -1720,7 +1720,7 @@ pub async fn set_active(State(state): State<Arc<RamaState>>, req: Request) -> Re
         Ok(target) => target,
         Err(response) => return response,
     };
-    let body: ActiveBody = match super::read_json(req.into_body(), "the Dot state").await {
+    let body: ActiveBody = match super::read_json(req.into_body(), "the agent state").await {
         Ok(body) => body,
         Err(response) => return response,
     };
@@ -2097,11 +2097,11 @@ pub async fn memories_create(State(state): State<Arc<RamaState>>, req: Request) 
     let Some(dot_id) = raw_path_segment(&req, 1) else {
         return bad_request(t(lang, "dot-error-id-missing"));
     };
-    let body = match super::read_json::<DotMemoryBody>(req.into_body(), "the Dot memory body").await
-    {
-        Ok(body) => body,
-        Err(response) => return response,
-    };
+    let body =
+        match super::read_json::<DotMemoryBody>(req.into_body(), "the agent memory body").await {
+            Ok(body) => body,
+            Err(response) => return response,
+        };
     save_memory(&state, &user.id, &dot_id, None, body, lang)
         .await
         .unwrap_or_else(|response| response)
@@ -2114,11 +2114,11 @@ pub async fn memories_update(State(state): State<Arc<RamaState>>, req: Request) 
     else {
         return bad_request(t(lang, "dot-memory-error-id-missing"));
     };
-    let body = match super::read_json::<DotMemoryBody>(req.into_body(), "the Dot memory body").await
-    {
-        Ok(body) => body,
-        Err(response) => return response,
-    };
+    let body =
+        match super::read_json::<DotMemoryBody>(req.into_body(), "the agent memory body").await {
+            Ok(body) => body,
+            Err(response) => return response,
+        };
     save_memory(&state, &user.id, &dot_id, Some(&memory_id), body, lang)
         .await
         .unwrap_or_else(|response| response)

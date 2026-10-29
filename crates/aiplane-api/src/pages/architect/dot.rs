@@ -597,7 +597,7 @@ pub async fn apply_plan(State(state): State<Arc<RamaState>>, req: Request) -> Re
         return not_found(t(lang, "dot-error-not-found"));
     };
     let body: ApplyDotPlanBody =
-        or_return!(super::super::read_json(req.into_body(), "the reviewed Dot plan").await);
+        or_return!(super::super::read_json(req.into_body(), "the reviewed agent plan").await);
     async {
         let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
         let session = owned_session(&state, &mut tx, &user.id, &id, lang).await?;
@@ -720,7 +720,7 @@ pub async fn apply_plan(State(state): State<Arc<RamaState>>, req: Request) -> Re
                     &t(lang, "dot-error-active-limit"),
                 ));
             }
-            _ => return Err(internal("created Dot could not be loaded")),
+            _ => return Err(internal("created agent could not be loaded")),
         };
         architect_sessions::set_agent_in(&mut tx, &id, &agent.principal.id)
             .await
@@ -729,7 +729,7 @@ pub async fn apply_plan(State(state): State<Arc<RamaState>>, req: Request) -> Re
         let dot = agents::get_personal_dot(&state.db, &current.id, &agent.principal.id)
             .await
             .map_err(internal)?
-            .ok_or_else(|| internal("created Dot could not be loaded"))?;
+            .ok_or_else(|| internal("created agent could not be loaded"))?;
         Ok(json_ok(
             StatusCode::CREATED,
             AppliedDotPlan {
@@ -873,7 +873,7 @@ mod tests {
 
     #[test]
     fn personal_plan_names_reject_empty_long_and_control_values() {
-        assert!(valid_name("A named Dot"));
+        assert!(valid_name("A named agent"));
         assert!(!valid_name("  "));
         assert!(!valid_name(&"x".repeat(81)));
         assert!(!valid_name("Clock\n"));

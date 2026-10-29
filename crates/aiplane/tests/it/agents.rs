@@ -1486,7 +1486,7 @@ async fn a_personal_agent_profile_sets_what_its_runs_are_told() {
     assert_eq!(saved["display"], "Harry");
     assert_eq!(
         saved["name"], "Harry",
-        "a Dot name in step with it follows the rename"
+        "an agent name in step with it follows the rename"
     );
     let (status, body) = fx
         .post(&fx.alice, "/api/v0/dots", json!({ "name": "Harald" }))
@@ -1811,7 +1811,7 @@ async fn personal_dot_chat_sessions_are_private_and_remain_dot_owned_when_deacti
         .unwrap()
         .iter()
         .find(|event| event["kind"] == "personal_dot_session_started")
-        .expect("starting a Dot chat is recorded in Dot activity");
+        .expect("starting an agent chat is recorded in agent activity");
     assert_eq!(session_event["principal_id"], dot_id);
     assert_eq!(session_event["actor_id"], "alice");
     assert_eq!(session_event["session_id"], session_id);

@@ -660,10 +660,10 @@ fn display_meta(tool_id: &str) -> Option<(&'static str, &'static str)> {
              look.",
         ),
         "forward_request" => (
-            "Delegate to another Dot",
-            "Lets one of your Dots hand an explicit task to another Dot it may address — \
-             one of your own Dots, or an organization Dot your organization has consented \
-             to receive requests from — and work from the answer. The receiving Dot uses \
+            "Delegate to another agent",
+            "Lets one of your agents hand an explicit task to another agent it may address — \
+             one of your own agents, or an organization agent your organization has consented \
+             to receive requests from — and work from the answer. The receiving agent uses \
              its own tools, memory and approval rules; only the task itself crosses over.",
         ),
         _ => return None,

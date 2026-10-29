@@ -213,7 +213,7 @@ async fn dot_memory_approval(case: DotResumeCase) {
     let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
     let (_, dot) = agents::create_personal_dot(
         &state.db,
-        &system_principals::NewPrincipal { name: "approval-dot", display: "Approval Dot", description: "" },
+        &system_principals::NewPrincipal { name: "approval-dot", display: "Approval agent", description: "" },
         r#"{"main":{"tools":["remember"],"tool_resources":{"remember":{"permission":"always_ask"}}}}"#,
         "alice", 4,
     ).await.unwrap();

@@ -213,8 +213,8 @@ settings-f-usage-currency-help = Moneda en la que se informan los costes.
 
 settings-f-limits-enabled = Aplicar límites y cuotas
 settings-f-limits-enabled-help = Desactivado, las reglas de /admin/limits se ignoran.
-settings-f-dots-max_active_per_user = Dots personales activos por usuario
-settings-f-dots-max_active_per_user-help = Número máximo de Dots personales activos que puede tener un usuario. Valor predeterminado: 4.
+settings-f-dots-max_active_per_user = Agentes personales activos por usuario
+settings-f-dots-max_active_per_user-help = Número máximo de agentes personales activos que puede tener un usuario. Valor predeterminado: 4.
 
 settings-f-feedback-enabled = Ofrecer el widget de comentarios
 settings-f-feedback-enabled-help = Interruptor principal del botón de comentarios de la aplicación.
@@ -301,8 +301,8 @@ settings-f-gateway-default_priority-opt-low = Baja
 settings-f-gateway-default_priority-opt-medium = Media
 settings-f-gateway-default_priority-opt-high = Alta
 
-settings-f-dots-max_active_per_organization = Dots activos por organización
-settings-f-dots-max_active_per_organization-help = Número máximo de Dots activos de una organización, incluidos los que están en espera. Valor predeterminado: 4.
+settings-f-dots-max_active_per_organization = Agentes activos por organización
+settings-f-dots-max_active_per_organization-help = Número máximo de agentes activos de una organización, incluidos los que están en espera. Valor predeterminado: 4.
 
 # Branding — el logotipo de la empresa que sube la persona que administra el
 # sistema. Una tarjeta de administración hecha a mano, no una sección de

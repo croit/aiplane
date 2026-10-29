@@ -169,7 +169,7 @@ fn map_dot_metadata(row: &SqliteRow) -> Result<DotMetadata, DbError> {
         _ => {
             return Err(DbError::Decode {
                 column: "dot_owner",
-                source: anyhow::anyhow!("a Dot requires exactly one owner"),
+                source: anyhow::anyhow!("an agent requires exactly one owner"),
             });
         }
     };
@@ -1757,7 +1757,7 @@ mod tests {
         .await
         .unwrap();
         let (DotCreate::Created, Some(first)) = first else {
-            panic!("first Dot should be created")
+            panic!("first agent should be created")
         };
         assert_eq!(
             create_personal_dot(
@@ -2025,7 +2025,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             saved.name, "Harry",
-            "a Dot name that matched follows the rename"
+            "an agent name that matched follows the rename"
         );
         assert_eq!(saved.agent.principal.display, "Harry");
         assert_eq!(saved.agent.principal.description, "Ceph helper");

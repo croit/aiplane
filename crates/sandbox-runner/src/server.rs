@@ -116,7 +116,7 @@ async fn workspace(State(state): State<Arc<RunnerState>>, req: Request) -> Respo
         Err(_) => {
             return err(
                 StatusCode::BAD_REQUEST,
-                "The workspace request is invalid. Supply the trusted Dot identity and a supported file operation.",
+                "The workspace request is invalid. Supply the trusted agent identity and a supported file operation.",
             );
         }
     };
@@ -125,7 +125,7 @@ async fn workspace(State(state): State<Arc<RunnerState>>, req: Request) -> Respo
             Ok(true) => (StatusCode::NO_CONTENT, ()).into_response(),
             Ok(false) | Err(RunnerError::Busy) => err(
                 StatusCode::CONFLICT,
-                "Dot storage retirement is pending. Retry after container teardown or the next bounded cleanup pass.",
+                "Agent storage retirement is pending. Retry after container teardown or the next bounded cleanup pass.",
             ),
             Err(error) => runner_failure(error),
         };
@@ -185,7 +185,7 @@ async fn workspace(State(state): State<Arc<RunnerState>>, req: Request) -> Respo
         Ok(Ok(response)) => response,
         Ok(Err(RunnerError::Busy)) => err(
             StatusCode::CONFLICT,
-            "The Dot computer is in use. Finish or stop its current turn and wait for confirmed container removal before changing files.",
+            "The agent computer is in use. Finish or stop its current turn and wait for confirmed container removal before changing files.",
         ),
         Ok(Err(error)) => runner_failure(error),
         Err(_) => err(
@@ -220,7 +220,7 @@ fn runner_failure(error: RunnerError) -> Response {
         RunnerError::Busy => err(StatusCode::SERVICE_UNAVAILABLE, "sandbox at capacity"),
         RunnerError::BrowserUnavailable => err(
             StatusCode::GONE,
-            "The Dot browser handover is no longer available. Start a new browser session.",
+            "The agent browser handover is no longer available. Start a new browser session.",
         ),
         RunnerError::NetworkUnavailable => err(
             StatusCode::BAD_REQUEST,
@@ -230,11 +230,11 @@ fn runner_failure(error: RunnerError) -> Response {
         ),
         RunnerError::WorkspaceUnavailable => err(
             StatusCode::SERVICE_UNAVAILABLE,
-            "Persistent Dot storage is unavailable. Configure and verify the runner's persistent storage.",
+            "Persistent agent storage is unavailable. Configure and verify the runner's persistent storage.",
         ),
         RunnerError::WorkspaceMismatch => err(
             StatusCode::CONFLICT,
-            "The container does not belong to this Dot, turn or purpose. Start a new authorized container.",
+            "The container does not belong to this agent, turn or purpose. Start a new authorized container.",
         ),
         RunnerError::Workspace(error) => {
             let status = match &error {

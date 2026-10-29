@@ -17,7 +17,7 @@ pub fn spawn(state: Arc<RamaState>) {
         loop {
             let client = state.sandbox_client();
             if let Err(error) = drain_once(&state.db, client.as_deref(), Timestamp::now()).await {
-                tracing::warn!(error = %error, "Dot workspace cleanup pass failed; queued work remains retryable");
+                tracing::warn!(error = %error, "Agent workspace cleanup pass failed; queued work remains retryable");
             }
             tokio::time::sleep(Duration::from_secs(30)).await;
         }

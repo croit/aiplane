@@ -1534,7 +1534,7 @@ async fn organization_memory_uses_existing_dot_routes_with_actual_scope_metadata
         .post(
             &fx.alice,
             &base,
-            json!({"scope":"dot","kind":"project","content":"Actual isolated Dot lesson"}),
+            json!({"scope":"dot","kind":"project","content":"Actual isolated agent lesson"}),
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{own}");

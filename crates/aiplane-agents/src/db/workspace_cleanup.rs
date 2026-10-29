@@ -297,8 +297,8 @@ mod tests {
             &mut tx,
             &organization.organization.id,
             &NewPrincipal {
-                name: "Organization Dot",
-                display: "Organization Dot",
+                name: "Organization agent",
+                display: "Organization agent",
                 description: "",
             },
             r#"{"main":{}}"#,

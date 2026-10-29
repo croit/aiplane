@@ -20,12 +20,12 @@ Open **Settings → Memory** (`/settings/memory`). The three cards have differen
 
 Select **Add** on the appropriate card, enter the content and save. The add dialog lets you correct the kind before saving. Edit existing text inline and select Save; use Delete and confirm to remove an entry. The browser editor limits each entry to 2,000 characters.
 
-When the memory tools are available, you can also ask the assistant to remember, recall, correct or forget information. Check the memory page to verify the resulting stored entries. Personal Dots keep their own private memory; in a Dot chat, `recall` can read both that Dot's memory and your shared memory. Dot memory writes stay with the Dot, and your shared memories are read-only from a Dot chat. The same Memory permission and setting control whether a Dot can use these tools.
+When the memory tools are available, you can also ask the assistant to remember, recall, correct or forget information. Check the memory page to verify the resulting stored entries. Personal agents keep their own private memory; in an agent chat, `recall` can read both that agent's memory and your shared memory. Agent memory writes stay with the agent, and your shared memories are read-only from an agent chat. The same Memory permission and setting control whether an agent can use these tools.
 
-Manage personal Dot notes in that Dot's Memory panel. New or edited Dot
+Manage personal agent notes in that agent's Memory panel. New or edited agent
 notes are limited to 2,000 UTF-8 bytes, which can be fewer than 2,000 characters.
-Organization Dot memory is separate from your profile; see
-[organization memory](../agent-guide/permissions.md#organization-dot-memory).
+Organization agent memory is separate from your profile; see
+[organization memory](../agent-guide/permissions.md#organization-agent-memory).
 
 Preferences use a bounded standing section: the driver reads up to 50 recent preferences and applies a 3,000-character budget, while keeping at least the first preference. Older or omitted entries can be looked up through recall. Turning Memory off stops its use and standing-context injection; it does not delete the stored entries. Deleting an entry does not remove text already present in earlier chat messages.
 

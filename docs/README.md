@@ -57,7 +57,7 @@ integrations and features vary with each installation's configuration.*
 
 - [AIplane Dots: implemented personal behavior and product specification](dots.md).
 - [Conversational Dot setup and chat participation](dots-conversational-setup.md): implemented personal setup and the design for organization setup, reconfiguration, guided connections and attributed Dot mentions.
-- [Personal Dot scheduled and event-driven work](guide/automation-and-inbox.md#run-scheduled-or-event-driven-work-as-a-dot).
+- [Personal Dot scheduled and event-driven work](guide/automation-and-inbox.md#run-scheduled-or-event-driven-work-as-an-agent).
 - [Organization Dot webhooks](dots-webhooks.md): event-driven private runs with retained published versions, own identities, secret rotation and explicit replay.
 - [Personal Dot files](dots.md#personal-dot-files) and the [workspace design](dots-workspace.md): persistent file storage and Dot-owned browser profiles on supported runner deployments.
 - [Dot identities](dots-identities.md): personal and organization Dot-owned connector identities.

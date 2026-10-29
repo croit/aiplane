@@ -4,10 +4,10 @@ Testing examines the saved draft or a selected published snapshot. Publication c
 
 You need agent-management permission and access to the agent; editing test cases or publishing requires write access. The model, tools, connectors and collections used by a test must be available to its principal.
 
-Organization Dots use the existing draft editor and publication mechanisms.
-An active Dot with an enabled principal can run its saved draft or published version in **Try it →
+Organization agents use the existing draft editor and publication mechanisms.
+An active agent with an enabled principal can run its saved draft or published version in **Try it →
 Test chat** when the initiating member has current Write access. Its model and
-tools run under the Dot's explicit principal grants, without the member's
+tools run under the agent's explicit principal grants, without the member's
 credentials or personal context. With Recall selected and granted, its
 bounded memory context includes its own notes and shared organization knowledge;
 its memory tools can change only its own notes. Pauses can be answered in the
@@ -17,9 +17,9 @@ Current membership and Write access are checked again when responding.
 
 Organization automated test suites, delegation, webhooks and external
 channels are unavailable. Organization scheduled work uses explicit published
-versions; see [schedules and inbox](../guide/automation-and-inbox.md#schedule-work-for-an-organization-dot). Publishing a snapshot does
+versions; see [schedules and inbox](../guide/automation-and-inbox.md#schedule-work-for-an-organization-agent). Publishing a snapshot does
 not enable those callers. Organization membership also narrows share access;
-see [permissions](permissions.md#organization-dot-configuration).
+see [permissions](permissions.md#organization-agent-configuration).
 
 ## Try the saved draft
 
@@ -30,7 +30,7 @@ see [permissions](permissions.md#organization-dot-configuration).
 5. Answer any waiting approval, secure input or human-handoff card using the offered controls.
 6. Use New conversation when the next scenario requires clean state.
 
-![An organization Dot's private draft chat with an actual response and the stopped-turn debug view, using synthetic demo data.](../img/guide/organization-dot-draft-chat.png)
+![An organization agent's private draft chat with an actual response and the stopped-turn debug view, using synthetic demo data.](../img/guide/organization-dot-draft-chat.png)
 
 *A current organization member with Write access tests Harald's saved draft.
 The conversation runs as Harald's principal and remains separate from personal
@@ -54,10 +54,10 @@ source or choose **New conversation** to start fresh. Source changes and reset
 are disabled while sending, running or answering a decision. Reset stops viewing
 the conversation; it does not cancel an existing server-side pause. Use **Stop**
 to cancel the exact running or waiting turn. Stop requires current Write access
-and, for an organization Dot, current membership; it remains available after
-the Dot is deactivated or its execution grants change.
+and, for an organization agent, current membership; it remains available after
+the agent is deactivated or its execution grants change.
 
-![An organization Dot's private published conversation with its captured version, actual answer and stopped-turn debug view.](../img/guide/organization-dot-published-chat.png)
+![An organization agent's private published conversation with its captured version, actual answer and stopped-turn debug view.](../img/guide/organization-dot-published-chat.png)
 
 *A current organization member with Write access uses published version 1.
 Later publication keeps this conversation on its captured version. This example
@@ -65,7 +65,7 @@ uses synthetic demo data.*
 
 ## Inspect an organization scheduled conversation
 
-The Dot's **Scheduled actions** link opens its scoped automation list. A schedule card
+The agent's **Scheduled actions** link opens its scoped automation list. A schedule card
 or run-history link opens Test chat with the recorded `test_session`. The
 conversation remains private to current member writers. Test chat obtains its
 source and published number from the actual history before offering further
@@ -82,7 +82,7 @@ when that authority is unavailable.
 ## Add repeatable test cases
 
 For ordinary agents, open **Try it → Tests** (`?tab=try&sub=tests`).
-Organization Dots provide private draft or published Test chat; automated suites are unavailable.
+Organization agents provide private draft or published Test chat; automated suites are unavailable.
 
 1. Add a named case.
 2. Write its script of visitor messages. Add trusted state writes where the scenario explicitly requires that writer.
