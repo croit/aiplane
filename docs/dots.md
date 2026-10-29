@@ -164,10 +164,13 @@ agent cannot be shared ([`agents.md`](agents.md#shares)).
 `rag_search`, `schedule_action` and `forward_request` (*Ask another agent*) —
 so a new personal agent can research, schedule and delegate before anyone
 opens its **Tools** tab. Each rule comes from the same `default_permission`
-the conversational setup uses: the memory tools and read-only tools are
-allowed, everything else asks before each call. So `forward_request` asks its
-owner once per delegation, and it reaches no other agent until both consents
-of the pair are set ([communication](dots-communication.md)). A tool the owner
+the conversational setup uses: the memory tools, read-only tools and
+`forward_request` are allowed, everything else asks before each call.
+*Chosen:* `forward_request` reaches no other agent until both consents of the
+pair are set ([communication](dots-communication.md)) — that is the owner's
+permission — and the receiver keeps its own rules, so asking again on every
+delegation would only get in the way. The owner can set any of these to Ask,
+or allow scheduling, on the **Tools** tab. A tool the owner
 does not hold is not selected, and every selection is checked against the
 owner's current grants on each call. The conversational setup keeps its
 reviewed proposal and selects only what the proposal shows.

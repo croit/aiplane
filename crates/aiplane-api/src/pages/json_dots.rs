@@ -2241,7 +2241,7 @@ mod defaults_tests {
     #[test]
     fn a_personal_agent_made_by_hand_starts_with_the_starter_tools_its_owner_holds() {
         let read_only = |id: &str| match id {
-            "search_web" => "always_allow",
+            "search_web" | "forward_request" => "always_allow",
             _ => "always_ask",
         };
         let spec = starter_personal_spec(
@@ -2267,7 +2267,7 @@ mod defaults_tests {
         let permission = |id: &str| spec["main"]["tool_resources"][id]["permission"].clone();
         assert_eq!(permission("remember"), "always_allow");
         assert_eq!(permission("search_web"), "always_allow");
-        assert_eq!(permission("forward_request"), "always_ask");
+        assert_eq!(permission("forward_request"), "always_allow");
         assert_eq!(permission("schedule_action"), "always_ask");
         assert!(AgentSpec::from_value(&spec).is_ok());
         assert_eq!(

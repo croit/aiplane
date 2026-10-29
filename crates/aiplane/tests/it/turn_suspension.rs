@@ -372,8 +372,8 @@ async fn personal_dot_resume_rechecks_the_users_enabled_tools() {
 
 /// Two personal agents made the way the product makes them — created by
 /// hand, consents set on their Collaboration tabs — can hand work to each
-/// other with nothing else configured: the starter tools give the caller
-/// "Ask another agent", which asks its owner once before it delegates.
+/// other with nothing else configured and without being asked each time: the
+/// starter tools give the caller "Ask another agent", allowed by default.
 #[tokio::test]
 async fn personal_agents_made_by_hand_delegate_once_both_consents_are_set() {
     use aiplane_agents::db::dot_sessions;
@@ -426,8 +426,8 @@ async fn personal_agents_made_by_hand_delegate_once_both_consents_are_set() {
         .unwrap();
     assert_eq!(forward["selected"], true, "{access}");
     assert_eq!(
-        forward["permission"], "always_ask",
-        "a tool that is not read-only asks first, as in the conversational setup"
+        forward["permission"], "always_allow",
+        "both consents are the permission; it does not ask again per call"
     );
 
     let outbound = router(state.clone())
@@ -479,20 +479,6 @@ async fn personal_agents_made_by_hand_delegate_once_both_consents_are_set() {
             .unwrap()
     );
     let turn_id = submit(&state, &cookie, &session_id).await;
-    wait_for_status(&state, &session_id, &turn_id, TurnStatus::Suspended).await;
-    let pause = chat::get_suspension(&state.db, &turn_id)
-        .await
-        .unwrap()
-        .unwrap();
-    let (status, body) = resume(
-        &state,
-        &cookie,
-        &session_id,
-        &turn_id,
-        json!({"decision": "allow_once", "request_id": pause.request_id}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
     let done = wait_for_status(&state, &session_id, &turn_id, TurnStatus::Completed).await;
     assert_eq!(done.tool_calls.len(), 1);
     assert_eq!(done.tool_calls[0].name, "forward_request");
