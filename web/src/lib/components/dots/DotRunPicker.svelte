@@ -23,7 +23,7 @@
 	{#if value}
 		<p class="label whitespace-normal">{t('dot-background-policy')}</p>
 		{#if selected}
-			<a class="link link-hover text-sm" href={`/dots#dot-${encodeURIComponent(value)}`}>{t('dot-background-configure')}</a>
+			<a class="link link-hover text-sm" href={`/agents/${encodeURIComponent(value)}?tab=automation`}>{t('dot-background-configure')}</a>
 			{#if !selected.active}<p class="text-sm text-warning" role="status">{t('dot-background-inactive-help')}</p>{/if}
 		{:else}<p class="text-sm text-warning" role="status">{t('dot-background-unavailable-help')}</p>{/if}
 	{/if}

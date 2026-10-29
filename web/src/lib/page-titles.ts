@@ -12,7 +12,6 @@ const exactTitles: Record<string, PageTitleDescriptor> = {
 	'/agents': { key: 'agents-heading', branded: true },
 	'/organizations': { key: 'organizations-heading', branded: true },
 	'/admin/organizations': { key: 'organizations-heading', branded: true },
-	'/dots': { key: 'dots-heading', branded: true },
 	'/inbox': { key: 'inbox-heading', branded: true },
 	'/tools/integrations': { key: 'integrations-heading', branded: true },
 	'/tools/skills': { key: 'my-skills-heading', branded: true },

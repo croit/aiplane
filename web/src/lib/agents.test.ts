@@ -493,3 +493,12 @@ test('the agent list asks for every user only when told to', async (context) => 
     await agentsApi.list('all');
     assert.deepEqual(paths, ['/api/v0/agents', '/api/v0/agents?scope=all']);
 });
+
+test('the agent kinds offered for creation follow the permissions and the teams at hand', async () => {
+    const { creatableKinds } = await import('./agents.ts');
+    assert.deepEqual(creatableKinds({ can_manage_dots: true, can_manage_agents: true }, [{}]), ['personal', 'team', 'public']);
+    assert.deepEqual(creatableKinds({ can_manage_dots: true, can_manage_agents: true }, []), ['personal', 'public']);
+    assert.deepEqual(creatableKinds({ can_manage_dots: true }, [{}]), ['personal']);
+    assert.deepEqual(creatableKinds({ can_manage_agents: true }, []), ['public']);
+    assert.deepEqual(creatableKinds(null, [{}]), []);
+});

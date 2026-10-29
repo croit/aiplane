@@ -2870,3 +2870,77 @@ async fn organization_webhook_malformed_mutations_and_invalid_configuration_leav
         }
     }
 }
+
+#[tokio::test]
+async fn a_personal_agent_copied_to_a_team_brings_its_task_but_not_its_memory_or_tools() {
+    let fx = fixture().await;
+    let org = organization(&fx, "Acme Support", &["managers"]).await;
+    let (status, body) = fx
+        .post(
+            &fx.alice,
+            "/api/v0/dots",
+            json!({ "name": "Harald", "description": "Ceph helper" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let personal = body["dot"]["id"].as_str().unwrap().to_string();
+    let (_, profile) = fx
+        .get(&fx.alice, &format!("/api/v0/dots/{personal}/profile"))
+        .await;
+    let (status, body) = fx
+        .put(
+            &fx.alice,
+            &format!("/api/v0/dots/{personal}/profile"),
+            json!({ "revision": profile["revision"], "display": "Harald", "description": "Ceph helper",
+                    "task": "Watch the Ceph cluster.", "topics": ["Ceph"] }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = fx
+        .post(
+            &fx.alice,
+            &format!("/api/v0/dots/{personal}/memories"),
+            json!({ "scope": "dot", "kind": "fact", "content": "The cluster is called prod-1." }),
+        )
+        .await;
+    assert!(status.is_success(), "{body}");
+
+    let (status, created) = fx
+        .post(
+            &fx.alice,
+            &format!("/api/v0/organizations/{}/dots", id(&org)),
+            json!({ "name": "Harald Team", "copy_from": personal }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let team = created["agent"]["id"].as_str().unwrap();
+    assert_eq!(created["agent"]["kind"], "team");
+    assert_eq!(created["agent"]["description"], "Ceph helper");
+    let (_, detail) = fx.get(&fx.alice, &format!("/api/v0/agents/{team}")).await;
+    assert_eq!(
+        detail["agent"]["draft_spec"],
+        json!({ "main": { "instructions": { "orchestration": "Watch the Ceph cluster." } },
+                "scope": { "topics": ["Ceph"] } })
+    );
+    let (status, memories) = fx
+        .get(&fx.alice, &format!("/api/v0/dots/{team}/memories"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{memories}");
+    assert!(
+        !memories.to_string().contains("prod-1"),
+        "a personal agent's memory never moves to a team: {memories}"
+    );
+
+    let (status, body) = fx
+        .post(
+            &fx.bob,
+            &format!("/api/v0/organizations/{}/dots", id(&org)),
+            json!({ "name": "Stolen", "copy_from": personal }),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "only the owner copies a personal agent: {body}"
+    );
+}

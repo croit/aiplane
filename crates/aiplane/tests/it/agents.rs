@@ -1381,6 +1381,183 @@ async fn personal_dots_are_owner_scoped_and_deactivation_frees_capacity() {
 }
 
 #[tokio::test]
+async fn a_user_who_manages_only_personal_agents_lists_just_their_own() {
+    let fx = fixture().await;
+    gateway_groups::upsert_group(&fx.state.db, "dotters", "", false, false)
+        .await
+        .unwrap();
+    gateway_groups::set_can_manage_dots(&fx.state.db, "dotters", true)
+        .await
+        .unwrap();
+    gateway_groups::set_mappings_for_group(&fx.state.db, "dotters", &["dotters".into()])
+        .await
+        .unwrap();
+    fx.state.reload_rbac().await;
+    let dotty = person(&fx.state, "dotty", &["dotters"]).await;
+    fx.create(&fx.alice, "support").await;
+    let (status, body) = fx
+        .post(&dotty, "/api/v0/dots", json!({ "name": "Harald" }))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+
+    let (status, list) = fx.get(&dotty, "/api/v0/agents").await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    let kinds = list["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|agent| {
+            (
+                agent["display"].as_str().unwrap(),
+                agent["kind"].as_str().unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(kinds, [("Harald", "personal")]);
+    let (status, _) = fx
+        .post(&dotty, "/api/v0/agents", json!({ "name": "public" }))
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "creating a public agent still needs agent management"
+    );
+}
+
+#[tokio::test]
+async fn a_personal_agent_profile_sets_what_its_runs_are_told() {
+    let fx = fixture().await;
+    let (status, body) = fx
+        .post(&fx.alice, "/api/v0/dots", json!({ "name": "Harald" }))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let id = body["dot"]["id"].as_str().unwrap().to_string();
+    let path = format!("/api/v0/dots/{id}/profile");
+
+    let (status, profile) = fx.get(&fx.alice, &path).await;
+    assert_eq!(status, StatusCode::OK, "{profile}");
+    assert_eq!(profile["name"], "Harald");
+    assert_eq!(profile["task"], "");
+    assert_eq!(profile["topics"], json!([]));
+    assert_eq!(profile["owner"]["id"], "alice");
+    let revision = profile["revision"].clone();
+
+    let edit = json!({
+        "revision": revision, "display": "Harry", "description": "Keeps an eye on Ceph",
+        "task": "Watch the Ceph cluster.", "tone": "Short sentences.",
+        "topics": ["Ceph", "  ", "Proxmox"]
+    });
+    let (status, saved) = fx.put(&fx.alice, &path, edit.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["display"], "Harry");
+    assert_eq!(saved["name"], "Harald", "the Dot name stays as created");
+    assert_eq!(saved["description"], "Keeps an eye on Ceph");
+    assert_eq!(saved["task"], "Watch the Ceph cluster.");
+    assert_eq!(saved["tone"], "Short sentences.");
+    assert_eq!(saved["topics"], json!(["Ceph", "Proxmox"]));
+    let dot = aiplane_agents::db::agents::get_personal_dot(&fx.state.db, "alice", &id)
+        .await
+        .unwrap()
+        .unwrap();
+    let spec: Value = serde_json::from_str(&dot.agent.draft_spec).unwrap();
+    assert_eq!(
+        spec["main"]["instructions"]["orchestration"],
+        "Watch the Ceph cluster."
+    );
+    assert_eq!(spec["scope"]["topics"], json!(["Ceph", "Proxmox"]));
+    assert!(
+        spec["main"]["tools"].is_array(),
+        "the tool selection is kept: {spec}"
+    );
+
+    let (status, body) = fx.put(&fx.alice, &path, edit).await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "a stale revision is refused: {body}"
+    );
+
+    let cleared = json!({ "revision": saved["revision"], "display": "Harry" });
+    let (status, body) = fx.put(&fx.alice, &path, cleared).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let dot = aiplane_agents::db::agents::get_personal_dot(&fx.state.db, "alice", &id)
+        .await
+        .unwrap()
+        .unwrap();
+    let spec: Value = serde_json::from_str(&dot.agent.draft_spec).unwrap();
+    assert!(spec["main"].get("instructions").is_none(), "{spec}");
+    assert!(spec.get("scope").is_none(), "{spec}");
+
+    let (status, body) = fx.get(&fx.bob, &path).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+#[tokio::test]
+async fn an_admin_changes_another_users_personal_agent_settings_but_not_its_memory() {
+    let fx = fixture().await;
+    let (status, body) = fx
+        .post(&fx.alice, "/api/v0/dots", json!({ "name": "Harald" }))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let id = body["dot"]["id"].as_str().unwrap().to_string();
+
+    let (status, profile) = fx
+        .get(&fx.root, &format!("/api/v0/dots/{id}/profile"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{profile}");
+    assert_eq!(profile["owner"]["email"], "alice@example.com");
+    let (status, body) = fx
+        .put(
+            &fx.root,
+            &format!("/api/v0/dots/{id}/profile"),
+            json!({ "revision": profile["revision"], "display": "Harald", "task": "Answer in German." }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, access) = fx.get(&fx.root, &format!("/api/v0/dots/{id}/access")).await;
+    assert_eq!(status, StatusCode::OK, "{access}");
+    let (status, body) = fx
+        .put(
+            &fx.root,
+            &format!("/api/v0/dots/{id}/active"),
+            json!({ "active": false }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        !aiplane_agents::db::agents::get_personal_dot(&fx.state.db, "alice", &id)
+            .await
+            .unwrap()
+            .unwrap()
+            .active
+    );
+    let audit = aiplane_agents::db::agent_audit::for_principal(&fx.state.db, &id)
+        .await
+        .unwrap();
+    assert!(
+        audit.iter().any(|event| event.kind == "agent_draft_updated"
+            && event.actor_id.as_deref() == Some("root")),
+        "the admin's change is recorded as theirs"
+    );
+
+    for path in [
+        format!("/api/v0/dots/{id}/memories"),
+        format!("/api/v0/dots/{id}/activity"),
+        format!("/api/v0/dots/{id}/communication"),
+        format!("/api/v0/dots/{id}/connections"),
+    ] {
+        let (status, body) = fx.get(&fx.root, &path).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "{path} stays the owner's: {body}"
+        );
+    }
+    let (status, body) = fx.get(&fx.bob, &format!("/api/v0/dots/{id}/access")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+#[tokio::test]
 async fn personal_dot_public_name_is_not_limited_to_a_principal_slug() {
     let fx = fixture().await;
     let (status, body) = fx
@@ -1398,15 +1575,17 @@ async fn personal_dot_public_name_is_not_limited_to_a_principal_slug() {
     let dot_id = body["dot"]["id"].as_str().unwrap();
     let (status, agent_list) = fx.get(&fx.alice, "/api/v0/agents").await;
     assert_eq!(status, StatusCode::OK, "{agent_list}");
-    assert!(
-        !agent_list["agents"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|agent| agent["id"] == dot_id)
-    );
+    let mine = listed(&agent_list, dot_id).expect("the owner's list holds their personal agent");
+    assert_eq!(mine["kind"], "personal");
+    assert_eq!(mine["access"], "write");
+    assert_eq!(mine["display"], "Harald");
+    assert!(listed(&fx.get(&fx.bob, "/api/v0/agents").await.1, dot_id).is_none());
     let (status, body) = fx.get(&fx.alice, &format!("/api/v0/agents/{dot_id}")).await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "a personal agent is edited through its own routes, never the public agent builder: {body}"
+    );
 }
 
 #[tokio::test]

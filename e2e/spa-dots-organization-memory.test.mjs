@@ -48,7 +48,7 @@ test("Organization memory reuses scoped Dot notes with actual reader and writer 
         assert.equal(shared.status(), 201);
         const adminPage = await admin.newPage();
         await adminPage.goto(`${BASE}/agents/${dotId}?tab=setup`, { waitUntil: "networkidle" });
-        const adminPanel = adminPage.locator("details").filter({ has: adminPage.locator("summary").getByText("Dot memory", { exact: true }) });
+        const adminPanel = adminPage.locator("details").filter({ has: adminPage.locator("summary").getByText("Agent memory", { exact: true }) });
         await adminPanel.locator("summary").click();
         const adminShared = adminPanel.getByRole("region", { name: organization.name, exact: true });
         const sharedInput = adminShared.getByRole("textbox", { name: "Content", exact: true });
@@ -62,7 +62,7 @@ test("Organization memory reuses scoped Dot notes with actual reader and writer 
         assert.equal(sharedUpdatedResponse.request().postDataJSON().scope, "organization");
         const page = await member.newPage();
         await page.goto(`${BASE}/agents/${dotId}?tab=setup`, { waitUntil: "networkidle" });
-        const panel = page.locator("details").filter({ has: page.locator("summary").getByText("Dot memory", { exact: true }) });
+        const panel = page.locator("details").filter({ has: page.locator("summary").getByText("Agent memory", { exact: true }) });
         await panel.locator("summary").click();
         const own = panel.getByRole("region", { name: "Harald", exact: true });
         const global = panel.getByRole("region", { name: organization.name, exact: true });
@@ -113,7 +113,7 @@ test("Organization memory reuses scoped Dot notes with actual reader and writer 
             assert.ok(size);
             const entry = {
                 file: capture, route: `/agents/${dotId}?tab=setup`,
-                selector: 'details:has(> summary:text-is("Dot memory"))',
+                selector: 'details:has(> summary:text-is("Agent memory"))',
                 viewport: { width: 1400, height: 950 }, scale: 2,
                 width: Math.round(size.width * 2), height: Math.round(size.height * 2),
                 data: "Synthetic dev-ui fixture; actual Engineering organization Writer without personal Dot management. Existing memory editor shows Harald's editable Dot lesson and actual organization knowledge as read-only, after real scoped writes. Captured by spa-dots-organization-memory.test.mjs with DOCS_ORG_DOT_MEMORY_CAPTURE or DOTS_SCREENSHOT_DIR.",

@@ -229,7 +229,7 @@
 				<div class="alert alert-warning text-sm" role="status"><div><p class="font-medium">{t('dot-setup-unresolved')}</p><ul class="mt-2 list-disc pl-5">{#each [...new Set(unresolved)] as item}<li>{item}</li>{/each}{#each proposal.dropped.filter((item) => !unresolved.includes(item.reason)) as item}<li>{item.item ? `${item.item}: ` : ''}{item.reason}</li>{/each}</ul></div></div>
 			{/if}
 			<div class="card-actions justify-end">
-				{#if dotId}<a class="btn btn-primary" href={`/dots?dot_id=${encodeURIComponent(dotId)}`}>{t('dots-details-open')}</a>{:else}<button class="btn btn-primary" type="button" disabled={!canApply} onclick={() => void applyPlan()}>{#if applying}<span class="loading loading-spinner loading-sm"></span>{/if}{t('dot-setup-apply')}</button>{/if}
+				{#if dotId}<a class="btn btn-primary" href={`/agents/${encodeURIComponent(dotId)}`}>{t('dots-details-open')}</a>{:else}<button class="btn btn-primary" type="button" disabled={!canApply} onclick={() => void applyPlan()}>{#if applying}<span class="loading loading-spinner loading-sm"></span>{/if}{t('dot-setup-apply')}</button>{/if}
 			</div>
 		</div>
 	</section>

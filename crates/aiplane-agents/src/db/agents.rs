@@ -470,6 +470,18 @@ pub async fn set_personal_dot_active(
     active: bool,
     active_limit: u32,
 ) -> Result<bool, DbError> {
+    set_personal_dot_active_by(pool, id, owner_user_id, owner_user_id, active, active_limit).await
+}
+
+/// [`set_personal_dot_active`] by `actor_id`: the owner, or an admin.
+pub async fn set_personal_dot_active_by(
+    pool: &Pool,
+    id: &str,
+    owner_user_id: &str,
+    actor_id: &str,
+    active: bool,
+    active_limit: u32,
+) -> Result<bool, DbError> {
     let mut tx = WriteTx::begin(pool).await?;
     let result = set_dot_active_in(
         &mut tx,
@@ -477,7 +489,7 @@ pub async fn set_personal_dot_active(
         &DotOwner::User(owner_user_id.into()),
         active,
         active_limit,
-        owner_user_id,
+        actor_id,
     )
     .await?;
     tx.commit().await?;
@@ -528,6 +540,23 @@ pub async fn list_personal_dots(
     pool: &Pool,
     owner_user_id: &str,
 ) -> Result<Vec<PersonalDotRow>, DbError> {
+    list_personal_dots_with(pool, owner_user_id).await
+}
+
+pub async fn list_personal_dots_in(
+    tx: &mut WriteTx,
+    owner_user_id: &str,
+) -> Result<Vec<PersonalDotRow>, DbError> {
+    list_personal_dots_with(&mut **tx, owner_user_id).await
+}
+
+async fn list_personal_dots_with<'e, E>(
+    executor: E,
+    owner_user_id: &str,
+) -> Result<Vec<PersonalDotRow>, DbError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let rows = sqlx::query(&format!(
         "SELECT {}, d.owner_user_id, d.name AS dot_name, d.active FROM agents a
          JOIN system_principals p ON p.id = a.principal_id
@@ -536,7 +565,7 @@ pub async fn list_personal_dots(
         agent_cols()
     ))
     .bind(owner_user_id)
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await?;
     rows.iter().map(map_personal_dot).collect()
 }
@@ -913,6 +942,27 @@ pub async fn update_personal_dot_draft(
     expected_spec: &str,
     draft_spec: &str,
 ) -> Result<PersonalDotDraftSaved, DbError> {
+    update_personal_dot_draft_by(
+        pool,
+        id,
+        owner_user_id,
+        owner_user_id,
+        expected_spec,
+        draft_spec,
+    )
+    .await
+}
+
+/// [`update_personal_dot_draft`] by `actor_id`: the owner, or an admin
+/// changing another user's personal agent.
+pub async fn update_personal_dot_draft_by(
+    pool: &Pool,
+    id: &str,
+    owner_user_id: &str,
+    actor_id: &str,
+    expected_spec: &str,
+    draft_spec: &str,
+) -> Result<PersonalDotDraftSaved, DbError> {
     let mut tx = WriteTx::begin(pool).await?;
     let before: Option<String> = sqlx::query_scalar(
         "SELECT a.draft_spec FROM agents a JOIN dots d ON d.principal_id = a.principal_id
@@ -933,12 +983,72 @@ pub async fn update_personal_dot_draft(
         id,
         &before,
         draft_spec,
-        owner_user_id,
+        actor_id,
         DraftChange::default(),
     )
     .await?;
     tx.commit().await?;
     Ok(PersonalDotDraftSaved::Saved)
+}
+
+/// What shows a personal agent to people beside its spec: the name on its
+/// card and in chat, and its description. Its Dot name stays as created.
+pub struct PersonalDotProfile<'a> {
+    pub display: &'a str,
+    pub description: &'a str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersonalDotProfileSaved {
+    Saved,
+    Missing,
+    Conflict,
+}
+
+/// Rename and redescribe personal agent `id` of `owner_user_id` and replace
+/// its draft in one transaction, unless the draft moved on from
+/// `expected_spec`.
+pub async fn update_personal_dot_profile(
+    pool: &Pool,
+    id: &str,
+    owner_user_id: &str,
+    actor_id: &str,
+    expected_spec: &str,
+    draft_spec: &str,
+    profile: &PersonalDotProfile<'_>,
+) -> Result<PersonalDotProfileSaved, DbError> {
+    let mut tx = WriteTx::begin(pool).await?;
+    let before: Option<String> = sqlx::query_scalar(
+        "SELECT a.draft_spec FROM agents a JOIN dots d ON d.principal_id = a.principal_id
+         WHERE a.principal_id = ? AND d.owner_user_id = ?",
+    )
+    .bind(id)
+    .bind(owner_user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(before) = before else {
+        return Ok(PersonalDotProfileSaved::Missing);
+    };
+    if before != expected_spec {
+        return Ok(PersonalDotProfileSaved::Conflict);
+    }
+    sqlx::query("UPDATE system_principals SET display = ?, description = ? WHERE id = ?")
+        .bind(profile.display)
+        .bind(profile.description)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    save_draft(
+        &mut tx,
+        id,
+        &before,
+        draft_spec,
+        actor_id,
+        DraftChange::default(),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(PersonalDotProfileSaved::Saved)
 }
 
 async fn save_draft(
@@ -1791,6 +1901,106 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(audit_kinds(&audit), ["principal_created", "agent_created"]);
+    }
+
+    #[tokio::test]
+    async fn a_personal_agent_profile_renames_redescribes_and_saves_its_draft_together_keeping_its_dot_name()
+     {
+        let pool = pool().await;
+        let now = Timestamp::now();
+        users::upsert(
+            &pool,
+            &User {
+                id: "alice".into(),
+                email: "alice@example.com".into(),
+                name: None,
+                roles: vec![],
+                created_at: now,
+                updated_at: now,
+                timezone: None,
+                speech_voice: None,
+            },
+        )
+        .await
+        .unwrap();
+        let before = r#"{"main":{"tools":[]}}"#;
+        let mut ids = Vec::new();
+        for name in ["Harald", "Erna"] {
+            let (_, dot) = create_personal_dot(
+                &pool,
+                &NewPrincipal {
+                    name,
+                    display: name,
+                    description: "",
+                },
+                before,
+                "alice",
+                4,
+            )
+            .await
+            .unwrap();
+            ids.push(dot.unwrap().principal.id);
+        }
+        let after =
+            r#"{"main":{"tools":[],"instructions":{"orchestration":"Watch the cluster."}}}"#;
+        let profile = |display| PersonalDotProfile {
+            display,
+            description: "Ceph helper",
+        };
+        let save = |owner: &'static str, expected: &'static str, name: &'static str| {
+            let pool = pool.clone();
+            let id = ids[0].clone();
+            async move {
+                update_personal_dot_profile(
+                    &pool,
+                    &id,
+                    owner,
+                    "root",
+                    expected,
+                    after,
+                    &profile(name),
+                )
+                .await
+                .unwrap()
+            }
+        };
+        assert_eq!(
+            save("bob", before, "Harry").await,
+            PersonalDotProfileSaved::Missing
+        );
+        assert_eq!(
+            save("alice", "stale", "Harry").await,
+            PersonalDotProfileSaved::Conflict
+        );
+        assert_eq!(
+            get(&pool, &ids[0]).await.unwrap().unwrap().draft_spec,
+            before,
+            "a refused save changes nothing"
+        );
+        assert_eq!(
+            save("alice", before, "Erna").await,
+            PersonalDotProfileSaved::Saved,
+            "a shown name need not be unique"
+        );
+
+        let saved = get_personal_dot(&pool, "alice", &ids[0])
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.name, "Harald", "the Dot name stays as created");
+        assert_eq!(saved.agent.principal.display, "Erna");
+        assert_eq!(saved.agent.principal.description, "Ceph helper");
+        assert_eq!(saved.agent.draft_spec, after);
+        let audit = agent_audit::for_principal(&pool, &ids[0]).await.unwrap();
+        let last = audit
+            .iter()
+            .find(|event| event.kind == "agent_draft_updated")
+            .unwrap();
+        assert_eq!(
+            last.actor_id.as_deref(),
+            Some("root"),
+            "the change is the actor's"
+        );
     }
 
     #[tokio::test]

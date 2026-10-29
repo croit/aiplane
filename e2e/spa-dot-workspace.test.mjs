@@ -30,10 +30,9 @@ test("Personal Dot workspace persists files, respects availability and supports 
         const workspace = `${BASE}/api/v0/dots/${dotId}/workspace`;
         const route = `/dots/${dotId}/workspace`;
         const page = await context.newPage();
-        await page.goto(`${BASE}/dots`, { waitUntil: "networkidle" });
-        const card = page.locator(`[id="dot-${dotId}"]`);
-        await card.getByRole("button", { name: "Details", exact: true }).click();
-        await card.getByRole("tab", { name: "Workspace", exact: true }).click();
+        await page.goto(`${BASE}/agents/${dotId}`, { waitUntil: "networkidle" });
+        const card = page.getByRole("region", { name: "Agent details", exact: true });
+        await card.getByRole("tab", { name: "Files", exact: true }).click();
         await card.getByRole("link", { name: "Open workspace", exact: true }).click();
         await page.waitForURL((url) => url.pathname === route);
         await page.getByText(dot.display || dot.name, { exact: true }).waitFor();
@@ -81,12 +80,12 @@ test("Personal Dot workspace persists files, respects availability and supports 
         await page.getByText(name, { exact: true }).waitFor();
         await control({ dot_id: dotId, busy: true });
         await page.getByRole("button", { name: "Reload workspace", exact: true }).click();
-        await page.getByText("This Dot is using its workspace. Files may change; upload, folder creation and deletion are available when it is idle.", { exact: true }).waitFor();
+        await page.getByText("This agent is using its workspace. Files may change; upload, folder creation and deletion are available when it is idle.", { exact: true }).waitFor();
         assert.equal(await page.getByRole("button", { name: "Create folder", exact: true }).isDisabled(), true);
         assert.equal(await page.getByRole("button", { name: "Delete", exact: true }).isDisabled(), true);
         await control({ dot_id: dotId, busy: false });
         await page.getByRole("button", { name: "Reload workspace", exact: true }).click();
-        await page.getByText("This Dot is using its workspace. Files may change; upload, folder creation and deletion are available when it is idle.", { exact: true }).waitFor({ state: "hidden" });
+        await page.getByText("This agent is using its workspace. Files may change; upload, folder creation and deletion are available when it is idle.", { exact: true }).waitFor({ state: "hidden" });
         await page.getByRole("button", { name: "Delete", exact: true }).waitFor();
         await page.getByRole("button", { name: "Delete", exact: true }).isEnabled().then((enabled) => assert.equal(enabled, true));
         await page.getByRole("link", { name: "Workspace root", exact: true }).click();
@@ -109,8 +108,8 @@ test("Personal Dot workspace persists files, respects availability and supports 
         await page.getByText("This folder is empty.", { exact: true }).waitFor();
 
         assert.equal((await context.request.put(`${BASE}/api/v0/dots/${dotId}/active`, { data: { active: false } })).status(), 200);
-        await page.goto(`${BASE}/dots`, { waitUntil: "networkidle" });
-        await page.locator(`[id="dot-${dotId}"]`).getByRole("link", { name: "Workspace", exact: true }).click();
+        await page.goto(`${BASE}/agents/${dotId}?tab=workspace`, { waitUntil: "networkidle" });
+        await page.getByRole("region", { name: "Agent details", exact: true }).getByRole("link", { name: "Open workspace", exact: true }).click();
         await page.getByText("This folder is empty.", { exact: true }).waitFor();
         await control({ available: false });
         await page.getByRole("button", { name: "Reload workspace", exact: true }).click();

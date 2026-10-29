@@ -53,5 +53,5 @@ groups-identity-unseen-hint = An einer Gruppe konfiguriert, aber nie übermittel
 groups-identity-empty = Noch keine Claim-Werte. Sie werden bei der Anmeldung erfasst.
 groups-identity-create = Gruppe dafür anlegen
 groups-matrix-section-families = Ganze Familien
-groups-field-manage-dots = Persönliche Dots verwalten
-groups-field-manage-dots-help = Mitglieder können ihre persönlichen Dots erstellen, auflisten, aktivieren und deaktivieren. Administratoren besitzen diese Berechtigung bereits. Sie gewährt keine Agentenverwaltung und keinen Werkzeugzugriff.
+groups-field-manage-dots = Persönliche Agenten verwalten
+groups-field-manage-dots-help = Mitglieder können ihre persönlichen Agenten erstellen, auflisten, aktivieren und deaktivieren. Administratoren besitzen diese Berechtigung bereits. Sie gewährt keine Agentenverwaltung und keinen Werkzeugzugriff.

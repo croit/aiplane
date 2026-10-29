@@ -60,6 +60,22 @@ export function organizationOwner(agent: Pick<AgentSummary, 'owner'> | null | un
     return agent?.owner.kind === 'organization' ? agent.owner : null;
 }
 
+/**
+ * The kinds of agent a person may create, in the order offered: personal
+ * with personal-agent management, team with agent management and a team
+ * that lets them, public with agent management.
+ */
+export function creatableKinds(
+	me: { can_manage_agents?: boolean; can_manage_dots?: boolean } | null | undefined,
+	teams: readonly unknown[]
+): AgentKind[] {
+	const kinds: AgentKind[] = [];
+	if (me?.can_manage_dots) kinds.push('personal');
+	if (me?.can_manage_agents && teams.length) kinds.push('team');
+	if (me?.can_manage_agents) kinds.push('public');
+	return kinds;
+}
+
 /** How an owner is named on screen: their name, else their address, else their id. */
 export function ownerLabel(owner: AgentSummary['owner']): string {
     return owner.kind === 'organization' ? owner.name : (owner.name ?? owner.email ?? owner.id);

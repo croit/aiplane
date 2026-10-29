@@ -358,8 +358,12 @@ Every agent row is one of three kinds, read from its `dots` row
 ### Who sees an agent
 
 `GET /api/v0/agents` is the caller's workspace, admins included: their own
-agents and the ones shared with them `read` or `write`, a personal agent only
-for its owner, a team agent only for a current member. An admin's workspace
+personal agents (with `can_manage_dots`), and with `can_manage_agents` the
+agents shared with them `read` or `write`, a team agent only for a current
+member. Either permission opens the list. A personal agent is listed with
+`write` but edited through its own `/api/v0/dots/{id}/*` routes
+([`dots.md`](dots.md#personal-agent-profile)); the agent builder's routes
+answer `404` for it, and it is never offered as a route or hand-off target. An admin's workspace
 holds no other user's agent. *Chosen (privacy):* another user's personal
 agent in an admin's own list looked like the admin's own and invited changes
 by mistake.

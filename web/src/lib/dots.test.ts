@@ -153,3 +153,15 @@ test('Dot workspace writes raw file bytes and explicit folder and entry paths th
 		{ path: '/api/v0/dots/dot%2Fid/workspace/entry?path=project%2Fnotes.txt', method: 'DELETE', body: undefined, type: null }
 	]);
 });
+
+test('topics are read one per line or comma separated, blanks dropped', async () => {
+    const { parseTopics } = await import('./dots.ts');
+    assert.deepEqual(parseTopics('Ceph, Proxmox\n\n  Chef  \n,'), ['Ceph', 'Proxmox', 'Chef']);
+    assert.deepEqual(parseTopics(''), []);
+});
+
+test('an admin changing another user\'s personal agent gets only its settings tabs', async () => {
+    const { dotDetailTabs } = await import('./dots.ts');
+    assert.deepEqual(dotDetailTabs(false), ['task', 'tools']);
+    assert.deepEqual(dotDetailTabs(true), ['task', 'tools', 'memory', 'activity', 'communication', 'workspace', 'automation']);
+});

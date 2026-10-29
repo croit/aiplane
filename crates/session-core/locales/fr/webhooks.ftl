@@ -100,5 +100,5 @@ webhooks-open-runs = { $count ->
 webhooks-reveal-done = Terminé — retour aux webhooks
 
 webhooks-organization-fresh = Chaque événement démarre une nouvelle conversation privée avec la version publiée sélectionnée, son modèle et ses autorisations d’outils.
-webhooks-organization-tools-toggle-label = Autoriser les outils du Dot
-webhooks-organization-tools-warning = Toute personne disposant de l’URL de déclenchement peut envoyer du contenu que le Dot traite avec la version publiée sélectionnée et ses propres autorisations. Activez les outils uniquement pour un appelant de confiance.
+webhooks-organization-tools-toggle-label = Autoriser les outils de l’agent
+webhooks-organization-tools-warning = Toute personne disposant de l’URL de déclenchement peut envoyer du contenu que l’agent traite avec la version publiée sélectionnée et ses propres autorisations. Activez les outils uniquement pour un appelant de confiance.

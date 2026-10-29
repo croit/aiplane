@@ -375,6 +375,8 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
             "/api/v0/dots/{id}/workspace/entry",
             pages::json_dot_workspace::entry_delete,
         )
+        .with_get("/api/v0/dots/{id}/profile", pages::json_dots::profile_get)
+        .with_put("/api/v0/dots/{id}/profile", pages::json_dots::profile_put)
         .with_get("/api/v0/dots/{id}/access", pages::json_dots::access_get)
         .with_put("/api/v0/dots/{id}/access", pages::json_dots::access_put)
         .with_get(

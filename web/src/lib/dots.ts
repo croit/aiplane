@@ -187,8 +187,60 @@ export const dotAccessApi = {
 		})
 };
 
+/** What a personal agent is called and told to do; `revision` guards a save against a concurrent change. */
+export interface DotProfile {
+	id: string;
+	/** The Dot name it was created with; it does not change. */
+	name: string;
+	/** The name people see on its card and in chat. */
+	display: string;
+	description: string;
+	task: string;
+	tone: string;
+	topics: string[];
+	active: boolean;
+	owner: { id: string; name: string | null; email: string };
+	revision: string;
+}
+
+export type DotProfileBody = Pick<DotProfile, 'revision' | 'display' | 'description' | 'task' | 'tone' | 'topics'>;
+
+export type DotDetailTab = 'task' | 'tools' | 'memory' | 'activity' | 'communication' | 'workspace' | 'automation';
+
+/** Each tab of a personal agent's editor with its label key. */
+export const DOT_DETAIL_TABS: Record<DotDetailTab, string> = {
+	task: 'agents-tab-task',
+	tools: 'dots-tab-access',
+	memory: 'dots-tab-memory',
+	activity: 'dots-tab-activity',
+	communication: 'dots-tab-communication',
+	workspace: 'dots-tab-workspace',
+	automation: 'dots-tab-automation'
+};
+
+/**
+ * The tabs a viewer gets: the owner every one; an admin changing another
+ * user's personal agent only its settings, never its memory, activity,
+ * files, collaboration or automation.
+ */
+export function dotDetailTabs(owner: boolean): DotDetailTab[] {
+	return owner ? (Object.keys(DOT_DETAIL_TABS) as DotDetailTab[]) : ['task', 'tools'];
+}
+
+/** Topics as typed: one per line or separated by commas, blanks dropped. */
+export function parseTopics(text: string): string[] {
+	return text.split(/[\n,]/).map((topic) => topic.trim()).filter(Boolean);
+}
+
 export const dotsApi = {
 	list: () => request<DotList>('/api/v0/dots'),
+	profile: (id: string) => request<DotProfile>(`/api/v0/dots/${encodeURIComponent(id)}/profile`),
+	saveProfile: (id: string, body: DotProfileBody) =>
+		request<DotProfile>(`/api/v0/dots/${encodeURIComponent(id)}/profile`, {
+			method: 'PUT',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(body)
+		}),
 	create: (body: { name: string; display?: string; description?: string }) =>
 		request<{ dot: Dot }>('/api/v0/dots', {
 			method: 'POST',

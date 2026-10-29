@@ -339,7 +339,7 @@ async fn dot_oauth_shared_callback_freezes_owner_and_preserves_explicit_selectio
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(
         location.as_deref(),
-        Some(format!("/dots?dot_id={dot}").as_str())
+        Some(format!("/agents/{dot}?tab=tools").as_str())
     );
     let saved = mcp_connections::get_connection(&fx.state.db, &own(&dot), "workspace")
         .await

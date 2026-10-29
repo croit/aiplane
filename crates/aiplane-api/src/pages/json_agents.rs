@@ -580,7 +580,7 @@ async fn require_valid(
 /// "Who sees an agent"). A non-admin's `scope=all` is ignored, as on the
 /// usage page.
 pub async fn list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let user = or_return!(require_agent_manager(&state, &req).await);
+    let user = or_return!(require_agent_or_dot_manager(&state, &req).await);
     let wants_all = super::query_map(&req).get("scope").map(String::as_str) == Some("all");
     let mut tx = or_return!(
         aiplane_core::server::db::WriteTx::begin(&state.db)
@@ -595,7 +595,12 @@ pub async fn list(State(state): State<Arc<RamaState>>, req: Request) -> Response
             .map(|row| (row, Access::Write))
             .collect()
     } else {
-        or_return!(visible_agents_in(&state, &mut tx, &user.id).await)
+        let may_manage_dots = state.rbac.can_manage_dots(&groups);
+        let mut rows = or_return!(own_personal_agents_in(&mut tx, &user.id, may_manage_dots).await);
+        rows.extend(or_return!(
+            visible_agents_in(&state, &mut tx, &user.id).await
+        ));
+        rows
     };
     let mut agents = or_return!(agent_views_in(&mut tx, &rows).await);
     if !show_all {
@@ -619,6 +624,20 @@ pub struct AgentList {
     /// Whether the caller may ask for `scope=all`.
     pub can_view_all: bool,
     pub agents: Vec<AgentView>,
+}
+
+/// The caller, if they may build agents or personal agents: the list is
+/// where both kinds live.
+async fn require_agent_or_dot_manager(
+    state: &RamaState,
+    req: &Request,
+) -> Result<users::User, Response> {
+    let (_, user) = super::require_session_json(state, req).await?;
+    let role_ids = state.rbac.role_ids_for(&user.roles);
+    if state.rbac.can_manage_agents(&role_ids) || state.rbac.can_manage_dots(&role_ids) {
+        return Ok(user);
+    }
+    require_agent_manager(state, req).await
 }
 
 /// Whether the caller is an admin, and the groups they resolve to.
@@ -673,8 +692,10 @@ async fn attach_share_origins_in(
     Ok(())
 }
 
-/// The agents in `user`'s own workspace, with their access — admins
-/// included: another user's agent reaches an admin only through `scope=all`.
+/// The agents shared with `user`, with their access — admins included:
+/// another user's agent reaches an admin only through `scope=all`. Personal
+/// agents are not among them: no one shares one, and its owner's list adds
+/// it separately.
 pub(super) async fn visible_agents(
     state: &RamaState,
     user: &users::User,
@@ -726,10 +747,28 @@ pub(super) async fn visible_agents_in(
                 && metadata
                     .get(&row.principal.id)
                     .is_none_or(|dot| match &dot.owner {
-                        agents_db::DotOwner::User(owner) => owner == user_id,
+                        agents_db::DotOwner::User(_) => false,
                         agents_db::DotOwner::Organization(id) => memberships.contains(id),
                     })
         })
+        .collect())
+}
+
+/// The caller's own personal agents, when they may manage them: the list
+/// shows them beside the shared ones, nothing else offers them as a target.
+async fn own_personal_agents_in(
+    tx: &mut aiplane_core::server::db::WriteTx,
+    user_id: &str,
+    may_manage: bool,
+) -> Result<Vec<(agents_db::AgentRow, Access)>, Response> {
+    if !may_manage {
+        return Ok(Vec::new());
+    }
+    Ok(agents_db::list_personal_dots_in(tx, user_id)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(|dot| (dot.agent, Access::Write))
         .collect())
 }
 

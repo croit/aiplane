@@ -1,11 +1,15 @@
 <script lang="ts">
 	import Modal from '#lib/components/ui/Modal.svelte';
 	import ArchitectModal from '#lib/components/agents/ArchitectModal.svelte';
+	import ArchitectChat from '#lib/components/agents/ArchitectChat.svelte';
+	import { dotsApi } from '#lib/dots.js';
+	import { organizationsApi, type OrganizationListRow } from '#lib/organizations.js';
+	import { creatableKinds } from '#lib/agents.js';
 	import StatusPill from '#lib/components/ui/StatusPill.svelte';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { agentIdFromName, agentsApi, ownerLabel, type AgentError, type AgentSummary } from '#lib/agents.js';
+	import { agentIdFromName, agentsApi, ownerLabel, type AgentError, type AgentKind, type AgentSummary } from '#lib/agents.js';
 	import { locale, t } from '#lib/i18n.svelte.js';
 	import { me } from '#lib/session.svelte.js';
 
@@ -28,6 +32,11 @@
 	let error = $state<string | null>(null);
 
 	let creating = $state(false);
+	let teams = $state<OrganizationListRow[]>([]);
+	const kinds = $derived(creatableKinds(me.value, teams));
+	let kind = $state<AgentKind>('personal');
+	let team = $state('');
+	let planningPersonal = $state(false);
 	let display = $state('');
 	let customId = $state<string | null>(null);
 	let description = $state('');
@@ -50,7 +59,18 @@
 		}
 	}
 
-	onMount(reload);
+	onMount(() => {
+		void reload();
+		if (me.value?.can_manage_agents)
+			organizationsApi.list().then((result) => (teams = result.organizations.filter((row) => row.can_create_dot)), () => (teams = []));
+	});
+
+	function openCreate() {
+		kind = kinds[0] ?? 'public';
+		team = teams[0]?.id ?? '';
+		createError = null;
+		creating = true;
+	}
 
 	async function changeScope(next: 'self' | 'all') {
 		if (next === scope) return;
@@ -73,8 +93,16 @@
 		busy = true;
 		createError = null;
 		try {
-			const agent = await agentsApi.create({ name: id, display: display.trim(), description });
-			await goto(`/agents/${agent.id}/setup/start`);
+			if (kind === 'personal') {
+				const created = await dotsApi.create({ name: display.trim(), description: description.trim() });
+				await goto(`/agents/${encodeURIComponent(created.dot.id)}`);
+			} else if (kind === 'team') {
+				const created = await organizationsApi.createDot(team, { name: display.trim(), description: description.trim() });
+				await goto(`/agents/${encodeURIComponent(created.agent.id)}/setup/start`);
+			} else {
+				const agent = await agentsApi.create({ name: id, display: display.trim(), description });
+				await goto(`/agents/${agent.id}/setup/start`);
+			}
 		} catch (err) {
 			createError = (err as AgentError).message;
 		} finally {
@@ -97,7 +125,7 @@
 				</div>
 			{/if}
 			<button class="btn btn-sm" type="button" onclick={() => (planning = true)}>🎙 {t('architect-open')}</button>
-			<button class="btn btn-primary btn-sm" type="button" onclick={() => (creating = true)}>{t('agents-create')}</button>
+			{#if kinds.length}<button class="btn btn-primary btn-sm" type="button" onclick={openCreate}>{t('agents-create')}</button>{/if}
 		</div>
 	</header>
 
@@ -158,25 +186,47 @@
 
 {#snippet createActions()}
 	<button class="btn btn-ghost" type="button" onclick={() => (creating = false)}>{t('admin-cancel')}</button>
-	<button class="btn btn-primary" type="submit" form="agent-create" disabled={busy || !display.trim() || !id}>{t('agents-create-submit')}</button>
+	<button class="btn btn-primary" type="submit" form="agent-create" disabled={busy || !display.trim() || (kind === 'public' && !id) || (kind === 'team' && !team)}>{t('agents-create-submit')}</button>
 {/snippet}
 
 <Modal bind:open={creating} title={t('agents-create')} footer={createActions}>
 	<form id="agent-create" class="flex flex-col gap-3" onsubmit={(e) => { e.preventDefault(); void create(); }}>
 		{#if createError}<div class="alert alert-error text-sm" role="alert"><span>{createError}</span></div>{/if}
+		{#if kinds.length > 1}
+			<fieldset class="flex flex-col gap-2">
+				<legend class="label-text mb-1">{t('agents-create-for-whom')}</legend>
+				{#each kinds as option (option)}
+					<label class="flex cursor-pointer items-start gap-3 rounded-box border border-base-300 p-3" class:border-primary={kind === option}>
+						<input id={`agent-kind-${option}`} class="radio radio-sm mt-1" type="radio" name="agent-kind" value={option} bind:group={kind} />
+						<span class="flex flex-col gap-1">
+							<span class="font-medium">{t(`agents-create-kind-${option}`)}</span>
+							<span class="text-xs text-base-content/60">{t(`agents-create-kind-${option}-help`)}</span>
+						</span>
+					</label>
+				{/each}
+			</fieldset>
+		{/if}
+		{#if kind === 'team'}
+			<label class="flex flex-col gap-1">
+				<span class="label-text">{t('agents-copy-team')}</span>
+				<select id="agent-create-team" class="select w-full" bind:value={team}>
+					{#each teams as row (row.id)}<option value={row.id}>{row.name}</option>{/each}
+				</select>
+			</label>
+		{/if}
 		<label class="flex flex-col gap-1">
 			<span class="label-text">{t('agents-create-name')}</span>
 			<!-- svelte-ignore a11y_autofocus -->
 			<input class="input w-full" bind:value={display} required maxlength="80" placeholder={t('agents-create-name-placeholder')} autofocus />
-			<span class="text-xs text-base-content/60">{t('agents-create-name-help')}</span>
+			{#if kind === 'public'}<span class="text-xs text-base-content/60">{t('agents-create-name-help')}</span>{/if}
 		</label>
-		{#if customId !== null}
+		{#if kind === 'public' && customId !== null}
 			<label class="flex flex-col gap-1">
 				<span class="label-text">{t('agents-create-id')}</span>
 				<input class="input input-sm w-full font-mono" bind:value={customId} required maxlength="48" pattern="[a-z0-9]+(-[a-z0-9]+)*" />
 				<span class="text-xs text-base-content/60">{t('agents-create-name-hint')}</span>
 			</label>
-		{:else if display.trim()}
+		{:else if kind === 'public' && display.trim()}
 			<p class="flex flex-wrap items-center gap-2 text-xs text-base-content/60">
 				<span>{t('agents-create-id')}</span><code class="font-mono">{id || '…'}</code>
 				<button class="btn btn-ghost btn-xs" type="button" onclick={() => (customId = id)}>{t('agents-create-id-change')}</button>
@@ -185,10 +235,18 @@
 		<label class="flex flex-col gap-1">
 			<span class="label-text">{t('agents-create-description')}</span>
 			<textarea class="textarea w-full" bind:value={description}></textarea>
-			<span class="text-xs text-base-content/60">{t('agents-create-description-help')}</span>
+			<span class="text-xs text-base-content/60">{t(kind === 'public' ? 'agents-create-description-help' : 'dots-create-description-help')}</span>
 		</label>
-		<button class="btn btn-ghost btn-sm self-start" type="button" onclick={planInstead}>🎙 {t('architect-create-option')}</button>
+		{#if kind === 'personal'}
+			<button class="btn btn-ghost btn-sm self-start" type="button" onclick={() => { creating = false; planningPersonal = true; }}>🎙 {t('dot-setup-title')}</button>
+		{:else if kind === 'public'}
+			<button class="btn btn-ghost btn-sm self-start" type="button" onclick={planInstead}>🎙 {t('architect-create-option')}</button>
+		{/if}
 	</form>
+</Modal>
+
+<Modal bind:open={planningPersonal} title={t('dot-setup-title')} size="lg">
+	<ArchitectChat dotOwner="personal" oncreated={(created) => { planningPersonal = false; void goto(`/agents/${encodeURIComponent(created)}`); }} />
 </Modal>
 
 <ArchitectModal bind:open={planning} onchanged={() => void reload()} />
