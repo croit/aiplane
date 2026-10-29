@@ -7,6 +7,10 @@
 	import { ApiError } from '#lib/api.js';
 
 	let { children }: { children: Snippet } = $props();
+	const id = $derived(page.params.id ?? '');
+	// Asked once per agent: a query change (?tab=, ?test_session=) must not
+	// remount the editor and lose its state.
+	const lookup = $derived(personal(id));
 
 	// A personal agent answers its profile to its owner and to admins; every
 	// other agent answers 404 there and opens in the agent builder.
@@ -20,14 +24,14 @@
 	}
 </script>
 
-{#key page.params.id}
-	{#await personal(page.params.id ?? '')}
+{#key id}
+	{#await lookup}
 		<div class="skeleton h-96 w-full"></div>
 	{:then profile}
 		{#if profile}
 			<PersonalAgentEditor initial={profile} />
 		{:else}
-			<AgentShell id={page.params.id ?? ''}>{@render children()}</AgentShell>
+			<AgentShell {id}>{@render children()}</AgentShell>
 		{/if}
 	{:catch error}
 		<div class="alert alert-error" role="alert"><span>{error.message}</span></div>

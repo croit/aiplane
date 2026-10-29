@@ -124,7 +124,7 @@
 									{#if decision.enabled && decision.counterpartEnabled}<span class="badge badge-outline badge-sm">{t('dot-communication-both')}</span>{/if}
 								</div>
 								{#if organizationControl(peer, direction)}<p class="mt-2 text-xs text-base-content/60">{t('dot-communication-inbound-organization')}</p>
-								{:else}<p class="mt-2 text-xs text-base-content/60">{t(`dot-communication-${direction}-counterpart-${decision.counterpartEnabled ? 'enabled' : 'disabled'}`)}{#if !decision.counterpartEnabled && !peer.cross_organization} <a class="link" href={`/agents/${encodeURIComponent(peer.dot.id)}?tab=communication`}>{t('dot-communication-open-peer', { name: peer.dot.display || peer.dot.name })}</a>{/if}</p>{/if}
+								{:else}<p class="mt-2 text-xs text-base-content/60">{t(`dot-communication-${direction}-counterpart-${decision.counterpartEnabled ? 'enabled' : 'disabled'}`)}{#if !decision.counterpartEnabled && !peer.cross_organization}<a class="link ml-1" href={`/agents/${encodeURIComponent(peer.dot.id)}?tab=communication`}>{t('dot-communication-open-peer', { name: peer.dot.display || peer.dot.name })}</a>{/if}</p>{/if}
 								{#if !currentDot.active || !peer.dot.active}<p class="mt-1 text-xs text-base-content/60">{t('dot-communication-inactive')}</p>{/if}
 								{#if rowErrors[key]}<div class="alert alert-error mt-2 py-2" role="alert"><span class="break-words">{rowErrors[key]}</span></div>{/if}
 							</li>
