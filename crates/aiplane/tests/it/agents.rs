@@ -1112,7 +1112,7 @@ async fn an_agent_shared_with_you_names_who_shared_it_and_when() {
 }
 
 #[tokio::test]
-async fn a_personal_agent_answers_only_its_owner_and_an_admin() {
+async fn a_personal_agent_is_never_served_by_the_agent_builder_or_through_a_share() {
     let fx = fixture().await;
     let (status, body) = fx
         .post(&fx.alice, "/api/v0/dots", json!({ "name": "Harald" }))
@@ -1121,8 +1121,11 @@ async fn a_personal_agent_answers_only_its_owner_and_an_admin() {
     let personal = body["dot"]["id"].as_str().unwrap().to_string();
 
     let (status, body) = fx.share(&fx.root, &personal, "user", "bob", "write").await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
-    assert_eq!(body["error"]["code"], "personal_agent_not_shareable");
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "the agent builder never serves a personal agent: {body}"
+    );
 
     // A share written before personal agents became unshareable must not
     // open the agent to its holder.
@@ -1140,12 +1143,43 @@ async fn a_personal_agent_answers_only_its_owner_and_an_admin() {
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert!(listed(&fx.get(&fx.bob, "/api/v0/agents").await.1, &personal).is_none());
 
+    for path in [
+        format!("/api/v0/agents/{personal}"),
+        format!("/api/v0/system-principals/{personal}"),
+    ] {
+        let (status, body) = fx.get(&fx.root, &path).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body}");
+    }
+    let (status, body) = fx.put_draft(&fx.root, &personal, json!({})).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "a draft written here would skip the owner-grant check: {body}"
+    );
     let (status, body) = fx
-        .get(&fx.root, &format!("/api/v0/agents/{personal}"))
+        .get(&fx.root, &format!("/api/v0/dots/{personal}/profile"))
         .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["agent"]["access"], "write");
-    assert_eq!(body["agent"]["kind"], "personal");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "an admin reaches it on its own routes: {body}"
+    );
+
+    let path = format!("/api/v0/agents/{personal}");
+    let (status, _) = fx.send(Some(&fx.bob), Method::DELETE, &path, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, body) = fx.send(Some(&fx.alice), Method::DELETE, &path, None).await;
+    assert_eq!(
+        status,
+        StatusCode::NO_CONTENT,
+        "its owner deletes it: {body}"
+    );
+    assert!(
+        aiplane_agents::db::agents::get(&fx.state.db, &personal)
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -1450,7 +1484,34 @@ async fn a_personal_agent_profile_sets_what_its_runs_are_told() {
     let (status, saved) = fx.put(&fx.alice, &path, edit.clone()).await;
     assert_eq!(status, StatusCode::OK, "{saved}");
     assert_eq!(saved["display"], "Harry");
-    assert_eq!(saved["name"], "Harald", "the Dot name stays as created");
+    assert_eq!(
+        saved["name"], "Harry",
+        "a Dot name in step with it follows the rename"
+    );
+    let (status, body) = fx
+        .post(&fx.alice, "/api/v0/dots", json!({ "name": "Harald" }))
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "the old name is free again: {body}"
+    );
+    let (_, other) = fx
+        .post(&fx.alice, "/api/v0/dots", json!({ "name": "Erna" }))
+        .await;
+    let other_id = other["dot"]["id"].as_str().unwrap();
+    let (_, other_profile) = fx
+        .get(&fx.alice, &format!("/api/v0/dots/{other_id}/profile"))
+        .await;
+    let (status, body) = fx
+        .put(
+            &fx.alice,
+            &format!("/api/v0/dots/{other_id}/profile"),
+            json!({ "revision": other_profile["revision"], "display": "Harry" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "name_taken");
     assert_eq!(saved["description"], "Keeps an eye on Ceph");
     assert_eq!(saved["task"], "Watch the Ceph cluster.");
     assert_eq!(saved["tone"], "Short sentences.");
@@ -1490,6 +1551,73 @@ async fn a_personal_agent_profile_sets_what_its_runs_are_told() {
 
     let (status, body) = fx.get(&fx.bob, &path).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+#[tokio::test]
+async fn the_task_and_tools_tabs_save_one_after_the_other_without_reloading() {
+    let fx = fixture().await;
+    let (_, body) = fx
+        .post(&fx.alice, "/api/v0/dots", json!({ "name": "Harald" }))
+        .await;
+    let id = body["dot"]["id"].as_str().unwrap().to_string();
+    let (_, profile) = fx
+        .get(&fx.alice, &format!("/api/v0/dots/{id}/profile"))
+        .await;
+    let (_, access) = fx
+        .get(&fx.alice, &format!("/api/v0/dots/{id}/access"))
+        .await;
+
+    let (status, body) = fx
+        .put(
+            &fx.alice,
+            &format!("/api/v0/dots/{id}/profile"),
+            json!({ "revision": profile["revision"], "display": "Harald", "task": "Watch Ceph." }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = fx
+        .put(
+            &fx.alice,
+            &format!("/api/v0/dots/{id}/access"),
+            json!({ "revision": access["revision"], "tools": [] }),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a Task save leaves the Tools revision valid: {body}"
+    );
+    let (status, body) = fx
+        .put(
+            &fx.alice,
+            &format!("/api/v0/dots/{id}/profile"),
+            json!({ "revision": profile["revision"], "display": "Harald", "task": "Stale." }),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "its own earlier save makes it stale: {body}"
+    );
+
+    let (_, profile) = fx
+        .get(&fx.alice, &format!("/api/v0/dots/{id}/profile"))
+        .await;
+    assert_eq!(
+        profile["task"], "Watch Ceph.",
+        "the Tools save kept the task"
+    );
+    let (_, access) = fx
+        .get(&fx.alice, &format!("/api/v0/dots/{id}/access"))
+        .await;
+    assert!(
+        access["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|tool| tool["selected"] == false),
+        "{access}"
+    );
 }
 
 #[tokio::test]

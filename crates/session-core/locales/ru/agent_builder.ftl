@@ -4,7 +4,6 @@
 
 agents-heading = Агенты
 agents-intro = Ваши агенты и агенты, которыми с вами поделились. Личный агент работает только на вас, с вашими инструментами и учётными записями. Командный агент принадлежит организации. Публичный агент отвечает посетителям сайта.
-dots-heading = Личные агенты
 dots-create = Создать агента
 dots-create-name = Имя
 dots-create-display = Отображаемое имя
@@ -60,7 +59,6 @@ agents-create-kind-team = Для моей команды
 agents-create-kind-team-help = Принадлежит организации. Получает собственные инструменты, а участники получают доступ через предоставление доступа.
 agents-create-kind-public = Для посетителей
 agents-create-kind-public-help = После публикации отвечает посетителям сайта или другим агентам по A2A.
-agents-error-personal-not-shareable = Личный агент работает только на своего владельца, и им нельзя поделиться. Для совместной работы создайте командного агента.
 dots-create-submit = Создать
 dots-create-cancel = Отмена
 dots-empty = Пока нет агентов. Создайте первого.
@@ -112,6 +110,7 @@ agents-published = Опубликовано как версия { $version }.
 agents-publish-action = Опубликовать
 agents-delete = Удалить
 agents-delete-confirm = Удалить агента { $name } вместе с его правами, токенами, версиями и доступами? Это нельзя отменить.
+agents-delete-personal-confirm = Удалить личного агента { $name } вместе с его настройками? Это действие нельзя отменить.
 agents-tab-edit = Конструктор
 agents-tab-json = JSON
 agents-tab-grants = Права

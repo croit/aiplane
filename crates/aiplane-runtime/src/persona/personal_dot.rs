@@ -125,7 +125,7 @@ pub async fn initialize_for_turn(
                 None,
                 Frame {
                     principal_id: identity.dot_id,
-                    name: dot.name,
+                    name: dot.agent.principal.display.clone(),
                     version: None,
                     via: None,
                 },

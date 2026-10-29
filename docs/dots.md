@@ -10,8 +10,7 @@ state table, transactional active-slot enforcement, and session-authenticated
 `GET`/`POST /api/v0/dots` plus `PUT /api/v0/dots/{id}/active` endpoints. The
 active cap is an operator setting at `/admin/settings` → Access, defaulting to
 four. In the product a personal Dot is a **personal agent**: the `/agents` list
-shows it under *My agents*, its editor opens at `/agents/{id}`, and `/dots`
-forwards there (`/dots?dot_id=…` to that agent).
+shows it under *My agents* and its editor opens at `/agents/{id}`.
 Lifecycle endpoints require the independent `can_manage_dots` group
 permission; administrators hold it and other groups default to disabled. Each
 card in the agent list shows its name, the *Personal* badge, its active state
@@ -161,23 +160,17 @@ agent cannot be shared ([`agents.md`](agents.md#shares)).
 
 `POST /api/v0/dots` selects, among the tools its owner holds
 (`allowed_tools_for_user`), the memory tools and `STARTER_TOOLS` in
-`json_dots.rs`, so a new personal agent can work as an assistant before
-anyone opens its **Tools** tab:
-
-| Tool | Rule |
-|---|---|
-| `remember`, `recall`, `update_memory`, `forget` | Allow |
-| `get_current_timestamp`, `search_web`, `fetch_url`, `rag_search` | Allow |
-| `list_attachments`, `fetch_attachment`, `ask_user`, `notify_user`, `list_scheduled_actions` | Allow |
-| `schedule_action` | Ask before each call |
-| `forward_request` (*Ask another agent*) | Allow |
-
-*Chosen:* `forward_request` is allowed because it reaches no other agent until
-both consents of the pair are set ([communication](dots-communication.md)),
-and the receiving agent runs with its own tools and approval rules. A tool
-the owner does not hold is not selected, and every selection is checked
-against the owner's current grants on each call. The conversational setup
-keeps its reviewed proposal and selects only what the proposal shows.
+`json_dots.rs` — `get_current_timestamp`, `search_web`, `fetch_url`,
+`rag_search`, `schedule_action` and `forward_request` (*Ask another agent*) —
+so a new personal agent can research, schedule and delegate before anyone
+opens its **Tools** tab. Each rule comes from the same `default_permission`
+the conversational setup uses: the memory tools and read-only tools are
+allowed, everything else asks before each call. So `forward_request` asks its
+owner once per delegation, and it reaches no other agent until both consents
+of the pair are set ([communication](dots-communication.md)). A tool the owner
+does not hold is not selected, and every selection is checked against the
+owner's current grants on each call. The conversational setup keeps its
+reviewed proposal and selects only what the proposal shows.
 
 The model sees each personal agent, and each agent it may ask, by its display
 name, the name people use for it.

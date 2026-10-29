@@ -735,8 +735,9 @@ where
 }
 
 /// For each agent a person holds a share on, directly or through any of
-/// `group_ids`, who gave the most recent of those shares and when. Shares
-/// older than the record name no one and are left out.
+/// `group_ids`, who else gave the most recent of those shares and when.
+/// Shares the person gave themselves, and shares older than the record,
+/// name no one and are left out.
 pub async fn share_origins_in(
     tx: &mut WriteTx,
     user_id: &str,
@@ -745,13 +746,15 @@ pub async fn share_origins_in(
     let (holder, binds) = holder_clause(user_id, group_ids);
     let sql = format!(
         "SELECT s.principal_id, s.granted_by, s.granted_at FROM agent_shares s
-          WHERE {holder} AND s.granted_by IS NOT NULL AND s.granted_at IS NOT NULL
+          WHERE {holder} AND s.granted_by IS NOT NULL AND s.granted_by <> ?
+            AND s.granted_at IS NOT NULL
           ORDER BY s.granted_at"
     );
     let mut query = sqlx::query(&sql);
     for b in &binds {
         query = query.bind(b);
     }
+    query = query.bind(user_id);
     let mut origins = HashMap::new();
     for row in query.fetch_all(&mut **tx).await? {
         origins.insert(
@@ -992,7 +995,9 @@ pub async fn update_personal_dot_draft_by(
 }
 
 /// What shows a personal agent to people beside its spec: the name on its
-/// card and in chat, and its description. Its Dot name stays as created.
+/// card and in chat, and its description. A Dot name that matched the shown
+/// name follows it, so no name hidden behind a rename stays taken; a Dot name
+/// that differed from it from the start stays as it is.
 pub struct PersonalDotProfile<'a> {
     pub display: &'a str,
     pub description: &'a str,
@@ -1003,11 +1008,13 @@ pub enum PersonalDotProfileSaved {
     Saved,
     Missing,
     Conflict,
+    /// Another of the owner's agents already has the name.
+    NameTaken,
 }
 
 /// Rename and redescribe personal agent `id` of `owner_user_id` and replace
 /// its draft in one transaction, unless the draft moved on from
-/// `expected_spec`.
+/// `expected_spec` or another of the owner's agents has the new name.
 pub async fn update_personal_dot_profile(
     pool: &Pool,
     id: &str,
@@ -1031,6 +1038,32 @@ pub async fn update_personal_dot_profile(
     };
     if before != expected_spec {
         return Ok(PersonalDotProfileSaved::Conflict);
+    }
+    let in_step: bool = sqlx::query_scalar(
+        "SELECT d.name = p.display FROM dots d JOIN system_principals p ON p.id = d.principal_id
+         WHERE d.principal_id = ?",
+    )
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if in_step {
+        let taken: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM dots WHERE owner_user_id = ? AND name = ? AND principal_id <> ?)",
+        )
+        .bind(owner_user_id)
+        .bind(profile.display)
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if taken {
+            return Ok(PersonalDotProfileSaved::NameTaken);
+        }
+        sqlx::query("UPDATE dots SET name = ?, updated_at = ? WHERE principal_id = ?")
+            .bind(profile.display)
+            .bind(Timestamp::now().to_string())
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
     }
     sqlx::query("UPDATE system_principals SET display = ?, description = ? WHERE id = ?")
         .bind(profile.display)
@@ -1904,8 +1937,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_personal_agent_profile_renames_redescribes_and_saves_its_draft_together_keeping_its_dot_name()
-     {
+    async fn a_personal_agent_profile_renames_redescribes_and_saves_its_draft_together() {
         let pool = pool().await;
         let now = Timestamp::now();
         users::upsert(
@@ -1979,16 +2011,23 @@ mod tests {
         );
         assert_eq!(
             save("alice", before, "Erna").await,
-            PersonalDotProfileSaved::Saved,
-            "a shown name need not be unique"
+            PersonalDotProfileSaved::NameTaken,
+            "the name of another of the owner's agents"
+        );
+        assert_eq!(
+            save("alice", before, "Harry").await,
+            PersonalDotProfileSaved::Saved
         );
 
         let saved = get_personal_dot(&pool, "alice", &ids[0])
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(saved.name, "Harald", "the Dot name stays as created");
-        assert_eq!(saved.agent.principal.display, "Erna");
+        assert_eq!(
+            saved.name, "Harry",
+            "a Dot name that matched follows the rename"
+        );
+        assert_eq!(saved.agent.principal.display, "Harry");
         assert_eq!(saved.agent.principal.description, "Ceph helper");
         assert_eq!(saved.agent.draft_spec, after);
         let audit = agent_audit::for_principal(&pool, &ids[0]).await.unwrap();

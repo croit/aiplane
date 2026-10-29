@@ -197,7 +197,7 @@ fn localized_plan(mut plan: DotPlan, lang: Lang) -> DotPlan {
     plan
 }
 
-fn supported_tool(
+pub(crate) fn supported_tool(
     state: &RamaState,
     id: &str,
 ) -> Option<Arc<dyn aiplane_runtime::server::tools::Tool>> {
@@ -211,7 +211,9 @@ fn supported_tool(
         .get(id)
 }
 
-fn default_permission(
+/// The rule a newly selected tool starts with: Allow for the default memory
+/// tools and for read-only tools, Ask before each call for everything else.
+pub(crate) fn default_permission(
     defaults: &AgentSpec,
     id: &str,
     tool: Option<&dyn aiplane_runtime::server::tools::Tool>,

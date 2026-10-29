@@ -26,7 +26,7 @@ use aiplane_runtime::rama_server::state::RamaState;
 use aiplane_runtime::server::tools::ToolRegistry;
 use session_core::db as chat;
 
-mod dot;
+pub(crate) mod dot;
 mod tools;
 pub use dot::{AppliedDotPlan, ApplyDotPlanBody, DotPlanReply, apply_plan, get_plan};
 

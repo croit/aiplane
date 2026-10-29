@@ -48,6 +48,15 @@ pub fn replace_tool_access(
     Ok(spec.to_string())
 }
 
+/// The part of `draft` the tool selection edits — its tools and their
+/// rules — as one canonical text: a revision over it changes when the
+/// selection does, not when another part of the draft is saved.
+pub fn tool_access_text(draft: &str) -> Result<String, serde_json::Error> {
+    let spec: serde_json::Value = serde_json::from_str(draft)?;
+    AgentSpec::from_value(&spec)?;
+    Ok(json!([spec["main"]["tools"], spec["main"]["tool_resources"]]).to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

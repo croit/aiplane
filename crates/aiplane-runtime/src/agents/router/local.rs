@@ -338,7 +338,7 @@ pub(super) async fn dispatch_personal(
                     .chain()
                     .enter(Frame {
                         principal_id: request.receiver_dot_id.clone(),
-                        name: dot.name.clone(),
+                        name: dot.agent.principal.display.clone(),
                         version: None,
                         via: Some(CallSite {
                             turn_id: parent_turn.clone(),
@@ -356,7 +356,7 @@ pub(super) async fn dispatch_personal(
                     parent_turn_id: parent_turn,
                     parent_tool_call_id: call,
                     edge_generation: &generation,
-                    title: &dot.name,
+                    title: &dot.agent.principal.display,
                     message: &request.message,
                     model: &model,
                 },

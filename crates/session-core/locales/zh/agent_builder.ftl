@@ -4,7 +4,6 @@
 
 agents-heading = 智能体
 agents-intro = 你的智能体以及与你共享的智能体。个人智能体只为你工作，使用你的工具和账户。团队智能体属于某个组织。公开智能体在网站上回答访客的问题。
-dots-heading = 个人智能体
 dots-create = 创建智能体
 dots-create-name = 名称
 dots-create-display = 显示名称
@@ -60,7 +59,6 @@ agents-create-kind-team = 我的团队
 agents-create-kind-team-help = 属于某个组织。它拥有自己的工具，成员通过共享获得访问权限。
 agents-create-kind-public = 访客
 agents-create-kind-public-help = 发布后在网站上回答访客，或通过 A2A 回答其他智能体。
-agents-error-personal-not-shareable = 个人智能体只为其所有者工作，不能共享。若要共享工作，请创建团队智能体。
 dots-create-submit = 创建
 dots-create-cancel = 取消
 dots-empty = 尚无智能体。创建一个即可开始。
@@ -112,6 +110,7 @@ agents-published = 已发布为版本 { $version }。
 agents-publish-action = 发布
 agents-delete = 删除
 agents-delete-confirm = 删除智能体 { $name } 及其授权、令牌、版本和共享？此操作无法撤销。
+agents-delete-personal-confirm = 删除个人智能体 { $name } 及其设置？此操作无法撤销。
 agents-tab-edit = 构建器
 agents-tab-json = JSON
 agents-tab-grants = 授权

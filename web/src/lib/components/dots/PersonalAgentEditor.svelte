@@ -1,12 +1,13 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { onMount, untrack } from 'svelte';
+	import { untrack } from 'svelte';
 	import Modal from '#lib/components/ui/Modal.svelte';
 	import StatusPill from '#lib/components/ui/StatusPill.svelte';
 	import DotDetailsPanel from './DotDetailsPanel.svelte';
 	import { dotsApi, DOT_DETAIL_TABS, type DotDetailTab, type DotProfile } from '#lib/dots.js';
 	import { organizationsApi, type OrganizationListRow } from '#lib/organizations.js';
+	import { agentsApi } from '#lib/agents.js';
 	import { t } from '#lib/i18n.svelte.js';
 	import { me } from '#lib/session.svelte.js';
 
@@ -27,13 +28,14 @@
 	const initialTab = $derived<DotDetailTab>(requestedTab && requestedTab in DOT_DETAIL_TABS ? (requestedTab as DotDetailTab) : 'task');
 	const ownerName = $derived(profile.owner.name ?? profile.owner.email);
 
-	onMount(async () => {
-		if (!owner || !me.value?.can_manage_agents) return;
-		try {
-			teams = (await organizationsApi.list()).organizations.filter((row) => row.can_create_dot);
-		} catch {
-			teams = [];
-		}
+	let teamsAsked = false;
+	$effect(() => {
+		if (teamsAsked || !owner || !me.value?.can_manage_agents) return;
+		teamsAsked = true;
+		organizationsApi.list().then(
+			(result) => (teams = result.organizations.filter((row) => row.can_create_dot)),
+			() => (teams = [])
+		);
 	});
 
 	async function setActive() {
@@ -45,6 +47,19 @@
 		} catch (caught) {
 			error = (caught as Error).message;
 		} finally {
+			busy = false;
+		}
+	}
+
+	async function remove() {
+		if (!confirm(t('agents-delete-personal-confirm', { name: profile.display || profile.name }))) return;
+		busy = true;
+		error = null;
+		try {
+			await agentsApi.remove(profile.id);
+			await goto('/agents');
+		} catch (caught) {
+			error = (caught as Error).message;
 			busy = false;
 		}
 	}
@@ -85,7 +100,7 @@
 
 <div class="w-full space-y-4">
 	<a class="link link-hover text-sm" href="/agents">← {t('agents-back')}</a>
-	{#if !owner}
+	{#if me.loaded && !owner}
 		<div class="alert alert-warning" role="status"><span>{t('agents-admin-editing', { name: ownerName })}</span></div>
 	{/if}
 	<header class="flex flex-wrap items-start justify-between gap-3">
@@ -105,11 +120,16 @@
 			{#if owner && profile.active}
 				<button class="btn btn-primary btn-sm" type="button" disabled={busy} onclick={() => void openChat()}>{t('dot-action-chat')}</button>
 			{/if}
+			<button class="btn btn-ghost btn-sm text-error" type="button" disabled={busy} onclick={() => void remove()}>{t('agents-delete')}</button>
 		</div>
 	</header>
 	{#if error}<div class="alert alert-error" role="alert"><span>{error}</span></div>{/if}
 
-	<DotDetailsPanel {dot} {profile} {owner} initiallyOpenTab={initialTab} onprofile={(next) => (profile = next)} />
+	{#if me.loaded}
+		<DotDetailsPanel {dot} {profile} {owner} initiallyOpenTab={initialTab} onprofile={(next) => (profile = next)} />
+	{:else}
+		<div class="skeleton h-64 w-full"></div>
+	{/if}
 </div>
 
 {#snippet copyActions()}

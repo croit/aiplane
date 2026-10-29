@@ -398,7 +398,18 @@ pub async fn detail(State(state): State<Arc<RamaState>>, req: Request) -> Respon
             .await
             .map_err(internal)?;
         let can_create_dot = policy.can_manage_agents(&policy.role_ids_for(&current.roles));
-        let visible = super::json_agents::visible_agents_in(&state, &mut tx, &current.id).await?;
+        // An admin member recovers the team's agents here, shared with them or
+        // not, as they hold `write` on each (`docs/agents.md` → "Shares").
+        let visible = if policy.is_admin(&policy.role_ids_for(&current.roles)) {
+            agents::list_all_in(&mut tx)
+                .await
+                .map_err(internal)?
+                .into_iter()
+                .map(|row| (row, agents::Access::Write))
+                .collect()
+        } else {
+            super::json_agents::visible_agents_in(&state, &mut tx, &current.id).await?
+        };
         let ids = visible
             .iter()
             .map(|(row, _)| row.principal.id.clone())

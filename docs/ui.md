@@ -679,7 +679,7 @@ the same way on mount.
 
 Personal Dots are shown as **personal agents** in the one agent list:
 **Workspace → Agents** appears when `GET /api/v0/me` reports
-`can_manage_agents` or `can_manage_dots`, and `/dots` forwards to `/agents`.
+`can_manage_agents` or `can_manage_dots`; there is no separate Dots page.
 The existing group form exposes **Personal Dot manager** independently of
 **Agent manager**, with admin implication and the same save and reset flow.
 List, create and active-state routes enforce the corresponding server

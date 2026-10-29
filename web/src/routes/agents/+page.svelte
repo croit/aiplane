@@ -15,7 +15,9 @@
 
 	let agents = $state<AgentSummary[]>([]);
 	let canViewAll = $state(false);
-	const scope = $derived<'self' | 'all'>(page.url.searchParams.get('scope') === 'all' ? 'all' : 'self');
+	/** What the server answered, not what the URL asked: it ignores a non-admin's `scope=all`. */
+	let scope = $state<'self' | 'all'>('self');
+	const requestedScope = () => (page.url.searchParams.get('scope') === 'all' ? 'all' : 'self');
 	const groups = $derived.by(() => {
 		if (scope === 'all') {
 			const sorted = [...agents].sort((a, b) => ownerLabel(a.owner).localeCompare(ownerLabel(b.owner), locale.current) || (a.display || a.name).localeCompare(b.display || b.name, locale.current));
@@ -49,9 +51,10 @@
 
 	async function reload() {
 		try {
-			const list = await agentsApi.list(scope);
+			const list = await agentsApi.list(requestedScope());
 			agents = list.agents;
 			canViewAll = list.can_view_all;
+			scope = list.scope;
 		} catch (err) {
 			error = (err as AgentError).message;
 		} finally {
@@ -59,10 +62,13 @@
 		}
 	}
 
-	onMount(() => {
-		void reload();
-		if (me.value?.can_manage_agents)
-			organizationsApi.list().then((result) => (teams = result.organizations.filter((row) => row.can_create_dot)), () => (teams = []));
+	onMount(reload);
+
+	let teamsAsked = false;
+	$effect(() => {
+		if (teamsAsked || !me.value?.can_manage_agents) return;
+		teamsAsked = true;
+		organizationsApi.list().then((result) => (teams = result.organizations.filter((row) => row.can_create_dot)), () => (teams = []));
 	});
 
 	function openCreate() {

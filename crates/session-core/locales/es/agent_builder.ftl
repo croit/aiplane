@@ -4,7 +4,6 @@
 
 agents-heading = Agentes
 agents-intro = Tus agentes y los que se han compartido contigo. Un agente personal trabaja solo para ti, con tus herramientas y cuentas. Un agente de equipo pertenece a una organización. Un agente público atiende a los visitantes de un sitio web.
-dots-heading = Agentes personales
 dots-create = Crear agente
 dots-create-name = Nombre
 dots-create-display = Nombre visible
@@ -60,7 +59,6 @@ agents-create-kind-team = Para mi equipo
 agents-create-kind-team-help = Pertenece a una organización. Recibe sus propias herramientas y sus miembros acceden mediante permisos compartidos.
 agents-create-kind-public = Para visitantes
 agents-create-kind-public-help = Atiende a los visitantes de un sitio web o a otros agentes por A2A una vez publicado.
-agents-error-personal-not-shareable = Un agente personal trabaja solo para su propietario y no se puede compartir. Crea un agente de equipo para el trabajo que quieras compartir.
 dots-create-submit = Crear
 dots-create-cancel = Cancelar
 dots-empty = Aún no tienes agentes. Crea uno para empezar.
@@ -112,6 +110,7 @@ agents-published = Publicado como versión { $version }.
 agents-publish-action = Publicar
 agents-delete = Eliminar
 agents-delete-confirm = ¿Eliminar el agente { $name } con sus permisos, tokens, versiones y comparticiones? No se puede deshacer.
+agents-delete-personal-confirm = ¿Eliminar el agente personal { $name } con su configuración? Esta acción no se puede deshacer.
 agents-tab-edit = Constructor
 agents-tab-json = JSON
 agents-tab-grants = Permisos

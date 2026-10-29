@@ -198,9 +198,8 @@ remove its rule before saving; the interface preserves it for review.
 
 A personal agent you create with **New agent** starts with the tools of a
 personal assistant that your account holds: memory, the current time, web
-search, reading web pages, knowledge search, reading chat attachments,
-asking you back, notifying you and listing scheduled work are allowed;
-scheduling new work asks first; **Ask another agent** is allowed and works
+search, reading web pages and knowledge search are allowed; scheduling work
+and **Ask another agent** ask you before each call. Asking another agent works
 once both agents' consents are set (see below). Adjust them on the **Tools**
 tab. Memory writes belong to that agent; user-wide memory remains read-only context.
 If access to organization memory is revoked, its loaded notes are cleared from

@@ -324,9 +324,14 @@ log event on the same transaction (`agent_created`, `agent_draft_updated`,
   one: migration `0088` took each origin from the activity log, the latest
   `agent_share_set` for the subject, else the agent's creation for the
   creator's own share.
-- **A personal agent answers only its owner.** It cannot be shared
-  (`422 personal_agent_not_shareable`), and a share on one never takes effect
-  for its holder. Only an admin reaches another user's personal agent.
+- **A personal agent is never served here.** Every `/api/v0/agents/{id}`
+  and `/api/v0/system-principals/{id}` route answers `404` for it, admins
+  included, so it cannot be shared and a share on one never takes effect. Its
+  owner, and an admin for its settings, use `/api/v0/dots/{id}/*`, which check
+  every tool against the owner's own grants
+  ([`dots.md`](dots.md#administrator-changes)). The runtime's
+  `effective_access` still holds an admin's `write` for the Inbox and
+  resumption.
 - **A share names a subject that exists**: a user id from `users`, or a group
   the RBAC resolver knows (`Resolver::has_group`: database groups and the
   bootstrap admin group). For `read` and

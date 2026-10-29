@@ -89,10 +89,6 @@
       "documentation": "guide/chat.md"
     },
     {
-      "source": "web/src/routes/dots/+page.svelte",
-      "documentation": "dots.md"
-    },
-    {
       "source": "web/src/routes/dots/[id]/workspace/+page.svelte",
       "documentation": "dots.md"
     },

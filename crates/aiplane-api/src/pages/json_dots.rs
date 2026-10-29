@@ -964,34 +964,29 @@ fn personal_spec<'a>(
 
 /// What a personal agent created by hand starts with beyond its memory, each
 /// only when its owner holds the tool (`docs/dots.md` → "Starter tools").
-/// Reading and asking back are allowed; scheduling work asks first. Asking
-/// another agent is allowed because it reaches no one until both agents'
-/// consents are set, and the receiver keeps its own approval rules.
-const STARTER_TOOLS: &[(&str, &str)] = &[
-    ("get_current_timestamp", "always_allow"),
-    ("search_web", "always_allow"),
-    ("fetch_url", "always_allow"),
-    ("rag_search", "always_allow"),
-    ("list_attachments", "always_allow"),
-    ("fetch_attachment", "always_allow"),
-    ("ask_user", "always_allow"),
-    ("notify_user", "always_allow"),
-    ("list_scheduled_actions", "always_allow"),
-    ("schedule_action", "always_ask"),
-    (
-        aiplane_runtime::agents::router::FORWARD_TOOL_NAME,
-        "always_allow",
-    ),
+/// Their rules come from [`default_permission`](super::architect::dot::default_permission),
+/// as in the conversational setup.
+const STARTER_TOOLS: &[&str] = &[
+    "get_current_timestamp",
+    "search_web",
+    "fetch_url",
+    "rag_search",
+    "schedule_action",
+    aiplane_runtime::agents::router::FORWARD_TOOL_NAME,
 ];
 
-/// [`default_personal_spec`] plus the [`STARTER_TOOLS`] the owner holds.
-pub(super) fn starter_personal_spec(allowed: &[String]) -> serde_json::Value {
+/// [`default_personal_spec`] plus the [`STARTER_TOOLS`] the owner holds,
+/// each with the rule `permission` gives it.
+pub(super) fn starter_personal_spec(
+    allowed: &[String],
+    permission: impl Fn(&str) -> &'static str,
+) -> serde_json::Value {
     personal_spec(
         allowed,
         catalog::MEMORY_TOOL_IDS
             .iter()
             .map(|id| (*id, "always_allow"))
-            .chain(STARTER_TOOLS.iter().copied()),
+            .chain(STARTER_TOOLS.iter().map(|id| (*id, permission(id)))),
     )
 }
 
@@ -1020,7 +1015,18 @@ pub async fn create(State(state): State<Arc<RamaState>>, req: Request) -> Respon
         .filter(|s| !s.is_empty())
         .unwrap_or(name);
     let allowed = state.allowed_tools_for_user(&user.roles, &user.id).await;
-    let spec = starter_personal_spec(&allowed).to_string();
+    let defaults = match AgentSpec::from_value(&default_personal_spec(&allowed)) {
+        Ok(defaults) => defaults,
+        Err(error) => return internal(error),
+    };
+    let spec = starter_personal_spec(&allowed, |id| {
+        super::architect::dot::default_permission(
+            &defaults,
+            id,
+            super::architect::dot::supported_tool(&state, id).as_deref(),
+        )
+    })
+    .to_string();
     match agents_db::create_personal_dot(
         &state.db,
         &NewPrincipal {
@@ -1061,8 +1067,32 @@ pub struct DotAccessView {
     pub tools: Vec<DotAccessTool>,
 }
 
+/// The Tools tab's revision: it covers the tool selection only, so a save on
+/// the Task tab does not make the Tools tab's next save stale.
 fn access_revision(draft: &str) -> String {
-    let digest = Sha256::digest(draft.as_bytes());
+    revision_of(
+        &aiplane_runtime::agents::spec::tool_access::tool_access_text(draft)
+            .unwrap_or_else(|_| draft.to_owned()),
+    )
+}
+
+/// The Task tab's revision: it covers what that tab edits, so a save on the
+/// Tools tab does not make the Task tab's next save stale.
+fn profile_revision(display: &str, description: &str, profile: &profile::Profile) -> String {
+    revision_of(
+        &json!([
+            display,
+            description,
+            profile.task,
+            profile.tone,
+            profile.topics
+        ])
+        .to_string(),
+    )
+}
+
+fn revision_of(text: &str) -> String {
+    let digest = Sha256::digest(text.as_bytes());
     let mut revision = String::with_capacity(digest.len() * 2);
     for byte in digest {
         use std::fmt::Write as _;
@@ -1401,6 +1431,11 @@ fn profile_view(
     dot: &agents_db::PersonalDotRow,
 ) -> Result<DotProfileView, Response> {
     let profile = profile::read_profile(&dot.agent.draft_spec).map_err(internal)?;
+    let revision = profile_revision(
+        &dot.agent.principal.display,
+        &dot.agent.principal.description,
+        &profile,
+    );
     Ok(DotProfileView {
         id: dot.agent.principal.id.clone(),
         name: dot.name.clone(),
@@ -1415,7 +1450,7 @@ fn profile_view(
             name: owner.name.clone(),
             email: owner.email.clone(),
         },
-        revision: access_revision(&dot.agent.draft_spec),
+        revision,
     })
 }
 
@@ -1481,7 +1516,17 @@ pub async fn profile_put(State(state): State<Arc<RamaState>>, req: Request) -> R
             &t(lang, "agents-profile-error-too-long"),
         );
     }
-    if body.revision != access_revision(&dot.agent.draft_spec) {
+    let current = match profile::read_profile(&dot.agent.draft_spec) {
+        Ok(current) => current,
+        Err(error) => return internal(error),
+    };
+    if body.revision
+        != profile_revision(
+            &dot.agent.principal.display,
+            &dot.agent.principal.description,
+            &current,
+        )
+    {
         return json_error(
             StatusCode::CONFLICT,
             "conflict",
@@ -1530,6 +1575,11 @@ pub async fn profile_put(State(state): State<Arc<RamaState>>, req: Request) -> R
             StatusCode::CONFLICT,
             "conflict",
             &t(lang, "agents-profile-error-conflict"),
+        ),
+        Ok(agents_db::PersonalDotProfileSaved::NameTaken) => json_error(
+            StatusCode::CONFLICT,
+            "name_taken",
+            &t(lang, "dot-error-name-taken"),
         ),
         Err(error) => internal(error),
     }
@@ -1735,14 +1785,18 @@ pub async fn create_session(State(state): State<Arc<RamaState>>, req: Request) -
     };
     match aiplane_agents::db::dot_sessions::link(&state.db, &user.id, &dot_id, &session.id).await {
         Ok(true) => {
-            if let Err(error) =
-                session_core::db::set_session_title(&state.db, &session.id, &dot.name).await
+            if let Err(error) = session_core::db::set_session_title(
+                &state.db,
+                &session.id,
+                &dot.agent.principal.display,
+            )
+            .await
             {
                 let _ = session_core::db::delete_session(&state.db, &user.id, &session.id).await;
                 return internal(error);
             }
             let mut session = session;
-            session.title = Some(dot.name);
+            session.title = Some(dot.agent.principal.display);
             json_ok(StatusCode::CREATED, json!({ "session": session }))
         }
         Ok(false) => {
@@ -2186,13 +2240,20 @@ mod defaults_tests {
 
     #[test]
     fn a_personal_agent_made_by_hand_starts_with_the_starter_tools_its_owner_holds() {
-        let spec = starter_personal_spec(&[
-            "remember".into(),
-            "search_web".into(),
-            "schedule_action".into(),
-            "forward_request".into(),
-            "company_echo".into(),
-        ]);
+        let read_only = |id: &str| match id {
+            "search_web" => "always_allow",
+            _ => "always_ask",
+        };
+        let spec = starter_personal_spec(
+            &[
+                "remember".into(),
+                "search_web".into(),
+                "schedule_action".into(),
+                "forward_request".into(),
+                "company_echo".into(),
+            ],
+            read_only,
+        );
         assert_eq!(
             spec["main"]["tools"],
             json!([
@@ -2204,10 +2265,14 @@ mod defaults_tests {
             "only tools the owner holds, and nothing outside the starter set"
         );
         let permission = |id: &str| spec["main"]["tool_resources"][id]["permission"].clone();
+        assert_eq!(permission("remember"), "always_allow");
         assert_eq!(permission("search_web"), "always_allow");
-        assert_eq!(permission("forward_request"), "always_allow");
+        assert_eq!(permission("forward_request"), "always_ask");
         assert_eq!(permission("schedule_action"), "always_ask");
         assert!(AgentSpec::from_value(&spec).is_ok());
-        assert_eq!(starter_personal_spec(&[]), default_personal_spec(&[]));
+        assert_eq!(
+            starter_personal_spec(&[], read_only),
+            default_personal_spec(&[])
+        );
     }
 }

@@ -3,7 +3,6 @@
 
 agents-heading = Agents
 agents-intro = Your agents and the agents shared with you. A personal agent works only for you, with your tools and accounts. A team agent belongs to an organization. A public agent answers visitors on a website.
-dots-heading = Personal agents
 dots-create = Create agent
 dots-create-name = Name
 dots-create-display = Display name
@@ -59,7 +58,6 @@ agents-create-kind-team = My team
 agents-create-kind-team-help = Belongs to an organization. It gets its own tools, and its members get access through shares.
 agents-create-kind-public = Visitors
 agents-create-kind-public-help = Answers people on a website or other agents over A2A once you publish it.
-agents-error-personal-not-shareable = A personal agent works only for its owner and cannot be shared. Create a team agent for work you want to share.
 dots-create-submit = Create
 dots-create-cancel = Cancel
 dots-empty = No agents yet. Create one to get started.
@@ -111,6 +109,7 @@ agents-published = Published as version { $version }.
 agents-publish-action = Publish
 agents-delete = Delete
 agents-delete-confirm = Delete the agent { $name }, with its grants, tokens, versions and shares? This cannot be undone.
+agents-delete-personal-confirm = Delete the personal agent { $name } with its settings? This cannot be undone.
 agents-tab-edit = Builder
 agents-tab-json = JSON
 agents-tab-grants = Grants
