@@ -434,6 +434,7 @@ dot-communication-inbound = 接受其请求
 dot-communication-outbound-aria = 可以向 { $name } ({ $id }) 发起请求
 dot-communication-inbound-aria = 接受 { $name } ({ $id }) 的请求
 dot-communication-both = 双方均已同意
+dot-communication-open-peer = 在 { $name } 中设置
 dot-communication-outbound-counterpart-enabled = 此智能体接受你的请求。
 dot-communication-outbound-counterpart-disabled = 此智能体尚未同意接受你的请求。
 dot-communication-inbound-counterpart-enabled = 此智能体可以向你发起请求。

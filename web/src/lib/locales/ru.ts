@@ -1537,6 +1537,7 @@ export const ru: Catalog = {
  "dot-communication-inbound-counterpart-disabled": "Этот агент не может обращаться к вам.",
  "dot-communication-inbound-counterpart-enabled": "Этот агент может обращаться к вам.",
  "dot-communication-inbound-organization": "Организация решает, какие агенты могут обращаться к этому агенту.",
+ "dot-communication-open-peer": "Настроить у агента {name}",
  "dot-communication-outbound": "Может обращаться к",
  "dot-communication-outbound-aria": "Может обращаться к {name} ({id})",
  "dot-communication-outbound-counterpart-disabled": "Этот агент не согласился принимать ваши запросы.",

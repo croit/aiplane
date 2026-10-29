@@ -1521,6 +1521,7 @@ export const es: Catalog = {
  "dot-communication-inbound-counterpart-disabled": "Este agente no puede hacerte solicitudes.",
  "dot-communication-inbound-counterpart-enabled": "Este agente puede hacerte solicitudes.",
  "dot-communication-inbound-organization": "La organización decide quién puede pedir a este agente.",
+ "dot-communication-open-peer": "Configurarlo en {name}",
  "dot-communication-outbound": "Puede solicitar a",
  "dot-communication-outbound-aria": "Puede solicitar a {name} ({id})",
  "dot-communication-outbound-counterpart-disabled": "Este agente no ha aceptado tus solicitudes.",

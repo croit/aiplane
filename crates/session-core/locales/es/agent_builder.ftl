@@ -434,6 +434,7 @@ dot-communication-inbound = Acepta solicitudes de
 dot-communication-outbound-aria = Puede solicitar a { $name } ({ $id })
 dot-communication-inbound-aria = Acepta solicitudes de { $name } ({ $id })
 dot-communication-both = Ambos consentimientos habilitados
+dot-communication-open-peer = Configurarlo en { $name }
 dot-communication-outbound-counterpart-enabled = Este agente acepta tus solicitudes.
 dot-communication-outbound-counterpart-disabled = Este agente no ha aceptado tus solicitudes.
 dot-communication-inbound-counterpart-enabled = Este agente puede hacerte solicitudes.

@@ -1521,6 +1521,7 @@ export const de: Catalog = {
  "dot-communication-inbound-counterpart-disabled": "Dieser Agent darf nicht bei Ihnen anfragen.",
  "dot-communication-inbound-counterpart-enabled": "Dieser Agent darf bei Ihnen anfragen.",
  "dot-communication-inbound-organization": "Die Organisation entscheidet, welche Agenten diesen Agenten fragen dürfen.",
+ "dot-communication-open-peer": "Bei {name} festlegen",
  "dot-communication-outbound": "Kann anfragen",
  "dot-communication-outbound-aria": "Kann {name} ({id}) anfragen",
  "dot-communication-outbound-counterpart-disabled": "Dieser Agent hat Ihre Anfragen nicht akzeptiert.",

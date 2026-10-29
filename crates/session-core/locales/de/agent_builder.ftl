@@ -434,6 +434,7 @@ dot-communication-inbound = Akzeptiert Anfragen von
 dot-communication-outbound-aria = Kann { $name } ({ $id }) anfragen
 dot-communication-inbound-aria = Akzeptiert Anfragen von { $name } ({ $id })
 dot-communication-both = Beide Zustimmungen aktiviert
+dot-communication-open-peer = Bei { $name } festlegen
 dot-communication-outbound-counterpart-enabled = Dieser Agent akzeptiert Ihre Anfragen.
 dot-communication-outbound-counterpart-disabled = Dieser Agent hat Ihre Anfragen nicht akzeptiert.
 dot-communication-inbound-counterpart-enabled = Dieser Agent darf bei Ihnen anfragen.

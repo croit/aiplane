@@ -937,16 +937,62 @@ pub async fn list(State(state): State<Arc<RamaState>>, req: Request) -> Response
 }
 
 pub(super) fn default_personal_spec(allowed: &[String]) -> serde_json::Value {
-    let memory_tools: Vec<_> = catalog::MEMORY_TOOL_IDS
+    personal_spec(
+        allowed,
+        catalog::MEMORY_TOOL_IDS
+            .iter()
+            .map(|id| (*id, "always_allow")),
+    )
+}
+
+/// A personal agent's spec selecting each of `tools` its owner holds, with
+/// its rule.
+fn personal_spec<'a>(
+    allowed: &[String],
+    tools: impl Iterator<Item = (&'a str, &'static str)>,
+) -> serde_json::Value {
+    let held = tools
+        .filter(|(id, _)| allowed.iter().any(|allowed| allowed == id))
+        .collect::<Vec<_>>();
+    let resources: serde_json::Map<String, serde_json::Value> = held
         .iter()
-        .copied()
-        .filter(|id| allowed.iter().any(|allowed| allowed == id))
+        .map(|(id, permission)| ((*id).to_string(), json!({ "permission": permission })))
         .collect();
-    let resources: serde_json::Map<String, serde_json::Value> = memory_tools
-        .iter()
-        .map(|id| ((*id).to_string(), json!({"permission":"always_allow"})))
-        .collect();
-    json!({"main":{"tools":memory_tools,"tool_resources":resources}})
+    let ids = held.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+    json!({"main":{"tools":ids,"tool_resources":resources}})
+}
+
+/// What a personal agent created by hand starts with beyond its memory, each
+/// only when its owner holds the tool (`docs/dots.md` → "Starter tools").
+/// Reading and asking back are allowed; scheduling work asks first. Asking
+/// another agent is allowed because it reaches no one until both agents'
+/// consents are set, and the receiver keeps its own approval rules.
+const STARTER_TOOLS: &[(&str, &str)] = &[
+    ("get_current_timestamp", "always_allow"),
+    ("search_web", "always_allow"),
+    ("fetch_url", "always_allow"),
+    ("rag_search", "always_allow"),
+    ("list_attachments", "always_allow"),
+    ("fetch_attachment", "always_allow"),
+    ("ask_user", "always_allow"),
+    ("notify_user", "always_allow"),
+    ("list_scheduled_actions", "always_allow"),
+    ("schedule_action", "always_ask"),
+    (
+        aiplane_runtime::agents::router::FORWARD_TOOL_NAME,
+        "always_allow",
+    ),
+];
+
+/// [`default_personal_spec`] plus the [`STARTER_TOOLS`] the owner holds.
+pub(super) fn starter_personal_spec(allowed: &[String]) -> serde_json::Value {
+    personal_spec(
+        allowed,
+        catalog::MEMORY_TOOL_IDS
+            .iter()
+            .map(|id| (*id, "always_allow"))
+            .chain(STARTER_TOOLS.iter().copied()),
+    )
 }
 
 pub async fn create(State(state): State<Arc<RamaState>>, req: Request) -> Response {
@@ -974,7 +1020,7 @@ pub async fn create(State(state): State<Arc<RamaState>>, req: Request) -> Respon
         .filter(|s| !s.is_empty())
         .unwrap_or(name);
     let allowed = state.allowed_tools_for_user(&user.roles, &user.id).await;
-    let spec = default_personal_spec(&allowed).to_string();
+    let spec = starter_personal_spec(&allowed).to_string();
     match agents_db::create_personal_dot(
         &state.db,
         &NewPrincipal {
@@ -2136,5 +2182,32 @@ mod defaults_tests {
                 .is_empty()
         );
         assert!(AgentSpec::from_value(&spec).is_ok());
+    }
+
+    #[test]
+    fn a_personal_agent_made_by_hand_starts_with_the_starter_tools_its_owner_holds() {
+        let spec = starter_personal_spec(&[
+            "remember".into(),
+            "search_web".into(),
+            "schedule_action".into(),
+            "forward_request".into(),
+            "company_echo".into(),
+        ]);
+        assert_eq!(
+            spec["main"]["tools"],
+            json!([
+                "remember",
+                "search_web",
+                "schedule_action",
+                "forward_request"
+            ]),
+            "only tools the owner holds, and nothing outside the starter set"
+        );
+        let permission = |id: &str| spec["main"]["tool_resources"][id]["permission"].clone();
+        assert_eq!(permission("search_web"), "always_allow");
+        assert_eq!(permission("forward_request"), "always_allow");
+        assert_eq!(permission("schedule_action"), "always_ask");
+        assert!(AgentSpec::from_value(&spec).is_ok());
+        assert_eq!(starter_personal_spec(&[]), default_personal_spec(&[]));
     }
 }

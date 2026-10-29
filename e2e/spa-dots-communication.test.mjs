@@ -71,7 +71,9 @@ test("Personal Dot communication saves directed consent, preserves stale drafts 
         const outgoingCheckbox = outgoing.getByRole("checkbox", { name: `Can ask Clara (${clara.id})`, exact: true });
         assert.equal(await outgoingCheckbox.isChecked(), false);
         assert.equal(await panel(harald).getByRole("button", { name: "Save changes", exact: true }).count(), 0);
-        await outgoing.getByText("This agent has not accepted your requests.", { exact: true }).waitFor();
+        await outgoing.getByText(/^This agent has not accepted your requests\./).waitFor();
+        assert.equal(await outgoing.getByRole("link", { name: "Set it on Clara", exact: true }).getAttribute("href"),
+            `/agents/${clara.id}?tab=communication`, "the counterpart choice is one click away");
         await outgoingCheckbox.check();
         const firstSave = await save(harald, "Can ask", clara);
         assert.deepEqual(firstSave.request().postDataJSON(), { peer_id: clara.id, direction: "outbound", enabled: true, expected_generation: null });
@@ -84,7 +86,7 @@ test("Personal Dot communication saves directed consent, preserves stale drafts 
         await open(clara);
         const accepts = row(clara, "Accepts requests from", harald);
         const acceptsCheckbox = accepts.getByRole("checkbox", { name: `Accepts requests from Harald (${harald.id})`, exact: true });
-        await accepts.getByText("This agent is allowed to ask you.", { exact: true }).waitFor();
+        await accepts.getByText(/^This agent is allowed to ask you\./).waitFor();
         await acceptsCheckbox.check();
         const acceptance = await save(clara, "Accepts requests from", harald);
         assert.deepEqual(acceptance.request().postDataJSON(), { peer_id: harald.id, direction: "inbound", enabled: true, expected_generation: haraldStored.outgoing.generation });

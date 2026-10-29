@@ -38,9 +38,10 @@ Dot memory has a separate store and owner-scoped API, but automatic memory
 curation is not implemented. A personal Dot can start a private chat that
 reads bounded Dot memory and the user's existing profile context. Its chat
 uses the tools selected in its Access and approvals panel, intersected with
-the user's current grants, enabled settings and connected MCP tools. Existing
-memory tools are selected at creation when granted and enabled; their writes
-remain isolated to the Dot. Schedules and webhooks can run with the same personal Dot context and durable approvals.
+the user's current grants, enabled settings and connected MCP tools. A personal
+agent created by hand starts with the [starter tools](#starter-tools) its
+owner holds; memory writes remain isolated to the Dot. Schedules and webhooks
+can run with the same personal Dot context and durable approvals.
 
 | Endpoint | Behavior |
 |---|---|
@@ -155,6 +156,31 @@ editor shows such an administrator only **Task** and **Tools** with a notice
 naming the owner. Memory, activity, communication, connections, files,
 sessions and runs stay owner-only and answer `404` to everyone else. A personal
 agent cannot be shared ([`agents.md`](agents.md#shares)).
+
+## Starter tools
+
+`POST /api/v0/dots` selects, among the tools its owner holds
+(`allowed_tools_for_user`), the memory tools and `STARTER_TOOLS` in
+`json_dots.rs`, so a new personal agent can work as an assistant before
+anyone opens its **Tools** tab:
+
+| Tool | Rule |
+|---|---|
+| `remember`, `recall`, `update_memory`, `forget` | Allow |
+| `get_current_timestamp`, `search_web`, `fetch_url`, `rag_search` | Allow |
+| `list_attachments`, `fetch_attachment`, `ask_user`, `notify_user`, `list_scheduled_actions` | Allow |
+| `schedule_action` | Ask before each call |
+| `forward_request` (*Ask another agent*) | Allow |
+
+*Chosen:* `forward_request` is allowed because it reaches no other agent until
+both consents of the pair are set ([communication](dots-communication.md)),
+and the receiving agent runs with its own tools and approval rules. A tool
+the owner does not hold is not selected, and every selection is checked
+against the owner's current grants on each call. The conversational setup
+keeps its reviewed proposal and selects only what the proposal shows.
+
+The model sees each personal agent, and each agent it may ask, by its display
+name, the name people use for it.
 
 ## Personal Dot files
 

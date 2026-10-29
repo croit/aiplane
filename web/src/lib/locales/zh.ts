@@ -1506,6 +1506,7 @@ export const zh: Catalog = {
  "dot-communication-inbound-counterpart-disabled": "此智能体不可以向你发起请求。",
  "dot-communication-inbound-counterpart-enabled": "此智能体可以向你发起请求。",
  "dot-communication-inbound-organization": "由组织决定哪些智能体可以向该智能体提出请求。",
+ "dot-communication-open-peer": "在 {name} 中设置",
  "dot-communication-outbound": "可以向其发起请求",
  "dot-communication-outbound-aria": "可以向 {name} ({id}) 发起请求",
  "dot-communication-outbound-counterpart-disabled": "此智能体尚未同意接受你的请求。",

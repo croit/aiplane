@@ -196,8 +196,13 @@ remove its rule before saving; the interface preserves it for review.
 
 ![A personal Dot’s access and action rules](../img/guide/dot-action-rules.png)
 
-New Dots select the existing memory tools with Allow when available to your
-account. Memory writes belong to that Dot; user-wide memory remains read-only context.
+A personal agent you create with **New agent** starts with the tools of a
+personal assistant that your account holds: memory, the current time, web
+search, reading web pages, knowledge search, reading chat attachments,
+asking you back, notifying you and listing scheduled work are allowed;
+scheduling new work asks first; **Ask another agent** is allowed and works
+once both agents' consents are set (see below). Adjust them on the **Tools**
+tab. Memory writes belong to that agent; user-wide memory remains read-only context.
 If access to organization memory is revoked, its loaded notes are cleared from
 the panel when the next request is refused.
 Read-only tools default to Allow when you select them. Other writes and tools with
@@ -229,8 +234,8 @@ availability](../dots-workspace.md#operator-implications).
 
 Open a personal agent from **Agents** and select **Collaboration**. **Can ask** controls its outgoing
 consent to each actual owned peer. **Accepts requests from** controls which
-peers it accepts requests from. The counterpart choice is read-only; configure
-it on the other agent's **Collaboration** tab. Save each changed row separately. **Both consents
+peers it accepts requests from. The counterpart choice is read-only; the link
+next to it opens the other agent's **Collaboration** tab to set it there. Save each changed row separately. **Both consents
 enabled** means both persisted choices allow that direction. Reverse
 communication needs separate choices.
 
