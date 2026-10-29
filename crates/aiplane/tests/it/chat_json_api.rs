@@ -1537,6 +1537,22 @@ async fn cancelling_one_conversation_leaves_the_other_running() {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::ACCEPTED);
     }
+    // Cancel only once both turns are streaming: a turn cancelled before its
+    // request leaves stops at once and deregisters, which on a slow runner
+    // races the lookup below.
+    let streaming = wait_until(|| async {
+        upstream
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|request| serde_json::from_slice::<Value>(&request.body).ok())
+            .filter(|body| body["stream"] == true)
+            .count()
+            >= 2
+    })
+    .await;
+    assert!(streaming, "both turns reached the upstream");
 
     let cancel = app
         .serve(json_req(
