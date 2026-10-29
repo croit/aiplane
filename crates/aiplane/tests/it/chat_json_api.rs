@@ -1015,7 +1015,10 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
         .filter(|message| message["role"] == "system")
         .map(|message| message["content"].as_str().unwrap_or_default())
         .collect::<String>();
-    assert!(system.contains("named \"memory-dot\""), "{system}");
+    assert!(
+        system.contains("named \"Memory Dot\""),
+        "the model knows the agent by the name people use for it: {system}"
+    );
     assert!(
         system.contains("prefers concise replies"),
         "the Dot receives the user's shared preference: {system}"

@@ -33,9 +33,8 @@ test("Personal Dot communication saves directed consent, preserves stale drafts 
         assert.ok(initial.peers.every((peer) => peer.dot.id !== harald.id));
         assert.deepEqual(initial.peers.find((peer) => peer.dot.id === clara.id).outgoing,
             { outbound_enabled: false, inbound_enabled: false, generation: null });
-        await page.goto(`${BASE}/dots`, { waitUntil: "networkidle" });
-        function panel(dot) {
-            return page.locator(`[id="dot-${dot.id}"]`).getByRole("tabpanel", { name: "Communication", exact: true });
+        function panel() {
+            return page.getByRole("region", { name: "Agent details", exact: true }).getByRole("tabpanel", { name: "Collaboration", exact: true });
         }
         function section(dot, title) {
             return panel(dot).getByRole("region", { name: title, exact: true });
@@ -44,11 +43,9 @@ test("Personal Dot communication saves directed consent, preserves stale drafts 
             return section(dot, title).locator("li").filter({ has: page.locator(`[title="${peer.id}"]`) });
         }
         async function open(dot) {
-            const card = page.locator(`[id="dot-${dot.id}"]`);
-            if (await card.getByRole("button", { name: "Details", exact: true }).count()) {
-                await card.getByRole("button", { name: "Details", exact: true }).click();
+            if (new URL(page.url()).pathname !== `/agents/${dot.id}`) {
+                await page.goto(`${BASE}/agents/${dot.id}?tab=communication`, { waitUntil: "networkidle" });
             }
-            await card.getByRole("tab", { name: "Communication", exact: true }).click();
             await section(dot, "Can ask").getByRole("checkbox").first().waitFor();
         }
         async function save(dot, title, peer, expectedStatus = 200) {
@@ -74,7 +71,9 @@ test("Personal Dot communication saves directed consent, preserves stale drafts 
         const outgoingCheckbox = outgoing.getByRole("checkbox", { name: `Can ask Clara (${clara.id})`, exact: true });
         assert.equal(await outgoingCheckbox.isChecked(), false);
         assert.equal(await panel(harald).getByRole("button", { name: "Save changes", exact: true }).count(), 0);
-        await outgoing.getByText("This Dot has not accepted your requests.", { exact: true }).waitFor();
+        await outgoing.getByText(/^This agent has not accepted your requests\./).waitFor();
+        assert.equal(await outgoing.getByRole("link", { name: "Set it on Clara", exact: true }).getAttribute("href"),
+            `/agents/${clara.id}?tab=communication`, "the counterpart choice is one click away");
         await outgoingCheckbox.check();
         const firstSave = await save(harald, "Can ask", clara);
         assert.deepEqual(firstSave.request().postDataJSON(), { peer_id: clara.id, direction: "outbound", enabled: true, expected_generation: null });
@@ -87,7 +86,7 @@ test("Personal Dot communication saves directed consent, preserves stale drafts 
         await open(clara);
         const accepts = row(clara, "Accepts requests from", harald);
         const acceptsCheckbox = accepts.getByRole("checkbox", { name: `Accepts requests from Harald (${harald.id})`, exact: true });
-        await accepts.getByText("This Dot is allowed to ask you.", { exact: true }).waitFor();
+        await accepts.getByText(/^This agent is allowed to ask you\./).waitFor();
         await acceptsCheckbox.check();
         const acceptance = await save(clara, "Accepts requests from", harald);
         assert.deepEqual(acceptance.request().postDataJSON(), { peer_id: harald.id, direction: "inbound", enabled: true, expected_generation: haraldStored.outgoing.generation });
@@ -143,7 +142,7 @@ test("Personal Dot communication saves directed consent, preserves stale drafts 
         await reload(harald);
         await outgoing.getByText("Inactive", { exact: true }).waitFor();
         assert.equal(await outgoingCheckbox.isDisabled(), true);
-        await panel(harald).getByRole("textbox", { name: "Search Dots by name or ID", exact: true }).fill(clara.id.toUpperCase());
+        await panel(harald).getByRole("textbox", { name: "Search agents by name or ID", exact: true }).fill(clara.id.toUpperCase());
         await outgoingCheckbox.waitFor();
         assert.equal(await outgoing.locator(`[title="${clara.id}"]`).getAttribute("title"), clara.id);
         await reload(clara);

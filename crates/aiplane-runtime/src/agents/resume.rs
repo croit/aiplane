@@ -1214,7 +1214,7 @@ async fn run_personal_children_inner(
                 .chain()
                 .enter(Frame {
                     principal_id: dot.agent.principal.id.clone(),
-                    name: dot.name,
+                    name: dot.agent.principal.display.clone(),
                     version: None,
                     via: Some(CallSite {
                         turn_id: link.parent_turn_id.clone(),

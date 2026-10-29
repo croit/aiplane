@@ -28,7 +28,11 @@ async fn personal_dot_access_is_owner_scoped_and_records_spec_revisions() {
         .iter()
         .find(|tool| tool["id"] == TIME)
         .unwrap();
-    assert_eq!(tool["selected"], false);
+    assert_eq!(
+        tool["selected"], true,
+        "a personal agent made by hand starts with the current time"
+    );
+    assert_eq!(tool["permission"], "always_allow");
     assert!(!tool["description"].as_str().unwrap().is_empty());
     assert_eq!(fx.get(&fx.bob, &url).await.0, StatusCode::NOT_FOUND);
     assert_eq!(
@@ -91,8 +95,8 @@ async fn personal_dot_access_rejects_a_stale_editor_before_replacing_newer_rules
     let stale_revision = access_revision(&fx, &fx.alice, &url).await;
     let newer = json!({
         "main": {
-            "tools": [TIME],
-            "tool_resources": {TIME: {"permission": "always_allow"}}
+            "tools": [],
+            "tool_resources": {}
         }
     });
     aiplane_agents::db::agents::update_draft(
@@ -161,7 +165,11 @@ async fn personal_dot_access_rejects_unknown_duplicate_and_invalid_permissions()
         .unwrap()
         .unwrap();
     let spec: serde_json::Value = serde_json::from_str(&dot.agent.draft_spec).unwrap();
-    assert_eq!(spec["main"]["tools"], json!([]));
+    assert_eq!(
+        spec["main"]["tools"],
+        json!([TIME]),
+        "a refused save keeps the starter selection"
+    );
 }
 
 #[tokio::test]
@@ -171,6 +179,16 @@ async fn personal_dot_access_cannot_select_a_user_disabled_tool() {
         .post(&fx.alice, "/api/v0/dots", json!({"name":"Disabled"}))
         .await;
     let id = created["dot"]["id"].as_str().unwrap();
+    let revision = access_revision(&fx, &fx.alice, &format!("/api/v0/dots/{id}/access")).await;
+    let (status, cleared) = fx
+        .send(
+            Some(&fx.alice),
+            Method::PUT,
+            &format!("/api/v0/dots/{id}/access"),
+            Some(json!({"revision": revision, "tools": []})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{cleared}");
     aiplane_core::server::db::user_tool_prefs::set(&fx.state.db, "alice", TIME, false)
         .await
         .unwrap();

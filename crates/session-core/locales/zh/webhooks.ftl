@@ -94,5 +94,5 @@ webhooks-open-runs = { $count } 次运行
 webhooks-reveal-done = 完成 — 返回 Webhook 列表
 
 webhooks-organization-fresh = 每个事件都会使用所选已发布版本、其模型和工具权限，开始一段新的私密对话。
-webhooks-organization-tools-toggle-label = 允许 Dot 使用工具
-webhooks-organization-tools-warning = 任何持有触发 URL 的人都可以发送内容，Dot 会使用所选已发布版本和自身权限处理这些内容。仅为可信调用方启用工具。
+webhooks-organization-tools-toggle-label = 允许智能体使用工具
+webhooks-organization-tools-warning = 任何持有触发 URL 的人都可以发送内容，智能体会使用所选已发布版本和自身权限处理这些内容。仅为可信调用方启用工具。

@@ -115,6 +115,11 @@ pub struct OrganizationDotBody {
     pub display: Option<String>,
     #[serde(default)]
     pub description: String,
+    /// One of the caller's own personal agents to start from: its task,
+    /// tone and topics are copied, never its memory, files, tools or accounts
+    /// (`docs/dots-organizations.md` → "Copying a personal agent").
+    #[serde(default)]
+    pub copy_from: Option<String>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -393,7 +398,18 @@ pub async fn detail(State(state): State<Arc<RamaState>>, req: Request) -> Respon
             .await
             .map_err(internal)?;
         let can_create_dot = policy.can_manage_agents(&policy.role_ids_for(&current.roles));
-        let visible = super::json_agents::visible_agents_in(&state, &mut tx, &current.id).await?;
+        // An admin member recovers the team's agents here, shared with them or
+        // not, as they hold `write` on each (`docs/agents.md` → "Shares").
+        let visible = if policy.is_admin(&policy.role_ids_for(&current.roles)) {
+            agents::list_all_in(&mut tx)
+                .await
+                .map_err(internal)?
+                .into_iter()
+                .map(|row| (row, agents::Access::Write))
+                .collect()
+        } else {
+            super::json_agents::visible_agents_in(&state, &mut tx, &current.id).await?
+        };
         let ids = visible
             .iter()
             .map(|(row, _)| row.principal.id.clone())
@@ -445,6 +461,31 @@ pub async fn create_dot(State(state): State<Arc<RamaState>>, req: Request) -> Re
         if display.chars().count() > 80 || display.chars().any(char::is_control) {
             return Err(invalid(lang));
         }
+        let (draft, copied_description) = match body.copy_from.as_deref() {
+            None => ("{}".to_owned(), String::new()),
+            Some(source) => {
+                let Some(personal) = agents::get_personal_dot(&state.db, &user.id, source)
+                    .await
+                    .map_err(internal)?
+                else {
+                    return Err(error(
+                        lang,
+                        StatusCode::NOT_FOUND,
+                        "not_found",
+                        "dot-error-not-found",
+                    ));
+                };
+                (
+                    aiplane_runtime::agents::spec::profile::team_copy(&personal.agent.draft_spec)
+                        .map_err(internal)?,
+                    personal.agent.principal.description,
+                )
+            }
+        };
+        let description = match body.description.trim() {
+            "" => copied_description.trim(),
+            written => written,
+        };
         let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
         let (_, current, policy) = member_in(&state, &mut tx, &user.id, &id, lang).await?;
         if !policy.can_manage_agents(&policy.role_ids_for(&current.roles)) {
@@ -461,9 +502,9 @@ pub async fn create_dot(State(state): State<Arc<RamaState>>, req: Request) -> Re
             &NewPrincipal {
                 name,
                 display,
-                description: body.description.trim(),
+                description,
             },
-            "{}",
+            &draft,
             &current.id,
             state.config().dots.max_active_per_organization,
         )

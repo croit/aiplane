@@ -120,6 +120,18 @@ pub(crate) async fn boot_with(
     tools: ToolRegistry,
     granted: &[&str],
 ) -> Arc<RamaState> {
+    boot_as(db_path, upstream_url, tools, granted, false).await
+}
+
+/// [`boot_with`], everyone an admin when `admin`: they hold every
+/// management permission, so they reach the personal-agent routes.
+pub(crate) async fn boot_as(
+    db_path: &Path,
+    upstream_url: &str,
+    tools: ToolRegistry,
+    granted: &[&str],
+    admin: bool,
+) -> Arc<RamaState> {
     let pool = db::open(db_path).await.unwrap();
     let mut pools = HashMap::new();
     pools.insert(
@@ -146,7 +158,7 @@ pub(crate) async fn boot_with(
         },
         vec![RoleConfig {
             id: "member".into(),
-            admin: false,
+            admin,
             tools: granted.iter().map(|t| t.to_string()).collect(),
             skills: vec![],
         }],
@@ -358,6 +370,129 @@ async fn personal_dot_resume_rechecks_the_users_enabled_tools() {
     dot_memory_approval(DotResumeCase::UserToolDisabled).await;
 }
 
+/// Two personal agents made the way the product makes them — created by
+/// hand, consents set on their Collaboration tabs — can hand work to each
+/// other with nothing else configured and without being asked each time: the
+/// starter tools give the caller "Ask another agent", allowed by default.
+#[tokio::test]
+async fn personal_agents_made_by_hand_delegate_once_both_consents_are_set() {
+    use aiplane_agents::db::dot_sessions;
+    use aiplane_runtime::agents::router::ForwardRequest;
+    use aiplane_tools::memory::Remember;
+
+    let directory = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    let state = boot_as(
+        &directory.path().join("hand-made.db"),
+        &server.uri(),
+        ToolRegistry::new()
+            .with(Remember)
+            .with(ForwardRequest::personal()),
+        &["remember", "forward_request"],
+        true,
+    )
+    .await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let mut ids = Vec::new();
+    for name in ["Planner", "Researcher"] {
+        let resp = router(state.clone())
+            .serve(post(
+                "/api/v0/dots".into(),
+                &cookie,
+                json!({ "name": name }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        ids.push(
+            json_body(resp).await["dot"]["id"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+        );
+    }
+    let access = json_body(
+        router(state.clone())
+            .serve(get(format!("/api/v0/dots/{}/access", ids[0]), &cookie))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let forward = access["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["id"] == "forward_request")
+        .unwrap();
+    assert_eq!(forward["selected"], true, "{access}");
+    assert_eq!(
+        forward["permission"], "always_allow",
+        "both consents are the permission; it does not ask again per call"
+    );
+
+    let outbound = router(state.clone())
+        .serve(put(
+            format!("/api/v0/dots/{}/communication", ids[0]),
+            &cookie,
+            json!({ "peer_id": ids[1], "direction": "outbound", "enabled": true, "expected_generation": null }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(outbound.status(), StatusCode::OK);
+    let generation = json_body(outbound).await["peers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|peer| peer["dot"]["id"] == ids[1].as_str())
+        .unwrap()["outgoing"]["generation"]
+        .clone();
+    let inbound = router(state.clone())
+        .serve(put(
+            format!("/api/v0/dots/{}/communication", ids[1]),
+            &cookie,
+            json!({ "peer_id": ids[0], "direction": "inbound", "enabled": true, "expected_generation": generation }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(inbound.status(), StatusCode::OK);
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(Scripted {
+            deltas: vec![
+                tool_call(
+                    "forward_request",
+                    json!({"receiver_dot_id": ids[1], "message": "Find the Ceph release date"}),
+                ),
+                json!({"content": "Ceph Tentacle shipped in 2025."}),
+                json!({"content": "The researcher says Ceph Tentacle shipped in 2025."}),
+            ],
+            served: AtomicUsize::new(0),
+            delay: Duration::ZERO,
+        })
+        .mount(&server)
+        .await;
+    let session_id = conversation(&state).await;
+    assert!(
+        dot_sessions::link(&state.db, "alice", &ids[0], &session_id)
+            .await
+            .unwrap()
+    );
+    let turn_id = submit(&state, &cookie, &session_id).await;
+    let done = wait_for_status(&state, &session_id, &turn_id, TurnStatus::Completed).await;
+    assert_eq!(done.tool_calls.len(), 1);
+    assert_eq!(done.tool_calls[0].name, "forward_request");
+    assert_eq!(done.tool_calls[0].status, ToolCallStatus::Completed);
+    assert!(
+        done.tool_calls[0]
+            .output_json
+            .as_deref()
+            .is_some_and(|result| result.contains("Ceph Tentacle shipped in 2025.")),
+        "the caller reads the receiver's answer: {:?}",
+        done.tool_calls[0].output_json
+    );
+}
+
 #[tokio::test]
 async fn personal_delegation_resumes_from_the_root_after_restart_and_writes_only_receiver_memory() {
     use aiplane_agents::db::{
@@ -560,6 +695,16 @@ async fn personal_delegation_resumes_from_the_root_after_restart_and_writes_only
 
 pub(crate) fn post(uri: String, cookie: &str, body: Value) -> Request {
     common::post_json(&uri, cookie, &body.to_string())
+}
+
+fn put(uri: String, cookie: &str, body: Value) -> Request {
+    Request::builder()
+        .method(Method::PUT)
+        .uri(uri)
+        .header("cookie", format!("id={cookie}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
 }
 
 fn get(uri: String, cookie: &str) -> Request {

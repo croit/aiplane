@@ -675,24 +675,39 @@ the same way on mount.
 
 `chat-protocol.ts` is deliberately framework-free — no Svelte, no DOM — so the fold is unit-testable under `node --test` (`chat-protocol.test.ts`, run by `mise run test-web`) and `chat.svelte.ts` stays a thin reactive wrapper around it. Keep it that way: wire behaviour that can only be tested through a browser is wire behaviour nobody tests.
 
-## Personal Dot navigation and management
+## Personal agent navigation and management
 
-The Workspace Dots link uses the resolved `can_manage_dots` value from
-`GET /api/v0/me`. The existing group form exposes **Personal Dot manager**
-independently of **Agent manager**, with admin implication and the same save
-and reset flow. List, create and active-state routes enforce the corresponding
-server permission; the sidebar is not an authorization boundary.
-See [personal Dots](dots.md) and [access administration](admin/access.md).
+Personal Dots are shown as **personal agents** in the one agent list:
+**Workspace → Agents** appears when `GET /api/v0/me` reports
+`can_manage_agents` or `can_manage_dots`; there is no separate Dots page.
+The existing group form exposes **Personal Dot manager** independently of
+**Agent manager**, with admin implication and the same save and reset flow.
+List, create and active-state routes enforce the corresponding server
+permission; the sidebar is not an authorization boundary. See
+[personal Dots](dots.md) and [access administration](admin/access.md).
 
-Each personal Dot card has a compact summary and a Details view with tabs for
-memory, activity, access, communication, workspace and automation. The memory,
-activity, access and communication tabs load their owner-scoped data on first
-visit and retain their edits while switching tabs. Workspace opens the Dot's
-file manager; automation links to its schedule and webhook pages. A Dot's
-optional short description is card and collaboration context, not an instruction
-to the model.
+**New agent** asks *Who is the agent for?* with the kinds the caller may create
+(`creatableKinds` in `web/src/lib/agents.ts`): *Only me* (`POST
+/api/v0/dots`, then the editor), *My team* (`POST
+/api/v0/organizations/{id}/dots` for a team that allows it, then the setup
+assistant) and *Visitors* (`POST /api/v0/agents`). Only *Visitors* asks for an
+id; *Only me* also offers the conversational setup.
 
-Each Dot card lazily loads **Communication** from its owner-scoped inventory.
+`/agents/{id}` asks `GET /api/v0/dots/{id}/profile` first: a personal agent
+opens in `PersonalAgentEditor` (header with kind badge, active state,
+**Activate**/**Deactivate**, **Chat** and **Copy as team agent**), every other
+agent answers `404` there and opens in the agent builder. The editor's tabs
+come from `DotDetailsPanel`: **Task** (`DotProfilePanel`: name, description,
+task, tone, topics, saved with its `revision`), **Tools**, **Memory**,
+**Activity**, **Collaboration**, **Files** and **Automation**; `?tab=` selects
+one. An admin on another user's personal agent gets only **Task** and
+**Tools** (`dotDetailTabs`) and a notice naming the owner. The memory,
+activity, tools and collaboration tabs load their data on first visit and
+retain their edits while switching tabs. A personal agent's optional short
+description is card and collaboration context, not an instruction to the
+model; its **Task** is.
+
+The **Collaboration** tab lazily loads from its owner-scoped inventory.
 Separate outgoing and incoming rows edit one decision per save; the other
 Dot's consent is read-only. Rows preserve actual IDs, names and inactive
 choices. An unsaved row retains its original generation when another row is
@@ -715,7 +730,14 @@ in [`agents.md`](agents.md#agent-definition). The data layer and the pure helper
 are `web/src/lib/agents.ts` (unit-tested in `agents.test.ts`); the components
 are in `web/src/lib/components/agents/`.
 
-- **`/agents`**: the agents shared with the caller, and a dialog to create one.
+- **`/agents`**: the caller's workspace in groups — *My agents* (their
+  personal agents and the ones they created), *Team agents* and *Shared with
+  me* — each card badged *Personal*, *Team · organization* or *Public*, with
+  the owner named on agents that are not the caller's and, on an agent
+  shared with them, who shared it and when. An admin gets the
+  usage page's *Mine / All users* switch: *All users* (`?scope=all`) lists
+  every user's agent, sorted by owner, each naming its owner. A dialog
+  creates an agent.
   A new agent opens in the setup assistant (`/agents/{id}/setup/start`).
 - **`/agents/{id}`** (`AgentShell` from the route's layout, `AgentWorkbench` as
   the page): header with live/draft badges, the open-points pill and Save
@@ -819,8 +841,9 @@ are in `web/src/lib/components/agents/`.
     *Verify chain* shows the verify result as an alert. The pure half,
     `web/src/lib/agent-activity.ts` (query, kind groups, turn grouping,
     summaries), is unit-tested.
-  - *Sharing*: shares with access change and revoke; `share_needs_agent_manager`
-    and `last_writer` are shown verbatim. A `read` share sees everything
+  - *Sharing*: shares with access change and revoke, each naming who gave
+    it and when; `share_needs_agent_manager` and `last_writer` are shown
+    verbatim. A `read` share sees everything
     read-only (the editor is a disabled `fieldset`).
 - **Validation errors by path.** The 422 `invalid_agent_spec` carries
   `{path, message}` issues (`main.tools[0]`, `routes.billing.when.all[1].slot`).

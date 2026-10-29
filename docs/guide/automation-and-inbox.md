@@ -59,15 +59,40 @@ Open `/inbox` to review pending requests visible to your account. The navigation
 
 The card only offers decisions the server permits. Expiry information appears when the request has an expiry. If another person already settled it or it expired, the page reports that state and refreshes; your later click does not replace the earlier decision. Sensitive-value requests can use a password field rather than a visible text area.
 
-## Manage personal Dots
+## Manage personal agents
 
-Open **Workspace → Dots** to list and create your personal Dots or change their
-active state. Your administrator enables **Personal Dot manager** in your
-resolved gateway group; ordinary agent management is a separate permission.
-Admins hold both. The configured cap counts active Dots even when idle;
-deactivating one frees a slot. Removing management permission blocks lifecycle
-management, without deactivating existing Dots or stopping their runs. Tool
-access and approvals remain bounded by the current permissions on execution.
+Open **Workspace → Agents**. **My agents** lists your personal agents (badge
+*Personal*) and the agents you created; **Team agents** and **Shared with me**
+follow, each naming its owner and who shared it with you and when. Choose
+**New agent** and answer **Who is the agent for?**: *Only me* creates a personal
+agent that works with your own tools and connected accounts, *My team* a team
+agent of one of your organizations, *Visitors* a public agent for a website.
+Only the choices your permissions allow are offered. Your administrator enables
+**Personal Dot manager** in your resolved gateway group for personal agents;
+ordinary agent management is a separate permission. Admins hold both. The
+configured cap counts active personal agents even when idle; deactivating one
+frees a slot. Removing management permission blocks lifecycle management,
+without deactivating existing agents or stopping their runs. Tool access and
+approvals remain bounded by the current permissions on execution.
+
+Open a personal agent to edit it. Its tabs are **Task**, **Tools**, **Memory**,
+**Activity**, **Collaboration**, **Files** and **Automation**. **Task** holds
+its name, the short description shown on its card, the standing **Task**
+instructions, the **Tone** and the **Topics** (one per line or separated by
+commas). Its chats, schedules and webhooks follow them from the next turn on.
+A save over a change made meanwhile is refused; reload and apply your change
+again. **Activate**/**Deactivate** and **Chat** sit in the header.
+
+**Copy as team agent** (when you may create team agents) starts a team agent in
+one of your organizations with this agent's name, description, task, tone and
+topics. Its memory, files, tools and connected accounts stay with you; the team
+agent gets its own tools from the team.
+
+A personal agent cannot be shared. Administrators find every user's agents
+under the **All users** switch of the agent list. On another user's personal
+agent they change only **Task**, **Tools** and the active state, checked against
+the owner's permissions and recorded in its activity log; memory, activity,
+files, collaboration and conversations stay the owner's.
 
 A schedule or webhook bound to a Dot that is later deactivated, or whose
 principal is disabled, runs as the ordinary assistant from then on rather than
@@ -76,7 +101,7 @@ as deactivating the Dot.
 
 ### Set up a personal Dot in conversation
 
-1. Choose **Set up a Dot together** on `/dots`.
+1. Choose **New agent** on **Agents**, select *Only me*, then **Set up a Dot together**.
 2. Describe the work in your own words. Include what the Dot should read, what
    result you expect and which actions need your approval. You can dictate the
    description when transcription is available.
@@ -91,8 +116,8 @@ as deactivating the Dot.
 5. Resolve any requirements listed in the warning. Then choose **Set up Dot**.
    AIplane checks your current permissions and the active limit again. Planning
    a Dot does not use an active slot.
-6. Open the created Dot's **Details** to adjust tools, memory, connections or
-   automation, or start its private chat.
+6. AIplane opens the created agent. Adjust its task, tools, memory, connections
+   or automation there, or start its private chat.
 
 For example, describe a research assistant that reads public documentation and
 explains its findings with sources. Its work instructions are saved with the
@@ -119,7 +144,7 @@ Strict topic enforcement is not available for personal Dots in this setup flow.
 
 ## Configure a personal Dot's tool access
 
-Open `/dots`, open your Dot's **Details** and select the **Access** tab. Search
+Open the personal agent from **Agents** and select the **Tools** tab. Search
 by tool name, description or ID, select each tool the Dot may use, and
 choose **Allow** or **Ask before each call**. Save your changes. Unselected
 tools are denied. Tool IDs distinguish actions that share a capability title.
@@ -171,8 +196,13 @@ remove its rule before saving; the interface preserves it for review.
 
 ![A personal Dot’s access and action rules](../img/guide/dot-action-rules.png)
 
-New Dots select the existing memory tools with Allow when available to your
-account. Memory writes belong to that Dot; user-wide memory remains read-only context.
+A personal agent you create with **New agent** starts with the tools of a
+personal assistant that your account holds: memory, the current time, web
+search, reading web pages, knowledge search and **Ask another agent** are
+allowed; scheduling work asks you before each call. Asking another agent works
+once both agents' consents are set (see below) and then needs no further
+approval. Change any rule to **Allow** or **Ask before each call** on the **Tools**
+tab. Memory writes belong to that agent; user-wide memory remains read-only context.
 If access to organization memory is revoked, its loaded notes are cleared from
 the panel when the next request is refused.
 Read-only tools default to Allow when you select them. Other writes and tools with
@@ -202,10 +232,10 @@ availability](../dots-workspace.md#operator-implications).
 
 ## Configure communication consent
 
-Open **Details** on a personal Dot card and select **Communication**. **Can ask** controls its outgoing
+Open a personal agent from **Agents** and select **Collaboration**. **Can ask** controls its outgoing
 consent to each actual owned peer. **Accepts requests from** controls which
-peers it accepts requests from. The counterpart choice is read-only; configure
-it on the other Dot's card. Save each changed row separately. **Both consents
+peers it accepts requests from. The counterpart choice is read-only; the link
+next to it opens the other agent's **Collaboration** tab to set it there. Save each changed row separately. **Both consents
 enabled** means both persisted choices allow that direction. Reverse
 communication needs separate choices.
 

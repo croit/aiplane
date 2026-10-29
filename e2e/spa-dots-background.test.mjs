@@ -33,10 +33,8 @@ test("existing automation forms retain Dot binding, filter reused chats and allo
         const ordinaryResponse = await context.request.post(`${BASE}/api/v0/chat/sessions`, { data: {} });
         const ordinarySession = (await ordinaryResponse.json()).session.id;
 
-        await page.goto(`${BASE}/dots`, { waitUntil: "networkidle" });
-        const card = page.locator("article").filter({ has: page.getByRole("heading", { name: dotName, exact: true }) });
-        await card.getByRole("button", { name: "Details", exact: true }).click();
-        await card.getByRole("tab", { name: "Automation", exact: true }).click();
+        await page.goto(`${BASE}/agents/${dotId}?tab=automation`, { waitUntil: "networkidle" });
+        const card = page.getByRole("region", { name: "Agent details", exact: true });
         await card.getByRole("link", { name: "Add scheduled work", exact: true }).click();
         await page.getByRole("combobox", { name: "Run as", exact: true }).getByText(dotName, { exact: true }).waitFor();
         await page.getByRole("textbox", { name: "Name", exact: true }).fill(`Dot schedule ${suffix}`);
@@ -54,11 +52,9 @@ test("existing automation forms retain Dot binding, filter reused chats and allo
         assert.equal(schedule.dot_id, dotId);
         scheduleId = schedule.id;
         await page.waitForURL(/\/scheduled\?notice=created/);
-        await page.getByRole("link", { name: `Dot: ${dotName}`, exact: true }).waitFor();
+        await page.getByRole("link", { name: `Agent: ${dotName}`, exact: true }).waitFor();
 
-        await page.goto(`${BASE}/dots`, { waitUntil: "networkidle" });
-        await card.getByRole("button", { name: "Details", exact: true }).click();
-        await card.getByRole("tab", { name: "Automation", exact: true }).click();
+        await page.goto(`${BASE}/agents/${dotId}?tab=automation`, { waitUntil: "networkidle" });
         await card.getByRole("link", { name: "Add webhook", exact: true }).click();
         await page.getByRole("combobox", { name: "Run as", exact: true }).getByText(dotName, { exact: true }).waitFor();
         await page.getByRole("textbox", { name: "Name", exact: true }).fill(`Dot webhook ${suffix}`);
@@ -70,18 +66,18 @@ test("existing automation forms retain Dot binding, filter reused chats and allo
         webhookId = webhook.webhook.id;
         assert.equal(webhook.webhook.dot_id, dotId);
         await page.getByRole("link", { name: "Done — back to webhooks", exact: true }).click();
-        await page.getByRole("link", { name: `Dot: ${dotName}`, exact: true }).waitFor();
+        await page.getByRole("link", { name: `Agent: ${dotName}`, exact: true }).waitFor();
         const fired = await context.request.post(`${BASE}/hooks/${webhook.secret}`, { data: { event: "updated" } });
         assert.equal(fired.status(), 200);
         const runSession = (await fired.json()).session_id;
         const filtered = await context.request.get(`${BASE}/api/v0/chat/sessions?dot_id=${dotId}`);
         assert.ok((await filtered.json()).sessions.some((session) => session.id === runSession));
         await page.goto(`${BASE}/webhooks/${webhookId}/runs`, { waitUntil: "networkidle" });
-        await page.getByRole("link", { name: `Dot: ${dotName}`, exact: true }).waitFor();
+        await page.getByRole("link", { name: `Agent: ${dotName}`, exact: true }).waitFor();
 
         await context.request.put(`${BASE}/api/v0/dots/${dotId}/active`, { data: { active: false } });
         await page.goto(`${BASE}/scheduled/${scheduleId}/edit`, { waitUntil: "networkidle" });
-        await page.getByText("This Dot is inactive. You can edit this automation, but it cannot run until the Dot is activated.", { exact: true }).waitFor();
+        await page.getByText("This agent is inactive. You can edit this automation, but it cannot run until the agent is activated.", { exact: true }).waitFor();
         await page.getByRole("textbox", { name: "Name", exact: true }).fill(`Renamed Dot schedule ${suffix}`);
         const editSaved = page.waitForResponse((response) => response.request().method() === "PUT" && response.url().endsWith(`/api/v0/scheduled/${scheduleId}`));
         await page.getByRole("button", { name: "Save changes", exact: true }).click();
@@ -141,8 +137,9 @@ test("pending Dot webhook is approved in Inbox and settles its exact run without
         });
         assert.equal(created.status(), 201);
         dotId = (await created.json()).dot.id;
+        const { revision } = await (await context.request.get(`${BASE}/api/v0/dots/${dotId}/access`)).json();
         const access = await context.request.put(`${BASE}/api/v0/dots/${dotId}/access`, {
-            data: { tools: [{ id: "remember", permission: "always_ask" }] },
+            data: { revision, tools: [{ id: "remember", permission: "always_ask" }] },
         });
         assert.equal(access.status(), 200);
         const hookCreated = await context.request.post(`${BASE}/api/v0/webhooks`, {

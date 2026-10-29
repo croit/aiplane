@@ -23,9 +23,18 @@ export type Spec = Record<string, any>;
 export type SpecIssue = ApiIssue;
 
 export type OrganizationOwner = { kind: 'organization'; id: string; name: string };
-export interface AgentDotMetadata { owner: OrganizationOwner | { kind: 'user'; id: string }; name: string; active: boolean }
+/** A person; `name` and `email` are null once the user is no longer known. */
+export type UserOwner = { kind: 'user'; id: string; name: string | null; email: string | null };
+export interface AgentDotMetadata { name: string; active: boolean }
+/** Whom an agent works for: its owner alone, an organization's members, or outside visitors. */
+export type AgentKind = 'personal' | 'team' | 'public';
 
 export interface AgentSummary {
+	kind: AgentKind;
+	/** The user or organization it belongs to; a public agent's creator. */
+	owner: UserOwner | OrganizationOwner;
+	/** Who shared it with the caller; set only in the caller's workspace on an agent that is not theirs. */
+	shared_by: ShareOrigin | null;
 	dot: AgentDotMetadata | null;
 	id: string;
 	name: string;
@@ -40,15 +49,43 @@ export interface AgentSummary {
 	access: 'read' | 'write';
 }
 
-export function organizationOwner(agent: Pick<AgentSummary, 'dot'> | null | undefined): OrganizationOwner | null {
-    return agent?.dot?.owner.kind === 'organization' ? agent.dot.owner : null;
+/** `GET /api/v0/agents`: the caller's workspace, or every user's agents for an admin who asked. */
+export interface AgentList {
+	scope: 'self' | 'all';
+	can_view_all: boolean;
+	agents: AgentSummary[];
+}
+
+export function organizationOwner(agent: Pick<AgentSummary, 'owner'> | null | undefined): OrganizationOwner | null {
+    return agent?.owner.kind === 'organization' ? agent.owner : null;
+}
+
+/**
+ * The kinds of agent a person may create, in the order offered: personal
+ * with personal-agent management, team with agent management and a team
+ * that lets them, public with agent management.
+ */
+export function creatableKinds(
+	me: { can_manage_agents?: boolean; can_manage_dots?: boolean } | null | undefined,
+	teams: readonly unknown[]
+): AgentKind[] {
+	const kinds: AgentKind[] = [];
+	if (me?.can_manage_dots) kinds.push('personal');
+	if (me?.can_manage_agents && teams.length) kinds.push('team');
+	if (me?.can_manage_agents) kinds.push('public');
+	return kinds;
+}
+
+/** How an owner is named on screen: their name, else their address, else their id. */
+export function ownerLabel(owner: AgentSummary['owner']): string {
+    return owner.kind === 'organization' ? owner.name : (owner.name ?? owner.email ?? owner.id);
 }
 
 export function agentPublicName(agent: Pick<AgentSummary, 'dot' | 'name'>): string {
     return agent.dot?.name ?? agent.name;
 }
 
-export function agentUiCapabilities(agent: (Pick<AgentSummary, 'dot'> & Partial<Pick<AgentSummary, 'access'>>) | null | undefined) {
+export function agentUiCapabilities(agent: (Pick<AgentSummary, 'owner'> & Partial<Pick<AgentSummary, 'access'>>) | null | undefined) {
     const enabled = !!agent && !organizationOwner(agent);
     const draftChat = enabled || (!!organizationOwner(agent) && agent?.access === 'write');
     return { draftChat, execution: enabled, site: enabled, channels: enabled, embed: enabled };
@@ -56,7 +93,7 @@ export function agentUiCapabilities(agent: (Pick<AgentSummary, 'dot'> & Partial<
 
 export type PrivateChatSource = 'draft' | 'published';
 
-export function testChatSources(agent: Pick<AgentSummary, 'dot' | 'live_version'> | null | undefined): PrivateChatSource[] {
+export function testChatSources(agent: Pick<AgentSummary, 'owner' | 'live_version'> | null | undefined): PrivateChatSource[] {
 	return organizationOwner(agent) && agent?.live_version != null && agent.live_version > 0
 		? ['draft', 'published'] : ['draft'];
 }
@@ -88,6 +125,14 @@ export interface Share {
 	access: ShareAccess;
 	/** A person's display name, when they have one. */
 	name?: string | null;
+	/** Who gave the share and when; null on a share older than the record. */
+	granted: ShareOrigin | null;
+}
+
+/** Who gave a share, and when. */
+export interface ShareOrigin {
+	by: UserOwner;
+	at: string;
 }
 
 /** What `GET /api/v0/agents/{id}/share-subjects?q=` found: a search, never the roster (nothing under two characters, a few matches, an address only for an exact one). */
@@ -348,7 +393,8 @@ const json = (method: string, body?: unknown): RequestInit => ({
 
 /** Every call rejects with an [`AgentError`]. */
 export const agentsApi = {
-	list: () => call<{ agents: AgentSummary[] }>('/api/v0/agents').then((r) => r.agents),
+	list: (scope: 'self' | 'all' = 'self') =>
+		call<AgentList>(scope === 'all' ? '/api/v0/agents?scope=all' : '/api/v0/agents'),
 	create: (body: { name: string; display?: string; description?: string; spec?: Spec }) =>
 		call<{ agent: AgentSummary }>('/api/v0/agents', json('POST', body)).then((r) => r.agent),
 	get: (id: string) => call<{ agent: AgentDetail }>(`/api/v0/agents/${id}`).then((r) => r.agent),
@@ -386,7 +432,7 @@ export const agentsApi = {
 	testRuns: (id: string) => call<{ runs: TestRun[] }>(`/api/v0/agents/${id}/test-runs`),
 	testRun: (id: string, runId: string) => call<TestRun>(`/api/v0/agents/${id}/test-runs/${runId}`),
 	remove: (id: string) => call<void>(`/api/v0/agents/${id}`, json('DELETE')),
-	share: (id: string, share: Share) => call<Share>(`/api/v0/agents/${id}/shares`, json('POST', share)),
+	share: (id: string, share: Pick<Share, 'subject_kind' | 'subject_id' | 'access'>) => call<Share>(`/api/v0/agents/${id}/shares`, json('POST', share)),
 	revokeShare: (id: string, share: Pick<Share, 'subject_kind' | 'subject_id'>) =>
 		call<void>(`/api/v0/agents/${id}/shares/revoke`, json('POST', share)),
 	shareSubjects: (id: string, q: string) =>

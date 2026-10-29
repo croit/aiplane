@@ -280,7 +280,7 @@ mod tests {
     #[test]
     fn builtin_display_copy_translates_forward_request_in_every_language() {
         let english = builtin_display_copy("forward_request", Lang::En).unwrap();
-        assert_eq!(english.0, "Ask another Dot");
+        assert_eq!(english.0, "Ask another agent");
         for lang in Lang::ALL {
             let copy = builtin_display_copy("forward_request", lang).unwrap();
             assert!(!copy.0.is_empty());

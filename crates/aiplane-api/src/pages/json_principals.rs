@@ -97,10 +97,11 @@ async fn begin_principal_write(
         .map_err(internal)?
         .is_some()
     {
-        if aiplane_runtime::agents::access::effective_access_in(state, &mut tx, id, &manager.id)
-            .await
-            .map_err(internal)?
-            != Some(Access::Write)
+        if super::json_agents::is_personal(state, id).await?
+            || aiplane_runtime::agents::access::effective_access_in(state, &mut tx, id, &manager.id)
+                .await
+                .map_err(internal)?
+                != Some(Access::Write)
         {
             return Err(not_found(t(lang, "organization-error-not-found")));
         }

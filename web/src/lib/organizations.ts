@@ -27,6 +27,6 @@ export const adminOrganizationsApi = {
 export const organizationsApi = {
     list: () => request<{ organizations: OrganizationListRow[] }>('/api/v0/organizations'),
     detail: (id: string) => request<OrganizationDetail>(path(id)),
-    createDot: (id: string, body: { name: string; display: string; description: string }) => request<{ agent: AgentSummary }>(`${path(id)}/dots`, json('POST', body)),
+    createDot: (id: string, body: { name: string; display?: string; description: string; copy_from?: string }) => request<{ agent: AgentSummary }>(`${path(id)}/dots`, json('POST', body)),
     setActive: (id: string, dotId: string, active: boolean) => request<{ agent: AgentSummary }>(`${path(id)}/dots/${encodeURIComponent(dotId)}/active`, json('POST', { active }))
 };

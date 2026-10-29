@@ -60,6 +60,7 @@ use verifiers::HOST_JWT;
 
 mod a2a;
 pub mod model;
+pub mod profile;
 mod route_kinds;
 pub mod secrets;
 pub mod tool_access;

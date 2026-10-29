@@ -4,23 +4,30 @@
 	import DotActivityPanel from './DotActivityPanel.svelte';
 	import DotAccessPanel from './DotAccessPanel.svelte';
 	import DotCommunicationPanel from './DotCommunicationPanel.svelte';
+	import DotProfilePanel from './DotProfilePanel.svelte';
 	import type { Dot } from '#lib/dot-state.js';
+	import { DOT_DETAIL_TABS, dotDetailTabs, type DotDetailTab, type DotProfile } from '#lib/dots.js';
 	import { t } from '#lib/i18n.svelte.js';
 
-	let { dot, initiallyOpenTab = 'memory' }: { dot: Dot; initiallyOpenTab?: DotDetailTab } = $props();
-	type DotDetailTab = 'memory' | 'activity' | 'access' | 'communication' | 'workspace' | 'automation';
-	let selected = $state<DotDetailTab>('memory');
-	const tabs: { id: DotDetailTab; label: string }[] = [
-		{ id: 'memory', label: 'dots-tab-memory' },
-		{ id: 'activity', label: 'dots-tab-activity' },
-		{ id: 'access', label: 'dots-tab-access' },
-		{ id: 'communication', label: 'dots-tab-communication' },
-		{ id: 'workspace', label: 'dots-tab-workspace' },
-		{ id: 'automation', label: 'dots-tab-automation' },
-	];
+	let {
+		dot,
+		profile,
+		owner,
+		initiallyOpenTab = 'task',
+		onprofile
+	}: {
+		dot: Dot;
+		profile: DotProfile;
+		/** The owner sees every tab; an admin changing another user's agent only its settings. */
+		owner: boolean;
+		initiallyOpenTab?: DotDetailTab;
+		onprofile: (profile: DotProfile) => void;
+	} = $props();
+	let selected = $state<DotDetailTab>('task');
+	const tabs = $derived(dotDetailTabs(owner).map((id) => ({ id, label: DOT_DETAIL_TABS[id] })));
 	const panelId = (tab: DotDetailTab) => `dot-${dot.id}-panel-${tab}`;
 	const tabId = (tab: DotDetailTab) => `dot-${dot.id}-tab-${tab}`;
-	onMount(() => selectTab(initiallyOpenTab));
+	onMount(() => selectTab(dotDetailTabs(owner).includes(initiallyOpenTab) ? initiallyOpenTab : 'task'));
 
 	function selectTab(tab: DotDetailTab) {
 		selected = tab;
@@ -60,14 +67,18 @@
 		{/each}
 	</div>
 
+	<div id={panelId('task')} role="tabpanel" aria-labelledby={tabId('task')} tabindex="0" hidden={selected !== 'task'}>
+		<DotProfilePanel {profile} onsaved={onprofile} />
+	</div>
+	<div id={panelId('tools')} role="tabpanel" aria-labelledby={tabId('tools')} tabindex="0" hidden={selected !== 'tools'}>
+		<DotAccessPanel {dot} tabbed active={selected === 'tools'} />
+	</div>
+	{#if owner}
 	<div id={panelId('memory')} role="tabpanel" aria-labelledby={tabId('memory')} tabindex="0" hidden={selected !== 'memory'}>
 		<DotMemoryPanel {dot} tabbed active={selected === 'memory'} />
 	</div>
 	<div id={panelId('activity')} role="tabpanel" aria-labelledby={tabId('activity')} tabindex="0" hidden={selected !== 'activity'}>
 		<DotActivityPanel {dot} tabbed active={selected === 'activity'} />
-	</div>
-	<div id={panelId('access')} role="tabpanel" aria-labelledby={tabId('access')} tabindex="0" hidden={selected !== 'access'}>
-		<DotAccessPanel {dot} tabbed active={selected === 'access'} />
 	</div>
 	<div id={panelId('communication')} role="tabpanel" aria-labelledby={tabId('communication')} tabindex="0" hidden={selected !== 'communication'}>
 		<DotCommunicationPanel {dot} tabbed active={selected === 'communication'} />
@@ -107,4 +118,5 @@
 			</article>
 		</div>
 	</div>
+	{/if}
 </section>

@@ -1,0 +1,2 @@
+index idx_agent_shares_subject: CREATE INDEX idx_agent_shares_subject ON agent_shares (subject_kind, subject_id)
+table agent_shares: CREATE TABLE agent_shares ( principal_id TEXT NOT NULL REFERENCES agents(principal_id) ON DELETE CASCADE, subject_kind TEXT NOT NULL CHECK (subject_kind IN ('user', 'group')), subject_id TEXT NOT NULL, access TEXT NOT NULL CHECK (access IN ('respond', 'read', 'write')), granted_by TEXT, granted_at TEXT, PRIMARY KEY (principal_id, subject_kind, subject_id) ) STRICT

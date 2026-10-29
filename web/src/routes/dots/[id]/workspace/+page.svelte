@@ -112,7 +112,7 @@
 <div class="w-full min-w-0 space-y-5">
 	<header class="flex flex-wrap items-start justify-between gap-3">
 		<div class="min-w-0">
-			<a class="link link-hover text-sm" href="/dots">{t('dots-heading')}</a>
+			<a class="link link-hover text-sm" href={`/agents/${encodeURIComponent(page.params.id ?? '')}?tab=workspace`}>{data?.dot_name ?? t('agents-back')}</a>
 			<h1 class="mt-2 text-2xl font-bold">{t('dot-workspace-heading')}</h1>
 			{#if data}<p class="mt-1 break-all font-medium">{data.dot_name}</p>{/if}
 			<p class="mt-2 max-w-3xl text-sm text-base-content/60">{t('dot-workspace-intro')}</p>

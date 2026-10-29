@@ -27,11 +27,9 @@ test("Dot action overrides preserve the tool default, reload and require correct
         assert.ok(actualBrowser.actions.some((action) => action.id === "read"));
         assert.ok(actualBrowser.actions.some((action) => action.id === "fill"));
 
-        await page.goto(`${BASE}/dots`, { waitUntil: "networkidle" });
-        const card = page.locator("article").filter({ has: page.getByRole("heading", { name, exact: true }) });
-        await card.getByRole("button", { name: "Details", exact: true }).click();
-        await card.getByRole("tab", { name: "Access", exact: true }).click();
-        const access = card.getByRole("tabpanel", { name: "Access", exact: true });
+        await page.goto(`${BASE}/agents/${dotId}?tab=tools`, { waitUntil: "networkidle" });
+        const card = page.getByRole("region", { name: "Agent details", exact: true });
+        const access = card.getByRole("tabpanel", { name: "Tools", exact: true });
         await access.getByRole("textbox").fill("browse_page");
         const browserRow = access.locator("li").filter({ has: page.locator("code").filter({ hasText: /^browse_page$/ }) });
         await browserRow.getByRole("checkbox").check();
@@ -128,8 +126,9 @@ test("Approve once rechecks a pending Dot browser action after its rule changes 
         assert.ok(catalogue.tools.find((tool) => tool.id === "browse_page")?.actions
             .some((action) => action.id === "navigate"), "the real browser catalogue must declare navigate");
         async function saveNavigateRule(rule) {
+            const { revision } = await jsonGet(`/api/v0/dots/${dotId}/access`);
             const response = await context.request.put(accessUrl, {
-                data: { tools: [{ id: "browse_page", permission: "always_ask", actions: [{ id: "navigate", rule }] }] },
+                data: { revision, tools: [{ id: "browse_page", permission: "always_ask", actions: [{ id: "navigate", rule }] }] },
             });
             assert.equal(response.status(), 200);
         }

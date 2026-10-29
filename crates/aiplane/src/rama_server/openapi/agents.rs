@@ -148,6 +148,13 @@ pub(super) fn operations() -> Vec<Op> {
         delete("/api/v0/dots/{id}/workspace/entry", Access::Session)
             .no_content()
             .errors(&[400, 404, 409, 413, 503]),
+        get("/api/v0/dots/{id}/profile", Access::Session)
+            .ok(json::<aiplane_api::pages::json_dots::DotProfileView>())
+            .errors(&[400, 404]),
+        put("/api/v0/dots/{id}/profile", Access::Session)
+            .body(json::<aiplane_api::pages::json_dots::DotProfileBody>())
+            .ok(json::<aiplane_api::pages::json_dots::DotProfileView>())
+            .errors(&[400, 404, 409]),
         get("/api/v0/dots/{id}/access", Access::Session)
             .ok(json::<aiplane_api::pages::json_dots::DotAccessView>())
             .errors(&[400, 404]),

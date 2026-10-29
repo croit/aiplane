@@ -67,7 +67,7 @@ test("Organization membership and Dot configuration reuse the existing editor wi
         await page.locator(`aside a[href="/organizations"]`).waitFor();
         await page.getByRole("link", { name: externalName, exact: true }).click();
         await page.getByRole("heading", { name: externalName, exact: true }).waitFor();
-        await page.getByRole("button", { name: "Create Dot", exact: true }).click();
+        await page.getByRole("button", { name: "Create agent", exact: true }).click();
         const createDot = page.locator("dialog[open]");
         await createDot.waitFor();
         await createDot.getByRole("textbox", { name: "Name", exact: true }).fill("Harald");
@@ -144,7 +144,7 @@ test("Organization membership and Dot configuration reuse the existing editor wi
             await memberPage.goto(`${BASE}/organizations`, { waitUntil: "networkidle" });
             await memberPage.locator(`aside a[href="/organizations"]`).waitFor();
             await memberPage.getByRole("link", { name: externalName, exact: true }).click();
-            await memberPage.getByText("No Dots are shared with you in this organization.", { exact: true }).waitFor();
+            await memberPage.getByText("No agents are shared with you in this organization.", { exact: true }).waitFor();
             assert.equal(await memberPage.getByRole("heading", { name: "Harald Support", exact: true }).count(), 0);
             await memberPage.setViewportSize({ width: 390, height: 844 });
             assert.equal(await memberPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
@@ -200,9 +200,9 @@ test("An organization member manages four active Dots without personal Dot permi
         const page = await member.newPage();
         await page.goto(`${BASE}/organizations`, { waitUntil: "networkidle" });
         await page.locator('aside a[href="/organizations"]').waitFor();
-        assert.equal(await page.locator('aside a[href="/dots"]').count(), 0);
+        assert.equal(await page.locator('aside a[href="/dots"]').count(), 0, "personal agents have no menu entry of their own");
         await page.getByRole("link", { name: organization.name, exact: true }).click();
-        await page.getByRole("button", { name: "Create Dot", exact: true }).click();
+        await page.getByRole("button", { name: "Create agent", exact: true }).click();
         const creation = page.locator("dialog[open]");
         await creation.waitFor();
         await creation.getByRole("textbox", { name: "Name", exact: true }).fill("Harald");
@@ -232,14 +232,14 @@ test("An organization member manages four active Dots without personal Dot permi
         const overflow = await member.request.post(`${orgUrl}/dots`, { data: { name: "Over capacity", display: "Over capacity", description: "" } });
         assert.equal(overflow.status(), 409);
         await page.goto(`${BASE}/organizations/${organization.id}`, { waitUntil: "networkidle" });
-        await page.getByText("4 of 4 Dots active", { exact: true }).waitFor();
-        assert.equal(await page.getByRole("button", { name: "Create Dot", exact: true }).isDisabled(), true);
+        await page.getByText("4 of 4 agents active", { exact: true }).waitFor();
+        assert.equal(await page.getByRole("button", { name: "Create agent", exact: true }).isDisabled(), true);
         const haraldCard = page.locator("section").filter({ has: page.getByRole("heading", { name: "Harald Engineering", exact: true }) });
         const deactivated = page.waitForResponse((response) => response.request().method() === "POST" && response.url() === `${orgUrl}/dots/${harald.id}/active`);
         await haraldCard.getByRole("button", { name: "Deactivate", exact: true }).click();
         assert.equal((await deactivated).status(), 200);
-        await page.getByText("3 of 4 Dots active", { exact: true }).waitFor();
-        assert.equal(await page.getByRole("button", { name: "Create Dot", exact: true }).isDisabled(), false);
+        await page.getByText("3 of 4 agents active", { exact: true }).waitFor();
+        assert.equal(await page.getByRole("button", { name: "Create agent", exact: true }).isDisabled(), false);
         await page.setViewportSize({ width: 390, height: 844 });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
         await page.setViewportSize({ width: 1280, height: 900 });

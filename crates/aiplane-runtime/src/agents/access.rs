@@ -5,7 +5,9 @@
 //! `/api/v0/agents` routes, the inbox's standing and the `a2a_caller` grant.
 //!
 //! An admin holds `write` on every agent without a share, so an agent whose
-//! last writer left can always be recovered. Anyone else needs a share. A
+//! last writer left can always be recovered. Anyone else needs a share, and a
+//! personal agent answers no one but its owner: a share on it never takes
+//! effect for anyone else. A
 //! `read` or `write` share takes effect only for a holder of the
 //! agent-management permission, so a manager who loses it loses every agent
 //! with it, whatever shares are left behind. A `respond` share needs no such
@@ -113,6 +115,7 @@ async fn access_in(
             }
         }
         _ if organization_only => return Ok(None),
+        Some(agents_db::DotOwner::User(owner)) if owner != user_id => return Ok(None),
         _ => {}
     }
     if policy.is_admin(&groups) {

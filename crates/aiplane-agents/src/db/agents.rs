@@ -125,6 +125,16 @@ pub struct ShareRow {
     pub subject_kind: SubjectKind,
     pub subject_id: String,
     pub access: Access,
+    /// Who gave the share; `None` for a share older than the record.
+    pub granted_by: Option<String>,
+    pub granted_at: Option<Timestamp>,
+}
+
+/// Who gave the share through which a person sees an agent, and when.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShareOrigin {
+    pub granted_by: String,
+    pub granted_at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
@@ -276,6 +286,11 @@ fn decode_share(row: &SqliteRow) -> Result<ShareRow, DbError> {
             column: "access",
             source: anyhow::anyhow!("unknown share access `{access}`"),
         })?,
+        granted_by: row.try_get("granted_by")?,
+        granted_at: row
+            .try_get::<Option<String>, _>("granted_at")?
+            .map(|at| super::parse_ts(at, "granted_at"))
+            .transpose()?,
     })
 }
 
@@ -304,11 +319,13 @@ pub async fn create(
     .execute(&mut *tx)
     .await?;
     sqlx::query(
-        "INSERT INTO agent_shares (principal_id, subject_kind, subject_id, access)
-         VALUES (?, 'user', ?, 'write')",
+        "INSERT INTO agent_shares (principal_id, subject_kind, subject_id, access, granted_by, granted_at)
+         VALUES (?, 'user', ?, 'write', ?, ?)",
     )
     .bind(&id)
     .bind(actor_id)
+    .bind(actor_id)
+    .bind(&now)
     .execute(&mut *tx)
     .await?;
     agent_audit::append(
@@ -430,8 +447,8 @@ async fn create_dot_in(
     sqlx::query("INSERT INTO dots(principal_id,owner_user_id,organization_id,name,active,created_at,updated_at) VALUES(?,?,?,?,1,?,?)")
         .bind(&id).bind(user).bind(organization).bind(new.name).bind(&now).bind(&now).execute(&mut **tx).await?;
     if matches!(owner, DotOwner::Organization(_)) {
-        sqlx::query("INSERT INTO agent_shares(principal_id,subject_kind,subject_id,access) VALUES(?,'user',?,'write')")
-            .bind(&id).bind(creator).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO agent_shares(principal_id,subject_kind,subject_id,access,granted_by,granted_at) VALUES(?,'user',?,'write',?,?)")
+            .bind(&id).bind(creator).bind(creator).bind(&now).execute(&mut **tx).await?;
     }
     agent_audit::append(
         tx,
@@ -453,6 +470,18 @@ pub async fn set_personal_dot_active(
     active: bool,
     active_limit: u32,
 ) -> Result<bool, DbError> {
+    set_personal_dot_active_by(pool, id, owner_user_id, owner_user_id, active, active_limit).await
+}
+
+/// [`set_personal_dot_active`] by `actor_id`: the owner, or an admin.
+pub async fn set_personal_dot_active_by(
+    pool: &Pool,
+    id: &str,
+    owner_user_id: &str,
+    actor_id: &str,
+    active: bool,
+    active_limit: u32,
+) -> Result<bool, DbError> {
     let mut tx = WriteTx::begin(pool).await?;
     let result = set_dot_active_in(
         &mut tx,
@@ -460,7 +489,7 @@ pub async fn set_personal_dot_active(
         &DotOwner::User(owner_user_id.into()),
         active,
         active_limit,
-        owner_user_id,
+        actor_id,
     )
     .await?;
     tx.commit().await?;
@@ -511,6 +540,23 @@ pub async fn list_personal_dots(
     pool: &Pool,
     owner_user_id: &str,
 ) -> Result<Vec<PersonalDotRow>, DbError> {
+    list_personal_dots_with(pool, owner_user_id).await
+}
+
+pub async fn list_personal_dots_in(
+    tx: &mut WriteTx,
+    owner_user_id: &str,
+) -> Result<Vec<PersonalDotRow>, DbError> {
+    list_personal_dots_with(&mut **tx, owner_user_id).await
+}
+
+async fn list_personal_dots_with<'e, E>(
+    executor: E,
+    owner_user_id: &str,
+) -> Result<Vec<PersonalDotRow>, DbError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let rows = sqlx::query(&format!(
         "SELECT {}, d.owner_user_id, d.name AS dot_name, d.active FROM agents a
          JOIN system_principals p ON p.id = a.principal_id
@@ -519,7 +565,7 @@ pub async fn list_personal_dots(
         agent_cols()
     ))
     .bind(owner_user_id)
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await?;
     rows.iter().map(map_personal_dot).collect()
 }
@@ -686,6 +732,40 @@ where
         held.extend(Access::parse(&access));
     }
     Ok(held)
+}
+
+/// For each agent a person holds a share on, directly or through any of
+/// `group_ids`, who else gave the most recent of those shares and when.
+/// Shares the person gave themselves, and shares older than the record,
+/// name no one and are left out.
+pub async fn share_origins_in(
+    tx: &mut WriteTx,
+    user_id: &str,
+    group_ids: &[String],
+) -> Result<HashMap<String, ShareOrigin>, DbError> {
+    let (holder, binds) = holder_clause(user_id, group_ids);
+    let sql = format!(
+        "SELECT s.principal_id, s.granted_by, s.granted_at FROM agent_shares s
+          WHERE {holder} AND s.granted_by IS NOT NULL AND s.granted_by <> ?
+            AND s.granted_at IS NOT NULL
+          ORDER BY s.granted_at"
+    );
+    let mut query = sqlx::query(&sql);
+    for b in &binds {
+        query = query.bind(b);
+    }
+    query = query.bind(user_id);
+    let mut origins = HashMap::new();
+    for row in query.fetch_all(&mut **tx).await? {
+        origins.insert(
+            row.try_get("principal_id")?,
+            ShareOrigin {
+                granted_by: row.try_get("granted_by")?,
+                granted_at: super::parse_ts(row.try_get("granted_at")?, "granted_at")?,
+            },
+        );
+    }
+    Ok(origins)
 }
 
 /// The agents a person holds a `read` or `write` share on, by name, with
@@ -865,6 +945,27 @@ pub async fn update_personal_dot_draft(
     expected_spec: &str,
     draft_spec: &str,
 ) -> Result<PersonalDotDraftSaved, DbError> {
+    update_personal_dot_draft_by(
+        pool,
+        id,
+        owner_user_id,
+        owner_user_id,
+        expected_spec,
+        draft_spec,
+    )
+    .await
+}
+
+/// [`update_personal_dot_draft`] by `actor_id`: the owner, or an admin
+/// changing another user's personal agent.
+pub async fn update_personal_dot_draft_by(
+    pool: &Pool,
+    id: &str,
+    owner_user_id: &str,
+    actor_id: &str,
+    expected_spec: &str,
+    draft_spec: &str,
+) -> Result<PersonalDotDraftSaved, DbError> {
     let mut tx = WriteTx::begin(pool).await?;
     let before: Option<String> = sqlx::query_scalar(
         "SELECT a.draft_spec FROM agents a JOIN dots d ON d.principal_id = a.principal_id
@@ -885,12 +986,102 @@ pub async fn update_personal_dot_draft(
         id,
         &before,
         draft_spec,
-        owner_user_id,
+        actor_id,
         DraftChange::default(),
     )
     .await?;
     tx.commit().await?;
     Ok(PersonalDotDraftSaved::Saved)
+}
+
+/// What shows a personal agent to people beside its spec: the name on its
+/// card and in chat, and its description. A Dot name that matched the shown
+/// name follows it, so no name hidden behind a rename stays taken; a Dot name
+/// that differed from it from the start stays as it is.
+pub struct PersonalDotProfile<'a> {
+    pub display: &'a str,
+    pub description: &'a str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersonalDotProfileSaved {
+    Saved,
+    Missing,
+    Conflict,
+    /// Another of the owner's agents already has the name.
+    NameTaken,
+}
+
+/// Rename and redescribe personal agent `id` of `owner_user_id` and replace
+/// its draft in one transaction, unless the draft moved on from
+/// `expected_spec` or another of the owner's agents has the new name.
+pub async fn update_personal_dot_profile(
+    pool: &Pool,
+    id: &str,
+    owner_user_id: &str,
+    actor_id: &str,
+    expected_spec: &str,
+    draft_spec: &str,
+    profile: &PersonalDotProfile<'_>,
+) -> Result<PersonalDotProfileSaved, DbError> {
+    let mut tx = WriteTx::begin(pool).await?;
+    let before: Option<String> = sqlx::query_scalar(
+        "SELECT a.draft_spec FROM agents a JOIN dots d ON d.principal_id = a.principal_id
+         WHERE a.principal_id = ? AND d.owner_user_id = ?",
+    )
+    .bind(id)
+    .bind(owner_user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(before) = before else {
+        return Ok(PersonalDotProfileSaved::Missing);
+    };
+    if before != expected_spec {
+        return Ok(PersonalDotProfileSaved::Conflict);
+    }
+    let in_step: bool = sqlx::query_scalar(
+        "SELECT d.name = p.display FROM dots d JOIN system_principals p ON p.id = d.principal_id
+         WHERE d.principal_id = ?",
+    )
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if in_step {
+        let taken: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM dots WHERE owner_user_id = ? AND name = ? AND principal_id <> ?)",
+        )
+        .bind(owner_user_id)
+        .bind(profile.display)
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if taken {
+            return Ok(PersonalDotProfileSaved::NameTaken);
+        }
+        sqlx::query("UPDATE dots SET name = ?, updated_at = ? WHERE principal_id = ?")
+            .bind(profile.display)
+            .bind(Timestamp::now().to_string())
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    sqlx::query("UPDATE system_principals SET display = ?, description = ? WHERE id = ?")
+        .bind(profile.display)
+        .bind(profile.description)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    save_draft(
+        &mut tx,
+        id,
+        &before,
+        draft_spec,
+        actor_id,
+        DraftChange::default(),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(PersonalDotProfileSaved::Saved)
 }
 
 async fn save_draft(
@@ -1206,7 +1397,7 @@ where
     E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
 {
     let rows = sqlx::query(
-        "SELECT subject_kind, subject_id, access FROM agent_shares
+        "SELECT subject_kind, subject_id, access, granted_by, granted_at FROM agent_shares
           WHERE principal_id = ? ORDER BY subject_kind, subject_id",
     )
     .bind(id)
@@ -1287,14 +1478,17 @@ pub async fn set_share_in(
         return Ok(ShareChange::LastWriter);
     }
     sqlx::query(
-        "INSERT INTO agent_shares (principal_id, subject_kind, subject_id, access)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(principal_id, subject_kind, subject_id) DO UPDATE SET access = excluded.access",
+        "INSERT INTO agent_shares (principal_id, subject_kind, subject_id, access, granted_by, granted_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(principal_id, subject_kind, subject_id) DO UPDATE SET
+             access = excluded.access, granted_by = excluded.granted_by, granted_at = excluded.granted_at",
     )
     .bind(id)
     .bind(kind.as_str())
     .bind(subject_id)
     .bind(access.as_str())
+    .bind(actor_id)
+    .bind(Timestamp::now().to_string())
     .execute(&mut **tx)
     .await?;
     agent_audit::append(tx, agent_audit::NewEvent::new(AuditKind::AgentShareSet, id, json!({ "subject_kind": kind.as_str(), "subject_id": subject_id, "access": access.as_str() })).by(Some(actor_id)))
@@ -1721,18 +1915,131 @@ mod tests {
             "the principal exists"
         );
         assert!(sp::grants(&pool, &a.principal.id).await.unwrap().is_empty());
+        let created = shares(&pool, &a.principal.id).await.unwrap();
         assert_eq!(
-            shares(&pool, &a.principal.id).await.unwrap(),
+            created,
             [ShareRow {
                 subject_kind: SubjectKind::User,
                 subject_id: "alice".into(),
                 access: Access::Write,
+                granted_by: Some("alice".into()),
+                granted_at: created[0].granted_at,
             }]
+        );
+        assert!(
+            created[0].granted_at.is_some(),
+            "the creator's share is dated"
         );
         let audit = agent_audit::for_principal(&pool, &a.principal.id)
             .await
             .unwrap();
         assert_eq!(audit_kinds(&audit), ["principal_created", "agent_created"]);
+    }
+
+    #[tokio::test]
+    async fn a_personal_agent_profile_renames_redescribes_and_saves_its_draft_together() {
+        let pool = pool().await;
+        let now = Timestamp::now();
+        users::upsert(
+            &pool,
+            &User {
+                id: "alice".into(),
+                email: "alice@example.com".into(),
+                name: None,
+                roles: vec![],
+                created_at: now,
+                updated_at: now,
+                timezone: None,
+                speech_voice: None,
+            },
+        )
+        .await
+        .unwrap();
+        let before = r#"{"main":{"tools":[]}}"#;
+        let mut ids = Vec::new();
+        for name in ["Harald", "Erna"] {
+            let (_, dot) = create_personal_dot(
+                &pool,
+                &NewPrincipal {
+                    name,
+                    display: name,
+                    description: "",
+                },
+                before,
+                "alice",
+                4,
+            )
+            .await
+            .unwrap();
+            ids.push(dot.unwrap().principal.id);
+        }
+        let after =
+            r#"{"main":{"tools":[],"instructions":{"orchestration":"Watch the cluster."}}}"#;
+        let profile = |display| PersonalDotProfile {
+            display,
+            description: "Ceph helper",
+        };
+        let save = |owner: &'static str, expected: &'static str, name: &'static str| {
+            let pool = pool.clone();
+            let id = ids[0].clone();
+            async move {
+                update_personal_dot_profile(
+                    &pool,
+                    &id,
+                    owner,
+                    "root",
+                    expected,
+                    after,
+                    &profile(name),
+                )
+                .await
+                .unwrap()
+            }
+        };
+        assert_eq!(
+            save("bob", before, "Harry").await,
+            PersonalDotProfileSaved::Missing
+        );
+        assert_eq!(
+            save("alice", "stale", "Harry").await,
+            PersonalDotProfileSaved::Conflict
+        );
+        assert_eq!(
+            get(&pool, &ids[0]).await.unwrap().unwrap().draft_spec,
+            before,
+            "a refused save changes nothing"
+        );
+        assert_eq!(
+            save("alice", before, "Erna").await,
+            PersonalDotProfileSaved::NameTaken,
+            "the name of another of the owner's agents"
+        );
+        assert_eq!(
+            save("alice", before, "Harry").await,
+            PersonalDotProfileSaved::Saved
+        );
+
+        let saved = get_personal_dot(&pool, "alice", &ids[0])
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            saved.name, "Harry",
+            "a Dot name that matched follows the rename"
+        );
+        assert_eq!(saved.agent.principal.display, "Harry");
+        assert_eq!(saved.agent.principal.description, "Ceph helper");
+        assert_eq!(saved.agent.draft_spec, after);
+        let audit = agent_audit::for_principal(&pool, &ids[0]).await.unwrap();
+        let last = audit
+            .iter()
+            .find(|event| event.kind == "agent_draft_updated")
+            .unwrap();
+        assert_eq!(
+            last.actor_id.as_deref(),
+            Some("root"),
+            "the change is the actor's"
+        );
     }
 
     #[tokio::test]

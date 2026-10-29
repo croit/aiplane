@@ -179,7 +179,6 @@
 		['nav-scheduled', '/scheduled', 'clock'],
 		['nav-webhooks', '/webhooks', 'send'],
 		['nav-agents', '/agents', 'cpu'],
-		['nav-dots', '/dots', 'cube'],
 		['organizations-heading', '/organizations', 'users'],
 		['nav-tools', '/tools', 'sliders']
 	];
@@ -204,8 +203,7 @@
 	const visibleWorkspaceLinks = $derived(
 		visibleNavLinks(workspaceLinks, features).filter(
 			([, path]) =>
-				(path !== '/agents' || me.value?.can_manage_agents) &&
-				(path !== '/dots' || me.value?.can_manage_dots) &&
+				(path !== '/agents' || me.value?.can_manage_agents || me.value?.can_manage_dots) &&
 				(path !== '/organizations' || organizationsAvailable) &&
 				(path !== '/inbox' || inboxShown(inboxLive, isActive('/inbox')))
 		)

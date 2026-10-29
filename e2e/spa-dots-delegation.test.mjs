@@ -41,8 +41,9 @@ test("delegated approval is settled at the root and child history stays read-onl
             ids.push((await response.json()).dot.id);
         }
         for (const [index, tool, permission] of [[0, "forward_request", "always_allow"], [1, "remember", "always_ask"]]) {
+            const { revision } = await (await context.request.get(`${BASE}/api/v0/dots/${ids[index]}/access`)).json();
             const response = await context.request.put(`${BASE}/api/v0/dots/${ids[index]}/access`, {
-                data: { tools: [{ id: tool, permission }] },
+                data: { revision, tools: [{ id: tool, permission }] },
             });
             assert.equal(response.status(), 200, await response.text());
         }

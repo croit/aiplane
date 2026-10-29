@@ -363,9 +363,10 @@ test('a debug view that is not ready yet is retried, any other failure is shown'
 
 test('agent UI uses actual organization ownership for configuration-only capabilities', async () => {
     const { agentUiCapabilities } = await import('./agents.ts');
-    const ordinary = { dot: null };
-    const personal = { dot: { owner: { kind: 'user' as const, id: 'owner' }, name: 'Harald', active: true } };
-    const organization = { dot: { owner: { kind: 'organization' as const, id: 'org', name: 'Acme Support' }, name: 'Harald', active: false } };
+    const person = { kind: 'user' as const, id: 'owner', name: null, email: null };
+    const ordinary = { owner: person };
+    const personal = { owner: person };
+    const organization = { owner: { kind: 'organization' as const, id: 'org', name: 'Acme Support' } };
     assert.deepEqual(agentUiCapabilities(ordinary), { draftChat: true, execution: true, site: true, channels: true, embed: true });
     assert.deepEqual(agentUiCapabilities(personal), agentUiCapabilities(ordinary));
     assert.deepEqual(agentUiCapabilities(organization), { draftChat: false, execution: false, site: false, channels: false, embed: false });
@@ -374,24 +375,24 @@ test('agent UI uses actual organization ownership for configuration-only capabil
 
 test('organization draft chat requires actual current Write access without enabling published execution', async () => {
     const { agentUiCapabilities } = await import('./agents.ts');
-    const dot = { owner: { kind: 'organization' as const, id: 'org', name: 'Acme Support' }, name: 'Harald', active: true };
-    const writer = { dot, access: 'write' as const };
-    const reader = { dot, access: 'read' as const };
+    const owner = { kind: 'organization' as const, id: 'org', name: 'Acme Support' };
+    const writer = { owner, access: 'write' as const };
+    const reader = { owner, access: 'read' as const };
     assert.deepEqual(agentUiCapabilities(writer), { draftChat: true, execution: false, site: false, channels: false, embed: false });
     assert.equal(agentUiCapabilities(reader).draftChat, false);
-    assert.equal(agentUiCapabilities({ dot }).draftChat, false);
+    assert.equal(agentUiCapabilities({ owner }).draftChat, false);
     assert.equal(agentUiCapabilities(undefined).draftChat, false);
     assert.equal(agentUiCapabilities({ ...writer, access: 'read' as const }).draftChat, false);
-    assert.equal(agentUiCapabilities({ dot: null, access: 'read' as const }).draftChat, true);
+    assert.equal(agentUiCapabilities({ owner: { kind: 'user', id: 'owner', name: null, email: null }, access: 'read' as const }).draftChat, true);
 });
 
 test('agent owner presentation preserves authored Dot name and actual organization return path', async () => {
     const { organizationOwner, agentPublicName } = await import('./agents.ts');
     const org = { id: 'actual/org', name: 'Acme Support', kind: 'organization' as const };
-    const dot = { name: 'internal-principal-id', display: 'Harald Support', dot: { owner: org, name: 'Harald', active: true } };
+    const dot = { name: 'internal-principal-id', display: 'Harald Support', owner: org, dot: { name: 'Harald', active: true } };
     assert.deepEqual(organizationOwner(dot), org);
     assert.equal(agentPublicName(dot), 'Harald');
-    assert.equal(organizationOwner({ ...dot, dot: null }), null);
+    assert.equal(organizationOwner({ ...dot, owner: { kind: 'user', id: 'u', name: null, email: null } }), null);
     assert.equal(agentPublicName({ ...dot, dot: null }), 'internal-principal-id');
 });
 
@@ -463,10 +464,41 @@ test('private test chat debug preserves actual published source and agent versio
 
 test('private test chat source choices require actual organization ownership and a published version', async () => {
     const { testChatSources } = await import('./agents.ts');
-    const dot = { owner: { kind: 'organization' as const, id: 'org', name: 'Acme Support' }, name: 'Harald', active: true };
-    assert.deepEqual(testChatSources({ dot, live_version: 3 }), ['draft', 'published']);
-    assert.deepEqual(testChatSources({ dot, live_version: null }), ['draft']);
-    assert.deepEqual(testChatSources({ dot, live_version: 0 }), ['draft']);
-    assert.deepEqual(testChatSources({ dot: null, live_version: 3 }), ['draft']);
+    const owner = { kind: 'organization' as const, id: 'org', name: 'Acme Support' };
+    assert.deepEqual(testChatSources({ owner, live_version: 3 }), ['draft', 'published']);
+    assert.deepEqual(testChatSources({ owner, live_version: null }), ['draft']);
+    assert.deepEqual(testChatSources({ owner, live_version: 0 }), ['draft']);
+    assert.deepEqual(testChatSources({ owner: { kind: 'user', id: 'u', name: null, email: null }, live_version: 3 }), ['draft']);
     assert.deepEqual(testChatSources(undefined), ['draft']);
+});
+
+test('an owner is named by their name, else their address, else their id', async () => {
+    const { ownerLabel } = await import('./agents.ts');
+    assert.equal(ownerLabel({ kind: 'user', id: 'u1', name: 'Alice Example', email: 'alice@example.com' }), 'Alice Example');
+    assert.equal(ownerLabel({ kind: 'user', id: 'u1', name: null, email: 'alice@example.com' }), 'alice@example.com');
+    assert.equal(ownerLabel({ kind: 'user', id: 'u1', name: null, email: null }), 'u1');
+    assert.equal(ownerLabel({ kind: 'organization', id: 'o1', name: 'Acme Support' }), 'Acme Support');
+});
+
+test('the agent list asks for every user only when told to', async (context) => {
+    const { agentsApi } = await import('./agents.ts');
+    const fetchOriginal = globalThis.fetch;
+    const paths: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+        paths.push(String(input));
+        return new Response(JSON.stringify({ scope: 'self', can_view_all: false, agents: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    context.after(() => { globalThis.fetch = fetchOriginal; });
+    assert.deepEqual(await agentsApi.list(), { scope: 'self', can_view_all: false, agents: [] });
+    await agentsApi.list('all');
+    assert.deepEqual(paths, ['/api/v0/agents', '/api/v0/agents?scope=all']);
+});
+
+test('the agent kinds offered for creation follow the permissions and the teams at hand', async () => {
+    const { creatableKinds } = await import('./agents.ts');
+    assert.deepEqual(creatableKinds({ can_manage_dots: true, can_manage_agents: true }, [{}]), ['personal', 'team', 'public']);
+    assert.deepEqual(creatableKinds({ can_manage_dots: true, can_manage_agents: true }, []), ['personal', 'public']);
+    assert.deepEqual(creatableKinds({ can_manage_dots: true }, [{}]), ['personal']);
+    assert.deepEqual(creatableKinds({ can_manage_agents: true }, []), ['public']);
+    assert.deepEqual(creatableKinds(null, [{}]), []);
 });

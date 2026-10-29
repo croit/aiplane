@@ -73,5 +73,5 @@ tools-browser-note-window = 助手在自己的窗口中工作，位于名为“A
 tools-browser-note-open = 仅在对话于标签页中保持打开时有效。完成后请通过扩展图标将其关闭。
 tools-browser-note-injection = 助手读取的页面可能包含针对它的文字。你可以在扩展设置中将其限制为你批准的网站。
 
-tool-forward-request-title = 询问另一个 Dot
-tool-forward-request-description = 向另一个个人 Dot 发送明确的任务。两个 Dot 都必须允许该请求；接收方 Dot 使用自己的工具和批准规则。
+tool-forward-request-title = 询问另一个智能体
+tool-forward-request-description = 向另一个个人智能体 发送明确的任务。两个智能体都必须允许该请求；接收方智能体使用自己的工具和批准规则。

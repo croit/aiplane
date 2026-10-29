@@ -73,5 +73,5 @@ tools-browser-note-window = El asistente trabaja en su propia ventana, en un gru
 tools-browser-note-open = Solo funciona mientras la conversación está abierta en una pestaña. Desactiva la extensión desde su icono cuando termines.
 tools-browser-note-injection = Las páginas que lee el asistente pueden contener texto dirigido a él. En la configuración de la extensión puedes limitarla a los sitios que apruebes.
 
-tool-forward-request-title = Preguntar a otro Dot
-tool-forward-request-description = Envía una tarea explícita a otro Dot personal. Ambos Dots deben permitir la solicitud; el Dot receptor utiliza sus propias herramientas y reglas de aprobación.
+tool-forward-request-title = Preguntar a otro agente
+tool-forward-request-description = Envía una tarea explícita a otro agente personal. Ambos agentes deben permitir la solicitud; el agente receptor utiliza sus propias herramientas y reglas de aprobación.

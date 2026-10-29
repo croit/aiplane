@@ -41,14 +41,14 @@ test("A group can grant personal Dot management independently and revoke it thro
         assert.equal((await memberMe()).can_manage_dots, false);
         const memberPage = await member.newPage();
         await memberPage.goto(BASE, { waitUntil: "networkidle" });
-        assert.equal(await memberPage.locator('aside a[href="/dots"]').count(), 0);
+        assert.equal(await memberPage.locator('aside a[href="/agents"]').count(), 0);
         const denied = await member.request.get(`${BASE}/api/v0/dots`);
         assert.equal(denied.status(), 403);
 
         const page = await admin.newPage();
         await page.goto(`${BASE}/admin/groups`, { waitUntil: "networkidle" });
         const groupCard = page.locator("article").filter({ has: page.getByRole("heading", { name: "engineering", exact: true }) });
-        const dotPermission = groupCard.getByRole("checkbox", { name: "Personal Dot manager", exact: true });
+        const dotPermission = groupCard.getByRole("checkbox", { name: "Personal agent manager", exact: true });
         const agentPermission = groupCard.getByRole("checkbox", { name: "Agent manager", exact: true });
         assert.equal(await agentPermission.isChecked(), false);
         assert.equal(await dotPermission.isChecked(), false);
@@ -64,20 +64,20 @@ test("A group can grant personal Dot management independently and revoke it thro
         assert.equal(grantedMe.can_manage_dots, true);
         assert.equal(grantedMe.can_manage_agents, false);
         await memberPage.reload({ waitUntil: "networkidle" });
-        await memberPage.locator('aside a[href="/dots"]').waitFor();
-        assert.equal(await memberPage.locator('aside a[href="/agents"]').count(), 0);
-        await memberPage.locator('aside a[href="/dots"]').click();
-        await memberPage.getByRole("button", { name: "Create Dot", exact: true }).click();
+        await memberPage.locator('aside a[href="/agents"]').waitFor();
+        await memberPage.locator('aside a[href="/agents"]').click();
+        await memberPage.getByRole("button", { name: "New agent", exact: true }).click();
         const dialog = memberPage.locator("dialog[open]");
         const name = `Permission Dot ${Date.now()}`;
         await dialog.getByRole("textbox", { name: "Name", exact: true }).fill(name);
         const created = memberPage.waitForResponse((response) => response.request().method() === "POST"
             && response.url() === `${BASE}/api/v0/dots`);
-        await dialog.getByRole("button", { name: "Create", exact: true }).click();
+        await dialog.getByRole("button", { name: "Create agent", exact: true }).click();
         const creation = await created;
         assert.equal(creation.status(), 201);
         dotId = (await creation.json()).dot.id;
-        const dotCard = memberPage.locator("article").filter({ has: memberPage.getByRole("heading", { name, exact: true }) });
+        await memberPage.waitForURL((url) => url.pathname === `/agents/${dotId}`);
+        const dotCard = memberPage.locator("main");
         const deactivated = memberPage.waitForResponse((response) => response.request().method() === "PUT"
             && response.url() === `${BASE}/api/v0/dots/${dotId}/active`);
         await dotCard.getByRole("button", { name: "Deactivate", exact: true }).click();
@@ -92,7 +92,7 @@ test("A group can grant personal Dot management independently and revoke it thro
         assert.equal((await revoked).status(), 200);
         assert.equal((await memberMe()).can_manage_dots, false);
         await memberPage.goto(BASE, { waitUntil: "networkidle" });
-        assert.equal(await memberPage.locator('aside a[href="/dots"]').count(), 0);
+        assert.equal(await memberPage.locator('aside a[href="/agents"]').count(), 0);
         const revokedList = await member.request.get(`${BASE}/api/v0/dots`);
         assert.equal(revokedList.status(), 403);
         const revokedCreate = await member.request.post(`${BASE}/api/v0/dots`, { data: { name: "Revoked permission probe" } });

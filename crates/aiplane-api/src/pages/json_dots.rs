@@ -19,6 +19,7 @@ use aiplane_agents::db::dot_memories::MemoryScope;
 use aiplane_agents::db::system_principals::NewPrincipal;
 use aiplane_runtime::agents::spec::AgentSpec;
 use aiplane_runtime::agents::spec::model::{ActionRule, Permission};
+use aiplane_runtime::agents::spec::profile;
 use aiplane_runtime::agents::spec::tool_access::ToolAccessSelection;
 use aiplane_runtime::rama_server::state::RamaState;
 use aiplane_runtime::server::tools::mcp::manager::{AskContext, CompositeToolSource};
@@ -486,7 +487,7 @@ pub async fn connections_connect(State(state): State<Arc<RamaState>>, req: Reque
         return bad_request(t(lang, "dot-connection-error-invalid"));
     }
     let return_to = match access.owner {
-        agents_db::DotOwner::User(_) => format!("/dots?dot_id={id}"),
+        agents_db::DotOwner::User(_) => format!("/agents/{id}?tab=tools"),
         agents_db::DotOwner::Organization(_) => format!("/agents/{id}?tab=setup"),
     };
     let response = super::integrations::connect_for_owner(
@@ -936,16 +937,57 @@ pub async fn list(State(state): State<Arc<RamaState>>, req: Request) -> Response
 }
 
 pub(super) fn default_personal_spec(allowed: &[String]) -> serde_json::Value {
-    let memory_tools: Vec<_> = catalog::MEMORY_TOOL_IDS
+    personal_spec(
+        allowed,
+        catalog::MEMORY_TOOL_IDS
+            .iter()
+            .map(|id| (*id, "always_allow")),
+    )
+}
+
+/// A personal agent's spec selecting each of `tools` its owner holds, with
+/// its rule.
+fn personal_spec<'a>(
+    allowed: &[String],
+    tools: impl Iterator<Item = (&'a str, &'static str)>,
+) -> serde_json::Value {
+    let held = tools
+        .filter(|(id, _)| allowed.iter().any(|allowed| allowed == id))
+        .collect::<Vec<_>>();
+    let resources: serde_json::Map<String, serde_json::Value> = held
         .iter()
-        .copied()
-        .filter(|id| allowed.iter().any(|allowed| allowed == id))
+        .map(|(id, permission)| ((*id).to_string(), json!({ "permission": permission })))
         .collect();
-    let resources: serde_json::Map<String, serde_json::Value> = memory_tools
-        .iter()
-        .map(|id| ((*id).to_string(), json!({"permission":"always_allow"})))
-        .collect();
-    json!({"main":{"tools":memory_tools,"tool_resources":resources}})
+    let ids = held.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+    json!({"main":{"tools":ids,"tool_resources":resources}})
+}
+
+/// What a personal agent created by hand starts with beyond its memory, each
+/// only when its owner holds the tool (`docs/dots.md` → "Starter tools").
+/// Their rules come from [`default_permission`](super::architect::dot::default_permission),
+/// as in the conversational setup.
+const STARTER_TOOLS: &[&str] = &[
+    "get_current_timestamp",
+    "search_web",
+    "fetch_url",
+    "rag_search",
+    "schedule_action",
+    aiplane_runtime::agents::router::FORWARD_TOOL_NAME,
+];
+
+/// [`default_personal_spec`] plus the [`STARTER_TOOLS`] the owner holds,
+/// each with the rule `permission` gives it.
+pub(super) fn starter_personal_spec(
+    allowed: &[String],
+    permission: impl Fn(&str) -> &'static str,
+) -> serde_json::Value {
+    personal_spec(
+        allowed,
+        catalog::MEMORY_TOOL_IDS
+            .iter()
+            .map(|id| (*id, "always_allow"))
+            .chain(STARTER_TOOLS.iter().map(|id| (*id, permission(id)))),
+    )
 }
 
 pub async fn create(State(state): State<Arc<RamaState>>, req: Request) -> Response {
@@ -973,7 +1015,18 @@ pub async fn create(State(state): State<Arc<RamaState>>, req: Request) -> Respon
         .filter(|s| !s.is_empty())
         .unwrap_or(name);
     let allowed = state.allowed_tools_for_user(&user.roles, &user.id).await;
-    let spec = default_personal_spec(&allowed).to_string();
+    let defaults = match AgentSpec::from_value(&default_personal_spec(&allowed)) {
+        Ok(defaults) => defaults,
+        Err(error) => return internal(error),
+    };
+    let spec = starter_personal_spec(&allowed, |id| {
+        super::architect::dot::default_permission(
+            &defaults,
+            id,
+            super::architect::dot::supported_tool(&state, id).as_deref(),
+        )
+    })
+    .to_string();
     match agents_db::create_personal_dot(
         &state.db,
         &NewPrincipal {
@@ -1014,8 +1067,32 @@ pub struct DotAccessView {
     pub tools: Vec<DotAccessTool>,
 }
 
+/// The Tools tab's revision: it covers the tool selection only, so a save on
+/// the Task tab does not make the Tools tab's next save stale.
 fn access_revision(draft: &str) -> String {
-    let digest = Sha256::digest(draft.as_bytes());
+    revision_of(
+        &aiplane_runtime::agents::spec::tool_access::tool_access_text(draft)
+            .unwrap_or_else(|_| draft.to_owned()),
+    )
+}
+
+/// The Task tab's revision: it covers what that tab edits, so a save on the
+/// Tools tab does not make the Task tab's next save stale.
+fn profile_revision(display: &str, description: &str, profile: &profile::Profile) -> String {
+    revision_of(
+        &json!([
+            display,
+            description,
+            profile.task,
+            profile.tone,
+            profile.topics
+        ])
+        .to_string(),
+    )
+}
+
+fn revision_of(text: &str) -> String {
+    let digest = Sha256::digest(text.as_bytes());
     let mut revision = String::with_capacity(digest.len() * 2);
     for byte in digest {
         use std::fmt::Write as _;
@@ -1254,18 +1331,271 @@ async fn access_view(
     })
 }
 
+/// The personal agent behind the path, for whoever may change its settings:
+/// its owner, or an admin (`docs/agents.md` → "Who sees an agent"). Answers
+/// the owner too, so a setting is checked against the owner's grants, never
+/// the admin's. Memory, files, connections and collaboration stay the
+/// owner's alone and do not use this.
+async fn settings_target(
+    state: &RamaState,
+    user: &aiplane_core::server::db::users::User,
+    id: &str,
+    lang: Lang,
+) -> Result<
+    (
+        aiplane_core::server::db::users::User,
+        agents_db::PersonalDotRow,
+    ),
+    Response,
+> {
+    if let Some(dot) = agents_db::get_personal_dot(&state.db, &user.id, id)
+        .await
+        .map_err(internal)?
+    {
+        return Ok((user.clone(), dot));
+    }
+    let missing = || not_found(t(lang, "dot-error-not-found"));
+    if !state.rbac.is_admin(&state.rbac.role_ids_for(&user.roles)) {
+        return Err(missing());
+    }
+    let Some(owner_id) = agents_db::personal_dot_owner(&state.db, id)
+        .await
+        .map_err(internal)?
+    else {
+        return Err(missing());
+    };
+    let owner = aiplane_core::server::db::users::find_by_id(&state.db, &owner_id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(missing)?;
+    let dot = agents_db::get_personal_dot(&state.db, &owner_id, id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(missing)?;
+    Ok((owner, dot))
+}
+
+/// The most characters a personal agent's task or tone may hold.
+const PROFILE_TEXT_MAX_CHARS: usize = 20_000;
+/// The most topics a personal agent may list, and the longest one.
+const PROFILE_TOPICS_MAX: usize = 50;
+const PROFILE_TOPIC_MAX_CHARS: usize = 200;
+/// The longest description, as on a principal.
+const PROFILE_DESCRIPTION_MAX_CHARS: usize = 500;
+
+/// What a personal agent is called and told to do (`docs/dots.md` →
+/// "Personal agent profile"): its name and description, and from its draft
+/// the task, tone and topics its runs are briefed with.
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct DotProfileView {
+    pub id: String,
+    /// The Dot name it was created with; it does not change.
+    pub name: String,
+    /// The name people see on its card and in chat.
+    pub display: String,
+    pub description: String,
+    pub task: String,
+    pub tone: String,
+    pub topics: Vec<String>,
+    pub active: bool,
+    /// The owner, for an admin changing another user's agent.
+    pub owner: DotProfileOwner,
+    /// Pass back on save; a save over a changed draft is refused.
+    pub revision: String,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct DotProfileOwner {
+    pub id: String,
+    pub name: Option<String>,
+    pub email: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DotProfileBody {
+    pub revision: String,
+    pub display: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub task: String,
+    #[serde(default)]
+    pub tone: String,
+    #[serde(default)]
+    pub topics: Vec<String>,
+}
+
+fn profile_view(
+    owner: &aiplane_core::server::db::users::User,
+    dot: &agents_db::PersonalDotRow,
+) -> Result<DotProfileView, Response> {
+    let profile = profile::read_profile(&dot.agent.draft_spec).map_err(internal)?;
+    let revision = profile_revision(
+        &dot.agent.principal.display,
+        &dot.agent.principal.description,
+        &profile,
+    );
+    Ok(DotProfileView {
+        id: dot.agent.principal.id.clone(),
+        name: dot.name.clone(),
+        display: dot.agent.principal.display.clone(),
+        description: dot.agent.principal.description.clone(),
+        task: profile.task,
+        tone: profile.tone,
+        topics: profile.topics,
+        active: dot.active,
+        owner: DotProfileOwner {
+            id: owner.id.clone(),
+            name: owner.name.clone(),
+            email: owner.email.clone(),
+        },
+        revision,
+    })
+}
+
+/// GET /api/v0/dots/{id}/profile — name, description, task, tone and topics.
+pub async fn profile_get(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_, user) = require_session_json!(state, req);
+    let lang = Lang::from_request(req.headers());
+    let Some(id) = raw_path_segment(&req, 1) else {
+        return bad_request(t(lang, "dot-error-id-missing"));
+    };
+    match settings_target(&state, &user, &id, lang).await {
+        Ok((owner, dot)) => match profile_view(&owner, &dot) {
+            Ok(view) => json_ok(StatusCode::OK, view),
+            Err(response) => response,
+        },
+        Err(response) => response,
+    }
+}
+
+/// PUT /api/v0/dots/{id}/profile — replace the profile in one save.
+pub async fn profile_put(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_, user) = require_session_json!(state, req);
+    let lang = Lang::from_request(req.headers());
+    let Some(id) = raw_path_segment(&req, 1) else {
+        return bad_request(t(lang, "dot-error-id-missing"));
+    };
+    let (owner, dot) = match settings_target(&state, &user, &id, lang).await {
+        Ok(target) => target,
+        Err(response) => return response,
+    };
+    let body: DotProfileBody = match super::read_json(req.into_body(), "the agent profile").await {
+        Ok(body) => body,
+        Err(response) => return response,
+    };
+    let display = body.display.trim();
+    if display.is_empty() || display.chars().count() > 80 || display.chars().any(char::is_control) {
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_name",
+            &t(lang, "dot-error-name-invalid"),
+        );
+    }
+    let description = body.description.trim();
+    let task = body.task.trim();
+    let tone = body.tone.trim();
+    let topics = body
+        .topics
+        .iter()
+        .map(|topic| topic.trim().to_owned())
+        .filter(|topic| !topic.is_empty())
+        .collect::<Vec<_>>();
+    if description.chars().count() > PROFILE_DESCRIPTION_MAX_CHARS
+        || task.chars().count() > PROFILE_TEXT_MAX_CHARS
+        || tone.chars().count() > PROFILE_TEXT_MAX_CHARS
+        || topics.len() > PROFILE_TOPICS_MAX
+        || topics
+            .iter()
+            .any(|topic| topic.chars().count() > PROFILE_TOPIC_MAX_CHARS)
+    {
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            "profile_too_long",
+            &t(lang, "agents-profile-error-too-long"),
+        );
+    }
+    let current = match profile::read_profile(&dot.agent.draft_spec) {
+        Ok(current) => current,
+        Err(error) => return internal(error),
+    };
+    if body.revision
+        != profile_revision(
+            &dot.agent.principal.display,
+            &dot.agent.principal.description,
+            &current,
+        )
+    {
+        return json_error(
+            StatusCode::CONFLICT,
+            "conflict",
+            &t(lang, "agents-profile-error-conflict"),
+        );
+    }
+    let draft = match profile::replace_profile(
+        &dot.agent.draft_spec,
+        &profile::Profile {
+            task: task.to_owned(),
+            tone: tone.to_owned(),
+            topics,
+        },
+    ) {
+        Ok(draft) => draft,
+        Err(error) => return internal(error),
+    };
+    let saved = agents_db::update_personal_dot_profile(
+        &state.db,
+        &id,
+        &owner.id,
+        &user.id,
+        &dot.agent.draft_spec,
+        &draft,
+        &agents_db::PersonalDotProfile {
+            display,
+            description,
+        },
+    )
+    .await;
+    match saved {
+        Ok(agents_db::PersonalDotProfileSaved::Saved) => {
+            match agents_db::get_personal_dot(&state.db, &owner.id, &id).await {
+                Ok(Some(dot)) => match profile_view(&owner, &dot) {
+                    Ok(view) => json_ok(StatusCode::OK, view),
+                    Err(response) => response,
+                },
+                Ok(None) => not_found(t(lang, "dot-error-not-found")),
+                Err(error) => internal(error),
+            }
+        }
+        Ok(agents_db::PersonalDotProfileSaved::Missing) => {
+            not_found(t(lang, "dot-error-not-found"))
+        }
+        Ok(agents_db::PersonalDotProfileSaved::Conflict) => json_error(
+            StatusCode::CONFLICT,
+            "conflict",
+            &t(lang, "agents-profile-error-conflict"),
+        ),
+        Ok(agents_db::PersonalDotProfileSaved::NameTaken) => json_error(
+            StatusCode::CONFLICT,
+            "name_taken",
+            &t(lang, "dot-error-name-taken"),
+        ),
+        Err(error) => internal(error),
+    }
+}
+
 pub async fn access_get(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_, user) = require_session_json!(state, req);
     let lang = Lang::from_request(req.headers());
     let Some(id) = raw_path_segment(&req, 1) else {
         return bad_request(t(lang, "dot-error-id-missing"));
     };
-    let dot = match agents_db::get_personal_dot(&state.db, &user.id, &id).await {
-        Ok(Some(dot)) => dot,
-        Ok(None) => return not_found(t(lang, "dot-error-not-found")),
-        Err(error) => return internal(error),
+    let (owner, dot) = match settings_target(&state, &user, &id, lang).await {
+        Ok(target) => target,
+        Err(response) => return response,
     };
-    match access_view(&state, &user, &id, &dot.agent.draft_spec, lang).await {
+    match access_view(&state, &owner, &id, &dot.agent.draft_spec, lang).await {
         Ok(view) => json_ok(StatusCode::OK, view),
         Err(error) => internal(error),
     }
@@ -1277,10 +1607,9 @@ pub async fn access_put(State(state): State<Arc<RamaState>>, req: Request) -> Re
     let Some(id) = raw_path_segment(&req, 1) else {
         return bad_request(t(lang, "dot-error-id-missing"));
     };
-    let dot = match agents_db::get_personal_dot(&state.db, &user.id, &id).await {
-        Ok(Some(dot)) => dot,
-        Ok(None) => return not_found(t(lang, "dot-error-not-found")),
-        Err(error) => return internal(error),
+    let (owner, dot) = match settings_target(&state, &user, &id, lang).await {
+        Ok(target) => target,
+        Err(response) => return response,
     };
     let body: DotAccessBody = match super::read_json(req.into_body(), "the Dot access rules").await
     {
@@ -1294,7 +1623,7 @@ pub async fn access_put(State(state): State<Arc<RamaState>>, req: Request) -> Re
             &t(lang, "dot-access-error-conflict"),
         );
     }
-    let inventory = match access_view(&state, &user, &id, &dot.agent.draft_spec, lang).await {
+    let inventory = match access_view(&state, &owner, &id, &dot.agent.draft_spec, lang).await {
         Ok(view) => view,
         Err(error) => return internal(error),
     };
@@ -1347,9 +1676,10 @@ pub async fn access_put(State(state): State<Arc<RamaState>>, req: Request) -> Re
         Ok(draft) => draft,
         Err(error) => return internal(error),
     };
-    match agents_db::update_personal_dot_draft(
+    match agents_db::update_personal_dot_draft_by(
         &state.db,
         &id,
+        &owner.id,
         &user.id,
         &dot.agent.draft_spec,
         &draft,
@@ -1357,7 +1687,7 @@ pub async fn access_put(State(state): State<Arc<RamaState>>, req: Request) -> Re
     .await
     {
         Ok(agents_db::PersonalDotDraftSaved::Saved) => {
-            match access_view(&state, &user, &id, &draft, lang).await {
+            match access_view(&state, &owner, &id, &draft, lang).await {
                 Ok(view) => json_ok(StatusCode::OK, view),
                 Err(error) => internal(error),
             }
@@ -1386,13 +1716,18 @@ pub async fn set_active(State(state): State<Arc<RamaState>>, req: Request) -> Re
     let Some(id) = raw_path_segment(&req, 1) else {
         return bad_request(t(lang, "dot-error-id-missing"));
     };
+    let (owner, _) = match settings_target(&state, &user, &id, lang).await {
+        Ok(target) => target,
+        Err(response) => return response,
+    };
     let body: ActiveBody = match super::read_json(req.into_body(), "the Dot state").await {
         Ok(body) => body,
         Err(response) => return response,
     };
-    match agents_db::set_personal_dot_active(
+    match agents_db::set_personal_dot_active_by(
         &state.db,
         &id,
+        &owner.id,
         &user.id,
         body.active,
         state.config().dots.max_active_per_user,
@@ -1402,7 +1737,7 @@ pub async fn set_active(State(state): State<Arc<RamaState>>, req: Request) -> Re
         Ok(true) => {
             if !body.active
                 && let Err(error) = aiplane_runtime::agents::resume::cancel_personal_runs_for_dot(
-                    &state, &user.id, &id,
+                    &state, &owner.id, &id,
                 )
                 .await
             {
@@ -1411,7 +1746,7 @@ pub async fn set_active(State(state): State<Arc<RamaState>>, req: Request) -> Re
             json_ok(StatusCode::OK, json!({ "id": id, "active": body.active }))
         }
         Ok(false) => {
-            let owned = agents_db::list_personal_dots(&state.db, &user.id).await;
+            let owned = agents_db::list_personal_dots(&state.db, &owner.id).await;
             match owned {
                 Ok(rows) if rows.iter().any(|row| row.agent.principal.id == id) => json_error(
                     StatusCode::CONFLICT,
@@ -1450,14 +1785,18 @@ pub async fn create_session(State(state): State<Arc<RamaState>>, req: Request) -
     };
     match aiplane_agents::db::dot_sessions::link(&state.db, &user.id, &dot_id, &session.id).await {
         Ok(true) => {
-            if let Err(error) =
-                session_core::db::set_session_title(&state.db, &session.id, &dot.name).await
+            if let Err(error) = session_core::db::set_session_title(
+                &state.db,
+                &session.id,
+                &dot.agent.principal.display,
+            )
+            .await
             {
                 let _ = session_core::db::delete_session(&state.db, &user.id, &session.id).await;
                 return internal(error);
             }
             let mut session = session;
-            session.title = Some(dot.name);
+            session.title = Some(dot.agent.principal.display);
             json_ok(StatusCode::CREATED, json!({ "session": session }))
         }
         Ok(false) => {
@@ -1897,5 +2236,43 @@ mod defaults_tests {
                 .is_empty()
         );
         assert!(AgentSpec::from_value(&spec).is_ok());
+    }
+
+    #[test]
+    fn a_personal_agent_made_by_hand_starts_with_the_starter_tools_its_owner_holds() {
+        let read_only = |id: &str| match id {
+            "search_web" | "forward_request" => "always_allow",
+            _ => "always_ask",
+        };
+        let spec = starter_personal_spec(
+            &[
+                "remember".into(),
+                "search_web".into(),
+                "schedule_action".into(),
+                "forward_request".into(),
+                "company_echo".into(),
+            ],
+            read_only,
+        );
+        assert_eq!(
+            spec["main"]["tools"],
+            json!([
+                "remember",
+                "search_web",
+                "schedule_action",
+                "forward_request"
+            ]),
+            "only tools the owner holds, and nothing outside the starter set"
+        );
+        let permission = |id: &str| spec["main"]["tool_resources"][id]["permission"].clone();
+        assert_eq!(permission("remember"), "always_allow");
+        assert_eq!(permission("search_web"), "always_allow");
+        assert_eq!(permission("forward_request"), "always_allow");
+        assert_eq!(permission("schedule_action"), "always_ask");
+        assert!(AgentSpec::from_value(&spec).is_ok());
+        assert_eq!(
+            starter_personal_spec(&[], read_only),
+            default_personal_spec(&[])
+        );
     }
 }

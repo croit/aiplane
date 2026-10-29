@@ -197,7 +197,7 @@ fn localized_plan(mut plan: DotPlan, lang: Lang) -> DotPlan {
     plan
 }
 
-fn supported_tool(
+pub(crate) fn supported_tool(
     state: &RamaState,
     id: &str,
 ) -> Option<Arc<dyn aiplane_runtime::server::tools::Tool>> {
@@ -211,7 +211,13 @@ fn supported_tool(
         .get(id)
 }
 
-fn default_permission(
+/// The rule a newly selected tool starts with: Allow for the default memory
+/// tools, for read-only tools and for Ask another agent, Ask before each call
+/// for everything else. *Chosen:* Ask another agent reaches no agent until
+/// both consents of the pair are set — that is the owner's permission — and
+/// the receiver keeps its own rules, so asking again on every call would only
+/// stop delegation from being useful. The owner can still set it to Ask.
+pub(crate) fn default_permission(
     defaults: &AgentSpec,
     id: &str,
     tool: Option<&dyn aiplane_runtime::server::tools::Tool>,
@@ -223,6 +229,7 @@ fn default_permission(
         .and_then(|resource| resource.permission)
         == Some(aiplane_runtime::agents::spec::model::Permission::AlwaysAllow)
         || tool.is_some_and(|tool| tool.read_only())
+        || id == aiplane_runtime::agents::router::FORWARD_TOOL_NAME
     {
         "always_allow"
     } else {
@@ -760,6 +767,11 @@ mod tests {
             "always_ask"
         );
         assert_eq!(default_permission(&defaults, "missing", None), "always_ask");
+        assert_eq!(
+            default_permission(&defaults, "forward_request", Some(&Echo)),
+            "always_allow",
+            "consent of both agents is the permission to delegate"
+        );
         let disabled_memory =
             AgentSpec::from_value(&super::super::super::json_dots::default_personal_spec(&[]))
                 .unwrap();

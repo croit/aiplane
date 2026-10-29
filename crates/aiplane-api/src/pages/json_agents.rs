@@ -64,10 +64,45 @@ async fn access(
     id: &str,
     need: Access,
 ) -> Result<Option<Access>, Response> {
-    let held = effective_access(state, id, &user.id)
-        .await
-        .map_err(internal)?;
+    let held = if is_personal(state, id).await? {
+        None
+    } else {
+        effective_access(state, id, &user.id)
+            .await
+            .map_err(internal)?
+    };
     require_held(held, id, need)
+}
+
+/// The caller, if they may delete personal agent `id` of `owner`: the owner
+/// while they may manage personal agents, or an admin. Anyone else learns
+/// nothing about it.
+async fn require_personal_deleter(
+    state: &RamaState,
+    req: &Request,
+    owner: &str,
+    id: &str,
+) -> Result<users::User, Response> {
+    let (_, user) = super::require_session_json(state, req).await?;
+    let roles = state.rbac.role_ids_for(&user.roles);
+    if (user.id == owner && state.rbac.can_manage_dots(&roles)) || state.rbac.is_admin(&roles) {
+        Ok(user)
+    } else {
+        Err(not_found(format!(
+            "there is no agent `{id}` shared with you — ask its owner for a share"
+        )))
+    }
+}
+
+/// Whether agent `id` is a personal agent. The agent builder's routes never
+/// serve one, admins included, deletion aside ([`delete`]): its settings live on the owner-scoped
+/// `/api/v0/dots/{id}/*` routes, which check every tool against the owner's
+/// own grants (`docs/agents.md` → "Who sees an agent").
+pub(super) async fn is_personal(state: &RamaState, id: &str) -> Result<bool, Response> {
+    Ok(agents_db::personal_dot_owner(&state.db, id)
+        .await
+        .map_err(internal)?
+        .is_some())
 }
 
 pub(super) fn require_held(
@@ -97,9 +132,13 @@ pub(super) async fn begin_write(
     let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
         .await
         .map_err(internal)?;
-    let held = aiplane_runtime::agents::access::effective_access_in(state, &mut tx, id, &user.id)
-        .await
-        .map_err(internal)?;
+    let held = if is_personal(state, id).await? {
+        None
+    } else {
+        aiplane_runtime::agents::access::effective_access_in(state, &mut tx, id, &user.id)
+            .await
+            .map_err(internal)?
+    };
     require_held(held, id, Access::Write)?;
     Ok(tx)
 }
@@ -183,19 +222,51 @@ pub struct AgentView {
     pub live_version: Option<i64>,
     /// The caller's access to the agent.
     pub access: &'static str,
+    pub kind: AgentKind,
+    /// Who the agent belongs to: its user or organization, and for a public
+    /// agent the person who created it.
+    pub owner: OwnerView,
+    /// Who shared the agent with the caller, and when: set in the caller's
+    /// workspace on an agent that is not their own.
+    pub shared_by: Option<ShareOriginView>,
     pub dot: Option<AgentDotView>,
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct ShareOriginView {
+    pub by: OwnerView,
+    pub at: Timestamp,
+}
+
+/// Whom an agent works for (`docs/agents.md` → "Agent kinds").
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentKind {
+    /// Owned by one user, acting with that user's own rights.
+    Personal,
+    /// Owned by an organization, acting as its own principal.
+    Team,
+    /// Answers outside visitors, acting as its own principal.
+    Public,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum DotOwnerView {
-    User { id: String },
-    Organization { id: String, name: String },
+pub enum OwnerView {
+    /// `name` and `email` are absent when the user is no longer known.
+    User {
+        id: String,
+        name: Option<String>,
+        email: Option<String>,
+    },
+    Organization {
+        id: String,
+        name: String,
+    },
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct AgentDotView {
-    pub owner: DotOwnerView,
     pub name: String,
     pub active: bool,
 }
@@ -230,33 +301,88 @@ pub(super) async fn agent_views_in(
         .into_iter()
         .map(|row| (row.organization.id, row.organization.name))
         .collect::<std::collections::HashMap<_, _>>();
+    let people = people_in(
+        tx,
+        rows.iter()
+            .filter_map(|(agent, _)| {
+                match metadata.get(&agent.principal.id).map(|dot| &dot.owner) {
+                    Some(agents_db::DotOwner::User(id)) => Some(id.clone()),
+                    Some(agents_db::DotOwner::Organization(_)) => None,
+                    None => Some(agent.principal.created_by.clone()),
+                }
+            })
+            .collect(),
+    )
+    .await?;
+    let person_view = |id: &String| person_view(&people, id);
     rows.iter()
         .map(|(agent, access)| {
-            let mut view = agent_view(agent, *access);
-            if let Some(dot) = metadata.get(&agent.principal.id) {
-                let owner = match &dot.owner {
-                    agents_db::DotOwner::User(id) => DotOwnerView::User { id: id.clone() },
-                    agents_db::DotOwner::Organization(id) => {
-                        let Some(name) = names.get(id) else {
-                            return Err(internal(
-                                "organization owner disappeared while reading agent metadata",
-                            ));
-                        };
-                        DotOwnerView::Organization {
+            let (kind, owner) = match metadata.get(&agent.principal.id).map(|dot| &dot.owner) {
+                Some(agents_db::DotOwner::User(id)) => (AgentKind::Personal, person_view(id)),
+                Some(agents_db::DotOwner::Organization(id)) => {
+                    let Some(name) = names.get(id) else {
+                        return Err(internal(
+                            "organization owner disappeared while reading agent metadata",
+                        ));
+                    };
+                    (
+                        AgentKind::Team,
+                        OwnerView::Organization {
                             id: id.clone(),
                             name: name.clone(),
-                        }
-                    }
-                };
-                view.dot = Some(AgentDotView {
-                    owner,
+                        },
+                    )
+                }
+                None => (AgentKind::Public, person_view(&agent.principal.created_by)),
+            };
+            let p = &agent.principal;
+            Ok(AgentView {
+                id: p.id.clone(),
+                name: p.name.clone(),
+                display: p.display.clone(),
+                description: p.description.clone(),
+                created_by: p.created_by.clone(),
+                created_at: agent.created_at,
+                updated_at: agent.updated_at,
+                disabled_at: p.disabled_at,
+                live_version: agent.live_version,
+                access: access.as_str(),
+                kind,
+                owner,
+                shared_by: None,
+                dot: metadata.get(&p.id).map(|dot| AgentDotView {
                     name: dot.name.clone(),
                     active: dot.active,
-                });
-            }
-            Ok(view)
+                }),
+            })
         })
         .collect()
+}
+
+/// The users behind `ids`, each looked up once; `None` for one no longer known.
+async fn people_in(
+    tx: &mut aiplane_core::server::db::WriteTx,
+    ids: Vec<String>,
+) -> Result<HashMap<String, Option<users::User>>, Response> {
+    let mut people = HashMap::new();
+    for id in ids {
+        if let std::collections::hash_map::Entry::Vacant(slot) = people.entry(id) {
+            let found = users::find_by_id_in(tx, slot.key())
+                .await
+                .map_err(internal)?;
+            slot.insert(found);
+        }
+    }
+    Ok(people)
+}
+
+fn person_view(people: &HashMap<String, Option<users::User>>, id: &String) -> OwnerView {
+    let found = people.get(id).and_then(Option::as_ref);
+    OwnerView::User {
+        id: id.clone(),
+        name: found.and_then(|user| user.name.clone()),
+        email: found.map(|user| user.email.clone()),
+    }
 }
 
 pub(super) async fn agent_view_for(
@@ -267,23 +393,6 @@ pub(super) async fn agent_view_for(
     Ok(agent_views(state, &[(agent.clone(), access)])
         .await?
         .remove(0))
-}
-
-pub(super) fn agent_view(a: &agents_db::AgentRow, access: Access) -> AgentView {
-    let p = &a.principal;
-    AgentView {
-        id: p.id.clone(),
-        name: p.name.clone(),
-        display: p.display.clone(),
-        description: p.description.clone(),
-        created_by: p.created_by.clone(),
-        created_at: a.created_at,
-        updated_at: a.updated_at,
-        disabled_at: p.disabled_at,
-        live_version: a.live_version,
-        access: access.as_str(),
-        dot: None,
-    }
 }
 
 pub(super) async fn agent_json(
@@ -306,6 +415,8 @@ pub struct ShareView {
     /// or a user no longer known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<Option<String>>,
+    /// Who gave the share and when; absent on a share older than the record.
+    pub granted: Option<ShareOriginView>,
 }
 
 /// The shares as the API shows them: a person's share carries their display
@@ -315,24 +426,42 @@ async fn share_views(
     state: &RamaState,
     rows: &[agents_db::ShareRow],
 ) -> Result<Vec<ShareView>, Response> {
-    let mut out = Vec::with_capacity(rows.len());
-    for s in rows {
-        let name = if s.subject_kind == SubjectKind::User {
-            users::find_by_id(&state.db, &s.subject_id)
-                .await
-                .map_err(internal)?
-                .map(|u| u.name)
-        } else {
-            None
-        };
-        out.push(ShareView {
+    let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
+        .await
+        .map_err(internal)?;
+    let people = people_in(
+        &mut tx,
+        rows.iter()
+            .filter(|s| s.subject_kind == SubjectKind::User)
+            .map(|s| s.subject_id.clone())
+            .chain(rows.iter().filter_map(|s| s.granted_by.clone()))
+            .collect(),
+    )
+    .await?;
+    tx.commit().await.map_err(internal)?;
+    Ok(rows
+        .iter()
+        .map(|s| ShareView {
             subject_kind: s.subject_kind.as_str(),
             subject_id: s.subject_id.clone(),
             access: s.access.as_str(),
-            name,
-        });
-    }
-    Ok(out)
+            name: (s.subject_kind == SubjectKind::User)
+                .then(|| {
+                    people
+                        .get(&s.subject_id)
+                        .and_then(Option::as_ref)
+                        .map(|u| u.name.clone())
+                })
+                .flatten(),
+            granted: match (&s.granted_by, s.granted_at) {
+                (Some(by), Some(at)) => Some(ShareOriginView {
+                    by: person_view(&people, by),
+                    at,
+                }),
+                _ => None,
+            },
+        })
+        .collect())
 }
 
 /// One published version.
@@ -489,28 +618,135 @@ async fn require_valid(
         .map_err(|issues| invalid_spec(what, &issues))
 }
 
-/// GET /api/v0/agents — the agents shared with the caller; every agent for
-/// an admin.
+/// GET /api/v0/agents — the caller's own agents and those shared with them;
+/// with `?scope=all`, every user's agent for an admin (`docs/agents.md` →
+/// "Who sees an agent"). A non-admin's `scope=all` is ignored, as on the
+/// usage page.
 pub async fn list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let user = or_return!(require_agent_manager(&state, &req).await);
+    let user = or_return!(require_agent_or_dot_manager(&state, &req).await);
+    let wants_all = super::query_map(&req).get("scope").map(String::as_str) == Some("all");
     let mut tx = or_return!(
         aiplane_core::server::db::WriteTx::begin(&state.db)
             .await
             .map_err(internal)
     );
-    let rows = or_return!(visible_agents_in(&state, &mut tx, &user.id).await);
-    let agents = or_return!(agent_views_in(&mut tx, &rows).await);
+    let (can_view_all, groups) = or_return!(caller_in(&state, &mut tx, &user.id).await);
+    let show_all = can_view_all && wants_all;
+    let rows = if show_all {
+        or_return!(agents_db::list_all_in(&mut tx).await.map_err(internal))
+            .into_iter()
+            .map(|row| (row, Access::Write))
+            .collect()
+    } else {
+        let may_manage_dots = state.rbac.can_manage_dots(&groups);
+        let mut rows = or_return!(own_personal_agents_in(&mut tx, &user.id, may_manage_dots).await);
+        rows.extend(or_return!(
+            visible_agents_in(&state, &mut tx, &user.id).await
+        ));
+        rows
+    };
+    let mut agents = or_return!(agent_views_in(&mut tx, &rows).await);
+    if !show_all {
+        or_return!(attach_share_origins_in(&mut tx, &mut agents, &user.id, &groups).await);
+    }
     or_return!(tx.commit().await.map_err(internal));
-    json_ok(StatusCode::OK, AgentList { agents })
+    json_ok(
+        StatusCode::OK,
+        AgentList {
+            scope: if show_all { "all" } else { "self" },
+            can_view_all,
+            agents,
+        },
+    )
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct AgentList {
+    /// `all` or `self`.
+    pub scope: &'static str,
+    /// Whether the caller may ask for `scope=all`.
+    pub can_view_all: bool,
     pub agents: Vec<AgentView>,
 }
 
-/// The agents shared with `user`, with their access; every agent for an
-/// admin.
+/// The caller, if they may build agents or personal agents: the list is
+/// where both kinds live.
+async fn require_agent_or_dot_manager(
+    state: &RamaState,
+    req: &Request,
+) -> Result<users::User, Response> {
+    let (_, user) = super::require_session_json(state, req).await?;
+    let role_ids = state.rbac.role_ids_for(&user.roles);
+    if state.rbac.can_manage_agents(&role_ids) || state.rbac.can_manage_dots(&role_ids) {
+        return Ok(user);
+    }
+    Err(json_error(
+        StatusCode::FORBIDDEN,
+        "forbidden",
+        &t(
+            Lang::from_request(req.headers()),
+            "agent-management-error-permission-required",
+        ),
+    ))
+}
+
+/// Whether the caller is an admin, and the groups they resolve to.
+async fn caller_in(
+    state: &RamaState,
+    tx: &mut aiplane_core::server::db::WriteTx,
+    user_id: &str,
+) -> Result<(bool, Vec<String>), Response> {
+    Ok(
+        match aiplane_runtime::agents::access::current_user_policy_in(state, tx, user_id)
+            .await
+            .map_err(internal)?
+        {
+            Some((user, policy)) => {
+                let groups = policy.role_ids_for(&user.roles);
+                (policy.is_admin(&groups), groups)
+            }
+            None => (false, Vec::new()),
+        },
+    )
+}
+
+/// Names who shared each agent with `user_id`, on the agents that are not
+/// theirs: an agent they created, or a share they gave themselves, names no
+/// one.
+async fn attach_share_origins_in(
+    tx: &mut aiplane_core::server::db::WriteTx,
+    views: &mut [AgentView],
+    user_id: &str,
+    groups: &[String],
+) -> Result<(), Response> {
+    let origins = agents_db::share_origins_in(tx, user_id, groups)
+        .await
+        .map_err(internal)?;
+    let people = people_in(
+        tx,
+        origins
+            .values()
+            .map(|origin| origin.granted_by.clone())
+            .collect(),
+    )
+    .await?;
+    for view in views {
+        if view.created_by != user_id
+            && let Some(origin) = origins.get(&view.id)
+        {
+            view.shared_by = Some(ShareOriginView {
+                by: person_view(&people, &origin.granted_by),
+                at: origin.granted_at,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// The agents shared with `user`, with their access — admins included:
+/// another user's agent reaches an admin only through `scope=all`. Personal
+/// agents are not among them: no one shares one, and its owner's list adds
+/// it separately.
 pub(super) async fn visible_agents(
     state: &RamaState,
     user: &users::User,
@@ -536,25 +772,12 @@ pub(super) async fn visible_agents_in(
         return Ok(Vec::new());
     };
     let groups = policy.role_ids_for(&current.roles);
-    let admin = policy.is_admin(&groups);
     if !policy.can_manage_agents(&groups) {
         return Ok(Vec::new());
     }
-    let rows = if admin {
-        agents_db::list_all_in(tx)
-            .await
-            .map_err(internal)?
-            .into_iter()
-            .map(|row| (row, Access::Write))
-            .collect::<Vec<_>>()
-    } else {
-        agents_db::list_shared_with_in(tx, user_id, &groups)
-            .await
-            .map_err(internal)?
-    };
-    if admin {
-        return Ok(rows);
-    }
+    let rows = agents_db::list_shared_with_in(tx, user_id, &groups)
+        .await
+        .map_err(internal)?;
     let ids = rows
         .iter()
         .map(|(row, _)| row.principal.id.clone())
@@ -575,10 +798,28 @@ pub(super) async fn visible_agents_in(
                 && metadata
                     .get(&row.principal.id)
                     .is_none_or(|dot| match &dot.owner {
-                        agents_db::DotOwner::User(_) => true,
+                        agents_db::DotOwner::User(_) => false,
                         agents_db::DotOwner::Organization(id) => memberships.contains(id),
                     })
         })
+        .collect())
+}
+
+/// The caller's own personal agents, when they may manage them: the list
+/// shows them beside the shared ones, nothing else offers them as a target.
+async fn own_personal_agents_in(
+    tx: &mut aiplane_core::server::db::WriteTx,
+    user_id: &str,
+    may_manage: bool,
+) -> Result<Vec<(agents_db::AgentRow, Access)>, Response> {
+    if !may_manage {
+        return Ok(Vec::new());
+    }
+    Ok(agents_db::list_personal_dots_in(tx, user_id)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(|dot| (dot.agent, Access::Write))
         .collect())
 }
 
@@ -1410,7 +1651,7 @@ async fn require_share_subject_in(
         .map_err(internal)?;
     let org = match owner {
         Some(agents_db::DotOwner::Organization(id)) => Some(id),
-        _ => None,
+        Some(agents_db::DotOwner::User(_)) | None => None,
     };
     let held = match kind {
         SubjectKind::User => {
@@ -1782,24 +2023,41 @@ pub async fn revoke_share(State(state): State<Arc<RamaState>>, req: Request) -> 
 /// DELETE /api/v0/agents/{id} — the agent and its principal, with every
 /// grant, token, version and share. The audit trail stays.
 pub async fn delete(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let user = or_return!(require_agent_manager(&state, &req).await);
-    let (agent, _) = or_return!(agent_at(&state, &req, &user, 0, Access::Write).await);
-    match agents_db::personal_dot_owner(&state.db, &agent.principal.id).await {
-        Ok(Some(owner)) => {
-            if let Err(error) = aiplane_runtime::agents::resume::cancel_personal_runs_for_dot(
-                &state,
-                &owner,
-                &agent.principal.id,
-            )
+    let Some(id) = raw_path_segment(&req, 0) else {
+        return bad_request("the URL is missing the agent id");
+    };
+    let personal = or_return!(
+        agents_db::personal_dot_owner(&state.db, &id)
             .await
+            .map_err(internal)
+    );
+    let (user, agent, mut tx) = match personal {
+        Some(owner) => {
+            let user = or_return!(require_personal_deleter(&state, &req, &owner, &id).await);
+            let Some(agent) = or_return!(agents_db::get(&state.db, &id).await.map_err(internal))
+            else {
+                return not_found(format!("there is no agent `{id}`"));
+            };
+            if let Err(error) =
+                aiplane_runtime::agents::resume::cancel_personal_runs_for_dot(&state, &owner, &id)
+                    .await
             {
                 return internal(error);
             }
+            let tx = or_return!(
+                aiplane_core::server::db::WriteTx::begin(&state.db)
+                    .await
+                    .map_err(internal)
+            );
+            (user, agent, tx)
         }
-        Ok(None) => {}
-        Err(error) => return internal(error),
-    }
-    let mut tx = or_return!(begin_write(&state, &user, &agent.principal.id).await);
+        None => {
+            let user = or_return!(require_agent_manager(&state, &req).await);
+            let (agent, _) = or_return!(agent_by_id(&state, &user, &id, Access::Write).await);
+            let tx = or_return!(begin_write(&state, &user, &agent.principal.id).await);
+            (user, agent, tx)
+        }
+    };
     let schedules = or_return!(
         aiplane_runtime::server::scheduled::list_for_owner_in(
             &mut tx,

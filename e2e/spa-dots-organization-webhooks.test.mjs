@@ -80,7 +80,7 @@ test("Organization webhooks retain their published pin, rotate and pause public 
         assert.equal(await page.getByRole("combobox", { name: "Run as", exact: true }).count(), 0);
         assert.equal(await page.getByRole("checkbox", { name: /^Wait for the response/ }).count(), 0);
         assert.equal(await page.getByRole("checkbox", { name: /^Continue one conversation/ }).count(), 0);
-        const tools = page.getByRole("checkbox", { name: "Allow the Dot’s tools", exact: true });
+        const tools = page.getByRole("checkbox", { name: "Allow the agent’s tools", exact: true });
         await tools.focus();
         await page.keyboard.press("Space");
         assert.equal(await tools.isChecked(), true);

@@ -216,7 +216,7 @@ The configuration foundation exposes these organization endpoints:
 - `GET /api/v0/admin/organizations`: administrator inventory with actual selected groups and the existing group catalogue.
 - `PUT /api/v0/admin/organizations/{id}`: administrator updates metadata and bindings with the returned `expected_revision`; stale edits return a conflict.
 - `GET /api/v0/organizations/{id}`: current member inventory with actual metadata, active usage and readable shared Dots.
-- `POST /api/v0/organizations/{id}/dots`: membership plus existing agent-management permission creates the Dot, principal, typed ownership and initial write share in one transaction, subject to capacity.
+- `POST /api/v0/organizations/{id}/dots`: membership plus existing agent-management permission creates the Dot, principal, typed ownership and initial write share in one transaction, subject to capacity. An optional `copy_from` names one of the caller's own personal agents to start from (see [copying a personal agent](#copying-a-personal-agent)).
 - `POST /api/v0/organizations/{id}/dots/{dot_id}/active`: current member writer activates or deactivates the actual organization-owned Dot under the independent cap.
 
 Reuse existing `/api/v0/agents/{id}` configuration, grants, shares, conversation and Inbox routes through the combined owner access decision. Extend the Dot inventory/access card with typed owner data where actual organization rows are shown. Do not make personal `/dots/{id}` handlers accept organization IDs without changing their documented authorization contract.
@@ -505,3 +505,14 @@ source/version proof and same-transaction current admission. Existing
 conversation storage, approval queues and model selection serve both sources.
 Organization announcements remain in the web interface; push and external
 channel messages are not dispatched.
+
+## Copying a personal agent
+
+**Copy as team agent** on a personal agent calls the creation route above with
+`copy_from`. The new team agent's draft holds only the personal agent's
+`main.instructions` and `scope.topics`, and it takes the personal agent's
+description unless the request gives one. *Chosen (privacy):* memory, files,
+tool selection and connected accounts never move. A personal agent acts with
+its owner's rights and accounts; a team agent acts as its own principal, so it
+gets tools only through its own grants. Only the owner may copy; anyone else's
+`copy_from` answers `404`.

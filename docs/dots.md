@@ -9,14 +9,17 @@ The current implementation branch has the personal-Dot owner and active
 state table, transactional active-slot enforcement, and session-authenticated
 `GET`/`POST /api/v0/dots` plus `PUT /api/v0/dots/{id}/active` endpoints. The
 active cap is an operator setting at `/admin/settings` → Access, defaulting to
-four. The `/dots` page lists, creates, activates and deactivates personal Dots.
+four. In the product a personal Dot is a **personal agent**: the `/agents` list
+shows it under *My agents* and its editor opens at `/agents/{id}`.
 Lifecycle endpoints require the independent `can_manage_dots` group
 permission; administrators hold it and other groups default to disabled. Each
-Dot card shows its name, active state and optional purpose description. Its
-Details button opens tabs for memory, activity, access, communication,
-workspace and automation. The workspace tab links to the Dot's file manager;
-automation links to the existing Dot-scoped schedule and webhook pages. Tabs
-keep their loaded state while switching so unsaved access edits are preserved.
+card in the agent list shows its name, the *Personal* badge, its active state
+and optional purpose description. Its editor has the tabs **Task** (see
+[personal agent profile](#personal-agent-profile)), **Tools** (access and
+approvals), **Memory**, **Activity**, **Collaboration** (communication),
+**Files** (the Dot's file manager) and **Automation** (the existing Dot-scoped
+schedule and webhook pages). Tabs keep their loaded state while switching so
+unsaved access edits are preserved.
 The short description appears on the card and to other Dots; it is not sent to
 the model as an instruction. Conversational setup saves separate work
 instructions that the personal Dot uses in its runs. The manual creation
@@ -34,16 +37,19 @@ Dot memory has a separate store and owner-scoped API, but automatic memory
 curation is not implemented. A personal Dot can start a private chat that
 reads bounded Dot memory and the user's existing profile context. Its chat
 uses the tools selected in its Access and approvals panel, intersected with
-the user's current grants, enabled settings and connected MCP tools. Existing
-memory tools are selected at creation when granted and enabled; their writes
-remain isolated to the Dot. Schedules and webhooks can run with the same personal Dot context and durable approvals.
+the user's current grants, enabled settings and connected MCP tools. A personal
+agent created by hand starts with the [starter tools](#starter-tools) its
+owner holds; memory writes remain isolated to the Dot. Schedules and webhooks
+can run with the same personal Dot context and durable approvals.
 
 | Endpoint | Behavior |
 |---|---|
 | `GET /api/v0/dots` | Lists only the signed-in user's personal Dots, including inactive ones, and returns the active limit. |
 | `POST /api/v0/dots` | Creates a named personal Dot if the user has an active slot. |
-| `PUT /api/v0/dots/{id}/active` | Activates or deactivates an owned Dot; activation rechecks capacity transactionally. |
-| `GET /api/v0/dots/{id}/access` | Returns the owned Dot's tool selection and approval rules together with the user's current available catalog. |
+| `PUT /api/v0/dots/{id}/active` | Activates or deactivates an owned Dot, or another user's for an admin; activation rechecks the owner's capacity transactionally. |
+| `GET /api/v0/dots/{id}/profile` | Returns the Dot name, the display name, description, task, tone and topics with the owner and a `revision`. |
+| `PUT /api/v0/dots/{id}/profile` | Replaces the display name, description, task, tone and topics in one audited save; a stale `revision` answers `409`. |
+| `GET /api/v0/dots/{id}/access` | Returns the Dot's tool selection and approval rules together with its owner's current available catalog. |
 | `PUT /api/v0/dots/{id}/access` | Replaces the owned Dot's selected tools and their approval rules, retaining other agent spec fields. |
 | `GET /api/v0/dots/{id}/communication` | Returns actual same-owner peers and separate directed outgoing/incoming consent. |
 | `PUT /api/v0/dots/{id}/communication` | Saves one directed consent under current management permission and generation checks. |
@@ -125,6 +131,52 @@ arguments; resumption reloads Dot selection, current user grants, enabled
 settings and connected tools. Revoked selections and disabled tools cannot
 execute on an old approval. Dot deactivation leaves ordinary pending calls
 paused and cancels affected delegation trees.
+
+## Personal agent profile
+
+The **Task** tab of a personal agent edits what it is called and told to do:
+its display name (the principal's; the Dot name it was created with stays
+unchanged), its card description,
+and three fields of its draft spec — `main.instructions.orchestration` (task),
+`main.instructions.response` (tone) and `scope.topics`. The personal Dot
+persona briefs every chat, schedule and webhook run from those fields
+(`render_owner_brief`), so a save takes effect from the next turn; there is no
+publish step for a personal agent. Blank fields are removed from the spec and
+every other spec field is kept. Limits: 80 characters for the display name, 500 for the
+description, 20,000 each for task and tone, 50 topics of 200 characters.
+
+### Administrator changes
+
+The settings routes — profile, access and active state — also answer an
+administrator for another user's personal agent. They resolve the owner and
+check every setting against the owner's grants and connector catalogue, never
+the administrator's; the save is audited with the administrator as actor. The
+editor shows such an administrator only **Task** and **Tools** with a notice
+naming the owner. Memory, activity, communication, connections, files,
+sessions and runs stay owner-only and answer `404` to everyone else. A personal
+agent cannot be shared ([`agents.md`](agents.md#shares)).
+
+## Starter tools
+
+`POST /api/v0/dots` selects, among the tools its owner holds
+(`allowed_tools_for_user`), the memory tools and `STARTER_TOOLS` in
+`json_dots.rs` — `get_current_timestamp`, `search_web`, `fetch_url`,
+`rag_search`, `schedule_action` and `forward_request` (*Ask another agent*) —
+so a new personal agent can research, schedule and delegate before anyone
+opens its **Tools** tab. Each rule comes from the same `default_permission`
+the conversational setup uses: the memory tools, read-only tools and
+`forward_request` are allowed, everything else asks before each call.
+*Chosen:* `forward_request` reaches no other agent until both consents of the
+pair are set ([communication](dots-communication.md)) — that is the owner's
+permission — and the receiver keeps its own rules, so asking again on every
+delegation would only get in the way. The owner can set any of these to Ask,
+or allow scheduling, on the **Tools** tab. A tool the owner
+does not hold is not selected, and every selection is checked against the
+owner's current grants on each call. The conversational setup keeps its
+reviewed proposal and selects only what the proposal shows.
+
+The model sees each personal agent, and each agent it may ask, by its display
+name, the name people use for it.
 
 ## Personal Dot files
 

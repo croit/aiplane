@@ -605,6 +605,8 @@ Debug fixture routes exist only in development builds.
 | `GET /api/v0/dots` |
 | `POST /api/v0/dots` |
 | `PUT /api/v0/dots/{id}/active` |
+| `GET /api/v0/dots/{id}/profile` |
+| `PUT /api/v0/dots/{id}/profile` |
 | `GET /api/v0/dots/{id}/access` |
 | `PUT /api/v0/dots/{id}/access` |
 | `GET /api/v0/dots/{id}/connections` |
