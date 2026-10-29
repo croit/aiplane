@@ -6,7 +6,9 @@ use crate::backend::fake::{FakeBackend, req};
 use crate::config::Config;
 use rama::Service;
 use rama::http::{Body, Method};
-use shared::sandbox::{DotWorkspace, DotWorkspaceScope, WorkspaceListing, WorkspacePurpose};
+use shared::sandbox::{
+    AgentWorkspaceScope, OwnedAgentWorkspace, WorkspaceListing, WorkspacePurpose,
+};
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -14,7 +16,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 struct Fixture {
     root: PathBuf,
     state: Arc<RunnerState>,
-    identity: DotWorkspace,
+    identity: OwnedAgentWorkspace,
 }
 
 impl Fixture {
@@ -35,9 +37,9 @@ impl Fixture {
             state: Arc::new(RunnerState {
                 pool: Pool::new(Arc::new(FakeBackend::new()), Arc::new(config)),
             }),
-            identity: DotWorkspace {
+            identity: OwnedAgentWorkspace {
                 owner_user_id: "person".into(),
-                dot_id: "00000000-0000-4000-8000-000000000001".into(),
+                agent_id: "00000000-0000-4000-8000-000000000001".into(),
             },
         }
     }
@@ -46,7 +48,11 @@ impl Fixture {
         self.send_as(self.identity.clone(), operation).await
     }
 
-    async fn send_as(&self, workspace: DotWorkspace, operation: WorkspaceOperation) -> Response {
+    async fn send_as(
+        &self,
+        workspace: OwnedAgentWorkspace,
+        operation: WorkspaceOperation,
+    ) -> Response {
         service(self.state.clone())
             .serve(
                 Request::builder()
@@ -66,8 +72,8 @@ impl Fixture {
             .unwrap()
     }
 
-    fn dot_root(&self) -> PathBuf {
-        self.root.join("dots").join(&self.identity.dot_id)
+    fn agent_root(&self) -> PathBuf {
+        self.root.join("agents").join(&self.identity.agent_id)
     }
 }
 
@@ -185,7 +191,7 @@ async fn workspace_routes_reject_foreign_ownership_without_changing_files_or_man
         fixture.send(write("notes.txt", b"original")).await.status(),
         StatusCode::NO_CONTENT
     );
-    let manifest = std::fs::read(fixture.dot_root().join("owner.json")).unwrap();
+    let manifest = std::fs::read(fixture.agent_root().join("owner.json")).unwrap();
     let mut foreign = fixture.identity.clone();
     foreign.owner_user_id = "foreign-person".into();
     for operation in [
@@ -207,11 +213,11 @@ async fn workspace_routes_reject_foreign_ownership_without_changing_files_or_man
         );
     }
     assert_eq!(
-        std::fs::read(fixture.dot_root().join("owner.json")).unwrap(),
+        std::fs::read(fixture.agent_root().join("owner.json")).unwrap(),
         manifest
     );
     assert_eq!(
-        std::fs::read(fixture.dot_root().join("files/notes.txt")).unwrap(),
+        std::fs::read(fixture.agent_root().join("files/notes.txt")).unwrap(),
         b"original"
     );
 }
@@ -239,7 +245,7 @@ async fn workspace_routes_refuse_traversal_and_symlinks_without_exposing_private
     }
     symlink(
         "../owner.json",
-        fixture.dot_root().join("files/manifest-link"),
+        fixture.agent_root().join("files/manifest-link"),
     )
     .unwrap();
     assert_eq!(
@@ -258,8 +264,8 @@ async fn workspace_routes_refuse_traversal_and_symlinks_without_exposing_private
             .status(),
         StatusCode::CONFLICT
     );
-    let manifest: DotWorkspace =
-        serde_json::from_slice(&std::fs::read(fixture.dot_root().join("owner.json")).unwrap())
+    let manifest: OwnedAgentWorkspace =
+        serde_json::from_slice(&std::fs::read(fixture.agent_root().join("owner.json")).unwrap())
             .unwrap();
     assert_eq!(manifest, fixture.identity);
 }
@@ -300,7 +306,7 @@ async fn workspace_bad_json_base64_and_oversized_body_leave_original_file_unchan
         assert_eq!(response.status(), expected);
     }
     assert_eq!(
-        std::fs::read(fixture.dot_root().join("files/notes.txt")).unwrap(),
+        std::fs::read(fixture.agent_root().join("files/notes.txt")).unwrap(),
         b"original"
     );
 }
@@ -314,7 +320,7 @@ async fn workspace_routes_allow_busy_reads_but_require_idle_mutations() {
     );
     let mut run = req();
     run.keep_alive = true;
-    run.workspace = Some(DotWorkspaceScope {
+    run.workspace = Some(AgentWorkspaceScope {
         workspace: fixture.identity.clone(),
         turn_id: "workspace-turn".into(),
         purpose: WorkspacePurpose::Workspace,

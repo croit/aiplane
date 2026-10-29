@@ -53,8 +53,8 @@ settings-s-usage = Метрики использования
 settings-s-usage-blurb = Учёт по каждому запросу за страницей /usage.
 settings-s-limits = Ограничения и квоты
 settings-s-limits-blurb = Главный переключатель правил, настроенных на /admin/limits.
-settings-s-dots = Личные агенты
-settings-s-dots-blurb = Лимит личных агентов.
+settings-s-agents = Личные агенты
+settings-s-agents-blurb = Лимит личных агентов.
 settings-s-content_guard = Проверка содержимого
 settings-s-content_guard-blurb = Проверяет содержимое перед отправкой выбранной модели.
 settings-f-content_guard-enabled = Включить проверку содержимого
@@ -211,8 +211,8 @@ settings-f-usage-currency-help = Валюта, в которой показыв�
 
 settings-f-limits-enabled = Применять ограничения и квоты
 settings-f-limits-enabled-help = Выключено — правила на /admin/limits игнорируются.
-settings-f-dots-max_active_per_user = Активные личные агенты на пользователя
-settings-f-dots-max_active_per_user-help = Максимальное количество активных личных агентов у пользователя. По умолчанию: 4.
+settings-f-agents-max_active_per_user = Активные личные агенты на пользователя
+settings-f-agents-max_active_per_user-help = Максимальное количество активных личных агентов у пользователя. По умолчанию: 4.
 
 settings-f-feedback-enabled = Показывать виджет обратной связи
 settings-f-feedback-enabled-help = Главный переключатель кнопки обратной связи в приложении.
@@ -299,8 +299,8 @@ settings-f-gateway-default_priority-opt-low = Низкий
 settings-f-gateway-default_priority-opt-medium = Средний
 settings-f-gateway-default_priority-opt-high = Высокий
 
-settings-f-dots-max_active_per_organization = Активные агенты на организацию
-settings-f-dots-max_active_per_organization-help = Максимальное количество активных агентов организации, включая ожидающих работы. По умолчанию: 4.
+settings-f-agents-max_active_per_organization = Активные агенты на организацию
+settings-f-agents-max_active_per_organization-help = Максимальное количество активных агентов организации, включая ожидающих работы. По умолчанию: 4.
 
 # Branding — корпоративный логотип, который загружает администратор.
 # Ручная карточка админ-раздела, а не секция settings.rs, поэтому имена

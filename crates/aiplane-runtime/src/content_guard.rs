@@ -381,7 +381,7 @@ mod tests {
             Action::Allow
         );
         assert_eq!(upstream.received_requests().await.unwrap().len(), 1);
-        sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
+        sqlx::query("UPDATE agent_owners SET active=0 WHERE principal_id=?")
             .bind(&profile.principal.id)
             .execute(&state.db)
             .await

@@ -602,7 +602,7 @@ async fn a_scheduled_run_that_paused_is_resumed_from_its_owners_inbox() {
     let action = scheduled::create(
         &fx.state.db,
         NewAction {
-            dot_id: None,
+            personal_agent_id: None,
             linked_session_id: None,
             owner: aiplane_runtime::server::background::AutomationOwner::User("plain".into()),
             created_by: "plain".into(),
@@ -699,7 +699,7 @@ async fn a_paused_schedule_shows_its_preview_in_the_owners_inbox() {
     scheduled::create(
         &fx.state.db,
         NewAction {
-            dot_id: None,
+            personal_agent_id: None,
             linked_session_id: None,
             owner: aiplane_runtime::server::background::AutomationOwner::User("plain".into()),
             created_by: "plain".into(),

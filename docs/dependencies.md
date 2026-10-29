@@ -15,7 +15,7 @@ These are pre-approved; just add them to the relevant crate's `Cargo.toml` (refe
 
 | Crate | Used in | Why |
 |---|---|---|
-| `aiplane-agents` | `aiplane-tools` | Existing memory tools route personal-Dot writes through the owner-scoped Dot-memory accessors, without duplicating their SQL or adding a new store. |
+| `aiplane-agents` | `aiplane-tools` | Existing memory tools route personal-agent writes through the owner-scoped agent-memory accessors, without duplicating their SQL or adding a new store. |
 | `rama` | `gateway` | HTTP framework + proxying primitives. Features `http-full` + `tower`; rustls deliberately off (aws-lc-sys is cmake-only). |
 | `serde_urlencoded` | `gateway`, `aiplane-api` | Query-string encode/decode: building the `return_to` parameter on the sign-in redirect and parsing the OIDC callback's query. (It used to parse form bodies for the page POST handlers; those are gone.) |
 | `tokio` | `gateway`, `cli` | Async runtime. |
@@ -26,7 +26,7 @@ These are pre-approved; just add them to the relevant crate's `Cargo.toml` (refe
 | `reqwest` (rustls, stream) | `gateway`, `cli` | Outbound HTTP — upstream LLM calls (gateway) + gateway-API calls (cli). TLS is rustls with the aws-lc-rs provider and the OS trust store via `rustls-platform-verifier`; both were already pulled in by `jsonwebtoken` and rama, so reqwest adds no build inputs of its own. See `crates/aiplane/src/rama_server/proxy.rs` for why AIplane keeps reqwest rather than driving rama's client side directly. |
 | `openidconnect` | `gateway` | OIDC discovery + code exchange. The Rust ecosystem's standard. |
 | `sqlx` (sqlite, runtime-tokio-rustls, macros, migrate) | `gateway` | Persistence for users, gateway tokens, sessions, pending_logins, audit log. |
-| `hmac` + `sha2` | `gateway`, `aiplane-api` | HMAC-SHA256 for the signed session cookie; SHA-256 for indexed bearer-token lookup and opaque Dot access revisions, preventing stale editors from replacing newer tool rules. Tokens are 256-bit OS-random opaque strings, so argon2id would only add CPU cost without security gain. |
+| `hmac` + `sha2` | `gateway`, `aiplane-api` | HMAC-SHA256 for the signed session cookie; SHA-256 for indexed bearer-token lookup and opaque agent access revisions, preventing stale editors from replacing newer tool rules. Tokens are 256-bit OS-random opaque strings, so argon2id would only add CPU cost without security gain. |
 | `rand` (with OsRng) | `gateway` | Session IDs and new gateway tokens from the OS RNG. |
 | `aes-gcm` | `gateway` | AES-256-GCM for at-rest secret sealing (`server::crypto`: MCP OAuth tokens, connector secrets, backend API keys) and AES-128-GCM for Web Push payload encryption (`aiplane_features::server::push`, RFC 8291). |
 | `p256` (+ `ecdh`) | `gateway` | Web Push (`aiplane_features::server::push`): P-256 ECDSA (ES256) for VAPID request signing (RFC 8292) + P-256 ECDH for payload encryption (RFC 8291). Already in the tree via `jsonwebtoken`; the `ecdh` feature is the only real addition. |

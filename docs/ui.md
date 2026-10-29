@@ -183,22 +183,22 @@ organization. The menu uses the existing `/api/v0/organizations` membership
 list, so users with no organization do not see an empty destination there.
 The page lists actual organizations for which the current user is a member.
 Each `/organizations/<id>` page shows the returned name,
-description, organization-wide active usage and readable shared Dots.
-Membership alone grants no Dot share. Members with agent-management permission
-open the shared creation dialog to create a named Dot; existing write access permits activation changes within
+description, organization-wide active usage and readable shared agents.
+Membership alone grants no agent share. Members with agent-management permission
+open the shared creation dialog to create a named agent; existing write access permits activation changes within
 the independent organization cap. Configuration opens the existing
 `/agents/<id>/setup/start` flow and editor. Organization owner metadata controls
 the return link and organization-specific controls. Current member writers use
 **Try it → Test chat** for private saved-draft or published conversations. The
 server returns their actual source and pinned version; newer publishing does
 not replace that version. **Scheduled actions** opens the existing schedule list
-under the Dot’s actual principal scope. Organization schedules select a real
+under the agent’s actual principal scope. Organization schedules select a real
 published version and explicit timezone, show its authored model without an
 employee override, and open fresh private principal conversations. Their
 Back/Cancel/save navigation preserves that scope. Test suites, website and
 external-channel controls
-are unavailable for these Dots. Current writers
-manage the Dot’s own OAuth identity in **Setup** through the existing connection
+are unavailable for these agents. Current writers
+manage the agent’s own OAuth identity in **Setup** through the existing connection
 panel. Organization choices contain no user identity; OAuth completion leaves
 the account unselected until Save. The returned action capabilities govern
 selection, authorization and local erasure independently. Removed catalogue
@@ -443,12 +443,12 @@ Invariants worth knowing before you touch either side:
 - **The stream ends at `turn_finalized` / `suspended` / `idle`.** The server closes there, so `chat.svelte.ts` closes the `EventSource` too, and fires `onTurnFinalized` on `turn_finalized` and `suspended` alike (the turn stopped running) — letting it auto-reconnect would loop snapshot/idle forever on a quiet session. `applyEvent` folds `suspended` into the turn (`status: suspended`, `suspension`), as a snapshot's row carries it. After a submit (or any suspected change) `attach()` reopens, and the fresh snapshot is the replay.
 - **An interrupted worker leaves a terminal turn.** The shared worker harness catches driver and tool panics, records the assistant turn and any still-running tool calls as `errored`, and broadcasts `Finalized`; its caller then releases the worker slot. On attach, if the owner has no live worker, the events handler also errors any already-present `in_progress` assistant turns before sending the snapshot. It targets only turn IDs read before rechecking the worker registry, so a newly starting turn cannot be mistaken for an orphan. Viewers of a shared conversation never perform this recovery because they cannot see the owner's worker in their own registry lookup.
 - **Organization schedule history uses private principal chat.** Scoped lists
-  use `GET /api/v0/scheduled?principal_id={id}` and the returned target Dot,
+  use `GET /api/v0/scheduled?principal_id={id}` and the returned target agent,
   versions and write capability. The same schedule editor hides user model and
   conversation-reuse controls for this scope. Version and timezone are explicit;
   the model display uses that published spec, with missing data shown as missing.
   Edit and toggle requests compare the actual configuration generation. User
-  and personal-Dot forms keep their existing model and reuse choices. A single
+  and personal-agent forms keep their existing model and reuse choices. A single
   organization run links to the existing agent Test chat through `test_session`;
   multiple runs use the shared runs list. Each organization fire opens a fresh
   private conversation, and run history shows its captured published version.
@@ -456,7 +456,7 @@ Invariants worth knowing before you touch either side:
   fires without cancelling or approving a pending turn. Organization runs
   always use fresh private conversations.
 - **Organization webhooks reuse the scoped automation surface.**
-  `GET /api/v0/webhooks?principal_id={id}` returns the actual Dot, retained
+  `GET /api/v0/webhooks?principal_id={id}` returns the actual agent, retained
   published versions and current Write capability. The existing form hides
   personal model, synchronous response and conversation-reuse controls. Its
   selected publication supplies the model and own-principal execution identity.
@@ -677,31 +677,31 @@ the same way on mount.
 
 ## Personal agent navigation and management
 
-Personal Dots are shown as **personal agents** in the one agent list:
+Personal agents are shown as **personal agents** in the one agent list:
 **Workspace → Agents** appears when `GET /api/v0/me` reports
-`can_manage_agents` or `can_manage_dots`; there is no separate Dots page.
-The existing group form exposes **Personal Dot manager** independently of
+`can_manage_agents` or `can_manage_personal_agents`; there is no separate agents page.
+The existing group form exposes **Personal agent manager** independently of
 **Agent manager**, with admin implication and the same save and reset flow.
 List, create and active-state routes enforce the corresponding server
 permission; the sidebar is not an authorization boundary. See
-[personal Dots](dots.md) and [access administration](admin/access.md).
+[personal agents](personal-agents.md) and [access administration](admin/access.md).
 
 **New agent** asks *Who is the agent for?* with the kinds the caller may create
 (`creatableKinds` in `web/src/lib/agents.ts`): *Only me* (`POST
-/api/v0/dots`, then the editor), *My team* (`POST
-/api/v0/organizations/{id}/dots` for a team that allows it, then the setup
+/api/v0/agents` with `kind: "personal"`, then the editor), *My team* (`POST
+/api/v0/organizations/{id}/agents` for a team that allows it, then the setup
 assistant) and *Visitors* (`POST /api/v0/agents`). Only *Visitors* asks for an
 id; *Only me* also offers the conversational setup.
 
-`/agents/{id}` asks `GET /api/v0/dots/{id}/profile` first: a personal agent
+`/agents/{id}` asks `GET /api/v0/agents/{id}/profile` first: a personal agent
 opens in `PersonalAgentEditor` (header with kind badge, active state,
 **Activate**/**Deactivate**, **Chat** and **Copy as team agent**), every other
 agent answers `404` there and opens in the agent builder. The editor's tabs
-come from `DotDetailsPanel`: **Task** (`DotProfilePanel`: name, description,
+come from `AgentDetailsPanel`: **Task** (`AgentProfilePanel`: name, description,
 task, tone, topics, saved with its `revision`), **Tools**, **Memory**,
 **Activity**, **Collaboration**, **Files** and **Automation**; `?tab=` selects
 one. An admin on another user's personal agent gets only **Task** and
-**Tools** (`dotDetailTabs`) and a notice naming the owner. The memory,
+**Tools** (`agentDetailTabs`) and a notice naming the owner. The memory,
 activity, tools and collaboration tabs load their data on first visit and
 retain their edits while switching tabs. A personal agent's optional short
 description is card and collaboration context, not an instruction to the
@@ -709,7 +709,7 @@ model; its **Task** is.
 
 The **Collaboration** tab lazily loads from its owner-scoped inventory.
 Separate outgoing and incoming rows edit one decision per save; the other
-Dot's consent is read-only. Rows preserve actual IDs, names and inactive
+Agent's consent is read-only. Rows preserve actual IDs, names and inactive
 choices. An unsaved row retains its original generation when another row is
 saved, so a stale decision cannot overwrite a newer counterpart. Conflict
 responses retain the draft until explicit reload. Consent mutation checks
@@ -858,7 +858,7 @@ are in `web/src/lib/components/agents/`.
 - **Test chat** (`TestChat`, `DebugPanel`). A streamed conversation like
   any other: `POST /api/v0/agents/{id}/test/messages` (`sendTestMessage`)
   requires an explicit source and runs the **saved draft** or an organization
-  Dot’s actual **published version** in the background. The organization source
+  agent’s actual **published version** in the background. The organization source
   selector uses actual ownership and live-version data. Returned source and
   `agent_version` remain attached to the conversation after later publishing.
   Changing source resets the conversation; source/reset controls are disabled

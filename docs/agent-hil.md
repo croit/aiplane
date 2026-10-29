@@ -229,7 +229,7 @@ message queued behind it runs afterwards as usual.
 
 ## The inbox
 
-Private organization Dot conversations require current organization membership
+Private organization agent conversations require current organization membership
 and Write access for staff settlement. Draft pauses stay inline in Test chat.
 Published private approvals, human answers and secure input also appear in the
 Inbox after exact private session, captured source and original version-row

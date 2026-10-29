@@ -7,7 +7,7 @@ use sqlx::Row;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CleanupClaim {
-    pub dot_id: String,
+    pub agent_id: String,
     pub owner_user_id: String,
     pub claim_token: String,
     pub attempts: i64,
@@ -41,10 +41,10 @@ pub async fn claim_due(
     }
     let mut tx = WriteTx::begin(pool).await?;
     let rows = sqlx::query(
-        "SELECT dot_id, owner_user_id, attempts FROM dot_workspace_cleanup
+        "SELECT agent_id, owner_user_id, attempts FROM agent_workspace_cleanup
          WHERE julianday(next_attempt_at) <= julianday(?)
          AND (claim_until IS NULL OR julianday(claim_until) <= julianday(?))
-         ORDER BY julianday(next_attempt_at), dot_id LIMIT ?",
+         ORDER BY julianday(next_attempt_at), agent_id LIMIT ?",
     )
     .bind(now.to_string())
     .bind(now.to_string())
@@ -54,18 +54,18 @@ pub async fn claim_due(
     let until = now + jiff::Span::new().seconds(120);
     let mut claims = Vec::with_capacity(rows.len());
     for row in rows {
-        let dot_id: String = row.try_get("dot_id")?;
+        let agent_id: String = row.try_get("agent_id")?;
         let owner_user_id: String = row.try_get("owner_user_id")?;
         let attempts: i64 = row.try_get("attempts")?;
         let claim_token = uuid::Uuid::new_v4().to_string();
         let changed = sqlx::query(
-            "UPDATE dot_workspace_cleanup SET claim_token = ?, claim_until = ?
-             WHERE dot_id = ? AND owner_user_id = ? AND julianday(next_attempt_at) <= julianday(?)
+            "UPDATE agent_workspace_cleanup SET claim_token = ?, claim_until = ?
+             WHERE agent_id = ? AND owner_user_id = ? AND julianday(next_attempt_at) <= julianday(?)
              AND (claim_until IS NULL OR julianday(claim_until) <= julianday(?))",
         )
         .bind(&claim_token)
         .bind(until.to_string())
-        .bind(&dot_id)
+        .bind(&agent_id)
         .bind(&owner_user_id)
         .bind(now.to_string())
         .bind(now.to_string())
@@ -74,7 +74,7 @@ pub async fn claim_due(
         .rows_affected();
         if changed == 1 {
             claims.push(CleanupClaim {
-                dot_id,
+                agent_id,
                 owner_user_id,
                 claim_token,
                 attempts,
@@ -87,9 +87,9 @@ pub async fn claim_due(
 
 pub async fn acknowledge(pool: &Pool, claim: &CleanupClaim) -> Result<bool, DbError> {
     Ok(sqlx::query(
-        "DELETE FROM dot_workspace_cleanup WHERE dot_id = ? AND owner_user_id = ? AND claim_token = ?",
+        "DELETE FROM agent_workspace_cleanup WHERE agent_id = ? AND owner_user_id = ? AND claim_token = ?",
     )
-    .bind(&claim.dot_id)
+    .bind(&claim.agent_id)
     .bind(&claim.owner_user_id)
     .bind(&claim.claim_token)
     .execute(pool)
@@ -105,9 +105,9 @@ pub async fn retry(
 ) -> Result<bool, DbError> {
     let mut tx = WriteTx::begin(pool).await?;
     let attempts: Option<i64> = sqlx::query_scalar(
-        "SELECT attempts FROM dot_workspace_cleanup WHERE dot_id = ? AND owner_user_id = ? AND claim_token = ?",
+        "SELECT attempts FROM agent_workspace_cleanup WHERE agent_id = ? AND owner_user_id = ? AND claim_token = ?",
     )
-    .bind(&claim.dot_id)
+    .bind(&claim.agent_id)
     .bind(&claim.owner_user_id)
     .bind(&claim.claim_token)
     .fetch_optional(&mut *tx)
@@ -120,14 +120,14 @@ pub async fn retry(
     let seconds = (30_i64 * (1_i64 << attempts.saturating_sub(1).min(7))).min(3600);
     let next = now + jiff::Span::new().seconds(seconds);
     let changed = sqlx::query(
-        "UPDATE dot_workspace_cleanup SET attempts = ?, next_attempt_at = ?,
+        "UPDATE agent_workspace_cleanup SET attempts = ?, next_attempt_at = ?,
          claim_token = NULL, claim_until = NULL, last_error_code = ?
-         WHERE dot_id = ? AND owner_user_id = ? AND claim_token = ?",
+         WHERE agent_id = ? AND owner_user_id = ? AND claim_token = ?",
     )
     .bind(attempts)
     .bind(next.to_string())
     .bind(error_code.as_str())
-    .bind(&claim.dot_id)
+    .bind(&claim.agent_id)
     .bind(&claim.owner_user_id)
     .bind(&claim.claim_token)
     .execute(&mut *tx)
@@ -173,8 +173,8 @@ mod tests {
         pool
     }
 
-    async fn dot(pool: &Pool, name: &str) -> String {
-        let (_, dot) = agents::create_personal_dot(
+    async fn owned_agent(pool: &Pool, name: &str) -> String {
+        let (_, owned_agent) = agents::create_personal_agent(
             pool,
             &NewPrincipal {
                 name,
@@ -187,11 +187,11 @@ mod tests {
         )
         .await
         .unwrap();
-        dot.unwrap().principal.id
+        owned_agent.unwrap().principal.id
     }
 
     async fn removed(pool: &Pool, name: &str) -> String {
-        let id = dot(pool, name).await;
+        let id = owned_agent(pool, name).await;
         assert!(agents::delete(pool, &id, "alice").await.unwrap());
         id
     }
@@ -200,25 +200,25 @@ mod tests {
     async fn deletion_queue_survives_direct_principal_and_account_cascades() {
         let pool = pool().await;
         let first = removed(&pool, "First").await;
-        let second = dot(&pool, "Second").await;
+        let second = owned_agent(&pool, "Second").await;
         sqlx::query("DELETE FROM system_principals WHERE id = ?")
             .bind(&second)
             .execute(&pool)
             .await
             .unwrap();
-        let third = dot(&pool, "Third").await;
+        let third = owned_agent(&pool, "Third").await;
         sqlx::query("DELETE FROM users WHERE id = 'alice'")
             .execute(&pool)
             .await
             .unwrap();
         let mut claims = claim_due(&pool, Timestamp::now(), 16).await.unwrap();
-        claims.sort_by(|a, b| a.dot_id.cmp(&b.dot_id));
+        claims.sort_by(|a, b| a.agent_id.cmp(&b.agent_id));
         let mut expected = vec![first, second, third];
         expected.sort();
         assert_eq!(
             claims
                 .iter()
-                .map(|claim| claim.dot_id.clone())
+                .map(|claim| claim.agent_id.clone())
                 .collect::<Vec<_>>(),
             expected
         );
@@ -239,7 +239,7 @@ mod tests {
     #[tokio::test]
     async fn rollback_deactivation_and_nonpersonal_deletion_do_not_enqueue_cleanup() {
         let pool = pool().await;
-        let personal = dot(&pool, "Personal").await;
+        let personal = owned_agent(&pool, "Personal").await;
         {
             let mut tx = WriteTx::begin(&pool).await.unwrap();
             assert!(
@@ -248,7 +248,7 @@ mod tests {
                     .unwrap()
             );
             assert_eq!(
-                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM dot_workspace_cleanup")
+                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM agent_workspace_cleanup")
                     .fetch_one(&mut *tx)
                     .await
                     .unwrap(),
@@ -256,7 +256,7 @@ mod tests {
             );
         }
         assert!(
-            agents::set_personal_dot_active(&pool, &personal, "alice", false, 4)
+            agents::set_personal_agent_active(&pool, &personal, "alice", false, 4)
                 .await
                 .unwrap()
         );
@@ -293,7 +293,7 @@ mod tests {
             panic!("The organization fixture must be created");
         };
         let mut tx = WriteTx::begin(&pool).await.unwrap();
-        let (_, org_dot) = agents::create_organization_dot_in(
+        let (_, org_agent) = agents::create_organization_agent_in(
             &mut tx,
             &organization.organization.id,
             &NewPrincipal {
@@ -308,7 +308,7 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            agents::delete_in(&mut tx, &org_dot.unwrap().principal.id, "alice")
+            agents::delete_in(&mut tx, &org_agent.unwrap().principal.id, "alice")
                 .await
                 .unwrap()
         );
@@ -320,7 +320,7 @@ mod tests {
                 .is_empty()
         );
         assert!(
-            agents::get_personal_dot(&pool, "alice", &personal)
+            agents::get_personal_agent(&pool, "alice", &personal)
                 .await
                 .unwrap()
                 .is_some()
@@ -378,7 +378,7 @@ mod tests {
             .pop()
             .unwrap();
         assert_eq!(second.attempts, 1);
-        sqlx::query("UPDATE dot_workspace_cleanup SET attempts = ? WHERE dot_id = ?")
+        sqlx::query("UPDATE agent_workspace_cleanup SET attempts = ? WHERE agent_id = ?")
             .bind(i64::MAX)
             .bind(&id)
             .execute(&pool)
@@ -391,7 +391,7 @@ mod tests {
         );
         assert_eq!(
             sqlx::query_scalar::<_, i64>(
-                "SELECT attempts FROM dot_workspace_cleanup WHERE dot_id = ?"
+                "SELECT attempts FROM agent_workspace_cleanup WHERE agent_id = ?"
             )
             .bind(&id)
             .fetch_one(&pool)
@@ -436,7 +436,7 @@ mod tests {
         assert_eq!(claims.len(), 1);
         assert!(acknowledge(&pool, &claims[0]).await.unwrap());
         for index in 0..20 {
-            removed(&pool, &format!("Dot {index}")).await;
+            removed(&pool, &format!("Agent {index}")).await;
         }
         let now = Timestamp::now();
         assert!(claim_due(&pool, now, 0).await.unwrap().is_empty());
@@ -461,7 +461,7 @@ mod tests {
             .unwrap()
             .pop()
             .unwrap();
-        assert_eq!(recovered.dot_id, id);
+        assert_eq!(recovered.agent_id, id);
         assert_eq!(recovered.owner_user_id, "alice");
         assert_ne!(recovered.claim_token, original.claim_token);
         assert!(acknowledge(&pool, &recovered).await.unwrap());

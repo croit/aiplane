@@ -824,7 +824,7 @@ print(json.dumps(dict(uid=os.getuid(),gid=os.getgid(),kernel=platform.release(),
         }
         if let Some(path) = browser_profile_path {
             a.push("-v".into());
-            a.push(format!("{}:/dot-browser:rw", path.display()));
+            a.push(format!("{}:/agent-browser:rw", path.display()));
         }
         a.extend::<Vec<String>>(vec![
             "--cap-drop=ALL".into(),
@@ -2239,16 +2239,16 @@ mod scratch_mount_tests {
             .run_args_with_workspace_path(
                 Network::None,
                 "sbx-3",
-                Some(Path::new("/srv/dots/abc/files")),
+                Some(Path::new("/srv/agents/abc/files")),
             );
         let joined = a.join(" ");
         assert!(
-            joined.contains("-v /srv/dots/abc/files:/workspace:rw"),
+            joined.contains("-v /srv/agents/abc/files:/workspace:rw"),
             "{joined}"
         );
         // Only `files` is mounted; private owner metadata and retired roots never are.
         assert!(!joined.contains("owner.json"), "{joined}");
-        assert!(!joined.contains(".dot-retired"), "{joined}");
+        assert!(!joined.contains(".agent-retired"), "{joined}");
     }
 
     #[test]

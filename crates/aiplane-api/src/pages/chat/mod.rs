@@ -84,7 +84,7 @@ mod title;
 #[derive(Debug)]
 pub(crate) enum SubmitTurnError {
     RateLimited(aiplane_core::server::limits::LimitExceeded),
-    DotInactive,
+    AgentInactive,
     BackgroundBusy,
     /// The conversation waits for a decision on a paused turn; the message
     /// was not stored. The text says which turn and what to do.
@@ -144,7 +144,7 @@ pub(crate) async fn submit_turn(
     submit: ChatSubmit,
     req: RequestCtx,
 ) -> Result<SubmitOutcome, SubmitTurnError> {
-    refuse_if_dot_inactive(state, &user.id, &active.id).await?;
+    refuse_if_agent_inactive(state, &user.id, &active.id).await?;
     // Rate-limit / quota gate — before reserving a worker or touching the DB,
     // so an over-budget user is turned away cleanly (details on `/usage`).
     if let Some(exceeded) = state
@@ -195,16 +195,16 @@ pub(crate) async fn submit_turn(
     ))
 }
 
-pub(crate) async fn refuse_if_dot_inactive(
+pub(crate) async fn refuse_if_agent_inactive(
     state: &RamaState,
     user_id: &str,
     session_id: &str,
 ) -> Result<(), SubmitTurnError> {
-    match aiplane_agents::db::dot_sessions::for_session(&state.db, user_id, session_id)
+    match aiplane_agents::db::agent_sessions::for_session(&state.db, user_id, session_id)
         .await
         .map_err(|error| SubmitTurnError::Db(error.to_string()))?
     {
-        Some(link) if !link.active => Err(SubmitTurnError::DotInactive),
+        Some(link) if !link.active => Err(SubmitTurnError::AgentInactive),
         _ => Ok(()),
     }
 }
@@ -513,7 +513,7 @@ async fn start_pending_turn(state: &Arc<RamaState>, pending: &chat::PendingTurn)
         tracing::warn!(user_id = %pending.user_id, "waiting turn for an unknown user");
         return false;
     };
-    match aiplane_agents::db::dot_sessions::for_session(&state.db, &user.id, &pending.session_id)
+    match aiplane_agents::db::agent_sessions::for_session(&state.db, &user.id, &pending.session_id)
         .await
     {
         Ok(Some(link)) if !link.active => return false,
@@ -871,11 +871,11 @@ async fn spawn_assistant_worker(
     // uses the unfiltered per-user set. Everything but the two interactive
     // handles below is shared with the headless scheduler via
     // `build_tool_context`.
-    use aiplane_runtime::persona::personal_dot::{
-        PersonalDotContext, PersonalTurnContext, initialize_for_turn,
+    use aiplane_runtime::persona::personal_agent::{
+        PersonalAgentContext, PersonalTurnContext, initialize_for_turn,
     };
     let clock = aiplane_runtime::budget::system_clock();
-    let dot_context = initialize_for_turn(
+    let agent_context = initialize_for_turn(
         state,
         user,
         true,
@@ -891,8 +891,8 @@ async fn spawn_assistant_worker(
         },
     )
     .await;
-    let (actor, persona) = match dot_context {
-        Ok(Some(PersonalDotContext::Active { actor, persona })) => (actor, Some(persona)),
+    let (actor, persona) = match agent_context {
+        Ok(Some(PersonalAgentContext::Active { actor, persona })) => (actor, Some(persona)),
         Ok(None) => (
             aiplane_runtime::agent_run::Actor::person(user.id.clone(), user.roles.clone()),
             crate::pages::architect::persona_for(state, user, session_id).await,
@@ -1126,16 +1126,16 @@ pub(crate) async fn resume_turn(
         error => ResumeTurnError::Context(error),
     })?;
     if let Some(background) = background {
-        use aiplane_runtime::persona::personal_dot::{PersonalDotContext, context_for};
+        use aiplane_runtime::persona::personal_agent::{PersonalAgentContext, context_for};
         let actor = match context_for(state, user, &turn.session_id, background.tools_enabled)
             .await
             .map_err(ResumeTurnError::Context)?
         {
-            Some(PersonalDotContext::Active { actor, .. }) => actor,
-            // A background run's Dot is optional: when its principal is gone
-            // the run resumes as the person, the pre-Dots behavior, so a
-            // suspended run never orphans on a disabled Dot.
-            Some(PersonalDotContext::Unavailable) | None => {
+            Some(PersonalAgentContext::Active { actor, .. }) => actor,
+            // A background run's agent is optional: when its principal is gone
+            // the run resumes as the person, the pre-agents behavior, so a
+            // suspended run never orphans on a disabled agent.
+            Some(PersonalAgentContext::Unavailable) | None => {
                 aiplane_runtime::agent_run::Actor::person(user.id.clone(), user.roles.clone())
             }
         };

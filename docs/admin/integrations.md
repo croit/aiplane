@@ -30,7 +30,7 @@ Allowed groups restrict connector availability. Audit logging is a separate chec
 
 Changing the server URL, authentication type, scope, effective shared secret
 or applicable OAuth configuration invalidates earlier cached calls and pending
-approvals. Owned user and Dot credentials require a new connection to the
+approvals. Owned user and agent credentials require a new connection to the
 changed resource. Changing the URL back does not reactivate them. Display
 fields, audit settings and allowed groups preserve resource identity; current
 enablement and group permissions are checked before execution. A request

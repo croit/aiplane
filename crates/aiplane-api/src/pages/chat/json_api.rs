@@ -78,11 +78,11 @@ pub async fn sessions_list(
         Ok(ids) => ids,
         Err(error) => return internal(error),
     };
-    let scope = match params.dot_id.as_deref() {
-        Some(dot_id) => match aiplane_agents::db::dot_sessions::scoped_session_ids(
+    let scope = match params.agent_id.as_deref() {
+        Some(agent_id) => match aiplane_agents::db::agent_sessions::scoped_session_ids(
             &state.db,
             &user.id,
-            (!dot_id.is_empty()).then_some(dot_id),
+            (!agent_id.is_empty()).then_some(agent_id),
         )
         .await
         {
@@ -133,7 +133,7 @@ pub async fn sessions_list(
 pub struct SessionsQuery {
     /// Search the caller's conversations for this text instead of listing them.
     q: Option<String>,
-    dot_id: Option<String>,
+    agent_id: Option<String>,
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
@@ -621,7 +621,7 @@ pub async fn message_send(
         }
     };
 
-    if let Err(error) = super::refuse_if_dot_inactive(&state, &user.id, &active.id).await {
+    if let Err(error) = super::refuse_if_agent_inactive(&state, &user.id, &active.id).await {
         return submit_refusal(error, lang);
     }
 
@@ -711,12 +711,12 @@ fn submit_refusal(err: SubmitTurnError, lang: Lang) -> Response {
         SubmitTurnError::BackgroundBusy => json_error(
             StatusCode::CONFLICT,
             "background_busy",
-            &t(lang, "dot-background-error-busy"),
+            &t(lang, "agent-background-error-busy"),
         ),
-        SubmitTurnError::DotInactive => json_error(
+        SubmitTurnError::AgentInactive => json_error(
             StatusCode::CONFLICT,
-            "dot_inactive",
-            &t(lang, "dot-error-inactive"),
+            "agent_inactive",
+            &t(lang, "agent-error-inactive"),
         ),
         SubmitTurnError::DecisionPending(message) => {
             json_error(StatusCode::CONFLICT, "decision_pending", &message)
@@ -790,7 +790,7 @@ pub async fn session_steer(
     if !user_can_write(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
-    if let Err(error) = super::refuse_if_dot_inactive(&state, &user.id, &session_id).await {
+    if let Err(error) = super::refuse_if_agent_inactive(&state, &user.id, &session_id).await {
         return submit_refusal(error, lang);
     }
     let (_, body) = req.into_parts();
@@ -1074,8 +1074,8 @@ pub async fn turn_resume(
         ),
         Err(super::ResumeTurnError::Unavailable) => json_error(
             StatusCode::CONFLICT,
-            "dot_unavailable",
-            &t(lang, "dot-background-error-unavailable"),
+            "agent_unavailable",
+            &t(lang, "agent-background-error-unavailable"),
         ),
         Err(super::ResumeTurnError::Context(err)) => internal(err),
         Err(super::ResumeTurnError::Refused(refused)) => match refused {
@@ -2317,10 +2317,10 @@ async fn capability_views(
     session_id: &str,
     lang: Lang,
 ) -> Vec<CapabilityView> {
-    use aiplane_runtime::persona::personal_dot::{PersonalDotContext, context_for};
+    use aiplane_runtime::persona::personal_agent::{PersonalAgentContext, context_for};
 
     let offers_forward = match context_for(state, user, session_id, true).await {
-        Ok(Some(PersonalDotContext::Active { persona, .. })) => {
+        Ok(Some(PersonalAgentContext::Active { persona, .. })) => {
             !persona.offered(&["forward_request".to_owned()]).is_empty()
         }
         _ => false,

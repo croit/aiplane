@@ -203,7 +203,7 @@
 	const visibleWorkspaceLinks = $derived(
 		visibleNavLinks(workspaceLinks, features).filter(
 			([, path]) =>
-				(path !== '/agents' || me.value?.can_manage_agents || me.value?.can_manage_dots) &&
+				(path !== '/agents' || me.value?.can_manage_agents || me.value?.can_manage_personal_agents) &&
 				(path !== '/organizations' || organizationsAvailable) &&
 				(path !== '/inbox' || inboxShown(inboxLive, isActive('/inbox')))
 		)

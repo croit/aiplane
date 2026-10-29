@@ -45,11 +45,11 @@ use std::path::PathBuf;
 
 use crate::server::config::AllowedIps;
 use crate::server::config::{
-    ChatConfig, ComfyuiConfig, CompactionConfig, ConfidentialConfig, ConfidentialRequirement,
-    Config, ContentGuardConfig, ContentGuardMode, ContentGuardPolicy, DotsConfig, FeedbackConfig,
-    GatewayConfig, GeoipConfig, LimitsConfig, LoopsConfig, MetricsConfig, OcrConfig, PromptConfig,
-    PushConfig, RagConfig, S3Config, SandboxConfig, SkillsConfig, TurnsConfig, TypstConfig,
-    UsageConfig, VoiceConfig,
+    AgentsConfig, ChatConfig, ComfyuiConfig, CompactionConfig, ConfidentialConfig,
+    ConfidentialRequirement, Config, ContentGuardConfig, ContentGuardMode, ContentGuardPolicy,
+    FeedbackConfig, GatewayConfig, GeoipConfig, LimitsConfig, LoopsConfig, MetricsConfig,
+    OcrConfig, PromptConfig, PushConfig, RagConfig, S3Config, SandboxConfig, SkillsConfig,
+    TurnsConfig, TypstConfig, UsageConfig, VoiceConfig,
 };
 use crate::server::crypto::Crypto;
 use crate::server::db::{DbError, Pool, app_settings};
@@ -681,12 +681,12 @@ pub static SECTIONS: &[SectionSpec] = &[
         fields: &[f("limits.enabled", Kind::Bool)],
     },
     SectionSpec {
-        name: "dots",
+        name: "agents",
         category: Category::Access,
         user_feature: false,
         fields: &[
-            f("dots.max_active_per_user", Kind::Int),
-            f("dots.max_active_per_organization", Kind::Int),
+            f("agents.max_active_per_user", Kind::Int),
+            f("agents.max_active_per_organization", Kind::Int),
         ],
     },
     SectionSpec {
@@ -1048,9 +1048,9 @@ pub fn apply(settings: &Settings, config: &mut Config) {
     config.limits = LimitsConfig {
         enabled: settings.bool("limits.enabled", true),
     };
-    config.dots = DotsConfig {
-        max_active_per_user: settings.int("dots.max_active_per_user", 4),
-        max_active_per_organization: settings.int("dots.max_active_per_organization", 4),
+    config.agents = AgentsConfig {
+        max_active_per_user: settings.int("agents.max_active_per_user", 4),
+        max_active_per_organization: settings.int("agents.max_active_per_organization", 4),
     };
     config.content_guard = ContentGuardConfig {
         enabled: settings.bool("content_guard.enabled", false),
@@ -1552,13 +1552,13 @@ pub fn snapshot(c: &Config) -> Vec<(String, String)> {
 
     put("limits.enabled", c.limits.enabled.to_string());
     put(
-        "dots.max_active_per_user",
-        c.dots.max_active_per_user.to_string(),
+        "agents.max_active_per_user",
+        c.agents.max_active_per_user.to_string(),
     );
 
     put(
-        "dots.max_active_per_organization",
-        c.dots.max_active_per_organization.to_string(),
+        "agents.max_active_per_organization",
+        c.agents.max_active_per_organization.to_string(),
     );
 
     put("content_guard.enabled", c.content_guard.enabled.to_string());
@@ -1916,40 +1916,40 @@ mod tests {
     }
 
     #[test]
-    fn organization_dot_limit_is_registered_independent_and_round_trips() {
-        assert!(field("dots.max_active_per_organization").is_some());
+    fn organization_agent_limit_is_registered_independent_and_round_trips() {
+        assert!(field("agents.max_active_per_organization").is_some());
         let mut config = Config::default();
         let defaults: HashMap<_, _> = snapshot(&config).into_iter().collect();
         assert_eq!(
             defaults
-                .get("dots.max_active_per_organization")
+                .get("agents.max_active_per_organization")
                 .map(String::as_str),
             Some("4")
         );
         apply(
             &settings_of(&[
-                ("dots.max_active_per_organization", "7"),
-                ("dots.max_active_per_user", "2"),
+                ("agents.max_active_per_organization", "7"),
+                ("agents.max_active_per_user", "2"),
             ]),
             &mut config,
         );
         let stored: HashMap<_, _> = snapshot(&config).into_iter().collect();
         assert_eq!(
             stored
-                .get("dots.max_active_per_organization")
+                .get("agents.max_active_per_organization")
                 .map(String::as_str),
             Some("7")
         );
         assert_eq!(
-            stored.get("dots.max_active_per_user").map(String::as_str),
+            stored.get("agents.max_active_per_user").map(String::as_str),
             Some("2")
         );
         let mut restored = Config::default();
         apply(&Settings::from_map(stored.clone()), &mut restored);
         let again: HashMap<_, _> = snapshot(&restored).into_iter().collect();
         assert_eq!(
-            again.get("dots.max_active_per_organization"),
-            stored.get("dots.max_active_per_organization")
+            again.get("agents.max_active_per_organization"),
+            stored.get("agents.max_active_per_organization")
         );
     }
 

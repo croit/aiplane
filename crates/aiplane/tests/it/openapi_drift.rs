@@ -185,9 +185,14 @@ async fn organization_operations_describe_current_typed_configuration_contracts(
         ("/api/v0/admin/organizations/{id}", "put", "admin", "200"),
         ("/api/v0/organizations", "get", "session", "200"),
         ("/api/v0/organizations/{id}", "get", "session", "200"),
-        ("/api/v0/organizations/{id}/dots", "post", "session", "201"),
         (
-            "/api/v0/organizations/{id}/dots/{dot}/active",
+            "/api/v0/organizations/{id}/agents",
+            "post",
+            "session",
+            "201",
+        ),
+        (
+            "/api/v0/organizations/{id}/agents/{agent}/active",
             "post",
             "session",
             "200",
@@ -215,15 +220,15 @@ async fn organization_operations_describe_current_typed_configuration_contracts(
     );
     for field in [
         "organization",
-        "dots",
+        "agents",
         "active_count",
         "active_limit",
-        "can_create_dot",
+        "can_create_agent",
     ] {
         assert!(detail["properties"].get(field).is_some(), "missing {field}");
     }
-    let agent = resolved(&document, &detail["properties"]["dots"]["items"]);
-    assert!(agent["properties"].get("dot").is_some());
+    let agent = resolved(&document, &detail["properties"]["agents"]["items"]);
+    assert!(agent["properties"].get("ownership").is_some());
     let subjects = json_body(
         &document,
         &paths["/api/v0/agents/{id}/share-subjects"]["get"]["responses"]["200"]["content"],
@@ -242,10 +247,10 @@ async fn organization_operations_describe_current_typed_configuration_contracts(
 }
 
 #[tokio::test]
-async fn dot_connection_inventory_declares_authoritative_selection_and_optional_personal_identity()
-{
+async fn agent_connection_inventory_declares_authoritative_selection_and_optional_personal_identity()
+ {
     let document = served_document().await;
-    let operation = &document["paths"]["/api/v0/dots/{id}/connections"]["get"];
+    let operation = &document["paths"]["/api/v0/agents/{id}/connections"]["get"];
     let inventory = json_body(&document, &operation["responses"]["200"]["content"]);
     let row = resolved(&document, &inventory["properties"]["connections"]["items"]);
     assert_eq!(row["properties"]["can_select"]["type"], "boolean");

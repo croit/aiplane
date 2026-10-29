@@ -181,7 +181,7 @@ pub enum SpecSource {
 enum ProfilePurpose {
     Generic,
     Private,
-    /// A personal caller delegating to an organization Dot: the receiver runs
+    /// A personal caller delegating to an organization agent: the receiver runs
     /// its published spec under its own principal's authority.
     Delegated,
 }
@@ -202,8 +202,8 @@ pub async fn organization_automation_version_in(
     let unavailable = || AgentRunError::OrganizationExecutionUnavailable(principal_id.to_owned());
     if version <= 0
         || !matches!(
-            agents_db::dot_owner_in(tx, principal_id).await?,
-            Some(agents_db::DotOwner::Organization(_))
+            agents_db::agent_owner_in(tx, principal_id).await?,
+            Some(agents_db::AgentOwner::Organization(_))
         )
     {
         return Err(unavailable());
@@ -318,7 +318,7 @@ impl RunProfile {
         Self::load_source(state, agent_id, source, role, options, None).await
     }
 
-    /// [`Self::load`] for a personal caller delegating to an organization Dot:
+    /// [`Self::load`] for a personal caller delegating to an organization agent:
     /// the organization execution contract on the published spec, the
     /// receiver's own principal's grants, no person's authority.
     pub async fn load_delegated(
@@ -384,7 +384,7 @@ impl RunProfile {
             .ok_or_else(|| AgentRunError::OrganizationExecutionUnavailable(run_id.to_owned()))?;
         if !action.enabled
             || action.reuse_conversation
-            || action.dot_id.is_some()
+            || action.personal_agent_id.is_some()
             || action.model.is_some()
             || run.configuration_generation.as_deref()
                 != Some(action.configuration_generation.as_str())
@@ -427,7 +427,7 @@ impl RunProfile {
         if hook.id != webhook_id
             || hook.reuse_conversation
             || hook.synchronous
-            || hook.dot_id.is_some()
+            || hook.personal_agent_id.is_some()
             || hook.model.is_some()
             || run.configuration_generation.as_deref()
                 != Some(hook.configuration_generation.as_str())
@@ -468,11 +468,11 @@ impl RunProfile {
             ));
         };
         let unavailable = || AgentRunError::OrganizationExecutionUnavailable(id.clone());
-        let dot = agents_db::get_dot_metadata_in(tx, id)
+        let owned_agent = agents_db::get_agent_metadata_in(tx, id)
             .await?
-            .filter(|dot| dot.active)
+            .filter(|owned_agent| owned_agent.active)
             .ok_or_else(unavailable)?;
-        let agents_db::DotOwner::Organization(organization_id) = dot.owner else {
+        let agents_db::AgentOwner::Organization(organization_id) = owned_agent.owner else {
             return Err(unavailable());
         };
         let principal = sp::load_active_in(tx, id).await?.ok_or_else(unavailable)?;
@@ -539,14 +539,14 @@ impl RunProfile {
             SpecSource::Draft(value) => Some(value.clone()),
             _ => None,
         };
-        let organization = match agents_db::dot_owner(&state.db, agent_id).await? {
-            Some(agents_db::DotOwner::Organization(id))
+        let organization = match agents_db::agent_owner(&state.db, agent_id).await? {
+            Some(agents_db::AgentOwner::Organization(id))
                 if matches!(&source, SpecSource::Draft(_))
                     || matches!(purpose, ProfilePurpose::Private | ProfilePurpose::Delegated) =>
             {
                 Some((id, state.clone()))
             }
-            Some(agents_db::DotOwner::Organization(_)) => {
+            Some(agents_db::AgentOwner::Organization(_)) => {
                 return Err(AgentRunError::OrganizationExecutionUnavailable(
                     agent_id.to_owned(),
                 ));
@@ -1194,13 +1194,13 @@ pub async fn private_session_spec_in(
         else {
             return Ok(None);
         };
-        let owner = agents_db::dot_owner_in(tx, principal_id).await?;
+        let owner = agents_db::agent_owner_in(tx, principal_id).await?;
         if authority.principal_id != principal_id
             || authority.session_id != session_id
             || authority.assistant_turn_id != turn
             || authority.version() != Some(version)
             || owner
-                != Some(agents_db::DotOwner::Organization(
+                != Some(agents_db::AgentOwner::Organization(
                     authority.organization_id.clone(),
                 ))
         {
@@ -1292,11 +1292,11 @@ async fn validate_organization_authority_in(
     admission: OrganizationTurnState,
 ) -> Result<SystemPrincipal, AgentRunError> {
     let unavailable = || AgentRunError::OrganizationExecutionUnavailable(initial.id.clone());
-    let dot = agents_db::get_dot_metadata_in(tx, &initial.id)
+    let owned_agent = agents_db::get_agent_metadata_in(tx, &initial.id)
         .await?
         .ok_or_else(unavailable)?;
-    if !dot.active
-        || dot.owner != agents_db::DotOwner::Organization(organization_id.to_owned())
+    if !owned_agent.active
+        || owned_agent.owner != agents_db::AgentOwner::Organization(organization_id.to_owned())
         || aiplane_agents::db::organizations::get_admin_in(tx, organization_id)
             .await?
             .is_none()
@@ -1713,7 +1713,7 @@ impl<'a> RunToolSource<'a> {
                 .agent
                 .is_some_and(|agent| agent.organization().is_some())
             {
-                run.permissions.gate_dot(tool)
+                run.permissions.gate_agent(tool)
             } else {
                 run.permissions.gate(tool)
             }
@@ -2471,7 +2471,7 @@ mod tests {
                 prompt: "prompt",
                 model: &profile.model,
                 existing_session: None,
-                dot_id: None,
+                personal_agent_id: None,
             },
         )
         .await
@@ -2544,7 +2544,7 @@ mod tests {
         .await
         .unwrap();
         for mutation in [
-            "UPDATE dots SET active=0 WHERE principal_id=?",
+            "UPDATE agent_owners SET active=0 WHERE principal_id=?",
             "UPDATE system_principals SET disabled_at='2026-01-01T00:00:00Z' WHERE id=?",
         ] {
             sqlx::query(mutation)
@@ -2558,7 +2558,7 @@ mod tests {
                     .is_err(),
                 "{mutation}"
             );
-            sqlx::query("UPDATE dots SET active=1 WHERE principal_id=?")
+            sqlx::query("UPDATE agent_owners SET active=1 WHERE principal_id=?")
                 .bind(&original.principal.id)
                 .execute(&mut *tx)
                 .await
@@ -2619,7 +2619,7 @@ mod tests {
                 .await
                 .unwrap()
                 .unwrap();
-        sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
+        sqlx::query("UPDATE agent_owners SET active=0 WHERE principal_id=?")
             .bind(&profile.principal.id)
             .execute(&mut *tx)
             .await

@@ -15,8 +15,8 @@ pub struct ArchitectSession {
     pub user_id: String,
     /// The agent it plans; `None` until it has created one.
     pub agent_id: Option<String>,
-    pub dot_owner: Option<String>,
-    pub dot_plan: Option<String>,
+    pub agent_owner: Option<String>,
+    pub agent_plan: Option<String>,
 }
 
 /// Mark `session_id` (a chat of `user_id`'s) as an architect conversation.
@@ -42,7 +42,7 @@ pub async fn create(
 /// The architect conversation `session_id`, `None` for any other chat.
 pub async fn get(pool: &Pool, session_id: &str) -> Result<Option<ArchitectSession>, DbError> {
     let row = sqlx::query(
-        "SELECT session_id, user_id, agent_id, dot_owner, dot_plan FROM agent_architect_sessions WHERE session_id = ?",
+        "SELECT session_id, user_id, agent_id, agent_owner, agent_plan FROM agent_architect_sessions WHERE session_id = ?",
     )
     .bind(session_id)
     .fetch_optional(pool)
@@ -52,8 +52,8 @@ pub async fn get(pool: &Pool, session_id: &str) -> Result<Option<ArchitectSessio
             session_id: r.try_get("session_id")?,
             user_id: r.try_get("user_id")?,
             agent_id: r.try_get("agent_id")?,
-            dot_owner: r.try_get("dot_owner")?,
-            dot_plan: r.try_get("dot_plan")?,
+            agent_owner: r.try_get("agent_owner")?,
+            agent_plan: r.try_get("agent_plan")?,
         })
     })
     .transpose()
@@ -68,7 +68,7 @@ pub async fn latest(
 ) -> Result<Option<String>, DbError> {
     Ok(sqlx::query_scalar(
         "SELECT session_id FROM agent_architect_sessions
-          WHERE user_id = ? AND agent_id IS ? AND dot_owner IS NULL
+          WHERE user_id = ? AND agent_id IS ? AND agent_owner IS NULL
           ORDER BY created_at DESC, rowid DESC LIMIT 1",
     )
     .bind(user_id)
@@ -88,13 +88,13 @@ pub async fn set_agent(pool: &Pool, session_id: &str, agent_id: &str) -> Result<
 }
 
 pub async fn create_personal(pool: &Pool, session_id: &str, user_id: &str) -> Result<(), DbError> {
-    sqlx::query("INSERT INTO agent_architect_sessions(session_id,user_id,agent_id,created_at,dot_owner) VALUES(?,?,NULL,?,'personal')")
+    sqlx::query("INSERT INTO agent_architect_sessions(session_id,user_id,agent_id,created_at,agent_owner) VALUES(?,?,NULL,?,'personal')")
         .bind(session_id).bind(user_id).bind(Timestamp::now().to_string()).execute(pool).await?;
     Ok(())
 }
 
 pub async fn latest_personal(pool: &Pool, user_id: &str) -> Result<Option<String>, DbError> {
-    Ok(sqlx::query_scalar("SELECT session_id FROM agent_architect_sessions WHERE user_id=? AND dot_owner='personal' AND agent_id IS NULL ORDER BY created_at DESC,rowid DESC LIMIT 1")
+    Ok(sqlx::query_scalar("SELECT session_id FROM agent_architect_sessions WHERE user_id=? AND agent_owner='personal' AND agent_id IS NULL ORDER BY created_at DESC,rowid DESC LIMIT 1")
         .bind(user_id).fetch_optional(pool).await?)
 }
 
@@ -102,14 +102,14 @@ pub async fn get_in(
     tx: &mut WriteTx,
     session_id: &str,
 ) -> Result<Option<ArchitectSession>, DbError> {
-    let row=sqlx::query("SELECT session_id,user_id,agent_id,dot_owner,dot_plan FROM agent_architect_sessions WHERE session_id=?").bind(session_id).fetch_optional(&mut **tx).await?;
+    let row=sqlx::query("SELECT session_id,user_id,agent_id,agent_owner,agent_plan FROM agent_architect_sessions WHERE session_id=?").bind(session_id).fetch_optional(&mut **tx).await?;
     row.map(|r| {
         Ok(ArchitectSession {
             session_id: r.try_get("session_id")?,
             user_id: r.try_get("user_id")?,
             agent_id: r.try_get("agent_id")?,
-            dot_owner: r.try_get("dot_owner")?,
-            dot_plan: r.try_get("dot_plan")?,
+            agent_owner: r.try_get("agent_owner")?,
+            agent_plan: r.try_get("agent_plan")?,
         })
     })
     .transpose()
@@ -121,7 +121,7 @@ pub async fn set_personal_plan_in(
     user_id: &str,
     plan: &str,
 ) -> Result<bool, DbError> {
-    Ok(sqlx::query("UPDATE agent_architect_sessions SET dot_plan=? WHERE session_id=? AND user_id=? AND dot_owner='personal' AND agent_id IS NULL")
+    Ok(sqlx::query("UPDATE agent_architect_sessions SET agent_plan=? WHERE session_id=? AND user_id=? AND agent_owner='personal' AND agent_id IS NULL")
         .bind(plan).bind(session_id).bind(user_id).execute(&mut **tx).await?.rows_affected()==1)
 }
 
@@ -214,10 +214,10 @@ mod tests {
                 .unwrap()
         );
         let planned = get_in(&mut tx, &session.id).await.unwrap().unwrap();
-        assert_eq!(planned.dot_owner.as_deref(), Some("personal"));
+        assert_eq!(planned.agent_owner.as_deref(), Some("personal"));
         assert!(planned.agent_id.is_none());
-        assert!(planned.dot_plan.as_deref().unwrap().contains("one"));
-        let (_, dot) = agents::create_personal_dot_in(
+        assert!(planned.agent_plan.as_deref().unwrap().contains("one"));
+        let (_, owned_agent) = agents::create_personal_agent_in(
             &mut tx,
             "alice",
             &NewPrincipal {
@@ -230,8 +230,8 @@ mod tests {
         )
         .await
         .unwrap();
-        let dot = dot.unwrap();
-        set_agent_in(&mut tx, &session.id, &dot.principal.id)
+        let owned_agent = owned_agent.unwrap();
+        set_agent_in(&mut tx, &session.id, &owned_agent.principal.id)
             .await
             .unwrap();
         assert!(
@@ -242,7 +242,7 @@ mod tests {
         tx.commit().await.unwrap();
         assert_eq!(
             get(&pool, &session.id).await.unwrap().unwrap().agent_id,
-            Some(dot.principal.id)
+            Some(owned_agent.principal.id)
         );
         assert_eq!(latest_personal(&pool, "alice").await.unwrap(), None);
     }

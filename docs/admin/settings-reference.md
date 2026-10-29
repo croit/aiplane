@@ -46,7 +46,7 @@ Category: **Chat**.
 | Key | Input / choices | Meaning | Restart |
 |---|---|---|---|
 | `chat.prompt.enabled` | Boolean | Master switch for the deployment-wide system prompt of a person's chat. Ships on. | No |
-| `chat.prompt.text` | Text | Standing instructions added to the system message of every person's chat while enabled; the field shows the built-in prompt while nothing is stored, and its reset button restores it. Agents and Dots keep their own instructions. | No |
+| `chat.prompt.text` | Text | Standing instructions added to the system message of every person's chat while enabled; the field shows the built-in prompt while nothing is stored, and its reset button restores it. Agents keep their own instructions. | No |
 
 ### chat.voice
 
@@ -199,14 +199,14 @@ Category: **Access**.
 |---|---|---|---|
 | `limits.enabled` | Boolean | Off means the rules at /admin/limits are ignored. | No |
 
-### dots
+### agents
 
 Category: **Access**.
 
 | Key | Input / choices | Meaning | Restart |
 |---|---|---|---|
-| `dots.max_active_per_user` | Integer | Maximum active personal Dots one user may own. The default is 4; deactivated Dots do not count. Lowering the value leaves existing Dots active; new creation or reactivation is blocked until the owner is under the limit. | No |
-| `dots.max_active_per_organization` | Integer | Maximum active Dots one organization may own, including idle Dots. The default is 4; deactivated Dots do not count. This cap is independent of personal Dot limits. Lowering it leaves existing Dots active and blocks creation or reactivation until the organization is under the limit. | No |
+| `agents.max_active_per_user` | Integer | Maximum active personal agents one user may own. The default is 4; deactivated agents do not count. Lowering the value leaves existing agents active; new creation or reactivation is blocked until the owner is under the limit. | No |
+| `agents.max_active_per_organization` | Integer | Maximum active agents one organization may own, including idle agents. The default is 4; deactivated agents do not count. This cap is independent of personal agent limits. Lowering it leaves existing agents active and blocks creation or reactivation until the organization is under the limit. | No |
 
 ### feedback
 

@@ -313,17 +313,17 @@ gateway; the credential for the external agent lives sealed in the route's
 
 Administrators can assign Low, Medium or High to existing gateway groups and API tokens. A token inherits the highest explicit priority of its owner’s groups unless it has an override; an override may also lower priority. The default is Medium. Owners can select priority at token creation or through `/api/v0/tokens/{id}/priority`, up to their current inherited priority, or restore inheritance. Administrators can select any priority through personal token management or `/api/v0/admin/tokens/{id}/priority`. The server checks ownership and the current priority ceiling before saving. Rotation preserves the existing override. [Request priority](request-priority.md) explains scheduling and backend forwarding.
 
-## Personal Dot management
+## Personal agent management
 
-Personal Dot list, create and active-state routes require `can_manage_dots`
+Personal agent list, create and active-state routes require `can_manage_personal_agents`
 on a resolved gateway group. Administrator and bootstrap-admin membership
 imply it; `can_manage_agents` does not. Set it through the existing
-`PUT /api/v0/admin/groups` with `"can_manage_dots": true`; omission preserves
+`PUT /api/v0/admin/groups` with `"can_manage_personal_agents": true`; omission preserves
 the stored value. Fresh groups default to false. `GET /api/v0/me` reports the
 resolved flag. Reloading group rights applies grants and revocations immediately.
 
 This flag controls lifecycle management. Existing owner-scoped memory,
 activity, tool selection, private chat and background binding checks remain
-in place. Revocation does not deactivate existing Dots or stop existing runs;
+in place. Revocation does not deactivate existing agents or stop existing runs;
 execution still checks active state, actual user grants, enabled tools,
-selected Dot rules and approvals. See [Dots](dots.md).
+selected agent rules and approvals. See [Agents](personal-agents.md).

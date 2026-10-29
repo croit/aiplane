@@ -191,8 +191,8 @@ async fn organization_pending_standing(
     };
     let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db).await?;
     if !matches!(
-        agents_db::dot_owner_in(&mut tx, id).await?,
-        Some(agents_db::DotOwner::Organization(_))
+        agents_db::agent_owner_in(&mut tx, id).await?,
+        Some(agents_db::AgentOwner::Organization(_))
     ) {
         return Ok(None);
     }
@@ -244,8 +244,8 @@ pub async fn agent_standing(
 ) -> Result<Option<Standing>, DbError> {
     let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db).await?;
     if matches!(
-        agents_db::dot_owner_in(&mut tx, agent_id).await?,
-        Some(agents_db::DotOwner::Organization(_))
+        agents_db::agent_owner_in(&mut tx, agent_id).await?,
+        Some(agents_db::AgentOwner::Organization(_))
     ) {
         let standing =
             (super::access::organization_access_in(state, &mut tx, agent_id, &viewer.user_id)
@@ -436,14 +436,14 @@ pub async fn announce(state: &RamaState, request_id: &str) -> bool {
             Ok(tx) => tx,
             Err(_) => return false,
         };
-        let owner = match agents_db::dot_owner_in(&mut tx, id).await {
+        let owner = match agents_db::agent_owner_in(&mut tx, id).await {
             Ok(owner) => owner,
             Err(error) => {
                 tracing::warn!(%error, request_id, "reading a pause owner to announce");
                 return false;
             }
         };
-        if matches!(owner, Some(agents_db::DotOwner::Organization(_))) {
+        if matches!(owner, Some(agents_db::AgentOwner::Organization(_))) {
             let valid = organization_pending_proof_in(&mut tx, &pending)
                 .await
                 .unwrap_or(false);
@@ -658,16 +658,28 @@ mod tests {
     async fn named_group_recipients_use_current_policy_without_notifying_unshared_admins() {
         use aiplane_agents::db::agents::{self, Access, SubjectKind};
         use aiplane_core::server::db::gateway_groups;
-        let (state, _, dot) = crate::agents::access::tests::fixture().await;
-        agents::remove_share(&state.db, &dot, SubjectKind::User, "responder", "creator")
-            .await
-            .unwrap();
-        agents::remove_share(&state.db, &dot, SubjectKind::User, "outsider", "creator")
-            .await
-            .unwrap();
+        let (state, _, owned_agent) = crate::agents::access::tests::fixture().await;
+        agents::remove_share(
+            &state.db,
+            &owned_agent,
+            SubjectKind::User,
+            "responder",
+            "creator",
+        )
+        .await
+        .unwrap();
+        agents::remove_share(
+            &state.db,
+            &owned_agent,
+            SubjectKind::User,
+            "outsider",
+            "creator",
+        )
+        .await
+        .unwrap();
         agents::set_share(
             &state.db,
-            &dot,
+            &owned_agent,
             SubjectKind::Group,
             "responders",
             Access::Respond,
@@ -679,7 +691,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            super::agent_answerers(&state, &dot).await.unwrap(),
+            super::agent_answerers(&state, &owned_agent).await.unwrap(),
             vec!["creator"]
         );
         gateway_groups::set_mappings_for_group(
@@ -690,14 +702,14 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            super::agent_answerers(&state, &dot).await.unwrap(),
+            super::agent_answerers(&state, &owned_agent).await.unwrap(),
             vec!["creator", "outsider"]
         );
         gateway_groups::set_mappings_for_group(&state.db, "responders", &[])
             .await
             .unwrap();
         assert_eq!(
-            super::agent_answerers(&state, &dot).await.unwrap(),
+            super::agent_answerers(&state, &owned_agent).await.unwrap(),
             vec!["creator"]
         );
     }

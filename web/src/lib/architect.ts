@@ -6,7 +6,7 @@
 import type { ToolCall } from './chat-protocol.ts';
 import type { Spec } from './agents.ts';
 
-export interface DotSetupPlan {
+export interface AgentSetupPlan {
 	revision: string;
 	name: string;
 	display: string;
@@ -18,12 +18,12 @@ export interface DotSetupPlan {
 	unresolved: string[];
 }
 
-export function dotPlanCanApply(plan: DotSetupPlan | null, working: boolean, applying: boolean): boolean {
+export function agentPlanCanApply(plan: AgentSetupPlan | null, working: boolean, applying: boolean): boolean {
 	return plan !== null && !working && !applying && plan.dropped.length === 0 && plan.unresolved.length === 0;
 }
 
-export function groupedDotTools(tools: DotSetupPlan['tools']) {
-	const groups = new Map<string, { key: string; label: string; permission: string; tools: DotSetupPlan['tools'] }>();
+export function groupedAgentTools(tools: AgentSetupPlan['tools']) {
+	const groups = new Map<string, { key: string; label: string; permission: string; tools: AgentSetupPlan['tools'] }>();
 	for (const tool of tools) {
 		const key = JSON.stringify([tool.capability_key, tool.permission]);
 		const group = groups.get(key);
@@ -37,7 +37,7 @@ export function groupedDotTools(tools: DotSetupPlan['tools']) {
 const DRAFT_WRITERS = new Set(['update_agent_draft']);
 /** The architect's tools whose answer names an agent's setup page. */
 const SETUP_LINKERS = new Set(['create_agent_draft', 'update_agent_draft', 'read_agent']);
-const TOOLS = new Set(['list_agents', 'read_agent', 'list_grantable', 'propose_setup', 'create_agent_draft', 'update_agent_draft', 'run_test_turn', 'propose_dot_setup']);
+const TOOLS = new Set(['list_agents', 'read_agent', 'list_grantable', 'propose_setup', 'create_agent_draft', 'update_agent_draft', 'run_test_turn', 'propose_agent_setup']);
 
 function output(call: ToolCall): Record<string, unknown> | null {
 	if (call.status !== 'completed' || !call.output_json) return null;

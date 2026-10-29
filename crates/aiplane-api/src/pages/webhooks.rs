@@ -153,19 +153,20 @@ pub(super) fn admission_error(error: AdmissionError, lang: Lang, public: bool) -
             tracing::warn!(%error,"webhook admission failed");
             trigger_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                &t(lang, "dot-background-error-recording"),
+                &t(lang, "agent-background-error-recording"),
             )
         }
         AdmissionError::Run(aiplane_runtime::agents::profile::AgentRunError::Db(error)) => {
             tracing::warn!(%error,"webhook principal admission failed");
             trigger_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                &t(lang, "dot-background-error-recording"),
+                &t(lang, "agent-background-error-recording"),
             )
         }
-        AdmissionError::Busy => {
-            trigger_error(StatusCode::CONFLICT, &t(lang, "dot-background-error-busy"))
-        }
+        AdmissionError::Busy => trigger_error(
+            StatusCode::CONFLICT,
+            &t(lang, "agent-background-error-busy"),
+        ),
         AdmissionError::Conflict if !public => super::json_error(
             StatusCode::CONFLICT,
             "configuration_conflict",
@@ -208,7 +209,7 @@ pub(super) async fn admit_and_open(
                         .as_deref()
                         .ok_or(AdmissionError::Unavailable)?,
                     existing_session: existing,
-                    dot_id: expected.dot_id.as_deref(),
+                    personal_agent_id: expected.personal_agent_id.as_deref(),
                 },
             )
             .await
@@ -284,7 +285,7 @@ pub(super) async fn admit_and_open(
                         prompt: input,
                         model: &profile.model,
                         existing_session: None,
-                        dot_id: None,
+                        personal_agent_id: None,
                     },
                 )
                 .await

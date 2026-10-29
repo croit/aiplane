@@ -175,9 +175,9 @@ with sync_playwright() as p:
     launch = {"args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]}
     if proxy:
         launch["proxy"] = {"server": proxy}
-    if os.path.isdir("/dot-browser"):
+    if os.path.isdir("/agent-browser"):
         ctx = p.chromium.launch_persistent_context(
-            user_data_dir="/dot-browser",
+            user_data_dir="/agent-browser",
             viewport={"width": 1280, "height": 900},
             **launch)
         browser = ctx.browser

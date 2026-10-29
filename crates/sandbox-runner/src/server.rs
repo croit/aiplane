@@ -376,7 +376,7 @@ mod tests {
                 .method(Method::POST).uri("/workspace")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&serde_json::json!({
-                    "workspace":{"owner_user_id":"person","dot_id":"12345678-1234-4234-8234-123456789abc"},
+                    "workspace":{"owner_user_id":"person","agent_id":"12345678-1234-4234-8234-123456789abc"},
                     "operation":operation
                 })).unwrap())).unwrap()).await.unwrap();
             assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);

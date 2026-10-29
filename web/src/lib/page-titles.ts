@@ -46,7 +46,7 @@ export function pageTitleDescriptor(pathname: string): PageTitleDescriptor | nul
 	const exact = exactTitles[path];
 	if (exact) return exact;
 	if (/^\/chat\/[^/]+$/.test(path)) return { key: 'chat-default-title', branded: true };
-	if (/^\/dots\/[^/]+\/workspace$/.test(path)) return { key: 'dot-workspace-heading', branded: true };
+	if (/^\/agents\/[^/]+\/workspace$/.test(path)) return { key: 'agent-workspace-heading', branded: true };
 	if (/^\/scheduled\/[^/]+\/edit$/.test(path)) return { key: 'scheduled-edit-heading', branded: true };
 	if (/^\/scheduled\/[^/]+\/runs$/.test(path)) return { key: 'scheduled-runs-page-title', branded: true };
 	if (/^\/organizations\/[^/]+$/.test(path)) return { key: 'organizations-heading', branded: true };

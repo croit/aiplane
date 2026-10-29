@@ -33,12 +33,12 @@ use super::{
     bad_request, internal, json_error, json_error_with, json_ok, no_content, not_found,
     raw_path_segment,
 };
+use aiplane_agents::db::agent_delegation::ConsentSaved;
 use aiplane_agents::db::agents::{
     self as agents_db, Access, DraftChange, ShareChange, SubjectKind,
 };
-use aiplane_agents::db::dot_delegation::ConsentSaved;
 use aiplane_agents::db::{
-    agent_analytics, agent_audit, dot_delegation, system_principals as sp_db,
+    agent_analytics, agent_audit, agent_delegation, system_principals as sp_db,
 };
 use aiplane_core::server::db::users;
 use aiplane_core::server::principal::{GrantKind, GrantSet};
@@ -85,7 +85,9 @@ async fn require_personal_deleter(
 ) -> Result<users::User, Response> {
     let (_, user) = super::require_session_json(state, req).await?;
     let roles = state.rbac.role_ids_for(&user.roles);
-    if (user.id == owner && state.rbac.can_manage_dots(&roles)) || state.rbac.is_admin(&roles) {
+    if (user.id == owner && state.rbac.can_manage_personal_agents(&roles))
+        || state.rbac.is_admin(&roles)
+    {
         Ok(user)
     } else {
         Err(not_found(format!(
@@ -96,10 +98,10 @@ async fn require_personal_deleter(
 
 /// Whether agent `id` is a personal agent. The agent builder's routes never
 /// serve one, admins included, deletion aside ([`delete`]): its settings live on the owner-scoped
-/// `/api/v0/dots/{id}/*` routes, which check every tool against the owner's
+/// `/api/v0/agents/{id}/*` routes, which check every tool against the owner's
 /// own grants (`docs/agents.md` → "Who sees an agent").
 pub(super) async fn is_personal(state: &RamaState, id: &str) -> Result<bool, Response> {
-    Ok(agents_db::personal_dot_owner(&state.db, id)
+    Ok(agents_db::personal_agent_owner(&state.db, id)
         .await
         .map_err(internal)?
         .is_some())
@@ -229,7 +231,7 @@ pub struct AgentView {
     /// Who shared the agent with the caller, and when: set in the caller's
     /// workspace on an agent that is not their own.
     pub shared_by: Option<ShareOriginView>,
-    pub dot: Option<AgentDotView>,
+    pub ownership: Option<AgentOwnershipView>,
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
@@ -266,7 +268,7 @@ pub enum OwnerView {
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
-pub struct AgentDotView {
+pub struct AgentOwnershipView {
     pub name: String,
     pub active: bool,
 }
@@ -291,7 +293,7 @@ pub(super) async fn agent_views_in(
         .iter()
         .map(|(a, _)| a.principal.id.clone())
         .collect::<Vec<_>>();
-    let metadata = agents_db::dot_metadata_for_agents_in(tx, &ids)
+    let metadata = agents_db::agent_metadata_for_agents_in(tx, &ids)
         .await
         .map_err(internal)?;
     let organizations = aiplane_agents::db::organizations::list_admin_in(tx)
@@ -305,9 +307,12 @@ pub(super) async fn agent_views_in(
         tx,
         rows.iter()
             .filter_map(|(agent, _)| {
-                match metadata.get(&agent.principal.id).map(|dot| &dot.owner) {
-                    Some(agents_db::DotOwner::User(id)) => Some(id.clone()),
-                    Some(agents_db::DotOwner::Organization(_)) => None,
+                match metadata
+                    .get(&agent.principal.id)
+                    .map(|owned_agent| &owned_agent.owner)
+                {
+                    Some(agents_db::AgentOwner::User(id)) => Some(id.clone()),
+                    Some(agents_db::AgentOwner::Organization(_)) => None,
                     None => Some(agent.principal.created_by.clone()),
                 }
             })
@@ -317,9 +322,12 @@ pub(super) async fn agent_views_in(
     let person_view = |id: &String| person_view(&people, id);
     rows.iter()
         .map(|(agent, access)| {
-            let (kind, owner) = match metadata.get(&agent.principal.id).map(|dot| &dot.owner) {
-                Some(agents_db::DotOwner::User(id)) => (AgentKind::Personal, person_view(id)),
-                Some(agents_db::DotOwner::Organization(id)) => {
+            let (kind, owner) = match metadata
+                .get(&agent.principal.id)
+                .map(|owned_agent| &owned_agent.owner)
+            {
+                Some(agents_db::AgentOwner::User(id)) => (AgentKind::Personal, person_view(id)),
+                Some(agents_db::AgentOwner::Organization(id)) => {
                     let Some(name) = names.get(id) else {
                         return Err(internal(
                             "organization owner disappeared while reading agent metadata",
@@ -350,9 +358,9 @@ pub(super) async fn agent_views_in(
                 kind,
                 owner,
                 shared_by: None,
-                dot: metadata.get(&p.id).map(|dot| AgentDotView {
-                    name: dot.name.clone(),
-                    active: dot.active,
+                ownership: metadata.get(&p.id).map(|owned_agent| AgentOwnershipView {
+                    name: owned_agent.name.clone(),
+                    active: owned_agent.active,
                 }),
             })
         })
@@ -623,7 +631,7 @@ async fn require_valid(
 /// "Who sees an agent"). A non-admin's `scope=all` is ignored, as on the
 /// usage page.
 pub async fn list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let user = or_return!(require_agent_or_dot_manager(&state, &req).await);
+    let user = or_return!(require_agent_or_personal_agent_manager(&state, &req).await);
     let wants_all = super::query_map(&req).get("scope").map(String::as_str) == Some("all");
     let mut tx = or_return!(
         aiplane_core::server::db::WriteTx::begin(&state.db)
@@ -638,8 +646,9 @@ pub async fn list(State(state): State<Arc<RamaState>>, req: Request) -> Response
             .map(|row| (row, Access::Write))
             .collect()
     } else {
-        let may_manage_dots = state.rbac.can_manage_dots(&groups);
-        let mut rows = or_return!(own_personal_agents_in(&mut tx, &user.id, may_manage_dots).await);
+        let may_manage_personal_agents = state.rbac.can_manage_personal_agents(&groups);
+        let mut rows =
+            or_return!(own_personal_agents_in(&mut tx, &user.id, may_manage_personal_agents).await);
         rows.extend(or_return!(
             visible_agents_in(&state, &mut tx, &user.id).await
         ));
@@ -671,13 +680,13 @@ pub struct AgentList {
 
 /// The caller, if they may build agents or personal agents: the list is
 /// where both kinds live.
-async fn require_agent_or_dot_manager(
+async fn require_agent_or_personal_agent_manager(
     state: &RamaState,
     req: &Request,
 ) -> Result<users::User, Response> {
     let (_, user) = super::require_session_json(state, req).await?;
     let role_ids = state.rbac.role_ids_for(&user.roles);
-    if state.rbac.can_manage_agents(&role_ids) || state.rbac.can_manage_dots(&role_ids) {
+    if state.rbac.can_manage_agents(&role_ids) || state.rbac.can_manage_personal_agents(&role_ids) {
         return Ok(user);
     }
     Err(json_error(
@@ -782,7 +791,7 @@ pub(super) async fn visible_agents_in(
         .iter()
         .map(|(row, _)| row.principal.id.clone())
         .collect::<Vec<_>>();
-    let metadata = agents_db::dot_metadata_for_agents_in(tx, &ids)
+    let metadata = agents_db::agent_metadata_for_agents_in(tx, &ids)
         .await
         .map_err(internal)?;
     let memberships = aiplane_agents::db::organizations::list_for_groups_in(tx, &groups)
@@ -795,12 +804,12 @@ pub(super) async fn visible_agents_in(
         .into_iter()
         .filter(|(row, access)| {
             *access >= Access::Read
-                && metadata
-                    .get(&row.principal.id)
-                    .is_none_or(|dot| match &dot.owner {
-                        agents_db::DotOwner::User(_) => false,
-                        agents_db::DotOwner::Organization(id) => memberships.contains(id),
-                    })
+                && metadata.get(&row.principal.id).is_none_or(|owned_agent| {
+                    match &owned_agent.owner {
+                        agents_db::AgentOwner::User(_) => false,
+                        agents_db::AgentOwner::Organization(id) => memberships.contains(id),
+                    }
+                })
         })
         .collect())
 }
@@ -815,17 +824,29 @@ async fn own_personal_agents_in(
     if !may_manage {
         return Ok(Vec::new());
     }
-    Ok(agents_db::list_personal_dots_in(tx, user_id)
+    Ok(agents_db::list_personal_agents_in(tx, user_id)
         .await
         .map_err(internal)?
         .into_iter()
-        .map(|dot| (dot.agent, Access::Write))
+        .map(|owned_agent| (owned_agent.agent, Access::Write))
         .collect())
+}
+
+/// Whom `POST /api/v0/agents` creates the agent for. A team agent is
+/// created under its organization instead.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CreateKind {
+    Personal,
+    #[default]
+    Public,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
 #[schemars(rename = "AgentCreateBody")]
 pub struct CreateBody {
+    #[serde(default)]
+    pub kind: CreateKind,
     pub name: String,
     #[serde(default)]
     pub display: Option<String>,
@@ -849,11 +870,33 @@ pub struct CreatedAgentReply {
     pub agent: CreatedAgent,
 }
 
-/// POST /api/v0/agents — an agent with a fresh principal (no grants) and a
-/// `write` share for its creator.
+/// What `POST /api/v0/agents` answers: a public agent with its draft, or the
+/// new personal agent.
+#[derive(serde::Serialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum CreatedAgentAnyReply {
+    Public(Box<CreatedAgentReply>),
+    Personal(super::json_owned_agents::CreatedPersonalAgentReply),
+}
+
+/// POST /api/v0/agents — a personal agent for the caller (`kind: personal`),
+/// or a public agent with a fresh principal (no grants) and a `write` share
+/// for its creator.
 pub async fn create(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    or_return!(super::require_session_json(&state, &req).await);
+    let (parts, body) = req.into_parts();
+    let req = Request::from_parts(parts, rama::http::Body::empty());
+    let body: CreateBody = or_return!(super::read_json(body, "the agent body").await);
+    if body.kind == CreateKind::Personal {
+        if body.spec.is_some() {
+            return bad_request(t(
+                Lang::from_request(req.headers()),
+                "agents-error-personal-spec",
+            ));
+        }
+        return super::json_owned_agents::create(&state, &req, body).await;
+    }
     let user = or_return!(require_agent_manager(&state, &req).await);
-    let body: CreateBody = or_return!(super::read_json(req.into_body(), "the agent body").await);
     match create_agent(&state, &user, body).await {
         Ok(agent) => json_ok(StatusCode::CREATED, CreatedAgentReply { agent }),
         Err(resp) => resp,
@@ -1460,12 +1503,12 @@ pub async fn share_subjects(State(state): State<Arc<RamaState>>, req: Request) -
             .map_err(internal)
     ));
     let owner = or_return!(
-        agents_db::dot_owner_in(&mut tx, &agent.principal.id)
+        agents_db::agent_owner_in(&mut tx, &agent.principal.id)
             .await
             .map_err(internal)
     );
     let org = match owner {
-        Some(agents_db::DotOwner::Organization(id)) => Some(id),
+        Some(agents_db::AgentOwner::Organization(id)) => Some(id),
         _ => None,
     };
     let mut response = ShareSubjects {
@@ -1646,12 +1689,12 @@ async fn require_share_subject_in(
             .await
             .map_err(internal)?,
     );
-    let owner = agents_db::dot_owner_in(tx, agent_id)
+    let owner = agents_db::agent_owner_in(tx, agent_id)
         .await
         .map_err(internal)?;
     let org = match owner {
-        Some(agents_db::DotOwner::Organization(id)) => Some(id),
-        Some(agents_db::DotOwner::User(_)) | None => None,
+        Some(agents_db::AgentOwner::Organization(id)) => Some(id),
+        Some(agents_db::AgentOwner::User(_)) | None => None,
     };
     let held = match kind {
         SubjectKind::User => {
@@ -1704,27 +1747,27 @@ fn last_writer() -> Response {
     )
 }
 
-/// The organization Dot behind the path, if the caller is a current member
-/// holding at least `need` on it: personal Dots and non-members answer 404.
-async fn organization_dot_at(
+/// The organization agent behind the path, if the caller is a current member
+/// holding at least `need` on it: personal agents and non-members answer 404.
+async fn organization_agent_at(
     state: &RamaState,
     req: &Request,
     user: &users::User,
     need: Access,
-) -> Result<Option<(agents_db::AgentRow, agents_db::DotMetadata)>, Response> {
+) -> Result<Option<(agents_db::AgentRow, agents_db::AgentMetadata)>, Response> {
     let Some(id) = raw_path_segment(req, 1) else {
         return Err(bad_request(t(
             Lang::from_request(req.headers()),
-            "dot-error-id-missing",
+            "agent-error-id-missing",
         )));
     };
-    let Some(metadata) = agents_db::get_dot_metadata(&state.db, &id)
+    let Some(metadata) = agents_db::get_agent_metadata(&state.db, &id)
         .await
         .map_err(internal)?
     else {
         return Ok(None);
     };
-    if !matches!(metadata.owner, agents_db::DotOwner::Organization(_)) {
+    if !matches!(metadata.owner, agents_db::AgentOwner::Organization(_)) {
         return Ok(None);
     }
     let Some(agent) = agents_db::get(&state.db, &id).await.map_err(internal)? else {
@@ -1747,28 +1790,28 @@ pub struct AgentCommunicationOwner {
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct AgentCommunicationCaller {
-    pub dot: super::json_dots::DotView,
+    pub agent: super::json_owned_agents::OwnedAgentView,
     pub owner: AgentCommunicationOwner,
-    pub incoming: super::json_dots::DotConsentView,
+    pub incoming: super::json_owned_agents::AgentConsentView,
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct AgentCommunicationView {
-    pub dot: super::json_dots::DotView,
+    pub agent: super::json_owned_agents::OwnedAgentView,
     pub callers: Vec<AgentCommunicationCaller>,
 }
 
 fn organization_communication_view(
     agent: &agents_db::AgentRow,
-    metadata: &agents_db::DotMetadata,
+    metadata: &agents_db::AgentMetadata,
     callers: Vec<(
-        dot_delegation::InboundCaller,
-        dot_delegation::DotDelegationEdge,
+        agent_delegation::InboundCaller,
+        agent_delegation::AgentDelegationEdge,
     )>,
 ) -> AgentCommunicationView {
     let p = &agent.principal;
     AgentCommunicationView {
-        dot: super::json_dots::DotView {
+        agent: super::json_owned_agents::OwnedAgentView {
             id: p.id.clone(),
             name: metadata.name.clone(),
             display: p.display.clone(),
@@ -1778,9 +1821,9 @@ fn organization_communication_view(
         callers: callers
             .into_iter()
             .map(|(caller, edge)| AgentCommunicationCaller {
-                dot: super::json_dots::DotView {
-                    id: caller.caller_dot_id.clone(),
-                    name: caller.dot_name,
+                agent: super::json_owned_agents::OwnedAgentView {
+                    id: caller.caller_agent_id.clone(),
+                    name: caller.agent_name,
                     display: String::new(),
                     description: String::new(),
                     active: caller.active,
@@ -1789,7 +1832,7 @@ fn organization_communication_view(
                     id: caller.owner_user_id,
                     name: caller.owner_name,
                 },
-                incoming: super::json_dots::DotConsentView::from_edge(Some(&edge)),
+                incoming: super::json_owned_agents::AgentConsentView::from_edge(Some(&edge)),
             })
             .collect(),
     }
@@ -1801,22 +1844,81 @@ async fn organization_communication(
     user: &users::User,
     need: Access,
 ) -> Result<AgentCommunicationView, Response> {
-    let Some((agent, metadata)) = organization_dot_at(state, req, user, need).await? else {
+    let Some((agent, metadata)) = organization_agent_at(state, req, user, need).await? else {
         return Err(not_found(t(
             Lang::from_request(req.headers()),
             "organization-error-not-found",
         )));
     };
-    let callers = dot_delegation::inbound_callers_for(&state.db, &agent.principal.id)
+    let callers = agent_delegation::inbound_callers_for(&state.db, &agent.principal.id)
         .await
         .map_err(internal)?;
     Ok(organization_communication_view(&agent, &metadata, callers))
 }
 
-/// GET /api/v0/agents/{id}/communication — the personal caller Dots on the
-/// organization Dot's cross-boundary edges with their current inbound state,
-/// for the member writers' "Accepts requests from" section.
-pub async fn organization_communication_get(
+/// What `/api/v0/agents/{id}/communication` answers: a personal agent's
+/// consent with its peers, or the callers a team agent accepts.
+#[derive(serde::Serialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum CommunicationReply {
+    Personal(super::json_owned_agents::OwnedAgentCommunicationView),
+    Team(AgentCommunicationView),
+}
+
+/// One consent change: a personal agent's side of an edge, or a team agent's
+/// inbound side.
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum CommunicationChange {
+    Personal(super::json_owned_agents::OwnedAgentCommunicationBody),
+    Team(AgentCommunicationBody),
+}
+
+/// Whether `/api/v0/agents/{id}/…` names a personal agent: the routes that
+/// serve both kinds answer a personal agent's owner differently.
+async fn addresses_personal_agent(state: &RamaState, req: &Request) -> Result<bool, Response> {
+    let Some(id) = raw_path_segment(req, 1) else {
+        let lang = Lang::from_request(req.headers());
+        return Err(bad_request(t(lang, "agent-error-id-missing")));
+    };
+    is_personal(state, &id).await
+}
+
+/// GET /api/v0/agents/{id}/communication — a personal agent's consent with
+/// its peers for its owner; for a team agent, the personal callers it accepts
+/// requests from.
+pub async fn communication_get(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    if or_return!(addresses_personal_agent(&state, &req).await) {
+        super::json_owned_agents::communication_get(State(state), req).await
+    } else {
+        organization_communication_get(State(state), req).await
+    }
+}
+
+/// PUT /api/v0/agents/{id}/communication — one consent change, on a personal
+/// agent's side or a team agent's inbound side.
+pub async fn communication_put(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    if or_return!(addresses_personal_agent(&state, &req).await) {
+        super::json_owned_agents::communication_put(State(state), req).await
+    } else {
+        organization_communication_put(State(state), req).await
+    }
+}
+
+/// GET /api/v0/agents/{id}/activity — a personal agent's runs for its owner;
+/// any other agent's decision trail for those who may read it.
+pub async fn activity(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    if or_return!(addresses_personal_agent(&state, &req).await) {
+        super::json_owned_agents::activity(State(state), req).await
+    } else {
+        super::json_agent_activity::list(State(state), req).await
+    }
+}
+
+/// The personal caller agents on the organization agent's cross-boundary
+/// edges with their current inbound state, for the member writers' "Accepts
+/// requests from" section.
+async fn organization_communication_get(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
@@ -1838,11 +1940,10 @@ pub struct AgentCommunicationBody {
     pub expected_generation: Option<String>,
 }
 
-/// PUT /api/v0/agents/{id}/communication — a member writer granting or
-/// revoking `inbound` on a personal caller Dot's cross-boundary edge. A
+/// A member writer granting or revoking `inbound` on a personal caller agent's cross-boundary edge. A
 /// revocation that changes the generation cancels the in-flight delegations on
 /// it, since the consent is their live recheck.
-pub async fn organization_communication_put(
+async fn organization_communication_put(
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
@@ -1851,7 +1952,7 @@ pub async fn organization_communication_put(
         Ok(user) => user,
         Err(response) => return response,
     };
-    let (agent, metadata) = match organization_dot_at(&state, &req, &user, Access::Write).await {
+    let (agent, metadata) = match organization_agent_at(&state, &req, &user, Access::Write).await {
         Ok(Some(value)) => value,
         Ok(None) => return not_found(t(lang, "organization-error-not-found")),
         Err(response) => return response,
@@ -1866,21 +1967,21 @@ pub async fn organization_communication_put(
         Ok(body) => body,
         Err(response) => return response,
     };
-    let caller_owner = match agents_db::personal_dot_owner(&state.db, &body.peer_id)
+    let caller_owner = match agents_db::personal_agent_owner(&state.db, &body.peer_id)
         .await
         .map_err(internal)
     {
         Ok(Some(owner)) => owner,
-        Ok(None) => return not_found(t(lang, "dot-error-not-found")),
+        Ok(None) => return not_found(t(lang, "agent-error-not-found")),
         Err(response) => return response,
     };
-    match dot_delegation::set_cross_boundary_consent(
+    match agent_delegation::set_cross_boundary_consent(
         &state.db,
-        dot_delegation::CrossBoundaryConsentEdit {
+        agent_delegation::CrossBoundaryConsentEdit {
             actor_user_id: &user.id,
-            caller_dot_id: &body.peer_id,
-            receiver_dot_id: &agent.principal.id,
-            direction: dot_delegation::ConsentDirection::Inbound,
+            caller_agent_id: &body.peer_id,
+            receiver_agent_id: &agent.principal.id,
+            direction: agent_delegation::ConsentDirection::Inbound,
             enabled: body.enabled,
             expected_generation: body.expected_generation.as_deref(),
         },
@@ -1893,8 +1994,8 @@ pub async fn organization_communication_put(
                 && let Err(error) = aiplane_runtime::agents::resume::cancel_personal_runs_for_edge(
                     &state,
                     &caller_owner,
-                    &edge.caller_dot_id,
-                    &edge.receiver_dot_id,
+                    &edge.caller_agent_id,
+                    &edge.receiver_agent_id,
                     previous,
                 )
                 .await
@@ -1902,7 +2003,7 @@ pub async fn organization_communication_put(
                 return internal(error);
             }
             let callers =
-                match dot_delegation::inbound_callers_for(&state.db, &agent.principal.id).await {
+                match agent_delegation::inbound_callers_for(&state.db, &agent.principal.id).await {
                     Ok(callers) => callers,
                     Err(error) => return internal(error),
                 };
@@ -1911,21 +2012,21 @@ pub async fn organization_communication_put(
                 organization_communication_view(&agent, &metadata, callers),
             )
         }
-        Ok(ConsentSaved::Missing) => not_found(t(lang, "dot-error-not-found")),
+        Ok(ConsentSaved::Missing) => not_found(t(lang, "agent-error-not-found")),
         Ok(ConsentSaved::Invalid) => json_error(
             StatusCode::BAD_REQUEST,
             "invalid_consent",
-            &t(lang, "dot-communication-error-invalid"),
+            &t(lang, "agent-communication-error-invalid"),
         ),
         Ok(ConsentSaved::Conflict) => json_error(
             StatusCode::CONFLICT,
             "conflict",
-            &t(lang, "dot-communication-error-conflict"),
+            &t(lang, "agent-communication-error-conflict"),
         ),
         Ok(ConsentSaved::Unavailable) => json_error(
             StatusCode::CONFLICT,
-            "inactive_dot",
-            &t(lang, "dot-communication-error-inactive"),
+            "inactive_agent",
+            &t(lang, "agent-communication-error-inactive"),
         ),
         Err(error) => internal(error),
     }
@@ -2027,7 +2128,7 @@ pub async fn delete(State(state): State<Arc<RamaState>>, req: Request) -> Respon
         return bad_request("the URL is missing the agent id");
     };
     let personal = or_return!(
-        agents_db::personal_dot_owner(&state.db, &id)
+        agents_db::personal_agent_owner(&state.db, &id)
             .await
             .map_err(internal)
     );
@@ -2039,7 +2140,7 @@ pub async fn delete(State(state): State<Arc<RamaState>>, req: Request) -> Respon
                 return not_found(format!("there is no agent `{id}`"));
             };
             if let Err(error) =
-                aiplane_runtime::agents::resume::cancel_personal_runs_for_dot(&state, &owner, &id)
+                aiplane_runtime::agents::resume::cancel_personal_runs_for_agent(&state, &owner, &id)
                     .await
             {
                 return internal(error);

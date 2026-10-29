@@ -54,13 +54,13 @@ pub(super) enum Kind {
     CreateAgentDraft,
     UpdateAgentDraft,
     RunTestTurn,
-    ProposeDotSetup,
+    ProposeAgentSetup,
 }
 
 impl Kind {
     fn id(self) -> &'static str {
         match self {
-            Kind::ProposeDotSetup => "propose_dot_setup",
+            Kind::ProposeAgentSetup => "propose_agent_setup",
             Kind::ListAgents => "list_agents",
             Kind::ReadAgent => "read_agent",
             Kind::ListGrantable => "list_grantable",
@@ -73,7 +73,7 @@ impl Kind {
 }
 
 /// Every tool the architect has. Publishing is deliberately not one.
-pub(super) const PERSONAL_KINDS: &[Kind] = &[Kind::ListGrantable, Kind::ProposeDotSetup];
+pub(super) const PERSONAL_KINDS: &[Kind] = &[Kind::ListGrantable, Kind::ProposeAgentSetup];
 
 pub(super) const KINDS: &[Kind] = &[
     Kind::ListAgents,
@@ -111,9 +111,9 @@ impl Tool for ArchitectTool {
 
     fn schema(&self) -> ToolDef {
         let (description, parameters) = match self.kind {
-            Kind::ProposeDotSetup => (
+            Kind::ProposeAgentSetup => (
                 "Store a complete reviewed personal agent proposal, without creating an agent. Only task, tone, non-strict scope, abilities and one knowledge collection are supported. The changes field must be an actual JSON object, never a string containing JSON. Every requested prerequisite that cannot be configured must be listed in unresolved. Replaces the previous proposal.",
-                json!({"type":"object","additionalProperties":false,"required":["name","changes"],"properties":{"name":{"type":"string"},"display":{"type":"string"},"description":{"type":"string"},"changes":super::dot::personal_changes_schema(),"unresolved":{"type":"array","items":{"type":"string"}}}}),
+                json!({"type":"object","additionalProperties":false,"required":["name","changes"],"properties":{"name":{"type":"string"},"display":{"type":"string"},"description":{"type":"string"},"changes":super::owned_agent::personal_changes_schema(),"unresolved":{"type":"array","items":{"type":"string"}}}}),
             ),
             Kind::ListGrantable if self.ctx.personal => (
                 "Inspect the personal agent's actual resources. Each ability reports read_only and default_permission: known read-only tools allow, external or unknown writes ask, permitted default_memory_tools allow only agent-scoped memory writes. Use these existing defaults; valid defaults do not need an unresolved approval-rule prerequisite. This is resource information, not approval of a tool call.",
@@ -213,7 +213,7 @@ impl Tool for ArchitectTool {
                 ));
             }
             let out = match self.kind {
-                Kind::ProposeDotSetup => super::dot::propose(
+                Kind::ProposeAgentSetup => super::owned_agent::propose(
                     &ctx.state,
                     &ctx.user,
                     &ctx.session_id,
@@ -226,9 +226,11 @@ impl Tool for ArchitectTool {
                 )
                 .await
                 .map_err(Refusal::from),
-                Kind::ListGrantable if ctx.personal => super::dot::resources(&ctx.state, &ctx.user)
-                    .await
-                    .map_err(Refusal::from),
+                Kind::ListGrantable if ctx.personal => {
+                    super::owned_agent::resources(&ctx.state, &ctx.user)
+                        .await
+                        .map_err(Refusal::from)
+                }
                 Kind::ListAgents => list_agents(ctx).await,
                 Kind::ReadAgent => read_agent(ctx, parse(args)?).await,
                 Kind::ListGrantable => resources_for(&ctx.state, &ctx.user, Lang::En)
@@ -372,6 +374,7 @@ async fn create(ctx: &Ctx, args: CreateArgs) -> Result<Value, Refusal> {
         &ctx.state,
         &ctx.user,
         CreateBody {
+            kind: super::super::json_agents::CreateKind::Public,
             name: name.clone(),
             display: Some(display),
             description: args.description.unwrap_or_default(),

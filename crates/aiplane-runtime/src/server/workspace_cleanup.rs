@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use aiplane_agents::db::workspace_cleanup::{self, CleanupErrorCode};
 use aiplane_core::server::db::{DbError, Pool};
 use jiff::Timestamp;
-use shared::sandbox::{DotWorkspace, WorkspaceOperation, WorkspaceRequest};
+use shared::sandbox::{OwnedAgentWorkspace, WorkspaceOperation, WorkspaceRequest};
 
 use crate::rama_server::state::RamaState;
 use crate::server::tools::sandbox::{SandboxClient, WorkspaceClientError, WorkspaceReply};
@@ -37,9 +37,9 @@ async fn drain_once(
             break;
         };
         let request = WorkspaceRequest {
-            workspace: DotWorkspace {
+            workspace: OwnedAgentWorkspace {
                 owner_user_id: claim.owner_user_id.clone(),
-                dot_id: claim.dot_id.clone(),
+                agent_id: claim.agent_id.clone(),
             },
             operation: WorkspaceOperation::Retire,
         };
@@ -84,7 +84,7 @@ mod tests {
 
     async fn queue() -> db::Pool {
         let pool = db::open(Path::new(":memory:")).await.unwrap();
-        sqlx::query("INSERT INTO dot_workspace_cleanup(dot_id,owner_user_id,created_at,next_attempt_at) VALUES('00000000-0000-4000-8000-000000000001','deleted-owner','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO agent_workspace_cleanup(agent_id,owner_user_id,created_at,next_attempt_at) VALUES('00000000-0000-4000-8000-000000000001','deleted-owner','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')").execute(&pool).await.unwrap();
         pool
     }
 
@@ -94,7 +94,7 @@ mod tests {
         let now = "2026-02-01T00:00:00Z".parse().unwrap();
         assert_eq!(drain_once(&pool, None, now).await.unwrap(), 1);
         let row: (i64, String, Option<String>, Option<String>) = sqlx::query_as(
-            "SELECT attempts,last_error_code,claim_token,claim_until FROM dot_workspace_cleanup",
+            "SELECT attempts,last_error_code,claim_token,claim_until FROM agent_workspace_cleanup",
         )
         .fetch_one(&pool)
         .await
@@ -121,7 +121,7 @@ mod tests {
                 .mount(&server)
                 .await;
             Mock::given(method("POST")).and(path("/workspace"))
-                .and(body_json(serde_json::json!({"workspace":{"owner_user_id":"deleted-owner","dot_id":"00000000-0000-4000-8000-000000000001"},"operation":{"kind":"retire"}})))
+                .and(body_json(serde_json::json!({"workspace":{"owner_user_id":"deleted-owner","agent_id":"00000000-0000-4000-8000-000000000001"},"operation":{"kind":"retire"}})))
                 .respond_with(ResponseTemplate::new(status)).mount(&server).await;
             let client = SandboxClient::new(
                 Arc::new(SandboxConfig {
@@ -143,7 +143,7 @@ mod tests {
                 1
             );
             assert_eq!(
-                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM dot_workspace_cleanup")
+                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM agent_workspace_cleanup")
                     .fetch_one(&pool)
                     .await
                     .unwrap(),
@@ -152,7 +152,7 @@ mod tests {
             if let Some(error) = error {
                 assert_eq!(
                     sqlx::query_scalar::<_, String>(
-                        "SELECT last_error_code FROM dot_workspace_cleanup"
+                        "SELECT last_error_code FROM agent_workspace_cleanup"
                     )
                     .fetch_one(&pool)
                     .await

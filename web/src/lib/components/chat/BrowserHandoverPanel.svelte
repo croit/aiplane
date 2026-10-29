@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-	import { api, type DotBrowserInput } from '#lib/api.js';
+	import { api, type AgentBrowserInput } from '#lib/api.js';
 	import { t } from '#lib/i18n.svelte.js';
 	import type { SuspensionView } from '#lib/suspension.js';
 
@@ -45,7 +45,7 @@
 	async function refreshFrame() {
 		if (stopped || !controllerId) return;
 		try {
-			setFrame(await api.dotBrowserFrame(sessionId, turnId, waiting.request_id, controllerId));
+			setFrame(await api.agentBrowserFrame(sessionId, turnId, waiting.request_id, controllerId));
 			error = false;
 		} catch {
 			error = true;
@@ -54,11 +54,11 @@
 		}
 	}
 
-	async function send(input: DotBrowserInput): Promise<boolean> {
+	async function send(input: AgentBrowserInput): Promise<boolean> {
 		if (!controllerId || busy || stopped) return false;
 		busy = true;
 		try {
-			const result = await api.dotBrowserInput(sessionId, turnId, waiting.request_id, controllerId, ++sequence, input);
+			const result = await api.agentBrowserInput(sessionId, turnId, waiting.request_id, controllerId, ++sequence, input);
 			expiresAt = result.expires_at;
 			updateRemaining();
 			return true;
@@ -101,7 +101,7 @@
 		stopped = true;
 		if (timer) clearTimeout(timer);
 		try {
-			await api.dotBrowserFinish(sessionId, turnId, waiting.request_id, controllerId);
+			await api.agentBrowserFinish(sessionId, turnId, waiting.request_id, controllerId);
 			oncomplete();
 		} catch {
 			error = true;
@@ -117,7 +117,7 @@
 		stopped = true;
 		if (timer) clearTimeout(timer);
 		try {
-			await api.dotBrowserAbort(sessionId, turnId, waiting.request_id, controllerId);
+			await api.agentBrowserAbort(sessionId, turnId, waiting.request_id, controllerId);
 			oncomplete();
 		} catch {
 			error = true;
@@ -131,7 +131,7 @@
 		clockTimer = setInterval(updateRemaining, 15000);
 		void (async () => {
 			try {
-				const claim = await api.dotBrowserClaim(sessionId, turnId, waiting.request_id);
+				const claim = await api.agentBrowserClaim(sessionId, turnId, waiting.request_id);
 				controllerId = claim.controller_id;
 				expiresAt = claim.expires_at;
 				await refreshFrame();

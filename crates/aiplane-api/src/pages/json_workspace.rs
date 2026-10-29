@@ -11,8 +11,8 @@ use std::sync::Arc;
 use rama::http::service::web::extract::{Path, State};
 use rama::http::{Request, Response, StatusCode};
 
-use super::json_dots::{self, DotView};
-use aiplane_agents::db::{WriteTx, agents as dots_db, dot_sessions};
+use super::json_owned_agents::{self, OwnedAgentView};
+use aiplane_agents::db::{WriteTx, agent_sessions, agents as owned_agents_db};
 use aiplane_core::server::auth::token as auth_token;
 use aiplane_core::server::db;
 use aiplane_runtime::openai_driver;
@@ -201,11 +201,11 @@ pub struct ActionView {
     pub run_count: i64,
     pub chat_count: i64,
     pub id: String,
-    pub dot_id: Option<String>,
+    pub personal_agent_id: Option<String>,
     pub principal_id: Option<String>,
     pub agent_version: Option<i64>,
     pub configuration_generation: String,
-    pub dot: Option<DotView>,
+    pub agent: Option<OwnedAgentView>,
     pub name: String,
     pub prompt: String,
     pub model: Option<String>,
@@ -244,7 +244,7 @@ pub struct ScheduledList {
     pub principal_id: Option<String>,
     pub can_write: bool,
     pub versions: Vec<super::json_agents::VersionView>,
-    pub dots: Vec<DotView>,
+    pub agents: Vec<OwnedAgentView>,
     pub actions: Vec<ActionView>,
     /// The chat models an action can run on.
     pub models: Vec<ModelOption>,
@@ -301,14 +301,14 @@ fn action_json_with_counts(
         run_count,
         chat_count,
         id: a.id.clone(),
-        dot_id: a.dot_id.clone(),
+        personal_agent_id: a.personal_agent_id.clone(),
         principal_id: match &a.owner {
             aiplane_runtime::server::background::AutomationOwner::User(_) => None,
             aiplane_runtime::server::background::AutomationOwner::Principal(id) => Some(id.clone()),
         },
         agent_version: a.agent_version,
         configuration_generation: a.configuration_generation.clone(),
-        dot: None,
+        agent: None,
         name: a.name.clone(),
         prompt: a.prompt.clone(),
         model: a.model.clone(),
@@ -376,7 +376,7 @@ async fn schedule_access_in(
             aiplane_runtime::agents::access::organization_access_in(state, tx, id, user_id)
                 .await
                 .map_err(internal)?
-                == Some(dots_db::Access::Write)
+                == Some(owned_agents_db::Access::Write)
         }
     };
     if admitted {
@@ -386,34 +386,35 @@ async fn schedule_access_in(
     }
 }
 
-async fn schedule_dot_in(
+async fn schedule_agent_in(
     tx: &mut WriteTx,
     owner: &aiplane_runtime::server::background::AutomationOwner,
-    dot_id: Option<&str>,
-) -> Result<Option<DotView>, db::DbError> {
+    personal_agent_id: Option<&str>,
+) -> Result<Option<OwnedAgentView>, db::DbError> {
     let id = match owner {
-        aiplane_runtime::server::background::AutomationOwner::User(_) => dot_id,
+        aiplane_runtime::server::background::AutomationOwner::User(_) => personal_agent_id,
         aiplane_runtime::server::background::AutomationOwner::Principal(id) => Some(id.as_str()),
     };
     let Some(id) = id else { return Ok(None) };
-    let Some(metadata) = dots_db::get_dot_metadata_in(tx, id).await? else {
+    let Some(metadata) = owned_agents_db::get_agent_metadata_in(tx, id).await? else {
         return Ok(None);
     };
     let owner_matches = match owner {
         aiplane_runtime::server::background::AutomationOwner::User(user) => {
-            metadata.owner == dots_db::DotOwner::User(user.clone())
+            metadata.owner == owned_agents_db::AgentOwner::User(user.clone())
         }
         aiplane_runtime::server::background::AutomationOwner::Principal(principal) => {
-            id == principal && matches!(metadata.owner, dots_db::DotOwner::Organization(_))
+            id == principal
+                && matches!(metadata.owner, owned_agents_db::AgentOwner::Organization(_))
         }
     };
     if !owner_matches {
         return Ok(None);
     };
-    let Some(agent) = dots_db::get_in(tx, id).await? else {
+    let Some(agent) = owned_agents_db::get_in(tx, id).await? else {
         return Ok(None);
     };
-    Ok(Some(DotView {
+    Ok(Some(OwnedAgentView {
         id: id.into(),
         name: metadata.name,
         display: agent.principal.display,
@@ -429,7 +430,7 @@ async fn scheduled_view_in(
     let counts = scheduled::run_counts_for_owner_in(tx, &action.owner).await?;
     let mut view =
         action_json_with_counts(action, counts.get(&action.id).copied().unwrap_or((0, 0)));
-    view.dot = schedule_dot_in(tx, &action.owner, action.dot_id.as_deref()).await?;
+    view.agent = schedule_agent_in(tx, &action.owner, action.personal_agent_id.as_deref()).await?;
     flag_deleted_last_chats_in(
         tx,
         [(view.last_session_id.as_deref(), &mut view.last_chat_deleted)],
@@ -443,7 +444,7 @@ async fn schedule_body_in(
     tx: &mut WriteTx,
     owner: &aiplane_runtime::server::background::AutomationOwner,
     parsed: &ScheduledBody,
-    previous_dot: Option<&str>,
+    previous_agent: Option<&str>,
     lang: Lang,
 ) -> Result<Option<Option<String>>, Response> {
     if validate_scheduled(parsed).is_err() {
@@ -453,7 +454,7 @@ async fn schedule_body_in(
         aiplane_runtime::server::background::AutomationOwner::Principal(id) => {
             if parsed.principal_id.as_deref() != Some(id.as_str())
                 || parsed.model.is_some()
-                || parsed.dot_id.is_some()
+                || parsed.personal_agent_id.is_some()
                 || parsed.reuse_conversation
                 || parsed.linked_session_id.is_some()
                 || parsed.timezone.trim().is_empty()
@@ -484,11 +485,16 @@ async fn schedule_body_in(
             {
                 return Err(invalid_schedule(lang));
             };
-            if !dot_sessions::binding_valid(tx, user, parsed.dot_id.as_deref(), previous_dot)
-                .await
-                .map_err(internal)?
+            if !agent_sessions::binding_valid(
+                tx,
+                user,
+                parsed.personal_agent_id.as_deref(),
+                previous_agent,
+            )
+            .await
+            .map_err(internal)?
             {
-                return Err(bad_request(t(lang, "dot-background-error-binding")));
+                return Err(bad_request(t(lang, "agent-background-error-binding")));
             };
             let Some(requested) = parsed.linked_session_id.as_deref().map(str::trim) else {
                 return Ok(None);
@@ -497,11 +503,16 @@ async fn schedule_body_in(
                 return Ok(Some(None));
             };
             if !parsed.reuse_conversation
-                || !dot_sessions::session_matches(tx, user, requested, parsed.dot_id.as_deref())
-                    .await
-                    .map_err(internal)?
+                || !agent_sessions::session_matches(
+                    tx,
+                    user,
+                    requested,
+                    parsed.personal_agent_id.as_deref(),
+                )
+                .await
+                .map_err(internal)?
             {
-                return Err(bad_request(t(lang, "dot-background-error-linked")));
+                return Err(bad_request(t(lang, "agent-background-error-linked")));
             };
             Ok(Some(Some(requested.into())))
         }
@@ -519,9 +530,9 @@ pub async fn scheduled_list(State(state): State<Arc<RamaState>>, req: Request) -
         .unwrap_or_else(|| {
             aiplane_runtime::server::background::AutomationOwner::User(user.id.clone())
         });
-    let personal_dots = if principal_id.is_none() {
-        match dots_db::list_personal_dots(&state.db, &user.id).await {
-            Ok(rows) => rows.iter().map(json_dots::view).collect(),
+    let agents = if principal_id.is_none() {
+        match owned_agents_db::list_personal_agents(&state.db, &user.id).await {
+            Ok(rows) => rows.iter().map(json_owned_agents::view).collect(),
             Err(error) => return internal(error),
         }
     } else {
@@ -536,21 +547,21 @@ pub async fn scheduled_list(State(state): State<Arc<RamaState>>, req: Request) -
         let counts = scheduled::run_counts_for_owner_in(&mut tx, &owner)
             .await
             .map_err(internal)?;
-        let (dots, versions, models, default_timezone) = if let Some(id) = &principal_id {
-            let dot = schedule_dot_in(&mut tx, &owner, None)
+        let (owned_agents, versions, models, default_timezone) = if let Some(id) = &principal_id {
+            let owned_agent = schedule_agent_in(&mut tx, &owner, None)
                 .await
                 .map_err(internal)?
                 .ok_or_else(|| schedule_unavailable(lang))?;
-            let versions = dots_db::versions_in(&mut tx, id)
+            let versions = owned_agents_db::versions_in(&mut tx, id)
                 .await
                 .map_err(internal)?
                 .iter()
                 .map(super::json_agents::version_view)
                 .collect();
-            (vec![dot], versions, Vec::new(), None)
+            (vec![owned_agent], versions, Vec::new(), None)
         } else {
             (
-                personal_dots,
+                agents,
                 Vec::new(),
                 chat_model_options(&state),
                 Some(user.timezone.as_deref().unwrap_or("UTC").into()),
@@ -563,11 +574,11 @@ pub async fn scheduled_list(State(state): State<Arc<RamaState>>, req: Request) -
                     action,
                     counts.get(&action.id).copied().unwrap_or((0, 0)),
                 );
-                view.dot = dots
+                view.agent = owned_agents
                     .iter()
-                    .find(|dot| {
-                        principal_id.as_deref() == Some(dot.id.as_str())
-                            || action.dot_id.as_deref() == Some(dot.id.as_str())
+                    .find(|owned_agent| {
+                        principal_id.as_deref() == Some(owned_agent.id.as_str())
+                            || action.personal_agent_id.as_deref() == Some(owned_agent.id.as_str())
                     })
                     .cloned();
                 view
@@ -591,7 +602,7 @@ pub async fn scheduled_list(State(state): State<Arc<RamaState>>, req: Request) -
                 principal_id,
                 can_write: true,
                 versions,
-                dots,
+                agents: owned_agents,
                 actions,
                 models,
                 default_timezone,
@@ -665,7 +676,7 @@ pub struct ScheduledBody {
     #[serde(default)]
     pub agent_version: Option<i64>,
     #[serde(default)]
-    pub dot_id: Option<String>,
+    pub personal_agent_id: Option<String>,
     pub name: String,
     pub prompt: String,
     #[serde(default)]
@@ -727,7 +738,7 @@ pub async fn scheduled_create(State(state): State<Arc<RamaState>>, req: Request)
             scheduled::NewAction {
                 owner,
                 created_by: user.id.clone(),
-                dot_id: parsed.dot_id,
+                personal_agent_id: parsed.personal_agent_id,
                 linked_session_id: link.flatten(),
                 name: parsed.name.trim().into(),
                 prompt: parsed.prompt,
@@ -803,7 +814,7 @@ pub async fn scheduled_update(
             &mut tx,
             &previous.owner,
             &parsed,
-            previous.dot_id.as_deref(),
+            previous.personal_agent_id.as_deref(),
             lang,
         )
         .await?;
@@ -816,7 +827,7 @@ pub async fn scheduled_update(
             .await
             .map_err(|_| invalid_schedule(lang))?;
         let edit = scheduled::EditAction {
-            dot_id: parsed.dot_id,
+            personal_agent_id: parsed.personal_agent_id,
             linked_session_id: link,
             name: parsed.name.trim().into(),
             prompt: parsed.prompt,
@@ -946,7 +957,7 @@ pub async fn scheduled_delete(
             scheduled::DeleteOutcome::Pending => Err(json_error(
                 StatusCode::CONFLICT,
                 "run_pending",
-                &t(lang, "dot-background-error-pending-delete"),
+                &t(lang, "agent-background-error-pending-delete"),
             )),
             scheduled::DeleteOutcome::Deleted => {
                 tx.commit().await.map_err(internal)?;
@@ -1017,8 +1028,8 @@ pub struct WebhookView {
     pub run_count: i64,
     pub chat_count: i64,
     pub id: String,
-    pub dot_id: Option<String>,
-    pub dot: Option<DotView>,
+    pub personal_agent_id: Option<String>,
+    pub agent: Option<OwnedAgentView>,
     pub name: String,
     pub prompt: String,
     pub model: Option<String>,
@@ -1048,7 +1059,7 @@ pub struct WebhookList {
     pub principal_id: Option<String>,
     pub can_write: bool,
     pub versions: Vec<super::json_agents::VersionView>,
-    pub dots: Vec<DotView>,
+    pub agents: Vec<OwnedAgentView>,
     pub webhooks: Vec<WebhookView>,
     /// The chat models a webhook can run on.
     pub models: Vec<ModelOption>,
@@ -1115,8 +1126,8 @@ fn webhook_json_with_counts(
         run_count,
         chat_count,
         id: w.id.clone(),
-        dot_id: w.dot_id.clone(),
-        dot: None,
+        personal_agent_id: w.personal_agent_id.clone(),
+        agent: None,
         name: w.name.clone(),
         prompt: w.prompt.clone(),
         model: w.model.clone(),
@@ -1173,7 +1184,7 @@ async fn webhook_view_in(
 ) -> Result<WebhookView, db::DbError> {
     let counts = webhooks::run_counts_for_owner_in(tx, &hook.owner).await?;
     let mut row = webhook_json_with_counts(hook, counts.get(&hook.id).copied().unwrap_or((0, 0)));
-    row.dot = schedule_dot_in(tx, &hook.owner, hook.dot_id.as_deref()).await?;
+    row.agent = schedule_agent_in(tx, &hook.owner, hook.personal_agent_id.as_deref()).await?;
     flag_deleted_last_chats_in(
         tx,
         [(row.last_session_id.as_deref(), &mut row.last_chat_deleted)],
@@ -1191,8 +1202,8 @@ pub async fn webhooks_list(State(state): State<Arc<RamaState>>, req: Request) ->
         .map(|id| AutomationOwner::Principal(id.clone()))
         .unwrap_or_else(|| AutomationOwner::User(user.id.clone()));
     let personal = if principal_id.is_none() {
-        match dots_db::list_personal_dots(&state.db, &user.id).await {
-            Ok(rows) => rows.iter().map(json_dots::view).collect(),
+        match owned_agents_db::list_personal_agents(&state.db, &user.id).await {
+            Ok(rows) => rows.iter().map(json_owned_agents::view).collect(),
             Err(error) => return internal(error),
         }
     } else {
@@ -1207,18 +1218,18 @@ pub async fn webhooks_list(State(state): State<Arc<RamaState>>, req: Request) ->
         let counts = webhooks::run_counts_for_owner_in(&mut tx, &owner)
             .await
             .map_err(internal)?;
-        let (dots, versions, models) = if let Some(id) = &principal_id {
-            let dot = schedule_dot_in(&mut tx, &owner, None)
+        let (owned_agents, versions, models) = if let Some(id) = &principal_id {
+            let owned_agent = schedule_agent_in(&mut tx, &owner, None)
                 .await
                 .map_err(internal)?
                 .ok_or_else(|| webhook_unavailable(lang))?;
-            let versions = dots_db::versions_in(&mut tx, id)
+            let versions = owned_agents_db::versions_in(&mut tx, id)
                 .await
                 .map_err(internal)?
                 .iter()
                 .map(super::json_agents::version_view)
                 .collect();
-            (vec![dot], versions, Vec::new())
+            (vec![owned_agent], versions, Vec::new())
         } else {
             (personal, Vec::new(), chat_model_options(&state))
         };
@@ -1227,11 +1238,11 @@ pub async fn webhooks_list(State(state): State<Arc<RamaState>>, req: Request) ->
             .map(|hook| {
                 let mut row =
                     webhook_json_with_counts(hook, counts.get(&hook.id).copied().unwrap_or((0, 0)));
-                row.dot = dots
+                row.agent = owned_agents
                     .iter()
-                    .find(|dot| {
-                        principal_id.as_deref() == Some(dot.id.as_str())
-                            || hook.dot_id.as_deref() == Some(dot.id.as_str())
+                    .find(|owned_agent| {
+                        principal_id.as_deref() == Some(owned_agent.id.as_str())
+                            || hook.personal_agent_id.as_deref() == Some(owned_agent.id.as_str())
                     })
                     .cloned();
                 row
@@ -1251,7 +1262,7 @@ pub async fn webhooks_list(State(state): State<Arc<RamaState>>, req: Request) ->
             WebhookList {
                 principal_id,
                 can_write: true,
-                dots,
+                agents: owned_agents,
                 versions,
                 models,
                 webhooks: hooks,
@@ -1269,7 +1280,7 @@ pub struct WebhookBody {
     #[serde(default)]
     pub agent_version: Option<i64>,
     #[serde(default)]
-    pub dot_id: Option<String>,
+    pub personal_agent_id: Option<String>,
     pub name: String,
     pub prompt: String,
     #[serde(default)]
@@ -1326,7 +1337,7 @@ async fn webhook_body_in(
             if body.principal_id.as_deref() != Some(id.as_str())
                 || body.agent_version.is_none_or(|v| v <= 0)
                 || body.model.is_some()
-                || body.dot_id.is_some()
+                || body.personal_agent_id.is_some()
                 || body.synchronous
                 || body.reuse_conversation
                 || body.linked_session_id.is_some()
@@ -1356,11 +1367,11 @@ async fn webhook_body_in(
             {
                 return Err(invalid_schedule(lang));
             };
-            if !dot_sessions::binding_valid(tx, user, body.dot_id.as_deref(), previous)
+            if !agent_sessions::binding_valid(tx, user, body.personal_agent_id.as_deref(), previous)
                 .await
                 .map_err(internal)?
             {
-                return Err(bad_request(t(lang, "dot-background-error-binding")));
+                return Err(bad_request(t(lang, "agent-background-error-binding")));
             };
             let Some(link) = body.linked_session_id.as_deref().map(str::trim) else {
                 return Ok(None);
@@ -1369,11 +1380,16 @@ async fn webhook_body_in(
                 return Ok(Some(None));
             };
             if !body.reuse_conversation
-                || !dot_sessions::session_matches(tx, user, link, body.dot_id.as_deref())
-                    .await
-                    .map_err(internal)?
+                || !agent_sessions::session_matches(
+                    tx,
+                    user,
+                    link,
+                    body.personal_agent_id.as_deref(),
+                )
+                .await
+                .map_err(internal)?
             {
-                return Err(bad_request(t(lang, "dot-background-error-linked")));
+                return Err(bad_request(t(lang, "agent-background-error-linked")));
             };
             Ok(Some(Some(link.into())))
         }
@@ -1399,7 +1415,7 @@ pub async fn webhooks_create(State(state): State<Arc<RamaState>>, req: Request) 
             webhooks::NewWebhook {
                 owner,
                 created_by: user.id.clone(),
-                dot_id: body.dot_id,
+                personal_agent_id: body.personal_agent_id,
                 name: body.name.trim().into(),
                 prompt: body.prompt,
                 model: body.model,
@@ -1450,12 +1466,12 @@ pub async fn webhooks_update(
             &mut tx,
             &old.owner,
             &body,
-            old.dot_id.as_deref(),
+            old.personal_agent_id.as_deref(),
             lang,
         )
         .await?;
         let edit = webhooks::EditWebhook {
-            dot_id: body.dot_id,
+            personal_agent_id: body.personal_agent_id,
             linked_session_id: link,
             name: body.name.trim().into(),
             prompt: body.prompt,
@@ -1590,7 +1606,7 @@ pub async fn webhooks_delete(
                 return Err(json_error(
                     StatusCode::CONFLICT,
                     "run_pending",
-                    &t(lang, "dot-background-error-pending-delete"),
+                    &t(lang, "agent-background-error-pending-delete"),
                 ));
             }
             scheduled::DeleteOutcome::Deleted => {}

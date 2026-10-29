@@ -332,10 +332,10 @@ pub(crate) async fn call_connector(
         run.state.mcp_layer_for_run(agent).await?
     } else {
         if matches!(
-            aiplane_agents::db::agents::dot_owner(&run.state.db, &run.principal.id)
+            aiplane_agents::db::agents::agent_owner(&run.state.db, &run.principal.id)
                 .await
                 .map_err(|error| ToolError::Failed(error.to_string()))?,
-            Some(aiplane_agents::db::agents::DotOwner::Organization(_))
+            Some(aiplane_agents::db::agents::AgentOwner::Organization(_))
         ) {
             return Err(organization_unavailable());
         }
@@ -374,12 +374,12 @@ pub(crate) async fn validate_verifier_authority_in(
     ctx: &ToolContext,
     dependency: &str,
 ) -> Result<(), ToolError> {
-    let owner = aiplane_agents::db::agents::dot_owner_in(tx, &run.principal.id)
+    let owner = aiplane_agents::db::agents::agent_owner_in(tx, &run.principal.id)
         .await
         .map_err(|error| ToolError::Failed(error.to_string()))?;
     let organization = matches!(
         owner,
-        Some(aiplane_agents::db::agents::DotOwner::Organization(_))
+        Some(aiplane_agents::db::agents::AgentOwner::Organization(_))
     ) || ctx
         .agent
         .as_ref()

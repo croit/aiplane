@@ -280,34 +280,34 @@ pub enum Actor {
     /// A person, gated by their roles: their real roles offer their normal
     /// tools, an empty list offers none (the scheduler's "tools off").
     Person { id: String, roles: Vec<String> },
-    /// A personal Dot is named separately, but exercises the owner's user
-    /// principal. The Dot identity travels beside that principal for scoped
+    /// A personal agent is named separately, but exercises the owner's user
+    /// principal. The agent identity travels beside that principal for scoped
     /// data and audit attribution.
-    PersonalDot {
+    PersonalAgent {
         id: String,
         roles: Vec<String>,
-        dot: PersonalDotIdentity,
-        execution: Option<Arc<PersonalDotExecution>>,
+        owned_agent: PersonalAgentIdentity,
+        execution: Option<Arc<PersonalAgentExecution>>,
     },
     /// An agent's run, offered exactly its principal's grants.
     Agent(Arc<AgentRun>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PersonalDotIdentity {
+pub struct PersonalAgentIdentity {
     pub owner_user_id: String,
-    pub dot_id: String,
+    pub agent_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersonalExecutionBinding {
-    pub identity: PersonalDotIdentity,
+    pub identity: PersonalAgentIdentity,
     pub session_id: String,
     pub assistant_turn_id: String,
     pub model: String,
 }
 
-pub struct PersonalDotExecution {
+pub struct PersonalAgentExecution {
     pub(crate) state: Arc<crate::rama_server::state::RamaState>,
     binding: PersonalExecutionBinding,
     chain: Arc<RunChain>,
@@ -315,9 +315,9 @@ pub struct PersonalDotExecution {
     meter: Arc<SpendMeter>,
 }
 
-impl std::fmt::Debug for PersonalDotExecution {
+impl std::fmt::Debug for PersonalAgentExecution {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PersonalDotExecution")
+        f.debug_struct("PersonalAgentExecution")
             .field("binding", &self.binding)
             .field("chain", &self.chain)
             .field("local_budget", &self.local_budget)
@@ -325,7 +325,7 @@ impl std::fmt::Debug for PersonalDotExecution {
     }
 }
 
-impl PersonalDotExecution {
+impl PersonalAgentExecution {
     pub(crate) fn new(
         state: Arc<crate::rama_server::state::RamaState>,
         binding: PersonalExecutionBinding,
@@ -333,10 +333,10 @@ impl PersonalDotExecution {
         local_budget: Budget,
         meter: Arc<SpendMeter>,
     ) -> Result<Self, MismatchedRun> {
-        if chain.current().principal_id != binding.identity.dot_id {
+        if chain.current().principal_id != binding.identity.agent_id {
             return Err(MismatchedRun {
                 chain_agent: chain.current().name.clone(),
-                principal: binding.identity.dot_id,
+                principal: binding.identity.agent_id,
             });
         }
         Ok(Self {
@@ -351,7 +351,7 @@ impl PersonalDotExecution {
     pub fn binding(&self) -> &PersonalExecutionBinding {
         &self.binding
     }
-    pub fn identity(&self) -> &PersonalDotIdentity {
+    pub fn identity(&self) -> &PersonalAgentIdentity {
         &self.binding.identity
     }
     pub fn model(&self) -> &str {
@@ -379,18 +379,18 @@ impl Actor {
         }
     }
 
-    pub fn personal_dot(
+    pub fn personal_agent(
         owner_user_id: impl Into<String>,
         roles: Vec<String>,
-        dot_id: impl Into<String>,
+        agent_id: impl Into<String>,
     ) -> Self {
         let owner_user_id = owner_user_id.into();
-        Self::PersonalDot {
+        Self::PersonalAgent {
             id: owner_user_id.clone(),
             roles,
-            dot: PersonalDotIdentity {
+            owned_agent: PersonalAgentIdentity {
                 owner_user_id,
-                dot_id: dot_id.into(),
+                agent_id: agent_id.into(),
             },
             execution: None,
         }
@@ -402,7 +402,7 @@ impl Actor {
                 id: id.clone(),
                 roles: roles.clone(),
             },
-            Self::PersonalDot { id, roles, .. } => Principal::User {
+            Self::PersonalAgent { id, roles, .. } => Principal::User {
                 id: id.clone(),
                 roles: roles.clone(),
             },
@@ -412,7 +412,7 @@ impl Actor {
 
     pub fn agent(&self) -> Option<&Arc<AgentRun>> {
         match self {
-            Self::Person { .. } | Self::PersonalDot { .. } => None,
+            Self::Person { .. } | Self::PersonalAgent { .. } => None,
             Self::Agent(run) => Some(run),
         }
     }
@@ -420,31 +420,35 @@ impl Actor {
     /// The person behind the turn; `None` for an agent's run.
     pub fn person_id(&self) -> Option<&str> {
         match self {
-            Self::Person { id, .. } | Self::PersonalDot { id, .. } => Some(id),
+            Self::Person { id, .. } | Self::PersonalAgent { id, .. } => Some(id),
             Self::Agent(_) => None,
         }
     }
 
-    pub fn personal_dot_identity(&self) -> Option<&PersonalDotIdentity> {
+    pub fn personal_agent_identity(&self) -> Option<&PersonalAgentIdentity> {
         match self {
-            Self::PersonalDot { dot, .. } => Some(dot),
+            Self::PersonalAgent { owned_agent, .. } => Some(owned_agent),
             Self::Person { .. } | Self::Agent(_) => None,
         }
     }
 
-    pub fn personal_execution(&self) -> Option<&Arc<PersonalDotExecution>> {
+    pub fn personal_execution(&self) -> Option<&Arc<PersonalAgentExecution>> {
         match self {
-            Self::PersonalDot { execution, .. } => execution.as_ref(),
+            Self::PersonalAgent { execution, .. } => execution.as_ref(),
             Self::Person { .. } | Self::Agent(_) => None,
         }
     }
 
     pub(crate) fn with_personal_execution(
         mut self,
-        run: Arc<PersonalDotExecution>,
+        run: Arc<PersonalAgentExecution>,
     ) -> Result<Self, MismatchedRun> {
         match &mut self {
-            Self::PersonalDot { dot, execution, .. } if dot == run.identity() => {
+            Self::PersonalAgent {
+                owned_agent,
+                execution,
+                ..
+            } if owned_agent == run.identity() => {
                 *execution = Some(run);
                 Ok(self)
             }
@@ -487,8 +491,8 @@ mod tests {
     }
 
     #[test]
-    fn a_personal_dot_keeps_the_users_principal_and_the_dots_attribution() {
-        let actor = Actor::personal_dot("u1", vec!["staff".into()], "dot-7");
+    fn a_personal_agent_keeps_the_users_principal_and_the_agents_attribution() {
+        let actor = Actor::personal_agent("u1", vec!["staff".into()], "agent-7");
         assert_eq!(
             actor.principal(),
             Principal::User {
@@ -498,8 +502,10 @@ mod tests {
         );
         assert_eq!(actor.person_id(), Some("u1"));
         assert_eq!(
-            actor.personal_dot_identity().map(|dot| dot.dot_id.as_str()),
-            Some("dot-7")
+            actor
+                .personal_agent_identity()
+                .map(|owned_agent| owned_agent.agent_id.as_str()),
+            Some("agent-7")
         );
         assert!(actor.agent().is_none());
     }

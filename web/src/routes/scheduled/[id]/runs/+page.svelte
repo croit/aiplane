@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-	import DotAssociation from '#lib/components/dots/DotAssociation.svelte';
+	import AgentAssociation from '#lib/components/agents/AgentAssociation.svelte';
 	import { page } from '$app/state';
 	import { runLinks } from '#lib/run-links.js';
 	import { locale, t } from '#lib/i18n.svelte.js';
@@ -54,7 +54,7 @@
 	{#if loading}
 		<div class="skeleton mt-5 h-40 w-full"></div>
 	{:else if action}
-		<DotAssociation binding={action} />
+		<AgentAssociation binding={action} />
 		<section class="card card-border mt-5">
 			<div class="card-body">
 				<ul class="flex flex-col divide-y divide-base-300">
@@ -64,7 +64,7 @@
 								<div class="flex flex-wrap items-center gap-2">
 									<strong class="text-sm">{runTime(run.fired_at)}</strong>
 									<span class="badge badge-sm {run.status === 'ok' ? 'badge-success' : run.status === 'error' ? 'badge-error' : run.status === 'waiting' ? 'badge-warning' : 'badge-ghost'}">
-										{t(run.status === 'ok' ? 'scheduled-run-status-ok' : run.status === 'error' ? 'scheduled-run-status-error' : run.status === 'waiting' ? 'dot-background-waiting' : 'scheduled-run-status-pending')}
+										{t(run.status === 'ok' ? 'scheduled-run-status-ok' : run.status === 'error' ? 'scheduled-run-status-error' : run.status === 'waiting' ? 'agent-background-waiting' : 'scheduled-run-status-pending')}
 									</span>
 								</div>
 								{#if run.agent_version}<p class="text-xs text-base-content/60">{t('agents-test-source-published', { version: run.agent_version })}</p>{/if}

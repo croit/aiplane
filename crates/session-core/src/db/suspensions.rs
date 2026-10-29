@@ -22,7 +22,7 @@ pub enum SuspensionKind {
     SecureInput,
     /// An answer from a human other than the one chatting.
     HumanAnswer,
-    /// The owner is temporarily operating a Dot's isolated browser.
+    /// The owner is temporarily operating an agent's isolated browser.
     BrowserHandover,
 }
 

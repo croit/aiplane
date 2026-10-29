@@ -2,7 +2,7 @@
 // Copyright (C) 2026 croit GmbH
 
 //! What an agent is told to do, as its owner edits it on a personal agent's
-//! **Task** tab (`docs/dots.md` → "Personal agent profile"): the task, tone
+//! **Task** tab (`docs/agents.md` → "Personal agent profile"): the task, tone
 //! and topics of its draft spec.
 
 use serde_json::{Value, json};

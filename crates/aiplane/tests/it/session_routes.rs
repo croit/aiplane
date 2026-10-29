@@ -275,7 +275,7 @@ async fn me_anonymous_is_401() {
 }
 
 #[tokio::test]
-async fn dot_browser_control_rejects_an_untrusted_origin() {
+async fn agent_browser_control_rejects_an_untrusted_origin() {
     let state = common::state_with_chat_pool("http://unused.invalid").await;
     let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
     let app = common::app(state);

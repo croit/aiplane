@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import { locale, t } from '#lib/i18n.svelte.js';
-	import DotAssociation from '#lib/components/dots/DotAssociation.svelte';
+	import AgentAssociation from '#lib/components/agents/AgentAssociation.svelte';
 	import { runLinks } from '#lib/run-links.js';
 	import { webhooksApi, formatWebhookFire, type Webhook } from '#lib/webhooks.js';
 
@@ -73,8 +73,8 @@
 					<span class="badge badge-sm {webhook.enabled ? 'badge-success' : 'badge-ghost'}">{webhook.enabled ? t('webhooks-badge-active') : t('webhooks-badge-paused')}</span>
 					{#if webhook.reuse_conversation}<span class="badge badge-ghost badge-sm">{t('webhooks-badge-reuses-chat')}</span>{/if}
 				</div>
-				<DotAssociation binding={webhook} />
-				{#if webhook.principal_id && webhook.dot}<p class="mt-2 text-sm">{webhook.dot.display || webhook.dot.name}</p>{/if}
+				<AgentAssociation binding={webhook} />
+				{#if webhook.principal_id && webhook.agent}<p class="mt-2 text-sm">{webhook.agent.display || webhook.agent.name}</p>{/if}
 				<p class="mt-1 line-clamp-2 text-sm text-base-content/70">{webhook.prompt}</p>
 				<div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-base-content/60">
 					{#if webhook.principal_id && webhook.agent_version}<span>{t('agents-test-source-published', { version: webhook.agent_version })}</span>{:else}<span class="font-mono">{webhook.model}</span>{/if}
@@ -85,7 +85,7 @@
 				</div>
 				{#if webhook.last_fired_at}
 					<p class="mt-1 text-xs {webhook.last_status === 'ok' ? 'text-success' : webhook.last_status === 'waiting' ? 'text-warning' : 'text-error'}">
-						{t(webhook.last_status === 'ok' ? 'webhooks-last-success' : webhook.last_status === 'waiting' ? 'dot-background-last-waiting' : 'webhooks-last-failure', { when: formatWebhookFire(webhook.last_fired_at, locale.current) })}
+						{t(webhook.last_status === 'ok' ? 'webhooks-last-success' : webhook.last_status === 'waiting' ? 'agent-background-last-waiting' : 'webhooks-last-failure', { when: formatWebhookFire(webhook.last_fired_at, locale.current) })}
 					</p>
 				{/if}
 				{#if webhook.last_status === 'waiting'}<a class="link link-hover text-sm" href="/inbox">{t('inbox-heading')}</a>{/if}

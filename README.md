@@ -85,7 +85,7 @@ connect company systems and define who can access models, tools and workflows.
   secure input or hand a task to a person; authorized colleagues respond in the
   shared inbox.
 - ⏱️ **Automate recurring and event-driven work.** Schedule prompts or trigger
-  runs with webhooks as a personal or organization Dot, then inspect the private
+  runs with webhooks as a personal or organization agent, then inspect the private
   conversation and run history.
   [Explore schedules, webhooks and inbox](docs/guide/automation-and-inbox.md).
 
@@ -103,7 +103,7 @@ connect company systems and define who can access models, tools and workflows.
 - 📊 **Agent insights and activity history.** Inspect run analytics and export
   agent activity records for review.
   [Observe agent runs](docs/agent-guide/run-observe.md).
-- 🤖 **Personal Dot capacity.** Set the active personal-Dot limit per user in
+- 🤖 **Personal agent capacity.** Set the active personal-agent limit per user in
   Administration → Settings → Access; the default is four.
 
 ### Ready to deploy and operate
@@ -220,34 +220,34 @@ token, an allowed IP list or both under **Administration → Settings → Access
 Behind a reverse proxy the IP list needs `AIPLANE_TRUSTED_PROXIES` set to the
 proxy. See [monitoring](docs/operations/monitoring.md).
 
-Personal Dot lifecycle management and directed communication consent changes
-require `can_manage_dots`, enabled through
+Personal agent lifecycle management and directed communication consent changes
+require `can_manage_personal_agents`, enabled through
 **Administration → Access → Groups**. Admins hold this permission; fresh groups
 default to disabled. It is independent of agent management and tool grants.
 The active count defaults to four per user and four per organization, configured
-independently by `dots.max_active_per_user` and
-`dots.max_active_per_organization` under
-**Administration → Settings → Access**. Idle active Dots count toward their
-owner’s limit; deactivated Dots do not. Organization member writers can use
-private saved-draft or published test chat with the Dot's own principal grants and explicitly
-selected own OAuth account. Their memory reads include the Dot's own notes
-and shared organization knowledge; writes from the Dot stay in its own scope.
+independently by `agents.max_active_per_user` and
+`agents.max_active_per_organization` under
+**Administration → Settings → Access**. Idle active agents count toward their
+owner’s limit; deactivated agents do not. Organization member writers can use
+private saved-draft or published test chat with the agent's own principal grants and explicitly
+selected own OAuth account. Their memory reads include the agent's own notes
+and shared organization knowledge; writes from the agent stay in its own scope.
 Published private conversations, schedules and event-driven webhooks retain
-their selected version and use the Dot's own identity. Webhook callers receive
+their selected version and use the agent's own identity. Webhook callers receive
 only an opaque conversation ID; history and decisions require current member
 Write. External organization agent channels remain unavailable; see
-[Organization Dots](docs/dots-organizations.md).
+[Organization agents](docs/agents-organizations.md).
 
 Optional sandbox execution uses the private [sandbox runner](docs/sandbox.md).
 It confirms container absence before acknowledging release and removing
 scratch data, retries failed teardown, and refuses startup if stale labelled
-containers cannot be cleared. Personal Dots retain files in `/workspace` when
+containers cannot be cleared. Personal agents retain files in `/workspace` when
 the host runner verifies local rootful Linux `runsc` isolation and the existing
 `SANDBOX_WORK_ROOT` storage with two actual containers. Unsupported or failed
 verification reports persistent storage unavailable; ordinary scratch execution
 keeps its existing behavior. Back up the runner volume, including retirement
 tombstones, together with the gateway database. Browser login profiles remain
-separate planned work. See [persistent workspace deployment and recovery](docs/sandbox.md#personal-dot-workspaces).
+separate planned work. See [persistent workspace deployment and recovery](docs/sandbox.md#personal-agent-workspaces).
 
 To build from source, install [mise](https://mise.jdx.dev/) and run:
 

@@ -70,10 +70,10 @@ choices, not immutable version pins.
   The runner refuses startup if it cannot confirm removal of stale labelled
   containers. Keep access to the configured container runtime available;
   failed teardown remains tracked and retried before scratch data is removed.
-  Personal Dot persistence additionally requires the verified local rootful
+  Personal agent persistence additionally requires the verified local rootful
   Linux host runner with `runsc` and an existing private `SANDBOX_WORK_ROOT`.
   The sample Compose configuration does not provision that host storage layout.
-  Use the [host runner setup](../sandbox.md#personal-dot-workspaces); a socket
+  Use the [host runner setup](../sandbox.md#personal-agent-workspaces); a socket
   mount or volume setting alone does not prove persistent file access.
 
 ```bash
@@ -205,7 +205,7 @@ guard. Its default denies private networks; changing
 go directly to checked addresses rather than through environment HTTP
 proxies. Operator-configured model backends use the operator HTTP client.
 
-## Persistent Dot workspace storage
+## Persistent agent workspace storage
 
 The runner checks UID/GID 1001 private writes, host reads, persistence through
 another fresh isolated container and confirmed teardown before reporting
@@ -217,7 +217,7 @@ management and cleanup request.
 
 Use one runner per persistent root. Monitor the backing volume's free space;
 `SANDBOX_WORK_SIZE` is not a persistent storage quota. Include the runner's
-`dots/` and permanent `.dot-retired/` tombstones in backups alongside the
+`agents/` and permanent `.agent-retired/` tombstones in backups alongside the
 separate gateway SQLite database. Quiesce gateway writes and runner executions
 for a consistent restore point. Restore the matching database, files and
 tombstones together; the gateway's durable cleanup queue retries retirement

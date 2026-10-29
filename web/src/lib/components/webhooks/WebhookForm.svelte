@@ -3,19 +3,19 @@
 	import { t } from '#lib/i18n.svelte.js';
 	import SearchableSelect from '#lib/components/SearchableSelect.svelte';
 	import LinkedChatPicker from '#lib/components/LinkedChatPicker.svelte';
-	import DotRunPicker from '#lib/components/dots/DotRunPicker.svelte';
-	import type { Dot } from '#lib/dot-state.js';
+	import AgentRunPicker from '#lib/components/agents/AgentRunPicker.svelte';
+	import type { OwnedAgent } from '#lib/agent-state.js';
 	import { initialLinkedSession, linkedSessionField } from '#lib/linked-chat.js';
 	import { modelSelectOptions, type ChatModelOption } from '#lib/model-option.js';
 	import { webhooksApi, type Webhook, type WebhookBody } from '#lib/webhooks.js';
 	import type { AgentVersion } from '#lib/agents.js';
 	import { scheduledVersionModel } from '#lib/scheduled.js';
 
-	let { webhook = null, models, dots, presetDotId = null, principalId = null, versions = [], canWrite = false, onsaved, oncancel, onsecret }: {
+	let { webhook = null, models, agents, presetAgentId = null, principalId = null, versions = [], canWrite = false, onsaved, oncancel, onsecret }: {
 		webhook?: Webhook | null;
 		models: ChatModelOption[];
-		dots: Dot[];
-		presetDotId?: string | null;
+		agents: OwnedAgent[];
+		presetAgentId?: string | null;
 		principalId?: string | null;
 		versions?: AgentVersion[];
 		canWrite?: boolean;
@@ -24,8 +24,8 @@
 		onsecret?: (secret: string) => void;
 	} = $props();
 	const initial = untrack(() => webhook);
-	const initialDotId = untrack(() => initial?.dot_id ?? presetDotId);
-	let dotId = $state(initialDotId ?? '');
+	const initialAgentId = untrack(() => initial?.personal_agent_id ?? presetAgentId);
+	let agentId = $state(initialAgentId ?? '');
 	let name = $state(initial?.name ?? '');
 	let model = $state(untrack(() => initial?.model ?? models[0]?.id ?? ''));
 	let prompt = $state(initial?.prompt ?? '');
@@ -41,7 +41,7 @@
 	onDestroy(() => { disposed = true; });
 	let agentVersion = $state<number | null>(initial?.agent_version ?? null);
 	const authoredModel = $derived(scheduledVersionModel(versions, agentVersion));
-	const target = $derived(dots.find((candidate) => candidate.id === principalId));
+	const target = $derived(agents.find((candidate) => candidate.id === principalId));
 	let selectedModel = $derived(models.find((candidate: ChatModelOption) => candidate.id === model));
 
 	let modelOptions = $derived(modelSelectOptions(models, {
@@ -62,7 +62,7 @@
 			synchronous: principalId ? false : synchronous,
 			reuse_conversation: principalId ? false : reuseConversation, reuse_rounds: reuseRounds,
 			...(principalId ? { principal_id: principalId, agent_version: agentVersion! } : {
-				model, dot_id: dotId || null, ...linkedSessionField(reuseConversation, initialLinked, linkedSession)
+				model, personal_agent_id: agentId || null, ...linkedSessionField(reuseConversation, initialLinked, linkedSession)
 			})
 		};
 		try {
@@ -107,7 +107,7 @@
 			{#if models.length}<SearchableSelect options={modelOptions} bind:value={model} ariaLabel={t('webhooks-model-label')} class="w-full" />
 			{:else}<input class="input min-w-0 w-full" bind:value={model} required aria-label={t('webhooks-model-label')} placeholder={t('webhooks-model-placeholder')} />{/if}
 		</label>
-		<DotRunPicker {dots} initialId={initial?.dot_id ?? null} bind:value={dotId} onchange={() => (linkedSession = '')} />
+		<AgentRunPicker {agents} initialId={initial?.personal_agent_id ?? null} bind:value={agentId} onchange={() => (linkedSession = '')} />
 		{#if selectedModel && !selectedModel.gdpr}<div class="alert alert-error"><span>{t('webhooks-gdpr-warning')}</span></div>{/if}
 		{#if selectedModel && !selectedModel.nda}<div class="alert alert-error"><span>{t('webhooks-nda-warning')}</span></div>{/if}
 		{/if}
@@ -123,7 +123,7 @@
 			<label class="label cursor-pointer justify-start gap-3 whitespace-normal"><input class="checkbox checkbox-sm" type="checkbox" bind:checked={reuseConversation} /><span>{t('webhooks-reuse-toggle-label')}</span></label>
 			{#if reuseConversation}<label class="flex items-center gap-2 text-sm"><span class="opacity-70">{t('webhooks-reuse-rounds-prefix')}</span><input class="input input-sm w-20" type="number" min="1" max="50" bind:value={reuseRounds} aria-label={t('webhooks-reuse-rounds-aria')} /><span class="opacity-70">{t('webhooks-reuse-rounds-suffix')}</span></label>{/if}
 		</div>
-		{#if reuseConversation}<LinkedChatPicker bind:value={linkedSession} dotId={dotId || null} />{/if}
+		{#if reuseConversation}<LinkedChatPicker bind:value={linkedSession} agentId={agentId || null} />{/if}
 		{/if}
 		<div class="card-actions justify-end">{#if oncancel}<button class="btn" type="button" onclick={oncancel}>{t('admin-cancel')}</button>{/if}<button class="btn btn-primary" type="submit" disabled={!canWrite || busy || !name.trim() || !prompt.trim() || (principalId ? !versions.some((version) => version.version === agentVersion) : !model.trim())}>{webhook ? t('webhooks-save-submit') : t('webhooks-create-submit')}</button></div>
 	</div>

@@ -149,8 +149,8 @@
     "data": "Synthetic dev-ui fixture; actual application components."
   },
   {
-    "file": "docs/img/guide/dot-scheduled-work.png",
-    "route": "/scheduled/new?dot_id=57714e86-7f9c-49ac-a72e-bb4ff3317240",
+    "file": "docs/img/guide/agent-scheduled-work.png",
+    "route": "/scheduled/new?personal_agent_id=57714e86-7f9c-49ac-a72e-bb4ff3317240",
     "selector": "fieldset",
     "matchingText": "Run as",
     "viewport": {
@@ -163,7 +163,7 @@
     "data": "Synthetic dev-ui fixture; actual application components."
   },
   {
-    "file": "docs/img/guide/dot-action-rules.png",
+    "file": "docs/img/guide/agent-action-rules.png",
     "route": "/agents/57714e86-7f9c-49ac-a72e-bb4ff3317240?tab=tools",
     "selector": "[role=\"tabpanel\"] li details",
     "matchingText": "Actions",
@@ -177,7 +177,7 @@
     "data": "Synthetic dev-ui fixture; actual application components."
   },
   {
-    "file": "docs/img/guide/dot-management-permission.png",
+    "file": "docs/img/guide/agent-management-permission.png",
     "route": "/admin/groups",
     "selector": "article",
     "matchingText": "engineering",
@@ -191,7 +191,7 @@
     "data": "Synthetic dev-ui fixture; actual application components."
   },
   {
-    "file": "docs/img/guide/dot-communication.png",
+    "file": "docs/img/guide/agent-communication.png",
     "route": "/agents/57714e86-7f9c-49ac-a72e-bb4ff3317240?tab=communication",
     "selector": "[role=\"tabpanel\"]:visible",
     "matchingText": "Can ask",
@@ -205,7 +205,7 @@
     "data": "Synthetic dev-ui fixture; actual application components."
   },
   {
-    "file": "docs/img/guide/organization-dot-draft-chat.png",
+    "file": "docs/img/guide/organization-agent-draft-chat.png",
     "route": "/agents/39990618-6645-406b-961b-f2140c123431?tab=try",
     "selector": "[data-test-chat]",
     "viewport": {
@@ -215,12 +215,12 @@
     "scale": 2,
     "width": 2128,
     "height": 1262,
-    "data": "Synthetic dev-ui fixture; actual organization member Writer without personal Dot management. Harald Draft's saved draft, real private TestChat answer and settled debug. Captured by spa-dots-organization-draft.test.mjs with DOCS_ORG_DOT_DRAFT_CAPTURE."
+    "data": "Synthetic dev-ui fixture; actual organization member Writer without personal OwnedAgent management. Harald Draft's saved draft, real private TestChat answer and settled debug. Captured by spa-agents-organization-draft.test.mjs with DOCS_ORG_AGENT_DRAFT_CAPTURE."
   },
   {
-    "file": "docs/img/guide/organization-dot-memory.png",
+    "file": "docs/img/guide/organization-agent-memory.png",
     "route": "/agents/a42da407-e237-463b-9bf0-e626b271a290?tab=setup",
-    "selector": "details:has(> summary:text-is(\"Dot memory\"))",
+    "selector": "details:has(> summary:text-is(\"OwnedAgent memory\"))",
     "viewport": {
       "width": 1400,
       "height": 950
@@ -228,10 +228,10 @@
     "scale": 2,
     "width": 2128,
     "height": 1440,
-    "data": "Synthetic dev-ui fixture; actual Engineering organization Writer without personal Dot management. Existing memory editor shows Harald's editable Dot lesson and actual organization knowledge as read-only, after real scoped writes. Captured by spa-dots-organization-memory.test.mjs with DOCS_ORG_DOT_MEMORY_CAPTURE or DOTS_SCREENSHOT_DIR."
+    "data": "Synthetic dev-ui fixture; actual Engineering organization Writer without personal OwnedAgent management. Existing memory editor shows Harald's editable OwnedAgent lesson and actual organization knowledge as read-only, after real scoped writes. Captured by spa-agents-organization-memory.test.mjs with DOCS_ORG_AGENT_MEMORY_CAPTURE or AGENTS_SCREENSHOT_DIR."
   },
   {
-    "file": "docs/img/guide/organization-dot-published-chat.png",
+    "file": "docs/img/guide/organization-agent-published-chat.png",
     "route": "/agents/c4b1bcaa-3482-45bf-b72c-be1c7267ee7e?tab=try",
     "selector": "[data-test-chat]",
     "viewport": {
@@ -241,10 +241,10 @@
     "scale": 2,
     "width": 2128,
     "height": 1262,
-    "data": "Synthetic dev-ui fixture; actual Engineering organization Writer without personal Dot management. Harald Draft's private conversation uses actual published version 1, with a real answer and settled source-aware debug. Captured by spa-dots-organization-draft.test.mjs with DOCS_ORG_DOT_PUBLISHED_CAPTURE."
+    "data": "Synthetic dev-ui fixture; actual Engineering organization Writer without personal OwnedAgent management. Harald Draft's private conversation uses actual published version 1, with a real answer and settled source-aware debug. Captured by spa-agents-organization-draft.test.mjs with DOCS_ORG_AGENT_PUBLISHED_CAPTURE."
   },
   {
-    "file": "docs/img/guide/dot-organization-schedule.png",
+    "file": "docs/img/guide/agent-organization-schedule.png",
     "route": "/scheduled/new?principal_id=f26cdf54-1a80-40b9-8188-c2dc7a836902",
     "selector": "body",
     "viewport": {
@@ -257,7 +257,7 @@
     "data": "Synthetic dev-ui fixture; actual application components."
   },
   {
-    "file": "docs/img/guide/dot-organization-webhook.png",
+    "file": "docs/img/guide/agent-organization-webhook.png",
     "route": "/webhooks/new?principal_id=ca1ad01e-f5b9-4794-a59e-59b16fc34282",
     "selector": "viewport",
     "viewport": {
@@ -267,7 +267,7 @@
     "scale": 2,
     "width": 2800,
     "height": 1900,
-    "data": "Synthetic dev-ui fixture; actual Engineering organization Writer without personal Dot management. Harald Webhooks, authored published version 1, actual model demo-model, explicitly enabled Dot tools, and filled trusted prompt. Captured before secret creation by spa-dots-organization-webhooks.test.mjs with DOCS_ORG_DOT_WEBHOOK_CAPTURE."
+    "data": "Synthetic dev-ui fixture; actual Engineering organization Writer without personal OwnedAgent management. Harald Webhooks, authored published version 1, actual model demo-model, explicitly enabled OwnedAgent tools, and filled trusted prompt. Captured before secret creation by spa-agents-organization-webhooks.test.mjs with DOCS_ORG_AGENT_WEBHOOK_CAPTURE."
   },
   {
     "file": "docs/img/guide/request-priority.png",
@@ -309,7 +309,7 @@
     "data": "Synthetic dev-ui fixture; actual application components."
   },
   {
-    "file": "docs/img/guide/organization-dots.png",
+    "file": "docs/img/guide/organization-agents.png",
     "route": "/organizations/27faeca6-9dbf-4f7a-b5a9-6ea678c8611b",
     "selector": "body",
     "viewport": {
@@ -348,7 +348,7 @@
     "data": "Synthetic dev-ui fixture; actual application components."
   },
   {
-    "file": "docs/img/guide/dot-delegated-history.png",
+    "file": "docs/img/guide/agent-delegated-history.png",
     "route": "/chat/f2274516-9432-4355-a938-9632f740a03d",
     "selector": "body",
     "viewport": {
@@ -358,10 +358,10 @@
     "scale": 2,
     "width": 2800,
     "height": 1900,
-    "data": "Synthetic dev-ui fixture; actual Harald to Clara delegation awaiting the owner's memory approval. Private receiver history has no composer or independent approval; the root link comes from verified stored ancestry. Capture generated by spa-dots-delegation.test.mjs with DOCS_DOT_DELEGATION_CAPTURE."
+    "data": "Synthetic dev-ui fixture; actual Harald to Clara delegation awaiting the owner's memory approval. Private receiver history has no composer or independent approval; the root link comes from verified stored ancestry. Capture generated by spa-agents-delegation.test.mjs with DOCS_AGENT_DELEGATION_CAPTURE."
   },
   {
-    "file": "docs/img/guide/dot-connector-identity.png",
+    "file": "docs/img/guide/agent-connector-identity.png",
     "route": "/agents/63f376e0-de88-49a8-a7e9-4d60585b09a9?tab=tools",
     "selector": "section[aria-label=\"Agent details\"] section[aria-label=\"Workspace\"]",
     "viewport": {
@@ -371,10 +371,10 @@
     "scale": 2,
     "width": 2060,
     "height": 816,
-    "data": "Synthetic dev-ui fixture; actual Harald Workspace principal connection explicitly selected after the real OAuth provider redirect and callback. The provider account label is absent; no account or email is invented. Capture generated by spa-dots-identities.test.mjs with DOCS_DOT_IDENTITY_CAPTURE."
+    "data": "Synthetic dev-ui fixture; actual Harald Workspace principal connection explicitly selected after the real OAuth provider redirect and callback. The provider account label is absent; no account or email is invented. Capture generated by spa-agents-identities.test.mjs with DOCS_AGENT_IDENTITY_CAPTURE."
   },
   {
-    "file": "docs/img/guide/organization-dot-identity.png",
+    "file": "docs/img/guide/organization-agent-identity.png",
     "route": "/agents/0ce5141e-101d-4ea4-9f76-37f0bb757fbf?tab=setup",
     "selector": "section[aria-label=\"Connector identity\"] section[aria-label=\"Workspace\"]",
     "viewport": {
@@ -384,6 +384,6 @@
     "scale": 2,
     "width": 2128,
     "height": 816,
-    "data": "Synthetic dev-ui fixture; actual organization member writer without personal Dot management. Real OAuth round trip and explicit selection of Harald Support's own Workspace credential. No employee identity or invented account label. Captured by spa-dots-organization-identities.test.mjs with DOCS_ORG_DOT_IDENTITY_CAPTURE."
+    "data": "Synthetic dev-ui fixture; actual organization member writer without personal OwnedAgent management. Real OAuth round trip and explicit selection of Harald Support's own Workspace credential. No employee identity or invented account label. Captured by spa-agents-organization-identities.test.mjs with DOCS_ORG_AGENT_IDENTITY_CAPTURE."
   }
 ]

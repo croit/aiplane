@@ -19,7 +19,7 @@
 
 use super::background::AutomationOwner;
 use super::scheduled::DeleteOutcome;
-use aiplane_agents::db::{WriteTx, dot_sessions};
+use aiplane_agents::db::{WriteTx, agent_sessions};
 use aiplane_agents::db::{agents, run_sessions};
 use jiff::Timestamp;
 use sqlx::Row;
@@ -35,7 +35,7 @@ pub struct Webhook {
     pub owner: AutomationOwner,
     pub created_by: Option<String>,
     pub configuration_generation: String,
-    pub dot_id: Option<String>,
+    pub personal_agent_id: Option<String>,
     pub name: String,
     pub prompt: String,
     pub model: Option<String>,
@@ -77,7 +77,7 @@ pub struct Webhook {
 pub struct NewWebhook {
     pub owner: AutomationOwner,
     pub created_by: String,
-    pub dot_id: Option<String>,
+    pub personal_agent_id: Option<String>,
     pub name: String,
     pub prompt: String,
     pub model: Option<String>,
@@ -93,7 +93,7 @@ pub struct NewWebhook {
 /// The mutable fields of an existing webhook, as submitted by the edit form.
 /// The secret is rotated separately via [`rotate_secret`].
 pub struct EditWebhook {
-    pub dot_id: Option<String>,
+    pub personal_agent_id: Option<String>,
     pub name: String,
     pub prompt: String,
     pub model: Option<String>,
@@ -118,7 +118,7 @@ fn map_row(row: &SqliteRow) -> Result<Webhook, DbError> {
         },
         created_by: row.try_get("created_by")?,
         configuration_generation: row.try_get("configuration_generation")?,
-        dot_id: row.try_get("dot_id")?,
+        personal_agent_id: row.try_get("personal_agent_id")?,
         name: row.try_get("name")?,
         prompt: row.try_get("prompt")?,
         model: row.try_get("model")?,
@@ -139,7 +139,7 @@ fn map_row(row: &SqliteRow) -> Result<Webhook, DbError> {
     })
 }
 
-const COLS: &str = "id,user_id,principal_id,created_by,configuration_generation,agent_version,dot_id,name,prompt,model,tools_enabled,synchronous,secret_hash,enabled,last_fired_at,last_status,last_session_id,last_error,last_payload,reuse_conversation,reuse_rounds,created_at,updated_at";
+const COLS: &str = "id,user_id,principal_id,created_by,configuration_generation,agent_version,personal_agent_id,name,prompt,model,tools_enabled,synchronous,secret_hash,enabled,last_fired_at,last_status,last_session_id,last_error,last_payload,reuse_conversation,reuse_rounds,created_at,updated_at";
 
 fn invalid(message: &str) -> DbError {
     sqlx::Error::Protocol(message.into()).into()
@@ -148,7 +148,7 @@ fn invalid(message: &str) -> DbError {
 async fn validate_in(
     tx: &mut WriteTx,
     owner: &AutomationOwner,
-    previous_dot: Option<&str>,
+    previous_agent: Option<&str>,
     new: &EditWebhook,
     linked: Option<&str>,
 ) -> Result<(), DbError> {
@@ -162,13 +162,25 @@ async fn validate_in(
             {
                 return Err(invalid("The user webhook requires a model"));
             };
-            if !dot_sessions::binding_valid(tx, user, new.dot_id.as_deref(), previous_dot).await? {
+            if !agent_sessions::binding_valid(
+                tx,
+                user,
+                new.personal_agent_id.as_deref(),
+                previous_agent,
+            )
+            .await?
+            {
                 return Err(invalid("The selected agent is not owned and active"));
             };
             if let Some(session) = linked
                 && (!new.reuse_conversation
-                    || !dot_sessions::session_matches(tx, user, session, new.dot_id.as_deref())
-                        .await?)
+                    || !agent_sessions::session_matches(
+                        tx,
+                        user,
+                        session,
+                        new.personal_agent_id.as_deref(),
+                    )
+                    .await?)
             {
                 return Err(invalid(
                     "The linked conversation does not match this automation",
@@ -178,7 +190,7 @@ async fn validate_in(
         AutomationOwner::Principal(principal) => {
             if new.model.is_some()
                 || new.agent_version.is_none_or(|version| version <= 0)
-                || new.dot_id.is_some()
+                || new.personal_agent_id.is_some()
                 || new.synchronous
                 || new.reuse_conversation
                 || linked.is_some()
@@ -188,8 +200,8 @@ async fn validate_in(
                 ));
             };
             if !matches!(
-                agents::dot_owner_in(tx, principal).await?,
-                Some(agents::DotOwner::Organization(_))
+                agents::agent_owner_in(tx, principal).await?,
+                Some(agents::AgentOwner::Organization(_))
             ) || agents::version_in(
                 tx,
                 principal,
@@ -213,7 +225,7 @@ pub async fn create(pool: &Pool, new: NewWebhook) -> Result<Webhook, DbError> {
 }
 pub async fn create_in(tx: &mut WriteTx, new: NewWebhook) -> Result<Webhook, DbError> {
     let edit = EditWebhook {
-        dot_id: new.dot_id.clone(),
+        personal_agent_id: new.personal_agent_id.clone(),
         name: new.name.clone(),
         prompt: new.prompt.clone(),
         model: new.model.clone(),
@@ -236,8 +248,8 @@ pub async fn create_in(tx: &mut WriteTx, new: NewWebhook) -> Result<Webhook, DbE
     let id = Uuid::new_v4().to_string();
     let generation = Uuid::new_v4().to_string();
     let (user, principal) = new.owner.columns();
-    sqlx::query("INSERT INTO webhooks(id,user_id,principal_id,created_by,configuration_generation,agent_version,dot_id,name,prompt,model,tools_enabled,synchronous,secret_hash,enabled,last_session_id,reuse_conversation,reuse_rounds,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?)")
-        .bind(&id).bind(user).bind(principal).bind(&new.created_by).bind(generation).bind(new.agent_version).bind(&new.dot_id).bind(&new.name).bind(&new.prompt).bind(&new.model).bind(new.tools_enabled).bind(new.synchronous).bind(&new.secret_hash).bind(&new.linked_session_id).bind(new.reuse_conversation).bind(new.reuse_rounds).bind(now.to_string()).bind(now.to_string()).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO webhooks(id,user_id,principal_id,created_by,configuration_generation,agent_version,personal_agent_id,name,prompt,model,tools_enabled,synchronous,secret_hash,enabled,last_session_id,reuse_conversation,reuse_rounds,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?)")
+        .bind(&id).bind(user).bind(principal).bind(&new.created_by).bind(generation).bind(new.agent_version).bind(&new.personal_agent_id).bind(&new.name).bind(&new.prompt).bind(&new.model).bind(new.tools_enabled).bind(new.synchronous).bind(&new.secret_hash).bind(&new.linked_session_id).bind(new.reuse_conversation).bind(new.reuse_rounds).bind(now.to_string()).bind(now.to_string()).execute(&mut **tx).await?;
     get_by_id_in(tx, &id)
         .await?
         .ok_or_else(|| invalid("The newly created webhook is unavailable"))
@@ -335,18 +347,22 @@ pub async fn update_in(
     };
     let linked = match &edit.linked_session_id {
         Some(link) => link.clone(),
-        None if previous.dot_id != edit.dot_id || !edit.reuse_conversation => None,
+        None if previous.personal_agent_id != edit.personal_agent_id
+            || !edit.reuse_conversation =>
+        {
+            None
+        }
         None => previous.last_session_id.clone(),
     };
     validate_in(
         tx,
         owner,
-        previous.dot_id.as_deref(),
+        previous.personal_agent_id.as_deref(),
         edit,
         linked.as_deref(),
     )
     .await?;
-    let changed = previous.dot_id != edit.dot_id
+    let changed = previous.personal_agent_id != edit.personal_agent_id
         || previous.prompt != edit.prompt
         || previous.model != edit.model
         || previous.agent_version != edit.agent_version
@@ -363,7 +379,7 @@ pub async fn update_in(
     } else {
         previous.configuration_generation
     };
-    sqlx::query("UPDATE webhooks SET dot_id=?,last_session_id=?,name=?,prompt=?,model=?,agent_version=?,tools_enabled=?,synchronous=?,reuse_conversation=?,reuse_rounds=?,configuration_generation=?,updated_at=? WHERE id=?").bind(&edit.dot_id).bind(linked).bind(&edit.name).bind(&edit.prompt).bind(&edit.model).bind(edit.agent_version).bind(edit.tools_enabled).bind(edit.synchronous).bind(edit.reuse_conversation).bind(edit.reuse_rounds).bind(generation).bind(Timestamp::now().to_string()).bind(id).execute(&mut **tx).await?;
+    sqlx::query("UPDATE webhooks SET personal_agent_id=?,last_session_id=?,name=?,prompt=?,model=?,agent_version=?,tools_enabled=?,synchronous=?,reuse_conversation=?,reuse_rounds=?,configuration_generation=?,updated_at=? WHERE id=?").bind(&edit.personal_agent_id).bind(linked).bind(&edit.name).bind(&edit.prompt).bind(&edit.model).bind(edit.agent_version).bind(edit.tools_enabled).bind(edit.synchronous).bind(edit.reuse_conversation).bind(edit.reuse_rounds).bind(generation).bind(Timestamp::now().to_string()).bind(id).execute(&mut **tx).await?;
     Ok(EditOutcome::Saved(Box::new(
         get_in(tx, owner, id)
             .await?
@@ -630,7 +646,8 @@ pub async fn attach_run_turn_in(
     };
     let valid = match &hook.owner {
         AutomationOwner::User(user) => {
-            dot_sessions::session_matches(tx, user, session, hook.dot_id.as_deref()).await?
+            agent_sessions::session_matches(tx, user, session, hook.personal_agent_id.as_deref())
+                .await?
         }
         AutomationOwner::Principal(principal) => match run.agent_version {
             Some(version) if version > 0 => {
@@ -951,7 +968,7 @@ mod tests {
 
     fn sample(user_id: &str, secret_hash: &str) -> NewWebhook {
         NewWebhook {
-            dot_id: None,
+            personal_agent_id: None,
             linked_session_id: None,
             owner: AutomationOwner::User(user_id.to_string()),
             created_by: user_id.to_string(),
@@ -1252,7 +1269,7 @@ mod tests {
         let source = create(&pool, new).await.unwrap();
         assert_eq!(source.last_session_id.as_deref(), Some(chat.id.as_str()));
         let edit = || EditWebhook {
-            dot_id: None,
+            personal_agent_id: None,
             linked_session_id: Some(None),
             name: source.name.clone(),
             prompt: source.prompt.clone(),

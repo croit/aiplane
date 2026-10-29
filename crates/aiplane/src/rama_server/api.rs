@@ -114,7 +114,7 @@ pub(crate) async fn me_response(state: &RamaState, user_id: &str) -> Response {
         name: user.name,
         roles: user.roles,
         can_manage_agents: state.rbac.can_manage_agents(&role_ids),
-        can_manage_dots: state.rbac.can_manage_dots(&role_ids),
+        can_manage_personal_agents: state.rbac.can_manage_personal_agents(&role_ids),
         role_ids,
         allowed_tools,
         features: aiplane_core::server::settings::enabled_sections(&state.config()),

@@ -30,7 +30,7 @@ see [permissions](permissions.md#organization-agent-configuration).
 5. Answer any waiting approval, secure input or human-handoff card using the offered controls.
 6. Use New conversation when the next scenario requires clean state.
 
-![An organization agent's private draft chat with an actual response and the stopped-turn debug view, using synthetic demo data.](../img/guide/organization-dot-draft-chat.png)
+![An organization agent's private draft chat with an actual response and the stopped-turn debug view, using synthetic demo data.](../img/guide/organization-agent-draft-chat.png)
 
 *A current organization member with Write access tests Harald's saved draft.
 The conversation runs as Harald's principal and remains separate from personal
@@ -57,7 +57,7 @@ to cancel the exact running or waiting turn. Stop requires current Write access
 and, for an organization agent, current membership; it remains available after
 the agent is deactivated or its execution grants change.
 
-![An organization agent's private published conversation with its captured version, actual answer and stopped-turn debug view.](../img/guide/organization-dot-published-chat.png)
+![An organization agent's private published conversation with its captured version, actual answer and stopped-turn debug view.](../img/guide/organization-agent-published-chat.png)
 
 *A current organization member with Write access uses published version 1.
 Later publication keeps this conversation on its captured version. This example

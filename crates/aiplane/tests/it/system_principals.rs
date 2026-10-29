@@ -932,7 +932,7 @@ async fn headless_run(
             prompt: "what do you know about me?",
             model: "model-a",
             existing_session: None,
-            dot_id: None,
+            personal_agent_id: None,
         },
     )
     .await

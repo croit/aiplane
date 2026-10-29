@@ -129,8 +129,8 @@ pub async fn answer(State(state): State<Arc<RamaState>>, req: Request) -> Respon
             ),
             Err(super::chat::ResumeTurnError::Unavailable) => json_error(
                 StatusCode::CONFLICT,
-                "dot_unavailable",
-                &t(lang, "dot-background-error-unavailable"),
+                "agent_unavailable",
+                &t(lang, "agent-background-error-unavailable"),
             ),
             Err(super::chat::ResumeTurnError::Context(err)) => internal(err),
             Err(super::chat::ResumeTurnError::Refused(refused)) => resume_error(

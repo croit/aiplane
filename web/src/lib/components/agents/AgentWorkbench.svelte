@@ -17,10 +17,10 @@
 	import TestChat from './TestChat.svelte';
 	import VersionsPanel from './VersionsPanel.svelte';
 	import SetupOverview from './setup/SetupOverview.svelte';
-	import DotConnectionsPanel from '../dots/DotConnectionsPanel.svelte';
-	import DotMemoryPanel from '../dots/DotMemoryPanel.svelte';
-	import OrganizationCommunicationPanel from '../dots/OrganizationCommunicationPanel.svelte';
-	import type { Dot } from '#lib/dots.js';
+	import AgentConnectionsPanel from '../agents/AgentConnectionsPanel.svelte';
+	import AgentMemoryPanel from '../agents/AgentMemoryPanel.svelte';
+	import OrganizationCommunicationPanel from '../agents/OrganizationCommunicationPanel.svelte';
+	import type { OwnedAgent } from '#lib/owned-agents.js';
 
 	/**
 	 * One agent's page, in four tabs: **Setup** (the plain-language overview,
@@ -33,9 +33,9 @@
 	const ws = useWorkspace();
 
 	const capabilities = $derived(agentUiCapabilities(ws.detail));
-	const organizationDot = $derived<Dot | null>(ws.detail?.dot && ws.detail.kind === 'team' ? {
-		id: ws.detail.id, name: ws.detail.dot.name, display: ws.detail.display,
-		description: ws.detail.description, active: ws.detail.dot.active,
+	const organizationAgent = $derived<OwnedAgent | null>(ws.detail?.ownership && ws.detail.kind === 'team' ? {
+		id: ws.detail.id, name: ws.detail.ownership.name, display: ws.detail.display,
+		description: ws.detail.description, active: ws.detail.ownership.active,
 	} : null);
 	const TABS = {
 		setup: [] as string[],
@@ -99,24 +99,24 @@
 	</div>
 {/if}
 
-{#if ws.writable && organizationDot}<a class="btn btn-sm w-fit" href={`/scheduled?principal_id=${encodeURIComponent(ws.id)}`}>{t('scheduled-heading')}</a>{/if}
-{#if ws.writable && organizationDot}<a class="btn btn-sm w-fit" href={`/webhooks?principal_id=${encodeURIComponent(ws.id)}`}>{t('webhooks-heading')}</a>{/if}
+{#if ws.writable && organizationAgent}<a class="btn btn-sm w-fit" href={`/scheduled?principal_id=${encodeURIComponent(ws.id)}`}>{t('scheduled-heading')}</a>{/if}
+{#if ws.writable && organizationAgent}<a class="btn btn-sm w-fit" href={`/webhooks?principal_id=${encodeURIComponent(ws.id)}`}>{t('webhooks-heading')}</a>{/if}
 
-{#if tab === 'setup' && ws.writable && organizationDot}
-	{#key organizationDot.id}
-		<DotConnectionsPanel dot={organizationDot} onchange={() => void ws.refresh(true).catch((error) => ws.fail(error))} />
+{#if tab === 'setup' && ws.writable && organizationAgent}
+	{#key organizationAgent.id}
+		<AgentConnectionsPanel agent={organizationAgent} onchange={() => void ws.refresh(true).catch((error) => ws.fail(error))} />
 	{/key}
 {/if}
 
-{#if tab === 'setup' && organizationDot && (ws.detail?.access === 'read' || ws.detail?.access === 'write')}
-	{#key organizationDot.id}
-		<DotMemoryPanel dot={organizationDot} />
+{#if tab === 'setup' && organizationAgent && (ws.detail?.access === 'read' || ws.detail?.access === 'write')}
+	{#key organizationAgent.id}
+		<AgentMemoryPanel agent={organizationAgent} />
 	{/key}
 {/if}
 
-{#if tab === 'setup' && organizationDot && (ws.detail?.access === 'read' || ws.detail?.access === 'write')}
-	{#key organizationDot.id}
-		<OrganizationCommunicationPanel dot={organizationDot} writable={ws.writable} />
+{#if tab === 'setup' && organizationAgent && (ws.detail?.access === 'read' || ws.detail?.access === 'write')}
+	{#key organizationAgent.id}
+		<OrganizationCommunicationPanel agent={organizationAgent} writable={ws.writable} />
 	{/key}
 {/if}
 
@@ -140,7 +140,7 @@
 	{:else if sub === 'grants' && ws.detail}
 		<GrantsPanel agentId={ws.id} grants={ws.detail.grants} resources={ws.resources} writable={ws.writable} onchanged={() => ws.refresh(true)} />
 	{:else if sub === 'test' && capabilities.draftChat}
-		<TestChat agentId={ws.id} spec={ws.spec} dirty={ws.dirty} organization={!!organizationDot} sources={testChatSources(ws.detail)} liveVersion={ws.detail?.live_version ?? null} initialSessionId={param('test_session')} onsession={(sessionId) => navigate({ test_session: sessionId })} onturn={(debug) => (ws.lastDebug = debug)} onsave={save} />
+		<TestChat agentId={ws.id} spec={ws.spec} dirty={ws.dirty} organization={!!organizationAgent} sources={testChatSources(ws.detail)} liveVersion={ws.detail?.live_version ?? null} initialSessionId={param('test_session')} onsession={(sessionId) => navigate({ test_session: sessionId })} onturn={(debug) => (ws.lastDebug = debug)} onsave={save} />
 	{:else if sub === 'tests' && capabilities.execution && ws.detail}
 		<TestsPanel agentId={ws.id} versions={ws.versions} liveVersion={ws.detail.live_version} dirty={ws.dirty} writable={ws.writable} onsave={save} />
 	{:else if sub === 'analytics'}

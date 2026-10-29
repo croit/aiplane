@@ -65,10 +65,10 @@ constructor and returns `MismatchedRun` when the chain's running frame is not
 that principal, so a run that acts as one agent and audits as another cannot
 be built.
 
-A turn's `Actor` is `Person { id, roles }`, `PersonalDot { id, roles, dot }`,
-or `Agent(Arc<AgentRun>)`. A personal Dot retains the owner's user principal
-and carries its Dot id alongside it; `build_tool_context` puts that attribution
-in `ToolContext.personal_dot`. This scopes Dot-owned data without changing the
+A turn's `Actor` is `Person { id, roles }`, `PersonalAgent { id, roles, agent }`,
+or `Agent(Arc<AgentRun>)`. A personal agent retains the owner's user principal
+and carries its agent id alongside it; `build_tool_context` puts that attribution
+in `ToolContext.personal_agent`. This scopes agent-owned data without changing the
 user's existing grants. `DriveParams` and `TurnFacts` take one, and
 `build_tool_context` derives `ToolContext.principal` from it, so the principal
 and the run cannot disagree. An agent run then lives in `ToolContext.agent`
@@ -611,7 +611,7 @@ sub-agent result, the audit chain, models), `agents/run/tests/output_filter.rs`,
 
 ## Organization private conversation authority
 
-An organization Dot's private test turn is owned by its system principal. The
+An organization agent's private test turn is owned by its system principal. The
 conversation has no user owner, visitor or parent turn, is not shared, and
 uses `DRAFT_VERSION` or a captured positive published version. The private
 opener checks current organization membership

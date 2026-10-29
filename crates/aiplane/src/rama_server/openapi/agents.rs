@@ -40,16 +40,16 @@ pub(super) fn operations() -> Vec<Op> {
         get("/api/v0/organizations/{id}", Access::Session)
             .ok(json::<organizations::OrganizationDetail>())
             .errors(&[400, 404]),
-        post("/api/v0/organizations/{id}/dots", Access::Session)
-            .body(json::<organizations::OrganizationDotBody>())
-            .created(json::<organizations::OrganizationDotReply>())
+        post("/api/v0/organizations/{id}/agents", Access::Session)
+            .body(json::<organizations::OrganizationAgentBody>())
+            .created(json::<organizations::OrganizationAgentReply>())
             .errors(&[400, 403, 404, 409, 413]),
         post(
-            "/api/v0/organizations/{id}/dots/{dot}/active",
+            "/api/v0/organizations/{id}/agents/{agent}/active",
             Access::Session,
         )
-        .body(json::<organizations::OrganizationDotActiveBody>())
-        .ok(json::<organizations::OrganizationDotReply>())
+        .body(json::<organizations::OrganizationAgentActiveBody>())
+        .ok(json::<organizations::OrganizationAgentReply>())
         .errors(&[400, 404, 409, 413]),
         get("/api/v0/system-principals", Access::Session)
             .ok(json::<principals::PrincipalList>())
@@ -96,18 +96,18 @@ pub(super) fn operations() -> Vec<Op> {
             .created(json::<architect::ArchitectConversation>())
             .errors(&[400, 403, 404, 503]),
         get(
-            "/api/v0/agent-architect/{session_id}/dot-plan",
+            "/api/v0/agent-architect/{session_id}/agent-plan",
             Access::Session,
         )
-        .ok(json::<architect::DotPlanReply>())
+        .ok(json::<architect::AgentPlanReply>())
         .errors(&[403, 404]),
         post(
-            "/api/v0/agent-architect/{session_id}/dot-plan",
+            "/api/v0/agent-architect/{session_id}/agent-plan",
             Access::Session,
         )
-        .body(json::<architect::ApplyDotPlanBody>())
-        .ok(json::<architect::AppliedDotPlan>())
-        .created(json::<architect::AppliedDotPlan>())
+        .body(json::<architect::ApplyAgentPlanBody>())
+        .ok(json::<architect::AppliedAgentPlan>())
+        .created(json::<architect::AppliedAgentPlan>())
         .errors(&[400, 403, 404, 409]),
         get("/api/v0/agents/inbox", Access::Session)
             .ok(json::<aiplane_runtime::agents::inbox::InboxList>()),
@@ -116,111 +116,106 @@ pub(super) fn operations() -> Vec<Op> {
             .body(json::<inbox::AnswerBody>())
             .accepted(json::<inbox::Resumed>())
             .errors(&[400, 403, 404, 409, 503]),
-        get("/api/v0/dots", Access::Session)
-            .ok(json::<aiplane_api::pages::json_dots::DotList>())
-            .errors(&[403]),
-        post("/api/v0/dots", Access::Session)
-            .body(json::<aiplane_api::pages::json_dots::CreateDotBody>())
-            .created(json::<serde_json::Value>())
-            .errors(&[400, 403, 409]),
-        put("/api/v0/dots/{id}/active", Access::Session)
-            .body(json::<aiplane_api::pages::json_dots::ActiveBody>())
+        put("/api/v0/agents/{id}/active", Access::Session)
+            .body(json::<aiplane_api::pages::json_owned_agents::ActiveBody>())
             .ok(json::<serde_json::Value>())
             .errors(&[400, 403, 404, 409]),
-        get("/api/v0/dots/{id}/workspace", Access::Session)
+        get("/api/v0/agents/{id}/workspace", Access::Session)
             .ok(json::<
-                aiplane_api::pages::json_dot_workspace::DotWorkspaceView,
+                aiplane_api::pages::json_agent_workspace::AgentWorkspaceView,
             >())
             .errors(&[400, 404, 409, 413, 503]),
-        get("/api/v0/dots/{id}/workspace/file", Access::Session)
+        get("/api/v0/agents/{id}/workspace/file", Access::Session)
             .ok(Content::Bytes("application/octet-stream"))
             .errors(&[400, 404, 409, 413, 503]),
-        put("/api/v0/dots/{id}/workspace/file", Access::Session)
+        put("/api/v0/agents/{id}/workspace/file", Access::Session)
             .body(Content::Bytes("application/octet-stream"))
             .no_content()
             .errors(&[400, 404, 409, 413, 503]),
-        post("/api/v0/dots/{id}/workspace/folder", Access::Session)
+        post("/api/v0/agents/{id}/workspace/folder", Access::Session)
             .body(json::<
-                aiplane_api::pages::json_dot_workspace::WorkspaceFolderBody,
+                aiplane_api::pages::json_agent_workspace::WorkspaceFolderBody,
             >())
             .no_content()
             .errors(&[400, 404, 409, 413, 503]),
-        delete("/api/v0/dots/{id}/workspace/entry", Access::Session)
+        delete("/api/v0/agents/{id}/workspace/entry", Access::Session)
             .no_content()
             .errors(&[400, 404, 409, 413, 503]),
-        get("/api/v0/dots/{id}/profile", Access::Session)
-            .ok(json::<aiplane_api::pages::json_dots::DotProfileView>())
+        get("/api/v0/agents/{id}/profile", Access::Session)
+            .ok(json::<
+                aiplane_api::pages::json_owned_agents::AgentProfileView,
+            >())
             .errors(&[400, 404]),
-        put("/api/v0/dots/{id}/profile", Access::Session)
-            .body(json::<aiplane_api::pages::json_dots::DotProfileBody>())
-            .ok(json::<aiplane_api::pages::json_dots::DotProfileView>())
+        put("/api/v0/agents/{id}/profile", Access::Session)
+            .body(json::<
+                aiplane_api::pages::json_owned_agents::AgentProfileBody,
+            >())
+            .ok(json::<
+                aiplane_api::pages::json_owned_agents::AgentProfileView,
+            >())
             .errors(&[400, 404, 409]),
-        get("/api/v0/dots/{id}/access", Access::Session)
-            .ok(json::<aiplane_api::pages::json_dots::DotAccessView>())
+        get("/api/v0/agents/{id}/access", Access::Session)
+            .ok(json::<aiplane_api::pages::json_owned_agents::AgentAccessView>())
             .errors(&[400, 404]),
-        get("/api/v0/dots/{id}/connections", Access::Session)
-            .ok(json::<aiplane_api::pages::json_dots::DotConnectionsView>())
-            .errors(&[400, 404]),
-        put("/api/v0/dots/{id}/connections/{key}", Access::Session)
-            .body(json::<
-                aiplane_api::pages::json_dots::DotConnectionSelectionBody,
+        get("/api/v0/agents/{id}/connections", Access::Session)
+            .ok(json::<
+                aiplane_api::pages::json_owned_agents::AgentConnectionsView,
             >())
-            .ok(json::<aiplane_api::pages::json_dots::DotConnectionsView>())
+            .errors(&[400, 404]),
+        put("/api/v0/agents/{id}/connections/{key}", Access::Session)
+            .body(json::<
+                aiplane_api::pages::json_owned_agents::AgentConnectionSelectionBody,
+            >())
+            .ok(json::<
+                aiplane_api::pages::json_owned_agents::AgentConnectionsView,
+            >())
             .errors(&[400, 403, 404, 409, 413]),
-        delete("/api/v0/dots/{id}/connections/{key}", Access::Session)
+        delete("/api/v0/agents/{id}/connections/{key}", Access::Session)
             .body(json::<
-                aiplane_api::pages::json_dots::DotConnectionVersionBody,
+                aiplane_api::pages::json_owned_agents::AgentConnectionVersionBody,
             >())
-            .ok(json::<aiplane_api::pages::json_dots::DotConnectionsView>())
+            .ok(json::<
+                aiplane_api::pages::json_owned_agents::AgentConnectionsView,
+            >())
             .errors(&[400, 403, 404, 409, 413]),
         post(
-            "/api/v0/dots/{id}/connections/{key}/connect",
+            "/api/v0/agents/{id}/connections/{key}/connect",
             Access::Session,
         )
         .body(json::<
-            aiplane_api::pages::json_dots::DotConnectionVersionBody,
+            aiplane_api::pages::json_owned_agents::AgentConnectionVersionBody,
         >())
-        .ok(json::<aiplane_api::pages::json_dots::DotAuthorizationView>())
+        .ok(json::<
+            aiplane_api::pages::json_owned_agents::AgentAuthorizationView,
+        >())
         .errors(&[400, 403, 404, 409, 413, 502]),
-        get("/api/v0/dots/{id}/communication", Access::Session)
-            .ok(json::<aiplane_api::pages::json_dots::DotCommunicationView>())
-            .errors(&[400, 404]),
-        put("/api/v0/dots/{id}/communication", Access::Session)
-            .body(json::<aiplane_api::pages::json_dots::DotCommunicationBody>())
-            .ok(json::<aiplane_api::pages::json_dots::DotCommunicationView>())
-            .errors(&[400, 403, 404, 409, 413]),
-        put("/api/v0/dots/{id}/access", Access::Session)
-            .body(json::<aiplane_api::pages::json_dots::DotAccessBody>())
-            .ok(json::<aiplane_api::pages::json_dots::DotAccessView>())
+        put("/api/v0/agents/{id}/access", Access::Session)
+            .body(json::<aiplane_api::pages::json_owned_agents::AgentAccessBody>())
+            .ok(json::<aiplane_api::pages::json_owned_agents::AgentAccessView>())
             .errors(&[400, 404, 409]),
-        post("/api/v0/dots/{id}/sessions", Access::Session)
+        post("/api/v0/agents/{id}/sessions", Access::Session)
             .created(json::<aiplane_api::pages::chat::json_api::SessionEnvelope>())
             .errors(&[400, 403, 404, 409, 500]),
-        get("/api/v0/dots/{id}/memories", Access::Session)
-            .ok(json::<aiplane_api::pages::json_dots::DotMemoryList>())
+        get("/api/v0/agents/{id}/memories", Access::Session)
+            .ok(json::<aiplane_api::pages::json_owned_agents::AgentMemoryList>())
             .errors(&[400, 404]),
-        post("/api/v0/dots/{id}/memories", Access::Session)
-            .body(json::<aiplane_api::pages::json_dots::DotMemoryBody>())
-            .created(json::<aiplane_api::pages::json_dots::DotMemoryView>())
+        post("/api/v0/agents/{id}/memories", Access::Session)
+            .body(json::<aiplane_api::pages::json_owned_agents::AgentMemoryBody>())
+            .created(json::<aiplane_api::pages::json_owned_agents::AgentMemoryView>())
             .errors(&[400, 404]),
-        put("/api/v0/dots/{id}/memories/{memory_id}", Access::Session)
-            .body(json::<aiplane_api::pages::json_dots::DotMemoryBody>())
-            .ok(json::<aiplane_api::pages::json_dots::DotMemoryView>())
+        put("/api/v0/agents/{id}/memories/{memory_id}", Access::Session)
+            .body(json::<aiplane_api::pages::json_owned_agents::AgentMemoryBody>())
+            .ok(json::<aiplane_api::pages::json_owned_agents::AgentMemoryView>())
             .errors(&[400, 404]),
-        delete("/api/v0/dots/{id}/memories/{memory_id}", Access::Session)
+        delete("/api/v0/agents/{id}/memories/{memory_id}", Access::Session)
             .no_content()
-            .errors(&[400, 404]),
-        get("/api/v0/dots/{id}/activity", Access::Session)
-            .ok(json::<
-                aiplane_api::pages::json_agent_activity::ActivityPageView,
-            >())
             .errors(&[400, 404]),
         get("/api/v0/agents", Access::Session)
             .ok(json::<agents::AgentList>())
             .errors(&[403]),
         post("/api/v0/agents", Access::Session)
             .body(json::<agents::CreateBody>())
-            .created(json::<agents::CreatedAgentReply>())
+            .created(json::<agents::CreatedAgentAnyReply>())
             .errors(&[400, 403, 409, 422]),
         get("/api/v0/agents/{id}", Access::Session)
             .ok(json::<agents::AgentDetailReply>())
@@ -333,12 +328,12 @@ pub(super) fn operations() -> Vec<Op> {
             .ok(json::<agents::ShareList>())
             .errors(&[400, 403, 404]),
         get("/api/v0/agents/{id}/communication", Access::Session)
-            .ok(json::<agents::AgentCommunicationView>())
+            .ok(json::<agents::CommunicationReply>())
             .errors(&[400, 403, 404]),
         put("/api/v0/agents/{id}/communication", Access::Session)
-            .body(json::<agents::AgentCommunicationBody>())
-            .ok(json::<agents::AgentCommunicationView>())
-            .errors(&[400, 403, 404, 409]),
+            .body(json::<agents::CommunicationChange>())
+            .ok(json::<agents::CommunicationReply>())
+            .errors(&[400, 403, 404, 409, 413]),
         post("/api/v0/agents/{id}/shares", Access::Session)
             .body(json::<agents::ShareBody>())
             .created(json::<agents::ShareSet>())

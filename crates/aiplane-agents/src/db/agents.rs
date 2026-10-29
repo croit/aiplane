@@ -90,7 +90,7 @@ pub struct AgentRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PersonalDotRow {
+pub struct PersonalAgentRow {
     pub agent: AgentRow,
     pub owner_user_id: String,
     pub name: String,
@@ -98,7 +98,7 @@ pub struct PersonalDotRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OrganizationDotRow {
+pub struct OrganizationAgentRow {
     pub agent: AgentRow,
     pub organization_id: String,
     pub name: String,
@@ -106,7 +106,7 @@ pub struct OrganizationDotRow {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DotCreate {
+pub enum AgentCreate {
     Created,
     NameTaken,
     ActiveLimit,
@@ -139,12 +139,12 @@ pub struct ShareOrigin {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
 #[serde(tag = "kind", content = "id", rename_all = "snake_case")]
-pub enum DotOwner {
+pub enum AgentOwner {
     User(String),
     Organization(String),
 }
 
-impl DotOwner {
+impl AgentOwner {
     pub(crate) fn columns(&self) -> (Option<&str>, Option<&str>) {
         match self {
             Self::User(id) => (Some(id), None),
@@ -154,81 +154,81 @@ impl DotOwner {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DotMetadata {
-    pub owner: DotOwner,
+pub struct AgentMetadata {
+    pub owner: AgentOwner,
     pub name: String,
     pub active: bool,
 }
 
-fn map_dot_metadata(row: &SqliteRow) -> Result<DotMetadata, DbError> {
+fn map_agent_metadata(row: &SqliteRow) -> Result<AgentMetadata, DbError> {
     let user: Option<String> = row.try_get("owner_user_id")?;
     let organization: Option<String> = row.try_get("organization_id")?;
     let owner = match (user, organization) {
-        (Some(id), None) => DotOwner::User(id),
-        (None, Some(id)) => DotOwner::Organization(id),
+        (Some(id), None) => AgentOwner::User(id),
+        (None, Some(id)) => AgentOwner::Organization(id),
         _ => {
             return Err(DbError::Decode {
-                column: "dot_owner",
+                column: "agent_owner",
                 source: anyhow::anyhow!("an agent requires exactly one owner"),
             });
         }
     };
-    Ok(DotMetadata {
+    Ok(AgentMetadata {
         owner,
         name: row.try_get("name")?,
         active: row.try_get("active")?,
     })
 }
 
-async fn dot_metadata_with<'e, E>(executor: E, id: &str) -> Result<Option<DotMetadata>, DbError>
+async fn agent_metadata_with<'e, E>(executor: E, id: &str) -> Result<Option<AgentMetadata>, DbError>
 where
     E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
 {
-    let row = sqlx::query("SELECT d.owner_user_id,d.organization_id,d.name,d.active FROM dots d JOIN agents a ON a.principal_id=d.principal_id WHERE d.principal_id=?").bind(id).fetch_optional(executor).await?;
-    row.as_ref().map(map_dot_metadata).transpose()
+    let row = sqlx::query("SELECT d.owner_user_id,d.organization_id,d.name,d.active FROM agent_owners d JOIN agents a ON a.principal_id=d.principal_id WHERE d.principal_id=?").bind(id).fetch_optional(executor).await?;
+    row.as_ref().map(map_agent_metadata).transpose()
 }
 
-pub async fn get_dot_metadata(pool: &Pool, id: &str) -> Result<Option<DotMetadata>, DbError> {
-    dot_metadata_with(pool, id).await
+pub async fn get_agent_metadata(pool: &Pool, id: &str) -> Result<Option<AgentMetadata>, DbError> {
+    agent_metadata_with(pool, id).await
 }
-pub async fn get_dot_metadata_in(
+pub async fn get_agent_metadata_in(
     tx: &mut WriteTx,
     id: &str,
-) -> Result<Option<DotMetadata>, DbError> {
-    dot_metadata_with(&mut **tx, id).await
+) -> Result<Option<AgentMetadata>, DbError> {
+    agent_metadata_with(&mut **tx, id).await
 }
-pub async fn dot_owner(pool: &Pool, id: &str) -> Result<Option<DotOwner>, DbError> {
-    Ok(get_dot_metadata(pool, id).await?.map(|d| d.owner))
+pub async fn agent_owner(pool: &Pool, id: &str) -> Result<Option<AgentOwner>, DbError> {
+    Ok(get_agent_metadata(pool, id).await?.map(|d| d.owner))
 }
-pub async fn dot_owner_in(tx: &mut WriteTx, id: &str) -> Result<Option<DotOwner>, DbError> {
-    Ok(get_dot_metadata_in(tx, id).await?.map(|d| d.owner))
+pub async fn agent_owner_in(tx: &mut WriteTx, id: &str) -> Result<Option<AgentOwner>, DbError> {
+    Ok(get_agent_metadata_in(tx, id).await?.map(|d| d.owner))
 }
 
-pub async fn dot_metadata_for_agents(
+pub async fn agent_metadata_for_agents(
     pool: &Pool,
     ids: &[String],
-) -> Result<HashMap<String, DotMetadata>, DbError> {
-    dot_metadata_for_agents_with(pool, ids).await
+) -> Result<HashMap<String, AgentMetadata>, DbError> {
+    agent_metadata_for_agents_with(pool, ids).await
 }
 
-pub async fn dot_metadata_for_agents_in(
+pub async fn agent_metadata_for_agents_in(
     tx: &mut WriteTx,
     ids: &[String],
-) -> Result<HashMap<String, DotMetadata>, DbError> {
-    dot_metadata_for_agents_with(&mut **tx, ids).await
+) -> Result<HashMap<String, AgentMetadata>, DbError> {
+    agent_metadata_for_agents_with(&mut **tx, ids).await
 }
 
-async fn dot_metadata_for_agents_with<'e, E>(
+async fn agent_metadata_for_agents_with<'e, E>(
     executor: E,
     ids: &[String],
-) -> Result<HashMap<String, DotMetadata>, DbError>
+) -> Result<HashMap<String, AgentMetadata>, DbError>
 where
     E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
 {
-    let rows = sqlx::query("SELECT d.principal_id,d.owner_user_id,d.organization_id,d.name,d.active FROM dots d JOIN agents a ON a.principal_id=d.principal_id WHERE d.principal_id IN (SELECT value FROM json_each(?))")
+    let rows = sqlx::query("SELECT d.principal_id,d.owner_user_id,d.organization_id,d.name,d.active FROM agent_owners d JOIN agents a ON a.principal_id=d.principal_id WHERE d.principal_id IN (SELECT value FROM json_each(?))")
         .bind(serde_json::to_string(ids).expect("string vector serializes")).fetch_all(executor).await?;
     rows.iter()
-        .map(|row| Ok((row.try_get("principal_id")?, map_dot_metadata(row)?)))
+        .map(|row| Ok((row.try_get("principal_id")?, map_agent_metadata(row)?)))
         .collect()
 }
 
@@ -338,32 +338,32 @@ pub async fn create(
     get(pool, &id).await
 }
 
-/// Create a named personal Dot only when its owner has an active slot.
+/// Create a named personal agent only when its owner has an active slot.
 /// Principal, agent, personal owner and lifecycle record are committed atomically.
-pub async fn create_personal_dot(
+pub async fn create_personal_agent(
     pool: &Pool,
     new: &NewPrincipal<'_>,
     draft_spec: &str,
     owner_user_id: &str,
     active_limit: u32,
-) -> Result<(DotCreate, Option<AgentRow>), DbError> {
+) -> Result<(AgentCreate, Option<AgentRow>), DbError> {
     let mut tx = WriteTx::begin(pool).await?;
     let result =
-        create_personal_dot_in(&mut tx, owner_user_id, new, draft_spec, active_limit).await?;
+        create_personal_agent_in(&mut tx, owner_user_id, new, draft_spec, active_limit).await?;
     tx.commit().await?;
     Ok(result)
 }
 
-pub async fn create_personal_dot_in(
+pub async fn create_personal_agent_in(
     tx: &mut WriteTx,
     owner_user_id: &str,
     new: &NewPrincipal<'_>,
     draft_spec: &str,
     active_limit: u32,
-) -> Result<(DotCreate, Option<AgentRow>), DbError> {
-    create_dot_in(
+) -> Result<(AgentCreate, Option<AgentRow>), DbError> {
+    create_agent_in(
         tx,
-        &DotOwner::User(owner_user_id.into()),
+        &AgentOwner::User(owner_user_id.into()),
         new,
         draft_spec,
         owner_user_id,
@@ -372,17 +372,17 @@ pub async fn create_personal_dot_in(
     .await
 }
 
-pub async fn create_organization_dot_in(
+pub async fn create_organization_agent_in(
     tx: &mut WriteTx,
     organization_id: &str,
     new: &NewPrincipal<'_>,
     draft_spec: &str,
     creator: &str,
     active_limit: u32,
-) -> Result<(DotCreate, Option<AgentRow>), DbError> {
-    create_dot_in(
+) -> Result<(AgentCreate, Option<AgentRow>), DbError> {
+    create_agent_in(
         tx,
-        &DotOwner::Organization(organization_id.into()),
+        &AgentOwner::Organization(organization_id.into()),
         new,
         draft_spec,
         creator,
@@ -391,43 +391,43 @@ pub async fn create_organization_dot_in(
     .await
 }
 
-pub async fn active_dot_count_in(tx: &mut WriteTx, owner: &DotOwner) -> Result<u32, DbError> {
+pub async fn active_agent_count_in(tx: &mut WriteTx, owner: &AgentOwner) -> Result<u32, DbError> {
     let (user, organization) = owner.columns();
     let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM dots WHERE owner_user_id IS ? AND organization_id IS ? AND active=1",
+        "SELECT COUNT(*) FROM agent_owners WHERE owner_user_id IS ? AND organization_id IS ? AND active=1",
     )
     .bind(user)
     .bind(organization)
     .fetch_one(&mut **tx)
     .await?;
     u32::try_from(count).map_err(|error| DbError::Decode {
-        column: "active_dots",
+        column: "active_agents",
         source: error.into(),
     })
 }
 
-async fn create_dot_in(
+async fn create_agent_in(
     tx: &mut WriteTx,
-    owner: &DotOwner,
+    owner: &AgentOwner,
     new: &NewPrincipal<'_>,
     draft_spec: &str,
     creator: &str,
     active_limit: u32,
-) -> Result<(DotCreate, Option<AgentRow>), DbError> {
+) -> Result<(AgentCreate, Option<AgentRow>), DbError> {
     let (user, organization) = owner.columns();
-    let taken:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM dots WHERE owner_user_id IS ? AND organization_id IS ? AND name=?)")
+    let taken:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM agent_owners WHERE owner_user_id IS ? AND organization_id IS ? AND name=?)")
         .bind(user).bind(organization).bind(new.name).fetch_one(&mut **tx).await?;
     if taken {
-        return Ok((DotCreate::NameTaken, None));
+        return Ok((AgentCreate::NameTaken, None));
     }
-    if active_dot_count_in(tx, owner).await? >= active_limit {
-        return Ok((DotCreate::ActiveLimit, None));
+    if active_agent_count_in(tx, owner).await? >= active_limit {
+        return Ok((AgentCreate::ActiveLimit, None));
     }
     let prefix = match owner {
-        DotOwner::User(_) => "personal",
-        DotOwner::Organization(_) => "organization",
+        AgentOwner::User(_) => "personal",
+        AgentOwner::Organization(_) => "organization",
     };
-    let name = format!("{prefix}-dot-{}", uuid::Uuid::new_v4());
+    let name = format!("{prefix}-agent-{}", uuid::Uuid::new_v4());
     let Some(id) = sp::insert(
         tx,
         &NewPrincipal {
@@ -439,14 +439,14 @@ async fn create_dot_in(
     )
     .await?
     else {
-        return Ok((DotCreate::NameTaken, None));
+        return Ok((AgentCreate::NameTaken, None));
     };
     let now = Timestamp::now().to_string();
     sqlx::query("INSERT INTO agents(principal_id,draft_spec,live_version,created_at,updated_at) VALUES(?,?,NULL,?,?)")
         .bind(&id).bind(draft_spec).bind(&now).bind(&now).execute(&mut **tx).await?;
-    sqlx::query("INSERT INTO dots(principal_id,owner_user_id,organization_id,name,active,created_at,updated_at) VALUES(?,?,?,?,1,?,?)")
+    sqlx::query("INSERT INTO agent_owners(principal_id,owner_user_id,organization_id,name,active,created_at,updated_at) VALUES(?,?,?,?,1,?,?)")
         .bind(&id).bind(user).bind(organization).bind(new.name).bind(&now).bind(&now).execute(&mut **tx).await?;
-    if matches!(owner, DotOwner::Organization(_)) {
+    if matches!(owner, AgentOwner::Organization(_)) {
         sqlx::query("INSERT INTO agent_shares(principal_id,subject_kind,subject_id,access,granted_by,granted_at) VALUES(?,'user',?,'write',?,?)")
             .bind(&id).bind(creator).bind(creator).bind(&now).execute(&mut **tx).await?;
     }
@@ -460,21 +460,21 @@ async fn create_dot_in(
         .by(Some(creator)),
     )
     .await?;
-    Ok((DotCreate::Created, get_with(&mut **tx, &id).await?))
+    Ok((AgentCreate::Created, get_with(&mut **tx, &id).await?))
 }
 
-pub async fn set_personal_dot_active(
+pub async fn set_personal_agent_active(
     pool: &Pool,
     id: &str,
     owner_user_id: &str,
     active: bool,
     active_limit: u32,
 ) -> Result<bool, DbError> {
-    set_personal_dot_active_by(pool, id, owner_user_id, owner_user_id, active, active_limit).await
+    set_personal_agent_active_by(pool, id, owner_user_id, owner_user_id, active, active_limit).await
 }
 
-/// [`set_personal_dot_active`] by `actor_id`: the owner, or an admin.
-pub async fn set_personal_dot_active_by(
+/// [`set_personal_agent_active`] by `actor_id`: the owner, or an admin.
+pub async fn set_personal_agent_active_by(
     pool: &Pool,
     id: &str,
     owner_user_id: &str,
@@ -483,10 +483,10 @@ pub async fn set_personal_dot_active_by(
     active_limit: u32,
 ) -> Result<bool, DbError> {
     let mut tx = WriteTx::begin(pool).await?;
-    let result = set_dot_active_in(
+    let result = set_agent_active_in(
         &mut tx,
         id,
-        &DotOwner::User(owner_user_id.into()),
+        &AgentOwner::User(owner_user_id.into()),
         active,
         active_limit,
         actor_id,
@@ -496,15 +496,15 @@ pub async fn set_personal_dot_active_by(
     Ok(result)
 }
 
-pub async fn set_dot_active_in(
+pub async fn set_agent_active_in(
     tx: &mut WriteTx,
     id: &str,
-    owner: &DotOwner,
+    owner: &AgentOwner,
     active: bool,
     active_limit: u32,
     actor: &str,
 ) -> Result<bool, DbError> {
-    let Some(current) = get_dot_metadata_in(tx, id).await? else {
+    let Some(current) = get_agent_metadata_in(tx, id).await? else {
         return Ok(false);
     };
     if &current.owner != owner {
@@ -513,10 +513,10 @@ pub async fn set_dot_active_in(
     if current.active == active {
         return Ok(true);
     }
-    if active && active_dot_count_in(tx, owner).await? >= active_limit {
+    if active && active_agent_count_in(tx, owner).await? >= active_limit {
         return Ok(false);
     }
-    sqlx::query("UPDATE dots SET active=?,updated_at=? WHERE principal_id=?")
+    sqlx::query("UPDATE agent_owners SET active=?,updated_at=? WHERE principal_id=?")
         .bind(active)
         .bind(Timestamp::now().to_string())
         .bind(id)
@@ -525,7 +525,7 @@ pub async fn set_dot_active_in(
     agent_audit::append(
         tx,
         agent_audit::NewEvent::new(
-            AuditKind::DotStateChanged,
+            AuditKind::AgentStateChanged,
             id,
             json!({"active":active,"owner":owner}),
         )
@@ -535,63 +535,63 @@ pub async fn set_dot_active_in(
     Ok(true)
 }
 
-/// List the personal Dots owned by one user, including inactive ones.
-pub async fn list_personal_dots(
+/// List the personal agents owned by one user, including inactive ones.
+pub async fn list_personal_agents(
     pool: &Pool,
     owner_user_id: &str,
-) -> Result<Vec<PersonalDotRow>, DbError> {
-    list_personal_dots_with(pool, owner_user_id).await
+) -> Result<Vec<PersonalAgentRow>, DbError> {
+    list_personal_agents_with(pool, owner_user_id).await
 }
 
-pub async fn list_personal_dots_in(
+pub async fn list_personal_agents_in(
     tx: &mut WriteTx,
     owner_user_id: &str,
-) -> Result<Vec<PersonalDotRow>, DbError> {
-    list_personal_dots_with(&mut **tx, owner_user_id).await
+) -> Result<Vec<PersonalAgentRow>, DbError> {
+    list_personal_agents_with(&mut **tx, owner_user_id).await
 }
 
-async fn list_personal_dots_with<'e, E>(
+async fn list_personal_agents_with<'e, E>(
     executor: E,
     owner_user_id: &str,
-) -> Result<Vec<PersonalDotRow>, DbError>
+) -> Result<Vec<PersonalAgentRow>, DbError>
 where
     E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
 {
     let rows = sqlx::query(&format!(
-        "SELECT {}, d.owner_user_id, d.name AS dot_name, d.active FROM agents a
+        "SELECT {}, d.owner_user_id, d.name AS agent_name, d.active FROM agents a
          JOIN system_principals p ON p.id = a.principal_id
-         JOIN dots d ON d.principal_id = a.principal_id
+         JOIN agent_owners d ON d.principal_id = a.principal_id
          WHERE d.owner_user_id = ? AND d.organization_id IS NULL ORDER BY a.created_at, p.name",
         agent_cols()
     ))
     .bind(owner_user_id)
     .fetch_all(executor)
     .await?;
-    rows.iter().map(map_personal_dot).collect()
+    rows.iter().map(map_personal_agent).collect()
 }
 
-fn map_personal_dot(row: &SqliteRow) -> Result<PersonalDotRow, DbError> {
-    Ok(PersonalDotRow {
+fn map_personal_agent(row: &SqliteRow) -> Result<PersonalAgentRow, DbError> {
+    Ok(PersonalAgentRow {
         agent: map_agent(row)?,
         owner_user_id: row.try_get("owner_user_id")?,
-        name: row.try_get("dot_name")?,
+        name: row.try_get("agent_name")?,
         active: row.try_get("active")?,
     })
 }
 
-/// The active organization Dots the user may discover as cross-boundary
+/// The active organization agents the user may discover as cross-boundary
 /// receivers: one per organization the user is a current member of, so a
-/// personal Dot can offer an organization Dot only while membership is live.
+/// personal agent can offer an organization agent only while membership is live.
 /// `role_ids` are the caller owner's role IDs resolved against the current
 /// RBAC snapshot, the same values the organization membership checks use.
-pub async fn list_organization_dots_for_member(
+pub async fn list_organization_agents_for_member(
     pool: &Pool,
     role_ids: &[String],
-) -> Result<Vec<OrganizationDotRow>, DbError> {
+) -> Result<Vec<OrganizationAgentRow>, DbError> {
     let rows = sqlx::query(&format!(
-        "SELECT {}, d.organization_id, d.name AS dot_name, d.active FROM agents a
+        "SELECT {}, d.organization_id, d.name AS agent_name, d.active FROM agents a
          JOIN system_principals p ON p.id = a.principal_id
-         JOIN dots d ON d.principal_id = a.principal_id
+         JOIN agent_owners d ON d.principal_id = a.principal_id
          WHERE d.owner_user_id IS NULL AND d.organization_id IS NOT NULL AND d.active = 1
            AND EXISTS (
                SELECT 1 FROM organization_groups b
@@ -605,28 +605,28 @@ pub async fn list_organization_dots_for_member(
     .bind(serde_json::to_string(role_ids).expect("string vector serializes"))
     .fetch_all(pool)
     .await?;
-    rows.iter().map(map_organization_dot).collect()
+    rows.iter().map(map_organization_agent).collect()
 }
 
-fn map_organization_dot(row: &SqliteRow) -> Result<OrganizationDotRow, DbError> {
-    Ok(OrganizationDotRow {
+fn map_organization_agent(row: &SqliteRow) -> Result<OrganizationAgentRow, DbError> {
+    Ok(OrganizationAgentRow {
         agent: map_agent(row)?,
         organization_id: row.try_get("organization_id")?,
-        name: row.try_get("dot_name")?,
+        name: row.try_get("agent_name")?,
         active: row.try_get("active")?,
     })
 }
 
-/// Load one personal Dot only when `owner_user_id` owns it.
-pub async fn get_personal_dot(
+/// Load one personal agent only when `owner_user_id` owns it.
+pub async fn get_personal_agent(
     pool: &Pool,
     owner_user_id: &str,
     id: &str,
-) -> Result<Option<PersonalDotRow>, DbError> {
+) -> Result<Option<PersonalAgentRow>, DbError> {
     let row = sqlx::query(&format!(
-        "SELECT {}, d.owner_user_id, d.name AS dot_name, d.active FROM agents a
+        "SELECT {}, d.owner_user_id, d.name AS agent_name, d.active FROM agents a
          JOIN system_principals p ON p.id = a.principal_id
-         JOIN dots d ON d.principal_id = a.principal_id
+         JOIN agent_owners d ON d.principal_id = a.principal_id
          WHERE d.owner_user_id = ? AND d.organization_id IS NULL AND d.principal_id = ?",
         agent_cols()
     ))
@@ -634,11 +634,11 @@ pub async fn get_personal_dot(
     .bind(id)
     .fetch_optional(pool)
     .await?;
-    row.as_ref().map(map_personal_dot).transpose()
+    row.as_ref().map(map_personal_agent).transpose()
 }
 
-pub async fn personal_dot_owner(pool: &Pool, id: &str) -> Result<Option<String>, DbError> {
-    Ok(sqlx::query_scalar("SELECT d.owner_user_id FROM dots d JOIN agents a ON a.principal_id = d.principal_id WHERE d.principal_id = ? AND d.owner_user_id IS NOT NULL AND d.organization_id IS NULL")
+pub async fn personal_agent_owner(pool: &Pool, id: &str) -> Result<Option<String>, DbError> {
+    Ok(sqlx::query_scalar("SELECT d.owner_user_id FROM agent_owners d JOIN agents a ON a.principal_id = d.principal_id WHERE d.principal_id = ? AND d.owner_user_id IS NOT NULL AND d.organization_id IS NULL")
         .bind(id).fetch_optional(pool).await?)
 }
 
@@ -932,20 +932,20 @@ pub async fn update_draft_in(
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum PersonalDotDraftSaved {
+pub enum PersonalAgentDraftSaved {
     Saved,
     Missing,
     Conflict,
 }
 
-pub async fn update_personal_dot_draft(
+pub async fn update_personal_agent_draft(
     pool: &Pool,
     id: &str,
     owner_user_id: &str,
     expected_spec: &str,
     draft_spec: &str,
-) -> Result<PersonalDotDraftSaved, DbError> {
-    update_personal_dot_draft_by(
+) -> Result<PersonalAgentDraftSaved, DbError> {
+    update_personal_agent_draft_by(
         pool,
         id,
         owner_user_id,
@@ -956,19 +956,19 @@ pub async fn update_personal_dot_draft(
     .await
 }
 
-/// [`update_personal_dot_draft`] by `actor_id`: the owner, or an admin
+/// [`update_personal_agent_draft`] by `actor_id`: the owner, or an admin
 /// changing another user's personal agent.
-pub async fn update_personal_dot_draft_by(
+pub async fn update_personal_agent_draft_by(
     pool: &Pool,
     id: &str,
     owner_user_id: &str,
     actor_id: &str,
     expected_spec: &str,
     draft_spec: &str,
-) -> Result<PersonalDotDraftSaved, DbError> {
+) -> Result<PersonalAgentDraftSaved, DbError> {
     let mut tx = WriteTx::begin(pool).await?;
     let before: Option<String> = sqlx::query_scalar(
-        "SELECT a.draft_spec FROM agents a JOIN dots d ON d.principal_id = a.principal_id
+        "SELECT a.draft_spec FROM agents a JOIN agent_owners d ON d.principal_id = a.principal_id
          WHERE a.principal_id = ? AND d.owner_user_id = ?",
     )
     .bind(id)
@@ -976,10 +976,10 @@ pub async fn update_personal_dot_draft_by(
     .fetch_optional(&mut *tx)
     .await?;
     let Some(before) = before else {
-        return Ok(PersonalDotDraftSaved::Missing);
+        return Ok(PersonalAgentDraftSaved::Missing);
     };
     if before != expected_spec {
-        return Ok(PersonalDotDraftSaved::Conflict);
+        return Ok(PersonalAgentDraftSaved::Conflict);
     }
     save_draft(
         &mut tx,
@@ -991,20 +991,20 @@ pub async fn update_personal_dot_draft_by(
     )
     .await?;
     tx.commit().await?;
-    Ok(PersonalDotDraftSaved::Saved)
+    Ok(PersonalAgentDraftSaved::Saved)
 }
 
 /// What shows a personal agent to people beside its spec: the name on its
-/// card and in chat, and its description. A Dot name that matched the shown
-/// name follows it, so no name hidden behind a rename stays taken; a Dot name
+/// card and in chat, and its description. An agent name that matched the shown
+/// name follows it, so no name hidden behind a rename stays taken; an agent name
 /// that differed from it from the start stays as it is.
-pub struct PersonalDotProfile<'a> {
+pub struct PersonalAgentProfile<'a> {
     pub display: &'a str,
     pub description: &'a str,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PersonalDotProfileSaved {
+pub enum PersonalAgentProfileSaved {
     Saved,
     Missing,
     Conflict,
@@ -1015,18 +1015,18 @@ pub enum PersonalDotProfileSaved {
 /// Rename and redescribe personal agent `id` of `owner_user_id` and replace
 /// its draft in one transaction, unless the draft moved on from
 /// `expected_spec` or another of the owner's agents has the new name.
-pub async fn update_personal_dot_profile(
+pub async fn update_personal_agent_profile(
     pool: &Pool,
     id: &str,
     owner_user_id: &str,
     actor_id: &str,
     expected_spec: &str,
     draft_spec: &str,
-    profile: &PersonalDotProfile<'_>,
-) -> Result<PersonalDotProfileSaved, DbError> {
+    profile: &PersonalAgentProfile<'_>,
+) -> Result<PersonalAgentProfileSaved, DbError> {
     let mut tx = WriteTx::begin(pool).await?;
     let before: Option<String> = sqlx::query_scalar(
-        "SELECT a.draft_spec FROM agents a JOIN dots d ON d.principal_id = a.principal_id
+        "SELECT a.draft_spec FROM agents a JOIN agent_owners d ON d.principal_id = a.principal_id
          WHERE a.principal_id = ? AND d.owner_user_id = ?",
     )
     .bind(id)
@@ -1034,13 +1034,13 @@ pub async fn update_personal_dot_profile(
     .fetch_optional(&mut *tx)
     .await?;
     let Some(before) = before else {
-        return Ok(PersonalDotProfileSaved::Missing);
+        return Ok(PersonalAgentProfileSaved::Missing);
     };
     if before != expected_spec {
-        return Ok(PersonalDotProfileSaved::Conflict);
+        return Ok(PersonalAgentProfileSaved::Conflict);
     }
     let in_step: bool = sqlx::query_scalar(
-        "SELECT d.name = p.display FROM dots d JOIN system_principals p ON p.id = d.principal_id
+        "SELECT d.name = p.display FROM agent_owners d JOIN system_principals p ON p.id = d.principal_id
          WHERE d.principal_id = ?",
     )
     .bind(id)
@@ -1048,7 +1048,7 @@ pub async fn update_personal_dot_profile(
     .await?;
     if in_step {
         let taken: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM dots WHERE owner_user_id = ? AND name = ? AND principal_id <> ?)",
+            "SELECT EXISTS(SELECT 1 FROM agent_owners WHERE owner_user_id = ? AND name = ? AND principal_id <> ?)",
         )
         .bind(owner_user_id)
         .bind(profile.display)
@@ -1056,9 +1056,9 @@ pub async fn update_personal_dot_profile(
         .fetch_one(&mut *tx)
         .await?;
         if taken {
-            return Ok(PersonalDotProfileSaved::NameTaken);
+            return Ok(PersonalAgentProfileSaved::NameTaken);
         }
-        sqlx::query("UPDATE dots SET name = ?, updated_at = ? WHERE principal_id = ?")
+        sqlx::query("UPDATE agent_owners SET name = ?, updated_at = ? WHERE principal_id = ?")
             .bind(profile.display)
             .bind(Timestamp::now().to_string())
             .bind(id)
@@ -1081,7 +1081,7 @@ pub async fn update_personal_dot_profile(
     )
     .await?;
     tx.commit().await?;
-    Ok(PersonalDotProfileSaved::Saved)
+    Ok(PersonalAgentProfileSaved::Saved)
 }
 
 async fn save_draft(
@@ -1613,7 +1613,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn personal_dot_draft_save_checks_owner_and_expected_revision() {
+    async fn personal_agent_draft_save_checks_owner_and_expected_revision() {
         let pool = pool().await;
         let now = Timestamp::now();
         users::upsert(
@@ -1632,7 +1632,7 @@ mod tests {
         .await
         .unwrap();
         let before = r#"{"main":{"tools":[]}}"#;
-        let (_, dot) = create_personal_dot(
+        let (_, owned_agent) = create_personal_agent(
             &pool,
             &NewPrincipal {
                 name: "Access",
@@ -1645,20 +1645,20 @@ mod tests {
         )
         .await
         .unwrap();
-        let id = &dot.unwrap().principal.id;
+        let id = &owned_agent.unwrap().principal.id;
         assert_eq!(
-            personal_dot_owner(&pool, id).await.unwrap().as_deref(),
+            personal_agent_owner(&pool, id).await.unwrap().as_deref(),
             Some("alice")
         );
         assert!(
-            personal_dot_owner(&pool, "missing")
+            personal_agent_owner(&pool, "missing")
                 .await
                 .unwrap()
                 .is_none()
         );
         let ordinary = agent(&pool, "Ordinary", "alice").await;
         assert!(
-            personal_dot_owner(&pool, &ordinary.principal.id)
+            personal_agent_owner(&pool, &ordinary.principal.id)
                 .await
                 .unwrap()
                 .is_none()
@@ -1669,30 +1669,30 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            personal_dot_owner(&pool, id).await.unwrap().as_deref(),
+            personal_agent_owner(&pool, id).await.unwrap().as_deref(),
             Some("alice")
         );
         let after = r#"{"main":{"tools":["recall"]}}"#;
         assert_eq!(
-            update_personal_dot_draft(&pool, id, "bob", before, after)
+            update_personal_agent_draft(&pool, id, "bob", before, after)
                 .await
                 .unwrap(),
-            PersonalDotDraftSaved::Missing
+            PersonalAgentDraftSaved::Missing
         );
         assert_eq!(
-            update_personal_dot_draft(&pool, id, "alice", "stale", after)
+            update_personal_agent_draft(&pool, id, "alice", "stale", after)
                 .await
                 .unwrap(),
-            PersonalDotDraftSaved::Conflict
+            PersonalAgentDraftSaved::Conflict
         );
         assert_eq!(
-            update_personal_dot_draft(&pool, id, "alice", before, after)
+            update_personal_agent_draft(&pool, id, "alice", before, after)
                 .await
                 .unwrap(),
-            PersonalDotDraftSaved::Saved
+            PersonalAgentDraftSaved::Saved
         );
         assert_eq!(
-            get_personal_dot(&pool, "alice", id)
+            get_personal_agent(&pool, "alice", id)
                 .await
                 .unwrap()
                 .unwrap()
@@ -1715,15 +1715,15 @@ mod tests {
             before
         );
         assert_eq!(
-            update_personal_dot_draft(&pool, id, "alice", before, "{}")
+            update_personal_agent_draft(&pool, id, "alice", before, "{}")
                 .await
                 .unwrap(),
-            PersonalDotDraftSaved::Conflict
+            PersonalAgentDraftSaved::Conflict
         );
     }
 
     #[tokio::test]
-    async fn dots_enforce_active_capacity_and_can_be_reactivated() {
+    async fn agents_enforce_active_capacity_and_can_be_reactivated() {
         let pool = pool().await;
         for (id, email) in [("alice", "alice@example.com"), ("bob", "bob@example.com")] {
             let now = Timestamp::now();
@@ -1743,7 +1743,7 @@ mod tests {
             .await
             .unwrap();
         }
-        let first = create_personal_dot(
+        let first = create_personal_agent(
             &pool,
             &NewPrincipal {
                 name: "harald",
@@ -1756,11 +1756,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let (DotCreate::Created, Some(first)) = first else {
+        let (AgentCreate::Created, Some(first)) = first else {
             panic!("first agent should be created")
         };
         assert_eq!(
-            create_personal_dot(
+            create_personal_agent(
                 &pool,
                 &NewPrincipal {
                     name: "research",
@@ -1774,14 +1774,14 @@ mod tests {
             .await
             .unwrap()
             .0,
-            DotCreate::ActiveLimit
+            AgentCreate::ActiveLimit
         );
         assert!(
-            set_personal_dot_active(&pool, &first.principal.id, "alice", false, 1)
+            set_personal_agent_active(&pool, &first.principal.id, "alice", false, 1)
                 .await
                 .unwrap()
         );
-        let (DotCreate::Created, Some(second)) = create_personal_dot(
+        let (AgentCreate::Created, Some(second)) = create_personal_agent(
             &pool,
             &NewPrincipal {
                 name: "research",
@@ -1797,14 +1797,14 @@ mod tests {
             panic!("deactivation should free the slot")
         };
         assert!(
-            !set_personal_dot_active(&pool, &first.principal.id, "alice", true, 1)
+            !set_personal_agent_active(&pool, &first.principal.id, "alice", true, 1)
                 .await
                 .unwrap()
         );
-        assert_eq!(list_personal_dots(&pool, "alice").await.unwrap().len(), 2);
-        assert!(list_personal_dots(&pool, "bob").await.unwrap().is_empty());
+        assert_eq!(list_personal_agents(&pool, "alice").await.unwrap().len(), 2);
+        assert!(list_personal_agents(&pool, "bob").await.unwrap().is_empty());
         assert_eq!(
-            create_personal_dot(
+            create_personal_agent(
                 &pool,
                 &NewPrincipal {
                     name: "harald",
@@ -1818,10 +1818,10 @@ mod tests {
             .await
             .unwrap()
             .0,
-            DotCreate::Created
+            AgentCreate::Created
         );
         assert_eq!(
-            create_personal_dot(
+            create_personal_agent(
                 &pool,
                 &NewPrincipal {
                     name: "harald",
@@ -1835,15 +1835,15 @@ mod tests {
             .await
             .unwrap()
             .0,
-            DotCreate::NameTaken
+            AgentCreate::NameTaken
         );
         assert!(
-            set_personal_dot_active(&pool, &second.principal.id, "alice", false, 1)
+            set_personal_agent_active(&pool, &second.principal.id, "alice", false, 1)
                 .await
                 .unwrap()
         );
         assert!(
-            set_personal_dot_active(&pool, &first.principal.id, "alice", true, 1)
+            set_personal_agent_active(&pool, &first.principal.id, "alice", true, 1)
                 .await
                 .unwrap()
         );
@@ -1958,7 +1958,7 @@ mod tests {
         let before = r#"{"main":{"tools":[]}}"#;
         let mut ids = Vec::new();
         for name in ["Harald", "Erna"] {
-            let (_, dot) = create_personal_dot(
+            let (_, owned_agent) = create_personal_agent(
                 &pool,
                 &NewPrincipal {
                     name,
@@ -1971,11 +1971,11 @@ mod tests {
             )
             .await
             .unwrap();
-            ids.push(dot.unwrap().principal.id);
+            ids.push(owned_agent.unwrap().principal.id);
         }
         let after =
             r#"{"main":{"tools":[],"instructions":{"orchestration":"Watch the cluster."}}}"#;
-        let profile = |display| PersonalDotProfile {
+        let profile = |display| PersonalAgentProfile {
             display,
             description: "Ceph helper",
         };
@@ -1983,7 +1983,7 @@ mod tests {
             let pool = pool.clone();
             let id = ids[0].clone();
             async move {
-                update_personal_dot_profile(
+                update_personal_agent_profile(
                     &pool,
                     &id,
                     owner,
@@ -1998,11 +1998,11 @@ mod tests {
         };
         assert_eq!(
             save("bob", before, "Harry").await,
-            PersonalDotProfileSaved::Missing
+            PersonalAgentProfileSaved::Missing
         );
         assert_eq!(
             save("alice", "stale", "Harry").await,
-            PersonalDotProfileSaved::Conflict
+            PersonalAgentProfileSaved::Conflict
         );
         assert_eq!(
             get(&pool, &ids[0]).await.unwrap().unwrap().draft_spec,
@@ -2011,15 +2011,15 @@ mod tests {
         );
         assert_eq!(
             save("alice", before, "Erna").await,
-            PersonalDotProfileSaved::NameTaken,
+            PersonalAgentProfileSaved::NameTaken,
             "the name of another of the owner's agents"
         );
         assert_eq!(
             save("alice", before, "Harry").await,
-            PersonalDotProfileSaved::Saved
+            PersonalAgentProfileSaved::Saved
         );
 
-        let saved = get_personal_dot(&pool, "alice", &ids[0])
+        let saved = get_personal_agent(&pool, "alice", &ids[0])
             .await
             .unwrap()
             .unwrap();
@@ -2645,7 +2645,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn organization_dot_listing_is_membership_scoped_and_active_only() {
+    async fn organization_agent_listing_is_membership_scoped_and_active_only() {
         use crate::db::{WriteTx, organizations, organizations::NewOrganization};
         let pool = pool().await;
         let now = Timestamp::now();
@@ -2703,7 +2703,7 @@ mod tests {
             _ => panic!("organization created"),
         };
         let mut tx = WriteTx::begin(&pool).await.unwrap();
-        let (_, dot) = create_organization_dot_in(
+        let (_, owned_agent) = create_organization_agent_in(
             &mut tx,
             &org.organization.id,
             &NewPrincipal {
@@ -2717,26 +2717,26 @@ mod tests {
         )
         .await
         .unwrap();
-        let dot = dot.unwrap();
-        let dot_id = dot.principal.id;
+        let owned_agent = owned_agent.unwrap();
+        let agent_id = owned_agent.principal.id;
         tx.commit().await.unwrap();
 
         assert!(
-            list_organization_dots_for_member(&pool, &[])
+            list_organization_agents_for_member(&pool, &[])
                 .await
                 .unwrap()
                 .is_empty()
         );
-        let listed = list_organization_dots_for_member(&pool, &["engineering".to_owned()])
+        let listed = list_organization_agents_for_member(&pool, &["engineering".to_owned()])
             .await
             .unwrap();
         assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].agent.principal.id, dot_id);
+        assert_eq!(listed[0].agent.principal.id, agent_id);
         assert_eq!(listed[0].organization_id, org.organization.id);
         assert_eq!(listed[0].name, "ticket");
         assert!(listed[0].active);
 
-        create_personal_dot(
+        create_personal_agent(
             &pool,
             &NewPrincipal {
                 name: "personal",
@@ -2750,23 +2750,23 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            list_organization_dots_for_member(&pool, &["engineering".to_owned()])
+            list_organization_agents_for_member(&pool, &["engineering".to_owned()])
                 .await
                 .unwrap()
                 .len(),
             1
         );
 
-        let owner = DotOwner::Organization(org.organization.id.clone());
+        let owner = AgentOwner::Organization(org.organization.id.clone());
         let mut tx = WriteTx::begin(&pool).await.unwrap();
         assert!(
-            set_dot_active_in(&mut tx, &dot_id, &owner, false, 4, "alice")
+            set_agent_active_in(&mut tx, &agent_id, &owner, false, 4, "alice")
                 .await
                 .unwrap()
         );
         tx.commit().await.unwrap();
         assert!(
-            list_organization_dots_for_member(&pool, &["engineering".to_owned()])
+            list_organization_agents_for_member(&pool, &["engineering".to_owned()])
                 .await
                 .unwrap()
                 .is_empty()

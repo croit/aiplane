@@ -17,9 +17,13 @@ async fn oauth_organization() -> (Fx, wiremock::MockServer, Value, String) {
             "access_token":"organization-fixture-access","refresh_token":"organization-fixture-refresh",
             "token_type":"Bearer","expires_in":3600,"scope":"workspace.read"
         }))).mount(&provider).await;
-    aiplane_core::server::db::gateway_groups::set_can_manage_dots(&fx.state.db, "managers", false)
-        .await
-        .unwrap();
+    aiplane_core::server::db::gateway_groups::set_can_manage_personal_agents(
+        &fx.state.db,
+        "managers",
+        false,
+    )
+    .await
+    .unwrap();
     aiplane_core::server::db::gateway_groups::set_tools_for_group(
         &fx.state.db,
         "managers",
@@ -31,10 +35,10 @@ async fn oauth_organization() -> (Fx, wiremock::MockServer, Value, String) {
     sqlx::query("INSERT INTO mcp_catalog_connectors(key,name,url,auth,scope,use_dcr,client_id,authorize_url,token_url,enabled,created_at,updated_at) VALUES('workspace','Actual Workspace',?,'oauth2','per_user',0,'client',?,?,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')")
         .bind(format!("{}/mcp", provider.uri())).bind(format!("{}/authorize", provider.uri())).bind(format!("{}/token", provider.uri())).execute(&fx.state.db).await.unwrap();
     let org = organization(&fx, "Acme OAuth", &["managers"]).await;
-    let (status, created) = create_dot(&fx, &fx.alice, &org, "Harald").await;
+    let (status, created) = create_owned_agent(&fx, &fx.alice, &org, "Harald").await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
-    let dot = id(&created["agent"]).to_owned();
-    (fx, provider, org, dot)
+    let owned_agent = id(&created["agent"]).to_owned();
+    (fx, provider, org, owned_agent)
 }
 
 fn connection_row(view: &Value) -> &Value {
@@ -72,11 +76,11 @@ async fn oauth_callback(
     (status, location)
 }
 
-async fn start_organization_oauth(fx: &Fx, dot: &str) -> String {
+async fn start_organization_oauth(fx: &Fx, owned_agent: &str) -> String {
     let (status, body) = fx
         .post(
             &fx.alice,
-            &format!("/api/v0/dots/{dot}/connections/workspace/connect"),
+            &format!("/api/v0/agents/{owned_agent}/connections/workspace/connect"),
             json!({"connection_id":null,"connection_generation":null}),
         )
         .await;
@@ -125,8 +129,8 @@ async fn seed_organization_credential(
     .unwrap()
 }
 
-async fn deny_organization_connections(fx: &Fx, cookie: &str, dot: &str) {
-    let base = format!("/api/v0/dots/{dot}/connections");
+async fn deny_organization_connections(fx: &Fx, cookie: &str, owned_agent: &str) {
+    let base = format!("/api/v0/agents/{owned_agent}/connections");
     for (method, suffix, body) in [
         (Method::GET, "", None),
         (
@@ -159,28 +163,31 @@ async fn deny_organization_connections(fx: &Fx, cookie: &str, dot: &str) {
 async fn organization_oauth_inactive_member_writer_uses_explicit_principal_identity_without_personal_permission()
  {
     use aiplane_core::server::db::mcp_connections::{self, ConnectionOwner};
-    let (fx, _provider, org, dot) = oauth_organization().await;
+    let (fx, _provider, org, owned_agent) = oauth_organization().await;
     let (_, me) = fx.get(&fx.alice, "/api/v0/me").await;
     assert_eq!(me["can_manage_agents"], true);
-    assert_eq!(me["can_manage_dots"], false);
+    assert_eq!(me["can_manage_personal_agents"], false);
     let user = seed_organization_credential(&fx, ConnectionOwner::User("alice".into())).await;
-    let (status, clara) = create_dot(&fx, &fx.alice, &org, "Clara").await;
+    let (status, clara) = create_owned_agent(&fx, &fx.alice, &org, "Clara").await;
     assert_eq!(status, StatusCode::CREATED);
     let other_owner = ConnectionOwner::Principal(id(&clara["agent"]).to_owned());
     let other = seed_organization_credential(&fx, other_owner.clone()).await;
     let (status, _) = fx
         .post(
             &fx.alice,
-            &format!("/api/v0/organizations/{}/dots/{dot}/active", id(&org)),
+            &format!(
+                "/api/v0/organizations/{}/agents/{owned_agent}/active",
+                id(&org)
+            ),
             json!({"active":false}),
         )
         .await;
     assert_eq!(status, StatusCode::OK);
-    let base = format!("/api/v0/dots/{dot}/connections");
+    let base = format!("/api/v0/agents/{owned_agent}/connections");
     let (status, initial) = fx.get(&fx.alice, &base).await;
     assert_eq!(status, StatusCode::OK, "{initial}");
-    assert_eq!(initial["dot"]["name"], "Harald");
-    assert_eq!(initial["dot"]["active"], false);
+    assert_eq!(initial["agent"]["name"], "Harald");
+    assert_eq!(initial["agent"]["active"], false);
     let row = connection_row(&initial);
     assert_eq!(row["supported_modes"], json!(["principal"]));
     assert_eq!(row["user_connection"], Value::Null);
@@ -190,12 +197,12 @@ async fn organization_oauth_inactive_member_writer_uses_explicit_principal_ident
         row["selected"],
         json!({"mode":"principal","connection_id":null,"connection_generation":null,"binding_generation":null})
     );
-    let oauth_state = start_organization_oauth(&fx, &dot).await;
+    let oauth_state = start_organization_oauth(&fx, &owned_agent).await;
     let (status, location) = oauth_callback(fx.state.clone(), &fx.alice, &oauth_state).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(
         location.as_deref(),
-        Some(format!("/agents/{dot}?tab=setup").as_str())
+        Some(format!("/agents/{owned_agent}?tab=setup").as_str())
     );
     let (status, connected) = fx.get(&fx.alice, &base).await;
     assert_eq!(status, StatusCode::OK, "{connected}");
@@ -276,9 +283,9 @@ async fn organization_oauth_inactive_member_writer_uses_explicit_principal_ident
 async fn organization_oauth_foreign_read_respond_and_nonmember_admin_never_obtain_credential_versions()
  {
     use aiplane_agents::db::agents;
-    let (fx, _provider, _org, dot) = oauth_organization().await;
+    let (fx, _provider, _org, owned_agent) = oauth_organization().await;
     for cookie in [&fx.root, &fx.bob, &fx.plain] {
-        deny_organization_connections(&fx, cookie, &dot).await;
+        deny_organization_connections(&fx, cookie, &owned_agent).await;
     }
     for access in ["read", "respond"] {
         let access = if access == "read" {
@@ -288,7 +295,7 @@ async fn organization_oauth_foreign_read_respond_and_nonmember_admin_never_obtai
         };
         agents::set_share(
             &fx.state.db,
-            &dot,
+            &owned_agent,
             agents::SubjectKind::User,
             "bob",
             access,
@@ -296,7 +303,7 @@ async fn organization_oauth_foreign_read_respond_and_nonmember_admin_never_obtai
         )
         .await
         .unwrap();
-        deny_organization_connections(&fx, &fx.bob, &dot).await;
+        deny_organization_connections(&fx, &fx.bob, &owned_agent).await;
     }
 }
 
@@ -305,9 +312,12 @@ async fn organization_oauth_current_membership_role_mapping_and_write_share_revo
  {
     use aiplane_core::server::db::gateway_groups;
     for change in ["membership", "mapping", "role", "share"] {
-        let (fx, _provider, org, dot) = oauth_organization().await;
+        let (fx, _provider, org, owned_agent) = oauth_organization().await;
         let (status, body) = fx
-            .get(&fx.alice, &format!("/api/v0/dots/{dot}/connections"))
+            .get(
+                &fx.alice,
+                &format!("/api/v0/agents/{owned_agent}/connections"),
+            )
             .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         match change {
@@ -324,7 +334,7 @@ async fn organization_oauth_current_membership_role_mapping_and_write_share_revo
                 use aiplane_agents::db::agents::{self, Access, SubjectKind};
                 agents::set_share(
                     &fx.state.db,
-                    &dot,
+                    &owned_agent,
                     SubjectKind::User,
                     "bob",
                     Access::Write,
@@ -333,15 +343,21 @@ async fn organization_oauth_current_membership_role_mapping_and_write_share_revo
                 .await
                 .unwrap();
                 assert_eq!(
-                    agents::remove_share(&fx.state.db, &dot, SubjectKind::User, "alice", "bob")
-                        .await
-                        .unwrap(),
+                    agents::remove_share(
+                        &fx.state.db,
+                        &owned_agent,
+                        SubjectKind::User,
+                        "alice",
+                        "bob"
+                    )
+                    .await
+                    .unwrap(),
                     agents::ShareChange::Changed
                 );
             }
             _ => unreachable!(),
         }
-        deny_organization_connections(&fx, &fx.alice, &dot).await;
+        deny_organization_connections(&fx, &fx.alice, &owned_agent).await;
     }
 }
 
@@ -350,8 +366,8 @@ async fn organization_oauth_retained_local_credential_can_be_erased_without_cata
  {
     use aiplane_core::server::db::mcp_connections::{self, ConnectionOwner};
     for restriction in ["disabled", "forbidden", "deleted"] {
-        let (fx, _provider, _org, dot) = oauth_organization().await;
-        let owner = ConnectionOwner::Principal(dot.clone());
+        let (fx, _provider, _org, owned_agent) = oauth_organization().await;
+        let owner = ConnectionOwner::Principal(owned_agent.clone());
         let own = seed_organization_credential(&fx, owner.clone()).await;
         let user = seed_organization_credential(&fx, ConnectionOwner::User("alice".into())).await;
         match restriction {
@@ -372,7 +388,7 @@ async fn organization_oauth_retained_local_credential_can_be_erased_without_cata
             }
             _ => unreachable!(),
         }
-        let base = format!("/api/v0/dots/{dot}/connections");
+        let base = format!("/api/v0/agents/{owned_agent}/connections");
         let (status, view) = fx.get(&fx.alice, &base).await;
         assert_eq!(status, StatusCode::OK, "{view}");
         let row = connection_row(&view);
@@ -420,8 +436,8 @@ async fn organization_oauth_retained_local_credential_can_be_erased_without_cata
 async fn organization_oauth_callback_rechecks_current_membership_before_exchange_and_consumes_state_once()
  {
     use aiplane_core::server::db::mcp_connections::{self, ConnectionOwner};
-    let (fx, provider, org, dot) = oauth_organization().await;
-    let oauth_state = start_organization_oauth(&fx, &dot).await;
+    let (fx, provider, org, owned_agent) = oauth_organization().await;
+    let oauth_state = start_organization_oauth(&fx, &owned_agent).await;
     assert_eq!(edit(&fx, &org, "Acme OAuth", &[]).await.0, StatusCode::OK);
     assert_eq!(
         oauth_callback(fx.state.clone(), &fx.alice, &oauth_state)
@@ -439,7 +455,7 @@ async fn organization_oauth_callback_rechecks_current_membership_before_exchange
     assert!(
         mcp_connections::get_connection(
             &fx.state.db,
-            &ConnectionOwner::Principal(dot),
+            &ConnectionOwner::Principal(owned_agent),
             "workspace"
         )
         .await
@@ -450,7 +466,7 @@ async fn organization_oauth_callback_rechecks_current_membership_before_exchange
 
 #[tokio::test]
 async fn organization_oauth_freshly_mapped_catalogue_permission_is_admitted_without_rbac_reload() {
-    let (fx, _provider, _org, dot) = oauth_organization().await;
+    let (fx, _provider, _org, owned_agent) = oauth_organization().await;
     sqlx::query(
         "UPDATE mcp_catalog_connectors SET allowed_groups='[\"support\"]' WHERE key='workspace'",
     )
@@ -465,11 +481,14 @@ async fn organization_oauth_freshly_mapped_catalogue_permission_is_admitted_with
     .await
     .unwrap();
     let (status, inventory) = fx
-        .get(&fx.alice, &format!("/api/v0/dots/{dot}/connections"))
+        .get(
+            &fx.alice,
+            &format!("/api/v0/agents/{owned_agent}/connections"),
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "{inventory}");
     assert_eq!(connection_row(&inventory)["can_connect"], true);
-    let oauth_state = start_organization_oauth(&fx, &dot).await;
+    let oauth_state = start_organization_oauth(&fx, &owned_agent).await;
     assert_eq!(
         oauth_callback(fx.state.clone(), &fx.alice, &oauth_state)
             .await
@@ -485,8 +504,8 @@ async fn organization_oauth_callback_membership_revoked_during_exchange_never_sa
         Mock, ResponseTemplate,
         matchers::{method, path},
     };
-    let (fx, provider, org, dot) = oauth_organization().await;
-    let oauth_state = start_organization_oauth(&fx, &dot).await;
+    let (fx, provider, org, owned_agent) = oauth_organization().await;
+    let oauth_state = start_organization_oauth(&fx, &owned_agent).await;
     let reached = Arc::new(tokio::sync::Notify::new());
     let exchanged = reached.clone();
     Mock::given(method("POST"))
@@ -518,7 +537,7 @@ async fn organization_oauth_callback_membership_revoked_during_exchange_never_sa
     assert!(
         aiplane_core::server::db::mcp_connections::get_connection(
             &fx.state.db,
-            &aiplane_core::server::db::mcp_connections::ConnectionOwner::Principal(dot),
+            &aiplane_core::server::db::mcp_connections::ConnectionOwner::Principal(owned_agent),
             "workspace"
         )
         .await
@@ -532,12 +551,12 @@ async fn organization_oauth_deleted_initiator_cancels_pending_without_erasing_or
  {
     use aiplane_agents::db::agents::{self, Access, SubjectKind};
     use aiplane_core::server::db::mcp_connections::{self, ConnectionOwner};
-    let (fx, provider, _org, dot) = oauth_organization().await;
-    let owner = ConnectionOwner::Principal(dot.clone());
+    let (fx, provider, _org, owned_agent) = oauth_organization().await;
+    let owner = ConnectionOwner::Principal(owned_agent.clone());
     let own = seed_organization_credential(&fx, owner.clone()).await;
     agents::set_share(
         &fx.state.db,
-        &dot,
+        &owned_agent,
         SubjectKind::User,
         "bob",
         Access::Write,
@@ -545,7 +564,7 @@ async fn organization_oauth_deleted_initiator_cancels_pending_without_erasing_or
     )
     .await
     .unwrap();
-    let base = format!("/api/v0/dots/{dot}/connections");
+    let base = format!("/api/v0/agents/{owned_agent}/connections");
     let (status, selected) = fx.send(Some(&fx.alice), Method::PUT, &format!("{base}/workspace"), Some(json!({
         "mode":"principal","expected_binding_generation":null,"connection_id":own.connection_id,"connection_generation":own.generation
     }))).await;
@@ -574,7 +593,7 @@ async fn organization_oauth_deleted_initiator_cancels_pending_without_erasing_or
         .unwrap();
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM pending_mcp_oauth WHERE principal_id=?")
-            .bind(&dot)
+            .bind(&owned_agent)
             .fetch_one(&fx.state.db)
             .await
             .unwrap(),
@@ -640,10 +659,10 @@ async fn edit(fx: &Fx, original: &Value, name: &str, groups: &[&str]) -> (Status
     .await
 }
 
-async fn create_dot(fx: &Fx, cookie: &str, org: &Value, name: &str) -> (StatusCode, Value) {
+async fn create_owned_agent(fx: &Fx, cookie: &str, org: &Value, name: &str) -> (StatusCode, Value) {
     fx.post(
         cookie,
-        &format!("/api/v0/organizations/{}/dots", id(org)),
+        &format!("/api/v0/organizations/{}/agents", id(org)),
         json!({
             "name":name,"display":"Harald Support","description":"Actual organization assistant"
         }),
@@ -723,10 +742,10 @@ async fn foundation_metadata_and_member_routes_require_their_current_session_and
         (Method::PUT, "/api/v0/admin/organizations/missing"),
         (Method::GET, "/api/v0/organizations"),
         (Method::GET, "/api/v0/organizations/missing"),
-        (Method::POST, "/api/v0/organizations/missing/dots"),
+        (Method::POST, "/api/v0/organizations/missing/agents"),
         (
             Method::POST,
-            "/api/v0/organizations/missing/dots/missing/active",
+            "/api/v0/organizations/missing/agents/missing/active",
         ),
     ] {
         let (status, _) = fx.send(None, method.clone(), path, Some(json!({}))).await;
@@ -755,7 +774,7 @@ async fn foundation_membership_is_current_and_never_inferred_from_admin_or_unbou
         assert_eq!(status, StatusCode::OK, "{list}");
         assert_eq!(list["organizations"].as_array().unwrap().len(), 1);
         assert_eq!(list["organizations"][0]["id"], org["id"]);
-        assert_eq!(list["organizations"][0]["can_create_dot"], true);
+        assert_eq!(list["organizations"][0]["can_create_agent"], true);
     }
     for cookie in [&fx.root, &fx.plain] {
         let (status, list) = fx.get(cookie, "/api/v0/organizations").await;
@@ -770,7 +789,7 @@ async fn foundation_membership_is_current_and_never_inferred_from_admin_or_unbou
         .get(&fx.alice, &format!("/api/v0/organizations/{}", id(&org)))
         .await;
     assert_eq!(status, StatusCode::OK, "{detail}");
-    assert_eq!(detail["dots"], json!([]));
+    assert_eq!(detail["agents"], json!([]));
     assert_eq!(detail["active_count"], 0);
     assert_eq!(detail["active_limit"], 4);
     person(&fx.state, "alice", &[]).await;
@@ -784,17 +803,17 @@ async fn foundation_membership_is_current_and_never_inferred_from_admin_or_unbou
 }
 
 #[tokio::test]
-async fn foundation_dot_creation_uses_member_manager_permission_not_personal_dot_permission() {
+async fn foundation_agent_creation_uses_member_manager_permission_not_personal_agent_permission() {
     let fx = fixture().await;
     let (status, group) = fx.send(Some(&fx.root), Method::PUT, "/api/v0/admin/groups", Some(json!({
-        "name":"managers","oidc_values":["managers"],"can_manage_agents":true,"can_manage_dots":false
+        "name":"managers","oidc_values":["managers"],"can_manage_agents":true,"can_manage_personal_agents":false
     }))).await;
     assert_eq!(status, StatusCode::OK, "{group}");
     let (_, me) = fx.get(&fx.alice, "/api/v0/me").await;
     assert_eq!(me["can_manage_agents"], true);
-    assert_eq!(me["can_manage_dots"], false);
+    assert_eq!(me["can_manage_personal_agents"], false);
     let org = organization(&fx, "Acme Support", &["managers"]).await;
-    let (status, created) = create_dot(&fx, &fx.alice, &org, "Harald").await;
+    let (status, created) = create_owned_agent(&fx, &fx.alice, &org, "Harald").await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
     let agent = &created["agent"];
     assert_eq!(agent["kind"], "team");
@@ -802,36 +821,36 @@ async fn foundation_dot_creation_uses_member_manager_permission_not_personal_dot
         agent["owner"],
         json!({"kind":"organization","id":org["id"],"name":org["name"]})
     );
-    assert_eq!(agent["dot"]["name"], "Harald");
-    assert_eq!(agent["dot"]["active"], true);
+    assert_eq!(agent["ownership"]["name"], "Harald");
+    assert_eq!(agent["ownership"]["active"], true);
     assert_eq!(agent["display"], "Harald Support");
     assert_eq!(agent["access"], "write");
     assert_ne!(agent["name"], "Harald");
-    let dot_id = id(agent);
+    let agent_id = id(agent);
     let (status, _) = fx
-        .get(&fx.alice, &format!("/api/v0/dots/{dot_id}/access"))
+        .get(&fx.alice, &format!("/api/v0/agents/{agent_id}/access"))
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     let (status, detail) = fx
         .get(&fx.alice, &format!("/api/v0/organizations/{}", id(&org)))
         .await;
     assert_eq!(status, StatusCode::OK, "{detail}");
-    assert_eq!(detail["dots"], json!([agent]));
+    assert_eq!(detail["agents"], json!([agent]));
     let (status, hidden) = fx
         .get(&fx.bob, &format!("/api/v0/organizations/{}", id(&org)))
         .await;
     assert_eq!(status, StatusCode::OK, "{hidden}");
-    assert_eq!(hidden["dots"], json!([]));
+    assert_eq!(hidden["agents"], json!([]));
     assert_eq!(hidden["active_count"], 1);
-    let (status, _) = create_dot(&fx, &fx.plain, &org, "Foreign").await;
+    let (status, _) = create_owned_agent(&fx, &fx.plain, &org, "Foreign").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     let plain_org = organization(&fx, "Everyone organization", &["everyone"]).await;
-    let (status, _) = create_dot(&fx, &fx.plain, &plain_org, "No manager").await;
+    let (status, _) = create_owned_agent(&fx, &fx.plain, &plain_org, "No manager").await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
-async fn foundation_dot_creation_rejects_spoofed_owner_and_invalid_names() {
+async fn foundation_agent_creation_rejects_spoofed_owner_and_invalid_names() {
     let fx = fixture().await;
     let org = organization(&fx, "Acme Support", &["managers"]).await;
     for body in [
@@ -843,7 +862,7 @@ async fn foundation_dot_creation_rejects_spoofed_owner_and_invalid_names() {
         let (status, error) = fx
             .post(
                 &fx.alice,
-                &format!("/api/v0/organizations/{}/dots", id(&org)),
+                &format!("/api/v0/organizations/{}/agents", id(&org)),
                 body,
             )
             .await;
@@ -856,42 +875,42 @@ async fn foundation_dot_creation_rejects_spoofed_owner_and_invalid_names() {
 }
 
 #[tokio::test]
-async fn foundation_dot_active_capacity_is_owner_scoped_and_reuses_deactivation() {
+async fn foundation_agent_active_capacity_is_owner_scoped_and_reuses_deactivation() {
     let fx = fixture().await;
     let org = organization(&fx, "Acme Support", &["managers"]).await;
-    let mut dots = Vec::new();
+    let mut owned_agents = Vec::new();
     for name in ["One", "Two", "Three", "Four"] {
-        let (status, body) = create_dot(&fx, &fx.alice, &org, name).await;
+        let (status, body) = create_owned_agent(&fx, &fx.alice, &org, name).await;
         assert_eq!(status, StatusCode::CREATED, "{body}");
-        dots.push(body["agent"].clone());
+        owned_agents.push(body["agent"].clone());
     }
-    let (status, _) = create_dot(&fx, &fx.alice, &org, "Five").await;
+    let (status, _) = create_owned_agent(&fx, &fx.alice, &org, "Five").await;
     assert_eq!(status, StatusCode::CONFLICT);
-    let (status, _) = create_dot(&fx, &fx.alice, &org, "One").await;
+    let (status, _) = create_owned_agent(&fx, &fx.alice, &org, "One").await;
     assert_eq!(status, StatusCode::CONFLICT);
     let active_path = format!(
-        "/api/v0/organizations/{}/dots/{}/active",
+        "/api/v0/organizations/{}/agents/{}/active",
         id(&org),
-        id(&dots[0])
+        id(&owned_agents[0])
     );
     let (status, disabled) = fx
         .post(&fx.alice, &active_path, json!({"active":false}))
         .await;
     assert_eq!(status, StatusCode::OK, "{disabled}");
-    assert_eq!(disabled["agent"]["dot"]["active"], false);
-    let (status, fifth) = create_dot(&fx, &fx.alice, &org, "Five").await;
+    assert_eq!(disabled["agent"]["ownership"]["active"], false);
+    let (status, fifth) = create_owned_agent(&fx, &fx.alice, &org, "Five").await;
     assert_eq!(status, StatusCode::CREATED, "{fifth}");
     let (status, _) = fx
         .post(&fx.alice, &active_path, json!({"active":true}))
         .await;
     assert_eq!(status, StatusCode::CONFLICT);
     let other = organization(&fx, "Other actual organization", &["managers"]).await;
-    let (status, first_other) = create_dot(&fx, &fx.alice, &other, "One").await;
+    let (status, first_other) = create_owned_agent(&fx, &fx.alice, &other, "One").await;
     assert_eq!(status, StatusCode::CREATED, "{first_other}");
     let wrong = format!(
-        "/api/v0/organizations/{}/dots/{}/active",
+        "/api/v0/organizations/{}/agents/{}/active",
         id(&other),
-        id(&dots[0])
+        id(&owned_agents[0])
     );
     let (status, _) = fx.post(&fx.alice, &wrong, json!({"active":false})).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -941,7 +960,7 @@ async fn organization_configuration_reuses_grants_publish_and_private_draft_but_
             .unwrap()
     );
     let org = organization(&fx, "Acme Support", &["managers"]).await;
-    let (status, created) = create_dot(&fx, &fx.alice, &org, "Harald").await;
+    let (status, created) = create_owned_agent(&fx, &fx.alice, &org, "Harald").await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
     let agent_id = id(&created["agent"]);
     let (status, resources) = fx
@@ -1013,7 +1032,7 @@ async fn organization_configuration_reuses_grants_publish_and_private_draft_but_
 async fn organization_subject_search_filters_members_before_limit_and_keeps_exact_email_privacy() {
     let fx = fixture().await;
     let org = organization(&fx, "Acme Support", &["managers"]).await;
-    let (status, created) = create_dot(&fx, &fx.alice, &org, "Harald").await;
+    let (status, created) = create_owned_agent(&fx, &fx.alice, &org, "Harald").await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
     let agent_id = id(&created["agent"]);
     for index in 0..20 {
@@ -1055,7 +1074,7 @@ async fn organization_member_revocation_blocks_existing_agent_share_and_principa
  {
     let fx = fixture().await;
     let org = organization(&fx, "Acme Support", &["managers"]).await;
-    let (status, created) = create_dot(&fx, &fx.alice, &org, "Harald").await;
+    let (status, created) = create_owned_agent(&fx, &fx.alice, &org, "Harald").await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
     let agent_id = id(&created["agent"]);
     let (status, _) = fx.share(&fx.alice, agent_id, "user", "bob", "read").await;
@@ -1112,7 +1131,7 @@ async fn organization_member_revocation_blocks_existing_agent_share_and_principa
 async fn organization_subject_search_reports_actual_scan_budget_without_leaking_nonmembers() {
     let fx = fixture().await;
     let org = organization(&fx, "Acme Support", &["managers"]).await;
-    let (status, created) = create_dot(&fx, &fx.alice, &org, "Harald").await;
+    let (status, created) = create_owned_agent(&fx, &fx.alice, &org, "Harald").await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
     let agent_id = id(&created["agent"]);
     for index in 0..1001 {
@@ -1162,7 +1181,7 @@ async fn organization_resources_use_current_tool_grants_without_global_rbac_relo
     use aiplane_core::server::db::gateway_groups;
     let fx = fixture().await;
     let org = organization(&fx, "Acme Support", &["managers"]).await;
-    let (status, created) = create_dot(&fx, &fx.alice, &org, "Harald").await;
+    let (status, created) = create_owned_agent(&fx, &fx.alice, &org, "Harald").await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
     let path = format!("/api/v0/agent-resources?agent_id={}", id(&created["agent"]));
     let (status, initial) = resource_choices(&fx, &path).await;
@@ -1268,7 +1287,7 @@ async fn mapped_resource_fixture() -> (Fx, Value, String) {
         .await
         .unwrap();
     let org = organization(&fx, "Acme Support", &["managers"]).await;
-    let (status, created) = create_dot(&fx, &fx.alice, &org, "Harald").await;
+    let (status, created) = create_owned_agent(&fx, &fx.alice, &org, "Harald").await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
     (fx, created["agent"].clone(), collection.id.to_string())
 }
@@ -1347,14 +1366,15 @@ fn offered_workspace(view: &Value) -> bool {
     })
 }
 
-async fn select_organization_credential(fx: &Fx, dot: &str) {
+async fn select_organization_credential(fx: &Fx, owned_agent: &str) {
     use aiplane_core::server::db::mcp_connections::ConnectionOwner;
-    let own = seed_organization_credential(fx, ConnectionOwner::Principal(dot.to_owned())).await;
+    let own =
+        seed_organization_credential(fx, ConnectionOwner::Principal(owned_agent.to_owned())).await;
     let (status, selected) = fx
         .send(
             Some(&fx.alice),
             Method::PUT,
-            &format!("/api/v0/dots/{dot}/connections/workspace"),
+            &format!("/api/v0/agents/{owned_agent}/connections/workspace"),
             Some(
                 json!({"mode":"principal","expected_binding_generation":null,
             "connection_id":own.connection_id,"connection_generation":own.generation}),
@@ -1367,13 +1387,13 @@ async fn select_organization_credential(fx: &Fx, dot: &str) {
 #[tokio::test]
 async fn organization_connector_resources_and_grant_require_explicit_selected_own_identity() {
     use aiplane_core::server::db::mcp_connections::ConnectionOwner;
-    let (fx, _provider, _org, dot) = oauth_organization().await;
+    let (fx, _provider, _org, owned_agent) = oauth_organization().await;
     seed_organization_credential(&fx, ConnectionOwner::User("alice".into())).await;
-    let path = format!("/api/v0/agent-resources?agent_id={dot}");
+    let path = format!("/api/v0/agent-resources?agent_id={owned_agent}");
     let (status, before) = fx.get(&fx.alice, &path).await;
     assert_eq!(status, StatusCode::OK, "{before}");
     assert!(!offered_workspace(&before));
-    let principal_path = format!("/api/v0/system-principals/{dot}/grants");
+    let principal_path = format!("/api/v0/system-principals/{owned_agent}/grants");
     let (status, _) = fx
         .post(
             &fx.alice,
@@ -1382,7 +1402,7 @@ async fn organization_connector_resources_and_grant_require_explicit_selected_ow
         )
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    select_organization_credential(&fx, &dot).await;
+    select_organization_credential(&fx, &owned_agent).await;
     let (status, selected) = fx.get(&fx.alice, &path).await;
     assert_eq!(status, StatusCode::OK, "{selected}");
     assert!(offered_workspace(&selected), "{selected}");
@@ -1396,7 +1416,7 @@ async fn organization_connector_resources_and_grant_require_explicit_selected_ow
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{grant}");
-    let grants = aiplane_agents::db::system_principals::grants(&fx.state.db, &dot)
+    let grants = aiplane_agents::db::system_principals::grants(&fx.state.db, &owned_agent)
         .await
         .unwrap();
     assert!(grants.iter().any(|grant| grant.kind
@@ -1406,9 +1426,9 @@ async fn organization_connector_resources_and_grant_require_explicit_selected_ow
 
 #[tokio::test]
 async fn organization_connector_grant_rechecks_membership_after_resource_offer() {
-    let (fx, _provider, org, dot) = oauth_organization().await;
-    select_organization_credential(&fx, &dot).await;
-    let path = format!("/api/v0/agent-resources?agent_id={dot}");
+    let (fx, _provider, org, owned_agent) = oauth_organization().await;
+    select_organization_credential(&fx, &owned_agent).await;
+    let path = format!("/api/v0/agent-resources?agent_id={owned_agent}");
     let (_, offered) = fx.get(&fx.alice, &path).await;
     assert!(offered_workspace(&offered), "{offered}");
     let (status, changed) = edit(&fx, &org, "Acme OAuth", &[]).await;
@@ -1416,12 +1436,12 @@ async fn organization_connector_grant_rechecks_membership_after_resource_offer()
     let (status, _) = fx
         .post(
             &fx.alice,
-            &format!("/api/v0/system-principals/{dot}/grants"),
+            &format!("/api/v0/system-principals/{owned_agent}/grants"),
             json!({"kind":"connector","ref":"workspace"}),
         )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    let grants = aiplane_agents::db::system_principals::grants(&fx.state.db, &dot)
+    let grants = aiplane_agents::db::system_principals::grants(&fx.state.db, &owned_agent)
         .await
         .unwrap();
     assert!(!grants.iter().any(|grant| grant.kind
@@ -1430,7 +1450,7 @@ async fn organization_connector_grant_rechecks_membership_after_resource_offer()
 }
 
 #[tokio::test]
-async fn organization_private_draft_chat_admits_member_writer_without_personal_dot_permission() {
+async fn organization_private_draft_chat_admits_member_writer_without_personal_agent_permission() {
     use wiremock::{
         Mock, MockServer, ResponseTemplate,
         matchers::{method, path},
@@ -1444,25 +1464,30 @@ async fn organization_private_draft_chat_admits_member_writer_without_personal_d
     fx.state = fx.state.clone().with_agent_runner(std::sync::Arc::new(
         aiplane_runtime::agents::embed::LiveAgentRunner,
     ));
-    aiplane_core::server::db::gateway_groups::set_can_manage_dots(&fx.state.db, "managers", false)
-        .await
-        .unwrap();
+    aiplane_core::server::db::gateway_groups::set_can_manage_personal_agents(
+        &fx.state.db,
+        "managers",
+        false,
+    )
+    .await
+    .unwrap();
     let org = organization(&fx, "Acme Draft", &["managers"]).await;
-    let (status, created) = create_dot(&fx, &fx.alice, &org, "Harald").await;
+    let (status, created) = create_owned_agent(&fx, &fx.alice, &org, "Harald").await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
-    let dot = id(&created["agent"]);
+    let owned_agent = id(&created["agent"]);
     assert_eq!(
-        fx.grant(&fx.alice, dot, "model", "m").await,
+        fx.grant(&fx.alice, owned_agent, "model", "m").await,
         StatusCode::CREATED
     );
     assert_eq!(
-        fx.grant(&fx.alice, dot, "tool", super::agents::TIME).await,
+        fx.grant(&fx.alice, owned_agent, "tool", super::agents::TIME)
+            .await,
         StatusCode::CREATED
     );
     let (status, saved) = fx
         .put_draft(
             &fx.alice,
-            dot,
+            owned_agent,
             super::agents::spec("Actual organization task"),
         )
         .await;
@@ -1470,7 +1495,7 @@ async fn organization_private_draft_chat_admits_member_writer_without_personal_d
     let (status, started) = fx
         .post(
             &fx.alice,
-            &format!("/api/v0/agents/{dot}/test/messages"),
+            &format!("/api/v0/agents/{owned_agent}/test/messages"),
             json!({"source":"draft","message":"Actual draft request"}),
         )
         .await;
@@ -1483,12 +1508,12 @@ async fn organization_private_draft_chat_admits_member_writer_without_personal_d
             .fetch_one(&fx.state.db)
             .await
             .unwrap();
-    assert_eq!(row.0.as_deref(), Some(dot));
+    assert_eq!(row.0.as_deref(), Some(owned_agent));
     assert_eq!(row.1, None);
     assert!(!row.2);
-    let history = format!("/api/v0/agents/{dot}/test/{session}/events");
+    let history = format!("/api/v0/agents/{owned_agent}/test/{session}/events");
     let turn = started["turn_id"].as_str().unwrap();
-    let debug = format!("/api/v0/agents/{dot}/test/{session}/turns/{turn}/debug");
+    let debug = format!("/api/v0/agents/{owned_agent}/test/{session}/turns/{turn}/debug");
     let (status, inspected) = fx.get(&fx.alice, &debug).await;
     assert_eq!(status, StatusCode::OK, "{inspected}");
     let (status, _) = fx.get(&fx.root, &debug).await;
@@ -1503,15 +1528,19 @@ async fn organization_private_draft_chat_admits_member_writer_without_personal_d
 
 async fn organization_memory_fixture() -> (Fx, Value, String) {
     let fx = fixture().await;
-    aiplane_core::server::db::gateway_groups::set_can_manage_dots(&fx.state.db, "managers", false)
-        .await
-        .unwrap();
+    aiplane_core::server::db::gateway_groups::set_can_manage_personal_agents(
+        &fx.state.db,
+        "managers",
+        false,
+    )
+    .await
+    .unwrap();
     fx.state.reload_rbac().await;
     let org = organization(&fx, "Acme Knowledge", &["managers", "admins"]).await;
-    let (status, created) = create_dot(&fx, &fx.alice, &org, "Harald").await;
+    let (status, created) = create_owned_agent(&fx, &fx.alice, &org, "Harald").await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
-    let dot = id(&created["agent"]).to_owned();
-    (fx, org, dot)
+    let owned_agent = id(&created["agent"]).to_owned();
+    (fx, org, owned_agent)
 }
 
 fn memory_scope<'a>(view: &'a Value, scope: &str) -> &'a Value {
@@ -1524,21 +1553,21 @@ fn memory_scope<'a>(view: &'a Value, scope: &str) -> &'a Value {
 }
 
 #[tokio::test]
-async fn organization_memory_uses_existing_dot_routes_with_actual_scope_metadata_and_separate_write_rights()
+async fn organization_memory_uses_existing_agent_routes_with_actual_scope_metadata_and_separate_write_rights()
  {
-    let (fx, org, dot) = organization_memory_fixture().await;
-    let base = format!("/api/v0/dots/{dot}/memories");
+    let (fx, org, owned_agent) = organization_memory_fixture().await;
+    let base = format!("/api/v0/agents/{owned_agent}/memories");
     let (_, me) = fx.get(&fx.alice, "/api/v0/me").await;
-    assert_eq!(me["can_manage_dots"], false);
+    assert_eq!(me["can_manage_personal_agents"], false);
     let (status, own) = fx
         .post(
             &fx.alice,
             &base,
-            json!({"scope":"dot","kind":"project","content":"Actual isolated agent lesson"}),
+            json!({"scope":"agent","kind":"project","content":"Actual isolated agent lesson"}),
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{own}");
-    assert_eq!(own["scope"], "dot");
+    assert_eq!(own["scope"], "agent");
     let (status, refused) = fx
         .post(
             &fx.alice,
@@ -1553,38 +1582,42 @@ async fn organization_memory_uses_existing_dot_routes_with_actual_scope_metadata
     assert_eq!(shared["scope"], "organization");
     let (status, view) = fx.get(&fx.alice, &base).await;
     assert_eq!(status, StatusCode::OK, "{view}");
-    assert_eq!(memory_scope(&view, "dot")["name"], "Harald");
-    assert_eq!(memory_scope(&view, "dot")["writable"], true);
+    assert_eq!(memory_scope(&view, "agent")["name"], "Harald");
+    assert_eq!(memory_scope(&view, "agent")["writable"], true);
     assert_eq!(memory_scope(&view, "organization")["name"], org["name"]);
     assert_eq!(memory_scope(&view, "organization")["writable"], false);
     assert_eq!(view["memories"].as_array().unwrap().len(), 2);
     assert!(view["memories"].as_array().unwrap().contains(&own));
     assert!(view["memories"].as_array().unwrap().contains(&shared));
-    let (status, _) = fx.share(&fx.alice, &dot, "user", "bob", "read").await;
+    let (status, _) = fx
+        .share(&fx.alice, &owned_agent, "user", "bob", "read")
+        .await;
     assert_eq!(status, StatusCode::CREATED);
     let (status, reader) = fx.get(&fx.bob, &base).await;
     assert_eq!(status, StatusCode::OK, "{reader}");
     assert_eq!(reader["memories"], view["memories"]);
-    assert_eq!(memory_scope(&reader, "dot")["writable"], false);
+    assert_eq!(memory_scope(&reader, "agent")["writable"], false);
     assert_eq!(memory_scope(&reader, "organization")["writable"], false);
     let (status, denied) = fx
         .post(
             &fx.bob,
             &base,
-            json!({"scope":"dot","kind":"fact","content":"Read-only cannot write"}),
+            json!({"scope":"agent","kind":"fact","content":"Read-only cannot write"}),
         )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{denied}");
-    let (status, _) = fx.share(&fx.alice, &dot, "user", "bob", "respond").await;
+    let (status, _) = fx
+        .share(&fx.alice, &owned_agent, "user", "bob", "respond")
+        .await;
     assert_eq!(status, StatusCode::CREATED);
     let (status, responder) = fx.get(&fx.bob, &base).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{responder}");
-    let (status, clara) = create_dot(&fx, &fx.alice, &org, "Clara").await;
+    let (status, clara) = create_owned_agent(&fx, &fx.alice, &org, "Clara").await;
     assert_eq!(status, StatusCode::CREATED);
     let (_, sibling_notes) = fx
         .get(
             &fx.alice,
-            &format!("/api/v0/dots/{}/memories", id(&clara["agent"])),
+            &format!("/api/v0/agents/{}/memories", id(&clara["agent"])),
         )
         .await;
     assert_eq!(sibling_notes["memories"], json!([shared.clone()]));
@@ -1613,13 +1646,13 @@ async fn organization_memory_uses_existing_dot_routes_with_actual_scope_metadata
 
 #[tokio::test]
 async fn organization_memory_foreign_ids_and_other_scopes_do_not_disclose_or_mutate_notes() {
-    let (fx, org, dot) = organization_memory_fixture().await;
+    let (fx, org, owned_agent) = organization_memory_fixture().await;
     let other_org = organization(&fx, "Other actual organization", &["managers", "admins"]).await;
-    let (status, created) = create_dot(&fx, &fx.alice, &other_org, "Clara").await;
+    let (status, created) = create_owned_agent(&fx, &fx.alice, &other_org, "Clara").await;
     assert_eq!(status, StatusCode::CREATED);
     let other = id(&created["agent"]);
-    let target = format!("/api/v0/dots/{dot}/memories");
-    let foreign_base = format!("/api/v0/dots/{other}/memories");
+    let target = format!("/api/v0/agents/{owned_agent}/memories");
+    let foreign_base = format!("/api/v0/agents/{other}/memories");
     let (status, foreign) = fx.post(&fx.root,&foreign_base,
         json!({"scope":"organization","kind":"fact","content":"Other organization confidential marker"})).await;
     assert_eq!(status, StatusCode::CREATED, "{foreign}");
@@ -1662,18 +1695,18 @@ async fn organization_memory_foreign_ids_and_other_scopes_do_not_disclose_or_mut
 
 #[tokio::test]
 async fn organization_memory_rechecks_current_membership_and_admin_after_management_views() {
-    let (fx, org, dot) = organization_memory_fixture().await;
-    let target = format!("/api/v0/dots/{dot}/memories");
+    let (fx, org, owned_agent) = organization_memory_fixture().await;
+    let target = format!("/api/v0/agents/{owned_agent}/memories");
     let (status, own) = fx
         .post(
             &fx.alice,
             &target,
-            json!({"scope":"dot","kind":"fact","content":"Preserved current authority lesson"}),
+            json!({"scope":"agent","kind":"fact","content":"Preserved current authority lesson"}),
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{own}");
     let (_, offered) = fx.get(&fx.alice, &target).await;
-    assert_eq!(memory_scope(&offered, "dot")["writable"], true);
+    assert_eq!(memory_scope(&offered, "agent")["writable"], true);
     let (status, changed) = edit(&fx, &org, "Acme Knowledge", &["admins"]).await;
     assert_eq!(status, StatusCode::OK, "{changed}");
     let (status, denied) = fx
@@ -1681,7 +1714,7 @@ async fn organization_memory_rechecks_current_membership_and_admin_after_managem
             Some(&fx.alice),
             Method::PUT,
             &format!("{target}/{}", own["id"].as_str().unwrap()),
-            Some(json!({"scope":"dot","kind":"fact","content":"Stale membership write"})),
+            Some(json!({"scope":"agent","kind":"fact","content":"Stale membership write"})),
         )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{denied}");
@@ -1706,7 +1739,7 @@ async fn organization_memory_rechecks_current_membership_and_admin_after_managem
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{denied}");
     let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM dot_memories WHERE content='Stale administrator write'",
+        "SELECT COUNT(*) FROM agent_memories WHERE content='Stale administrator write'",
     )
     .fetch_one(&fx.state.db)
     .await
@@ -1716,13 +1749,13 @@ async fn organization_memory_rechecks_current_membership_and_admin_after_managem
 
 #[tokio::test]
 async fn organization_memory_requires_explicit_scope_and_limits_human_saves_by_utf8_bytes() {
-    let (fx, _, dot) = organization_memory_fixture().await;
-    let base = format!("/api/v0/dots/{dot}/memories");
+    let (fx, _, owned_agent) = organization_memory_fixture().await;
+    let base = format!("/api/v0/agents/{owned_agent}/memories");
     let (status, accepted) = fx
         .post(
             &fx.alice,
             &base,
-            json!({"scope":"dot","kind":"fact","content":"é".repeat(1000)}),
+            json!({"scope":"agent","kind":"fact","content":"é".repeat(1000)}),
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{accepted}");
@@ -1736,7 +1769,7 @@ async fn organization_memory_requires_explicit_scope_and_limits_human_saves_by_u
         (
             Method::POST,
             base.clone(),
-            json!({"scope":"dot","kind":"fact","content":"é".repeat(1001)}),
+            json!({"scope":"agent","kind":"fact","content":"é".repeat(1001)}),
         ),
         (
             Method::PUT,
@@ -1746,7 +1779,7 @@ async fn organization_memory_requires_explicit_scope_and_limits_human_saves_by_u
         (
             Method::PUT,
             item.clone(),
-            json!({"scope":"dot","kind":"fact","content":"x".repeat(2001)}),
+            json!({"scope":"agent","kind":"fact","content":"x".repeat(2001)}),
         ),
     ] {
         let (status, denied) = fx.send(Some(&fx.alice), method, &path, Some(body)).await;
@@ -1773,34 +1806,37 @@ async fn private_published_organization() -> (Fx, wiremock::MockServer, Value, S
         aiplane_runtime::agents::embed::LiveAgentRunner,
     ));
     let org = organization(&fx, "Acme Published", &["managers"]).await;
-    let (status, created) = create_dot(&fx, &fx.alice, &org, "Harald").await;
+    let (status, created) = create_owned_agent(&fx, &fx.alice, &org, "Harald").await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
-    let dot = id(&created["agent"]).to_owned();
+    let owned_agent = id(&created["agent"]).to_owned();
     for (kind, reference) in [("model", "m"), ("tool", super::agents::TIME)] {
         assert_eq!(
-            fx.grant(&fx.alice, &dot, kind, reference).await,
+            fx.grant(&fx.alice, &owned_agent, kind, reference).await,
             StatusCode::CREATED
         );
     }
     assert_eq!(
         fx.put_draft(
             &fx.alice,
-            &dot,
+            &owned_agent,
             super::agents::spec("First published instructions")
         )
         .await
         .0,
         StatusCode::OK
     );
-    assert_eq!(fx.publish(&fx.alice, &dot).await.0, StatusCode::CREATED);
-    (fx, upstream, org, dot)
+    assert_eq!(
+        fx.publish(&fx.alice, &owned_agent).await.0,
+        StatusCode::CREATED
+    );
+    (fx, upstream, org, owned_agent)
 }
 
 #[tokio::test]
 async fn organization_private_published_chat_requires_explicit_source_and_refuses_ordinary_published()
  {
-    let (fx, upstream, _org, dot) = private_published_organization().await;
-    let endpoint = format!("/api/v0/agents/{dot}/test/messages");
+    let (fx, upstream, _org, owned_agent) = private_published_organization().await;
+    let endpoint = format!("/api/v0/agents/{owned_agent}/test/messages");
     for body in [
         json!({"message":"Missing source"}),
         json!({"message":"Invalid source","source":"live"}),
@@ -1824,8 +1860,8 @@ async fn organization_private_published_chat_requires_explicit_source_and_refuse
 #[tokio::test]
 async fn organization_private_published_chat_keeps_pinned_version_after_publish_and_rejects_source_change()
  {
-    let (fx, upstream, _org, dot) = private_published_organization().await;
-    let endpoint = format!("/api/v0/agents/{dot}/test/messages");
+    let (fx, upstream, _org, owned_agent) = private_published_organization().await;
+    let endpoint = format!("/api/v0/agents/{owned_agent}/test/messages");
     let (status, first) = fx
         .post(
             &fx.alice,
@@ -1839,19 +1875,23 @@ async fn organization_private_published_chat_keeps_pinned_version_after_publish_
     assert!(first.get("draft_version").is_none());
     let session = first["session_id"].as_str().unwrap();
     let turn = first["turn_id"].as_str().unwrap();
-    let debug = crate::common::test_chat_settled(&fx.state, &fx.alice, &dot, session, turn).await;
+    let debug =
+        crate::common::test_chat_settled(&fx.state, &fx.alice, &owned_agent, session, turn).await;
     assert_eq!(debug["status"], "completed", "{debug}");
     assert_eq!(
         fx.put_draft(
             &fx.alice,
-            &dot,
+            &owned_agent,
             super::agents::spec("Second published instructions")
         )
         .await
         .0,
         StatusCode::OK
     );
-    assert_eq!(fx.publish(&fx.alice, &dot).await.0, StatusCode::CREATED);
+    assert_eq!(
+        fx.publish(&fx.alice, &owned_agent).await.0,
+        StatusCode::CREATED
+    );
     let (status, second) = fx.post(&fx.alice, &endpoint, json!({"message":"Continue pinned conversation","source":"published","session_id":session})).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{second}");
     assert_eq!(second["agent_version"], 1);
@@ -1859,7 +1899,7 @@ async fn organization_private_published_chat_keeps_pinned_version_after_publish_
     crate::common::test_chat_settled(
         &fx.state,
         &fx.alice,
-        &dot,
+        &owned_agent,
         session,
         second["turn_id"].as_str().unwrap(),
     )
@@ -1879,29 +1919,33 @@ async fn organization_private_published_chat_keeps_pinned_version_after_publish_
         assert!(body.contains("First published instructions"), "{body}");
         assert!(!body.contains("Second published instructions"), "{body}");
     }
-    let row = aiplane_agents::db::run_sessions::get_principal_session(&fx.state.db, &dot, session)
-        .await
-        .unwrap()
-        .unwrap();
+    let row = aiplane_agents::db::run_sessions::get_principal_session(
+        &fx.state.db,
+        &owned_agent,
+        session,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(row.agent_version, Some(1));
 }
 
 #[tokio::test]
 async fn organization_private_published_history_requires_current_member_write_and_private_context()
 {
-    let (fx, _upstream, org, dot) = private_published_organization().await;
+    let (fx, _upstream, org, owned_agent) = private_published_organization().await;
     let (status, started) = fx
         .post(
             &fx.alice,
-            &format!("/api/v0/agents/{dot}/test/messages"),
+            &format!("/api/v0/agents/{owned_agent}/test/messages"),
             json!({"message":"Private history","source":"published"}),
         )
         .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{started}");
     let session = started["session_id"].as_str().unwrap();
     let turn = started["turn_id"].as_str().unwrap();
-    let debug_path = format!("/api/v0/agents/{dot}/test/{session}/turns/{turn}/debug");
-    let events_path = format!("/api/v0/agents/{dot}/test/{session}/events");
+    let debug_path = format!("/api/v0/agents/{owned_agent}/test/{session}/turns/{turn}/debug");
+    let events_path = format!("/api/v0/agents/{owned_agent}/test/{session}/events");
     let (status, debug) = fx.get(&fx.alice, &debug_path).await;
     assert_eq!(status, StatusCode::OK, "{debug}");
     assert_eq!(debug["agent_version"], 1);
@@ -1912,7 +1956,9 @@ async fn organization_private_published_history_requires_current_member_write_an
         ("respond", StatusCode::NOT_FOUND),
     ] {
         assert_eq!(
-            fx.share(&fx.alice, &dot, "user", "bob", access).await.0,
+            fx.share(&fx.alice, &owned_agent, "user", "bob", access)
+                .await
+                .0,
             StatusCode::CREATED
         );
         for uri in [&debug_path, &events_path] {
@@ -1951,7 +1997,7 @@ async fn organization_private_published_pause_inbox_is_current_member_writer_onl
         Mock, ResponseTemplate,
         matchers::{method, path},
     };
-    let (fx, upstream, org, dot) = private_published_organization().await;
+    let (fx, upstream, org, owned_agent) = private_published_organization().await;
     upstream.reset().await;
     let delta = json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"private-published-time","type":"function","function":{"name":super::agents::TIME,"arguments":"{}"}}]}}]});
     Mock::given(method("POST"))
@@ -1964,12 +2010,18 @@ async fn organization_private_published_pause_inbox_is_current_member_writer_onl
         .await;
     let mut spec = super::agents::spec("Ask before reading time");
     spec["main"]["tool_resources"] = json!({(super::agents::TIME):{"permission":"always_ask"}});
-    assert_eq!(fx.put_draft(&fx.alice, &dot, spec).await.0, StatusCode::OK);
-    assert_eq!(fx.publish(&fx.alice, &dot).await.0, StatusCode::CREATED);
+    assert_eq!(
+        fx.put_draft(&fx.alice, &owned_agent, spec).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        fx.publish(&fx.alice, &owned_agent).await.0,
+        StatusCode::CREATED
+    );
     let (status, started) = fx
         .post(
             &fx.alice,
-            &format!("/api/v0/agents/{dot}/test/messages"),
+            &format!("/api/v0/agents/{owned_agent}/test/messages"),
             json!({"message":"Request approved time","source":"published"}),
         )
         .await;
@@ -1977,7 +2029,7 @@ async fn organization_private_published_pause_inbox_is_current_member_writer_onl
     let settled = crate::common::test_chat_settled(
         &fx.state,
         &fx.alice,
-        &dot,
+        &owned_agent,
         started["session_id"].as_str().unwrap(),
         started["turn_id"].as_str().unwrap(),
     )
@@ -1988,7 +2040,9 @@ async fn organization_private_published_pause_inbox_is_current_member_writer_onl
     assert_eq!(inbox["count"], 1, "{inbox}");
     for access in ["read", "respond"] {
         assert_eq!(
-            fx.share(&fx.alice, &dot, "user", "bob", access).await.0,
+            fx.share(&fx.alice, &owned_agent, "user", "bob", access)
+                .await
+                .0,
             StatusCode::CREATED
         );
         let (status, hidden) = fx.get(&fx.bob, "/api/v0/agents/inbox").await;
@@ -2009,24 +2063,24 @@ async fn organization_private_published_pause_inbox_is_current_member_writer_onl
 
 #[tokio::test]
 async fn organization_private_published_debug_rechecks_membership_after_waiting_for_release() {
-    let (fx, _upstream, org, dot) = private_published_organization().await;
+    let (fx, _upstream, org, owned_agent) = private_published_organization().await;
     let (status, started) = fx
         .post(
             &fx.alice,
-            &format!("/api/v0/agents/{dot}/test/messages"),
+            &format!("/api/v0/agents/{owned_agent}/test/messages"),
             json!({"message":"Private delayed debug","source":"published"}),
         )
         .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{started}");
     let session = started["session_id"].as_str().unwrap();
     let turn = started["turn_id"].as_str().unwrap();
-    crate::common::test_chat_settled(&fx.state, &fx.alice, &dot, session, turn).await;
-    let claim =
-        aiplane_runtime::agents::embed::claim(&fx.state.chats, &dot, session, turn).unwrap();
+    crate::common::test_chat_settled(&fx.state, &fx.alice, &owned_agent, session, turn).await;
+    let claim = aiplane_runtime::agents::embed::claim(&fx.state.chats, &owned_agent, session, turn)
+        .unwrap();
     let updates = claim.worker().broadcast.clone();
     let state = fx.state.clone();
     let cookie = fx.alice.clone();
-    let uri = format!("/api/v0/agents/{dot}/test/{session}/turns/{turn}/debug");
+    let uri = format!("/api/v0/agents/{owned_agent}/test/{session}/turns/{turn}/debug");
     let request = tokio::spawn(async move { crate::common::get_json(&state, &cookie, &uri).await });
     for _ in 0..500 {
         if updates.receiver_count() > 0 {
@@ -2051,36 +2105,40 @@ async fn organization_private_published_debug_rechecks_membership_after_waiting_
     assert!(body.get("debug").is_none());
 }
 
-fn organization_schedule_body(dot: &str) -> Value {
-    json!({"principal_id":dot,"agent_version":1,"name":"Incident review","prompt":"Review incidents",
+fn organization_schedule_body(owned_agent: &str) -> Value {
+    json!({"principal_id":owned_agent,"agent_version":1,"name":"Incident review","prompt":"Review incidents",
         "cron":"0 9 * * *","timezone":"Europe/Berlin","tools_enabled":true,
         "reuse_conversation":false,"reuse_rounds":5})
 }
 
 #[tokio::test]
 async fn organization_schedule_inventory_create_and_history_use_current_member_write() {
-    let (fx, _upstream, _org, dot) = private_published_organization().await;
-    aiplane_core::server::db::gateway_groups::set_can_manage_dots(&fx.state.db, "managers", false)
-        .await
-        .unwrap();
-    let path = format!("/api/v0/scheduled?principal_id={dot}");
+    let (fx, _upstream, _org, owned_agent) = private_published_organization().await;
+    aiplane_core::server::db::gateway_groups::set_can_manage_personal_agents(
+        &fx.state.db,
+        "managers",
+        false,
+    )
+    .await
+    .unwrap();
+    let path = format!("/api/v0/scheduled?principal_id={owned_agent}");
     let (status, inventory) = fx.get(&fx.alice, &path).await;
     assert_eq!(status, StatusCode::OK, "{inventory}");
-    assert_eq!(inventory["principal_id"], dot);
+    assert_eq!(inventory["principal_id"], owned_agent);
     assert_eq!(inventory["can_write"], true);
     assert_eq!(inventory["models"], json!([]));
     assert_eq!(inventory["default_timezone"], Value::Null);
-    assert_eq!(inventory["dots"][0]["id"], dot);
+    assert_eq!(inventory["agents"][0]["id"], owned_agent);
     assert_eq!(inventory["versions"][0]["version"], 1);
     let (status, action) = fx
         .post(
             &fx.alice,
             "/api/v0/scheduled",
-            organization_schedule_body(&dot),
+            organization_schedule_body(&owned_agent),
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{action}");
-    assert_eq!(action["principal_id"], dot);
+    assert_eq!(action["principal_id"], owned_agent);
     assert_eq!(action["agent_version"], 1);
     assert_eq!(action["model"], Value::Null);
     assert!(
@@ -2095,21 +2153,21 @@ async fn organization_schedule_inventory_create_and_history_use_current_member_w
         assert_eq!(status, StatusCode::NOT_FOUND, "{denied}");
         assert!(denied.get("runs").is_none());
     }
-    sqlx::query("DELETE FROM organization_groups WHERE organization_id=(SELECT organization_id FROM dots WHERE principal_id=?)")
-        .bind(&dot).execute(&fx.state.db).await.unwrap();
+    sqlx::query("DELETE FROM organization_groups WHERE organization_id=(SELECT organization_id FROM agent_owners WHERE principal_id=?)")
+        .bind(&owned_agent).execute(&fx.state.db).await.unwrap();
     assert_eq!(fx.get(&fx.alice, &runs).await.0, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
 async fn organization_schedule_rejects_employee_model_reuse_and_stale_edit() {
-    let (fx, _upstream, _org, dot) = private_published_organization().await;
+    let (fx, _upstream, _org, owned_agent) = private_published_organization().await;
     for invalid in [
         json!({"model":"m"}),
         json!({"reuse_conversation":true}),
         json!({"agent_version":0}),
         json!({"agent_version":999}),
     ] {
-        let mut body = organization_schedule_body(&dot);
+        let mut body = organization_schedule_body(&owned_agent);
         for (key, value) in invalid.as_object().unwrap() {
             body[key] = value.clone();
         }
@@ -2120,7 +2178,7 @@ async fn organization_schedule_rejects_employee_model_reuse_and_stale_edit() {
         .post(
             &fx.alice,
             "/api/v0/scheduled",
-            organization_schedule_body(&dot),
+            organization_schedule_body(&owned_agent),
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{action}");
@@ -2144,16 +2202,16 @@ async fn organization_schedule_rejects_employee_model_reuse_and_stale_edit() {
 }
 
 #[tokio::test]
-async fn organization_retained_schedule_refuses_dot_deletion_until_source_deleted() {
+async fn organization_retained_schedule_refuses_agent_deletion_until_source_deleted() {
     use aiplane_runtime::server::background::AutomationOwner;
     use aiplane_runtime::server::scheduled::{self, NewAction};
-    let (fx, _upstream, _org, dot) = private_published_organization().await;
+    let (fx, _upstream, _org, owned_agent) = private_published_organization().await;
     let action = scheduled::create(
         &fx.state.db,
         NewAction {
-            owner: AutomationOwner::Principal(dot.clone()),
+            owner: AutomationOwner::Principal(owned_agent.clone()),
             created_by: "alice".into(),
-            dot_id: None,
+            personal_agent_id: None,
             name: "Retained schedule".into(),
             prompt: "Review incidents".into(),
             model: None,
@@ -2169,13 +2227,13 @@ async fn organization_retained_schedule_refuses_dot_deletion_until_source_delete
     )
     .await
     .unwrap();
-    let endpoint = format!("/api/v0/agents/{dot}");
+    let endpoint = format!("/api/v0/agents/{owned_agent}");
     let (status, denied) = fx
         .send(Some(&fx.alice), Method::DELETE, &endpoint, None)
         .await;
     assert_eq!(status, StatusCode::CONFLICT, "{denied}");
     assert!(
-        aiplane_agents::db::agents::get(&fx.state.db, &dot)
+        aiplane_agents::db::agents::get(&fx.state.db, &owned_agent)
             .await
             .unwrap()
             .is_some()
@@ -2200,7 +2258,7 @@ async fn organization_private_cancel_is_current_writer_structural_even_after_dea
         Mock, ResponseTemplate,
         matchers::{method, path},
     };
-    let (fx, upstream, _org, dot) = private_published_organization().await;
+    let (fx, upstream, _org, owned_agent) = private_published_organization().await;
     upstream.reset().await;
     let delta = json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"cancel-time","type":"function","function":{"name":super::agents::TIME,"arguments":"{}"}}]}}]});
     Mock::given(method("POST"))
@@ -2213,21 +2271,28 @@ async fn organization_private_cancel_is_current_writer_structural_even_after_dea
         .await;
     let mut spec = super::agents::spec("Ask before reading time");
     spec["main"]["tool_resources"] = json!({(super::agents::TIME):{"permission":"always_ask"}});
-    assert_eq!(fx.put_draft(&fx.alice, &dot, spec).await.0, StatusCode::OK);
-    assert_eq!(fx.publish(&fx.alice, &dot).await.0, StatusCode::CREATED);
+    assert_eq!(
+        fx.put_draft(&fx.alice, &owned_agent, spec).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        fx.publish(&fx.alice, &owned_agent).await.0,
+        StatusCode::CREATED
+    );
     let (status, started) = fx
         .post(
             &fx.alice,
-            &format!("/api/v0/agents/{dot}/test/messages"),
+            &format!("/api/v0/agents/{owned_agent}/test/messages"),
             json!({"message":"Ask for time","source":"published"}),
         )
         .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{started}");
     let session = started["session_id"].as_str().unwrap();
     let turn = started["turn_id"].as_str().unwrap();
-    let settled = crate::common::test_chat_settled(&fx.state, &fx.alice, &dot, session, turn).await;
+    let settled =
+        crate::common::test_chat_settled(&fx.state, &fx.alice, &owned_agent, session, turn).await;
     assert_eq!(settled["status"], "suspended", "{settled}");
-    let endpoint = format!("/api/v0/agents/{dot}/test/{session}/cancel");
+    let endpoint = format!("/api/v0/agents/{owned_agent}/test/{session}/cancel");
     let body = json!({"turn_id":turn});
     for cookie in [&fx.bob, &fx.root] {
         assert_eq!(
@@ -2241,13 +2306,13 @@ async fn organization_private_cancel_is_current_writer_structural_even_after_dea
                 .is_some()
         );
     }
-    sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
-        .bind(&dot)
+    sqlx::query("UPDATE agent_owners SET active=0 WHERE principal_id=?")
+        .bind(&owned_agent)
         .execute(&fx.state.db)
         .await
         .unwrap();
     sqlx::query("UPDATE system_principals SET disabled_at='2026-10-11T09:00:00Z' WHERE id=?")
-        .bind(&dot)
+        .bind(&owned_agent)
         .execute(&fx.state.db)
         .await
         .unwrap();
@@ -2278,7 +2343,7 @@ async fn organization_scheduled_pause_stop_cleans_stale_generation_and_unlocks_d
         Mock, ResponseTemplate,
         matchers::{method, path},
     };
-    let (fx, upstream, org, dot) = private_published_organization().await;
+    let (fx, upstream, org, owned_agent) = private_published_organization().await;
     upstream.reset().await;
     let delta = json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"scheduled-stop-time","type":"function","function":{"name":super::agents::TIME,"arguments":"{}"}}]}}]});
     Mock::given(method("POST"))
@@ -2291,14 +2356,20 @@ async fn organization_scheduled_pause_stop_cleans_stale_generation_and_unlocks_d
         .await;
     let mut spec = super::agents::spec("Ask before reading time");
     spec["main"]["tool_resources"] = json!({(super::agents::TIME):{"permission":"always_ask"}});
-    assert_eq!(fx.put_draft(&fx.alice, &dot, spec).await.0, StatusCode::OK);
-    assert_eq!(fx.publish(&fx.alice, &dot).await.0, StatusCode::CREATED);
+    assert_eq!(
+        fx.put_draft(&fx.alice, &owned_agent, spec).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        fx.publish(&fx.alice, &owned_agent).await.0,
+        StatusCode::CREATED
+    );
     let action = scheduled::create(
         &fx.state.db,
         NewAction {
-            owner: AutomationOwner::Principal(dot.clone()),
+            owner: AutomationOwner::Principal(owned_agent.clone()),
             created_by: "alice".into(),
-            dot_id: None,
+            personal_agent_id: None,
             name: "Pending schedule".into(),
             prompt: "Ask for time".into(),
             model: None,
@@ -2340,7 +2411,7 @@ async fn organization_scheduled_pause_stop_cleans_stale_generation_and_unlocks_d
             .0,
         StatusCode::CONFLICT
     );
-    let endpoint = format!("/api/v0/agents/{dot}/test/{session}/cancel");
+    let endpoint = format!("/api/v0/agents/{owned_agent}/test/{session}/cancel");
     assert_eq!(
         fx.post(&fx.alice, &endpoint, json!({"turn_id":"missing"}))
             .await
@@ -2353,7 +2424,7 @@ async fn organization_scheduled_pause_stop_cleans_stale_generation_and_unlocks_d
     assert_eq!(
         fx.post(
             &fx.alice,
-            &format!("/api/v0/agents/{dot}/test/{}/cancel", ordinary.id),
+            &format!("/api/v0/agents/{owned_agent}/test/{}/cancel", ordinary.id),
             json!({"turn_id":turn})
         )
         .await
@@ -2417,7 +2488,7 @@ async fn organization_scheduled_pause_stop_cleans_stale_generation_and_unlocks_d
         fx.send(
             Some(&fx.alice),
             Method::DELETE,
-            &format!("/api/v0/agents/{dot}"),
+            &format!("/api/v0/agents/{owned_agent}"),
             None
         )
         .await
@@ -2426,28 +2497,32 @@ async fn organization_scheduled_pause_stop_cleans_stale_generation_and_unlocks_d
     );
 }
 
-fn organization_webhook_body(dot: &str) -> Value {
-    json!({"principal_id":dot,"agent_version":1,"name":"Incident event",
+fn organization_webhook_body(owned_agent: &str) -> Value {
+    json!({"principal_id":owned_agent,"agent_version":1,"name":"Incident event",
         "prompt":"Review the incoming incident","tools_enabled":false,
         "synchronous":false,"reuse_conversation":false,"reuse_rounds":5})
 }
 
 #[tokio::test]
 async fn organization_webhook_creation_and_inventory_use_actual_principal_publication() {
-    let (fx, _upstream, _organization, dot) = private_published_organization().await;
-    aiplane_core::server::db::gateway_groups::set_can_manage_dots(&fx.state.db, "managers", false)
-        .await
-        .unwrap();
+    let (fx, _upstream, _organization, owned_agent) = private_published_organization().await;
+    aiplane_core::server::db::gateway_groups::set_can_manage_personal_agents(
+        &fx.state.db,
+        "managers",
+        false,
+    )
+    .await
+    .unwrap();
     let (status, created) = fx
         .post(
             &fx.alice,
             "/api/v0/webhooks",
-            organization_webhook_body(&dot),
+            organization_webhook_body(&owned_agent),
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
     let hook = &created["webhook"];
-    assert_eq!(hook["principal_id"], dot);
+    assert_eq!(hook["principal_id"], owned_agent);
     assert_eq!(hook["agent_version"], 1);
     assert!(hook["model"].is_null());
     assert_eq!(hook["synchronous"], false);
@@ -2462,12 +2537,12 @@ async fn organization_webhook_creation_and_inventory_use_actual_principal_public
             .as_str()
             .is_some_and(|value| value.starts_with("gwh_"))
     );
-    let endpoint = format!("/api/v0/webhooks?principal_id={dot}");
+    let endpoint = format!("/api/v0/webhooks?principal_id={owned_agent}");
     let (status, inventory) = fx.get(&fx.alice, &endpoint).await;
     assert_eq!(status, StatusCode::OK, "{inventory}");
-    assert_eq!(inventory["principal_id"], dot);
+    assert_eq!(inventory["principal_id"], owned_agent);
     assert_eq!(inventory["can_write"], true);
-    assert_eq!(inventory["dots"][0]["id"], dot);
+    assert_eq!(inventory["agents"][0]["id"], owned_agent);
     assert_eq!(inventory["models"], json!([]));
     assert_eq!(inventory["versions"][0]["version"], 1);
     assert_eq!(inventory["webhooks"][0]["id"], hook["id"]);
@@ -2480,12 +2555,12 @@ async fn organization_webhook_creation_and_inventory_use_actual_principal_public
 
 #[tokio::test]
 async fn organization_webhook_management_preserves_generation_and_current_member_write() {
-    let (fx, _upstream, org, dot) = private_published_organization().await;
+    let (fx, _upstream, org, owned_agent) = private_published_organization().await;
     let (status, created) = fx
         .post(
             &fx.alice,
             "/api/v0/webhooks",
-            organization_webhook_body(&dot),
+            organization_webhook_body(&owned_agent),
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
@@ -2516,7 +2591,7 @@ async fn organization_webhook_management_preserves_generation_and_current_member
             StatusCode::NOT_FOUND
         );
     }
-    let mut body = organization_webhook_body(&dot);
+    let mut body = organization_webhook_body(&owned_agent);
     body["expected_configuration_generation"] = json!("stale");
     assert_eq!(
         fx.send(Some(&fx.alice), Method::PUT, &endpoint, Some(body.clone()))
@@ -2574,7 +2649,7 @@ async fn organization_webhook_management_preserves_generation_and_current_member
         fx.send(
             Some(&fx.alice),
             Method::DELETE,
-            &format!("/api/v0/agents/{dot}"),
+            &format!("/api/v0/agents/{owned_agent}"),
             None
         )
         .await
@@ -2601,12 +2676,12 @@ async fn organization_webhook_management_preserves_generation_and_current_member
 #[tokio::test]
 async fn organization_webhook_public_fire_and_paused_replay_use_private_pinned_history() {
     use aiplane_runtime::server::{background::AutomationOwner, webhooks};
-    let (fx, _upstream, _org, dot) = private_published_organization().await;
+    let (fx, _upstream, _org, owned_agent) = private_published_organization().await;
     let (status, created) = fx
         .post(
             &fx.alice,
             "/api/v0/webhooks",
-            organization_webhook_body(&dot),
+            organization_webhook_body(&owned_agent),
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
@@ -2644,11 +2719,14 @@ async fn organization_webhook_public_fire_and_paused_replay_use_private_pinned_h
     let run = &webhooks::list_runs(&fx.state.db, hook, 1).await.unwrap()[0];
     assert_eq!(run.agent_version, Some(1));
     assert_eq!(run.configuration_generation.as_deref(), Some(generation));
-    let binding =
-        aiplane_agents::db::run_sessions::get_principal_session(&fx.state.db, &dot, session)
-            .await
-            .unwrap()
-            .unwrap();
+    let binding = aiplane_agents::db::run_sessions::get_principal_session(
+        &fx.state.db,
+        &owned_agent,
+        session,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(binding.agent_version, Some(1));
     let (status, history) = fx.get(&fx.alice, &format!("{endpoint}/runs")).await;
     assert_eq!(status, StatusCode::OK, "{history}");
@@ -2657,7 +2735,7 @@ async fn organization_webhook_public_fire_and_paused_replay_use_private_pinned_h
     assert_eq!(
         fx.get(
             &fx.bob,
-            &format!("/api/v0/agents/{dot}/test/{session}/events")
+            &format!("/api/v0/agents/{owned_agent}/test/{session}/events")
         )
         .await
         .0,
@@ -2699,7 +2777,7 @@ async fn organization_webhook_public_fire_and_paused_replay_use_private_pinned_h
         2
     );
     assert!(
-        !webhooks::get(&fx.state.db, &AutomationOwner::Principal(dot), hook)
+        !webhooks::get(&fx.state.db, &AutomationOwner::Principal(owned_agent), hook)
             .await
             .unwrap()
             .unwrap()
@@ -2714,12 +2792,12 @@ async fn organization_webhook_replay_rechecks_membership_before_private_result_d
         Mock, ResponseTemplate,
         matchers::{method, path},
     };
-    let (fx, upstream, org, dot) = private_published_organization().await;
+    let (fx, upstream, org, owned_agent) = private_published_organization().await;
     let (status, created) = fx
         .post(
             &fx.alice,
             "/api/v0/webhooks",
-            organization_webhook_body(&dot),
+            organization_webhook_body(&owned_agent),
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
@@ -2791,19 +2869,19 @@ async fn organization_webhook_replay_rechecks_membership_before_private_result_d
 async fn organization_webhook_malformed_mutations_and_invalid_configuration_leave_storage_unchanged()
  {
     use aiplane_runtime::server::{background::AutomationOwner, webhooks};
-    let (fx, _upstream, _org, dot) = private_published_organization().await;
+    let (fx, _upstream, _org, owned_agent) = private_published_organization().await;
     for (field, value) in [
         ("synchronous", json!(true)),
         ("reuse_conversation", json!(true)),
         ("model", json!("m")),
         ("agent_version", json!(0)),
     ] {
-        let mut body = organization_webhook_body(&dot);
+        let mut body = organization_webhook_body(&owned_agent);
         body[field] = value;
         let (status, refused) = fx.post(&fx.alice, "/api/v0/webhooks", body).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{field}: {refused}");
     }
-    let owner = AutomationOwner::Principal(dot.clone());
+    let owner = AutomationOwner::Principal(owned_agent.clone());
     let mut tx = aiplane_core::server::db::WriteTx::begin(&fx.state.db)
         .await
         .unwrap();
@@ -2818,7 +2896,7 @@ async fn organization_webhook_malformed_mutations_and_invalid_configuration_leav
         .post(
             &fx.alice,
             "/api/v0/webhooks",
-            organization_webhook_body(&dot),
+            organization_webhook_body(&owned_agent),
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
@@ -2833,7 +2911,7 @@ async fn organization_webhook_malformed_mutations_and_invalid_configuration_leav
         (
             Method::PUT,
             endpoint.clone(),
-            organization_webhook_body(&dot),
+            organization_webhook_body(&owned_agent),
         ),
         (
             Method::POST,
@@ -2878,19 +2956,19 @@ async fn a_personal_agent_copied_to_a_team_brings_its_task_but_not_its_memory_or
     let (status, body) = fx
         .post(
             &fx.alice,
-            "/api/v0/dots",
-            json!({ "name": "Harald", "description": "Ceph helper" }),
+            "/api/v0/agents",
+            json!({ "kind": "personal", "name": "Harald", "description": "Ceph helper" }),
         )
         .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
-    let personal = body["dot"]["id"].as_str().unwrap().to_string();
+    let personal = body["agent"]["id"].as_str().unwrap().to_string();
     let (_, profile) = fx
-        .get(&fx.alice, &format!("/api/v0/dots/{personal}/profile"))
+        .get(&fx.alice, &format!("/api/v0/agents/{personal}/profile"))
         .await;
     let (status, body) = fx
         .put(
             &fx.alice,
-            &format!("/api/v0/dots/{personal}/profile"),
+            &format!("/api/v0/agents/{personal}/profile"),
             json!({ "revision": profile["revision"], "display": "Harald", "description": "Ceph helper",
                     "task": "Watch the Ceph cluster.", "topics": ["Ceph"] }),
         )
@@ -2899,8 +2977,8 @@ async fn a_personal_agent_copied_to_a_team_brings_its_task_but_not_its_memory_or
     let (status, body) = fx
         .post(
             &fx.alice,
-            &format!("/api/v0/dots/{personal}/memories"),
-            json!({ "scope": "dot", "kind": "fact", "content": "The cluster is called prod-1." }),
+            &format!("/api/v0/agents/{personal}/memories"),
+            json!({ "scope": "agent", "kind": "fact", "content": "The cluster is called prod-1." }),
         )
         .await;
     assert!(status.is_success(), "{body}");
@@ -2908,7 +2986,7 @@ async fn a_personal_agent_copied_to_a_team_brings_its_task_but_not_its_memory_or
     let (status, created) = fx
         .post(
             &fx.alice,
-            &format!("/api/v0/organizations/{}/dots", id(&org)),
+            &format!("/api/v0/organizations/{}/agents", id(&org)),
             json!({ "name": "Harald Team", "copy_from": personal }),
         )
         .await;
@@ -2923,7 +3001,7 @@ async fn a_personal_agent_copied_to_a_team_brings_its_task_but_not_its_memory_or
                 "scope": { "topics": ["Ceph"] } })
     );
     let (status, memories) = fx
-        .get(&fx.alice, &format!("/api/v0/dots/{team}/memories"))
+        .get(&fx.alice, &format!("/api/v0/agents/{team}/memories"))
         .await;
     assert_eq!(status, StatusCode::OK, "{memories}");
     assert!(
@@ -2934,7 +3012,7 @@ async fn a_personal_agent_copied_to_a_team_brings_its_task_but_not_its_memory_or
     let (status, body) = fx
         .post(
             &fx.bob,
-            &format!("/api/v0/organizations/{}/dots", id(&org)),
+            &format!("/api/v0/organizations/{}/agents", id(&org)),
             json!({ "name": "Stolen", "copy_from": personal }),
         )
         .await;

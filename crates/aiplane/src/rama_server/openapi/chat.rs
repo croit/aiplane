@@ -117,10 +117,10 @@ pub(super) fn operations() -> Vec<Op> {
             Access::Session,
         )
         .body(json::<
-            aiplane_api::pages::json_dot_browser::BrowserControlBody,
+            aiplane_api::pages::json_agent_browser::BrowserControlBody,
         >())
         .ok(json::<
-            aiplane_api::pages::json_dot_browser::BrowserControlView,
+            aiplane_api::pages::json_agent_browser::BrowserControlView,
         >())
         .errors(&[400, 403, 404, 409, 413, 503]),
         post(
@@ -128,10 +128,10 @@ pub(super) fn operations() -> Vec<Op> {
             Access::Session,
         )
         .body(json::<
-            aiplane_api::pages::json_dot_browser::BrowserControlBody,
+            aiplane_api::pages::json_agent_browser::BrowserControlBody,
         >())
         .ok(json::<
-            aiplane_api::pages::json_dot_browser::BrowserControlView,
+            aiplane_api::pages::json_agent_browser::BrowserControlView,
         >())
         .errors(&[400, 403, 404, 409, 503]),
         post(
@@ -139,10 +139,10 @@ pub(super) fn operations() -> Vec<Op> {
             Access::Session,
         )
         .body(json::<
-            aiplane_api::pages::json_dot_browser::BrowserControlBody,
+            aiplane_api::pages::json_agent_browser::BrowserControlBody,
         >())
         .ok(json::<
-            aiplane_api::pages::json_dot_browser::BrowserControlView,
+            aiplane_api::pages::json_agent_browser::BrowserControlView,
         >())
         .errors(&[400, 403, 404, 409, 503]),
         post(
@@ -150,10 +150,10 @@ pub(super) fn operations() -> Vec<Op> {
             Access::Session,
         )
         .body(json::<
-            aiplane_api::pages::json_dot_browser::BrowserControlBody,
+            aiplane_api::pages::json_agent_browser::BrowserControlBody,
         >())
         .accepted(json::<
-            aiplane_api::pages::json_dot_browser::BrowserHandoverReturned,
+            aiplane_api::pages::json_agent_browser::BrowserHandoverReturned,
         >())
         .errors(&[400, 403, 404, 409, 503]),
         post(
@@ -161,10 +161,10 @@ pub(super) fn operations() -> Vec<Op> {
             Access::Session,
         )
         .body(json::<
-            aiplane_api::pages::json_dot_browser::BrowserControlBody,
+            aiplane_api::pages::json_agent_browser::BrowserControlBody,
         >())
         .ok(json::<
-            aiplane_api::pages::json_dot_browser::BrowserHandoverAborted,
+            aiplane_api::pages::json_agent_browser::BrowserHandoverAborted,
         >())
         .errors(&[400, 403, 404, 409, 503]),
         get("/api/v0/chat/sessions/{id}/events", Access::Session)

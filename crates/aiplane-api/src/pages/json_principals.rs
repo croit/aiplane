@@ -117,10 +117,10 @@ async fn refuse_organization_execution(
     lang: Lang,
 ) -> Result<(), Response> {
     if matches!(
-        agents_db::dot_owner(&state.db, id)
+        agents_db::agent_owner(&state.db, id)
             .await
             .map_err(internal)?,
-        Some(agents_db::DotOwner::Organization(_))
+        Some(agents_db::AgentOwner::Organization(_))
     ) {
         Err(json_error(
             StatusCode::FORBIDDEN,
@@ -446,16 +446,17 @@ pub async fn disable(State(state): State<Arc<RamaState>>, req: Request) -> Respo
     }
     if changed {
         aiplane_agents::db::embed_keys::origins_changed();
-        // Disabling a principal stops its personal Dot's in-flight runs, the
-        // same as deleting or deactivating the Dot — so a suspended run never
+        // Disabling a principal stops its personal agent's in-flight runs, the
+        // same as deleting or deactivating the agent — so a suspended run never
         // orphans on a disabled principal.
-        if let Some(owner) = aiplane_agents::db::agents::personal_dot_owner(&state.db, &p.id)
+        if let Some(owner) = aiplane_agents::db::agents::personal_agent_owner(&state.db, &p.id)
             .await
             .ok()
             .flatten()
-            && let Err(error) =
-                aiplane_runtime::agents::resume::cancel_personal_runs_for_dot(&state, &owner, &p.id)
-                    .await
+            && let Err(error) = aiplane_runtime::agents::resume::cancel_personal_runs_for_agent(
+                &state, &owner, &p.id,
+            )
+            .await
         {
             tracing::warn!(
                 principal = %p.id,

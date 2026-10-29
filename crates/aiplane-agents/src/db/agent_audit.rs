@@ -91,9 +91,9 @@ pub enum AuditKind {
     AgentShareSet,
     AgentShareRemoved,
     AgentDeleted,
-    DotStateChanged,
-    PersonalDotDelegationChanged,
-    PersonalDotSessionStarted,
+    AgentStateChanged,
+    PersonalAgentDelegationChanged,
+    PersonalAgentSessionStarted,
     /// A manager asked the prompt assistant to suggest a setup or improve a
     /// text: who, the scenario or text, pool, model, token counts, and
     /// which steps were offered or dropped. Nothing it suggests is applied.
@@ -176,9 +176,9 @@ impl AuditKind {
         Self::AgentShareSet,
         Self::AgentShareRemoved,
         Self::AgentDeleted,
-        Self::DotStateChanged,
-        Self::PersonalDotDelegationChanged,
-        Self::PersonalDotSessionStarted,
+        Self::AgentStateChanged,
+        Self::PersonalAgentDelegationChanged,
+        Self::PersonalAgentSessionStarted,
         Self::AssistSuggested,
         Self::EmbedKeyCreated,
         Self::EmbedKeyRevoked,
@@ -232,9 +232,9 @@ impl AuditKind {
             Self::AgentShareSet => "agent_share_set",
             Self::AgentShareRemoved => "agent_share_removed",
             Self::AgentDeleted => "agent_deleted",
-            Self::DotStateChanged => "dot_state_changed",
-            Self::PersonalDotDelegationChanged => "personal_dot_delegation_changed",
-            Self::PersonalDotSessionStarted => "personal_dot_session_started",
+            Self::AgentStateChanged => "agent_state_changed",
+            Self::PersonalAgentDelegationChanged => "personal_agent_delegation_changed",
+            Self::PersonalAgentSessionStarted => "personal_agent_session_started",
             Self::AssistSuggested => "assist_suggested",
             Self::EmbedKeyCreated => "embed_key_created",
             Self::EmbedKeyRevoked => "embed_key_revoked",
@@ -314,7 +314,7 @@ pub struct NewEvent<'a> {
     /// The person who caused it, when one did.
     pub actor_id: Option<&'a str>,
     /// An agent attribution for a user's conversation event, such as a
-    /// personal Dot acting under the user's principal.
+    /// personal agent acting under the user's principal.
     pub agent_id: Option<&'a str>,
     pub chain: Option<&'a RunChain>,
     pub at: Correlation,

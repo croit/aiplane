@@ -558,7 +558,7 @@ pub fn build_tool_context(state: &Arc<RamaState>, facts: TurnFacts) -> ToolConte
     } = facts;
     let principal = actor.principal();
     let agent = actor.agent().cloned();
-    let personal_dot = actor.personal_dot_identity().cloned();
+    let personal_agent = actor.personal_agent_identity().cloned();
     let personal_execution = actor.personal_execution().cloned();
     // Session paths: whatever the user's groups reach. Bearer paths hand in
     // their own, already narrowed by the token's allowlist.
@@ -566,7 +566,7 @@ pub fn build_tool_context(state: &Arc<RamaState>, facts: TurnFacts) -> ToolConte
     ToolContext {
         principal,
         agent,
-        personal_dot,
+        personal_agent,
         personal_execution,
         call_id: None,
         token_id: None,
@@ -1087,7 +1087,7 @@ async fn classify_and_dispatch_tool_calls(
         let terminal_refused = matches!(policy, CallPolicy::Granted)
             && !alone
             && tool_source.phase(&acc.name) == ToolPhase::Terminal;
-        let defer_audit = d.tool_ctx.personal_dot.is_some()
+        let defer_audit = d.tool_ctx.personal_agent.is_some()
             && policy.allows()
             && !terminal_refused
             && tool_source.personal_call_audit_is_deferred();
@@ -1241,9 +1241,9 @@ async fn run_one_turn(
         d.state.mcp_layer_for_run(run).await.map_err(upstream_err)?
     } else {
         d.state
-            .mcp_layer_for_dot(
+            .mcp_layer_for_agent(
                 &d.tool_ctx.principal,
-                d.tool_ctx.personal_dot.as_ref(),
+                d.tool_ctx.personal_agent.as_ref(),
                 crate::server::tools::mcp::manager::AskContext::Chat,
             )
             .await
@@ -1263,7 +1263,7 @@ async fn run_one_turn(
         .state
         .granted_tool_ids(&d.tool_ctx.principal, &user_mcp)
         .await;
-    if d.tool_ctx.personal_dot.is_some() {
+    if d.tool_ctx.personal_agent.is_some() {
         let disabled = aiplane_core::server::db::user_tool_prefs::disabled_for_user(
             &d.state.db,
             d.tool_ctx.principal.subject_id(),
@@ -1283,7 +1283,7 @@ async fn run_one_turn(
     // grant-narrowed source, never inside it.
     let live_state = Arc::new((**d.state).clone());
     let tool_source = policy.tool_source(&granted_source, &live_state);
-    let context_grants = if d.tool_ctx.personal_dot.is_some() {
+    let context_grants = if d.tool_ctx.personal_agent.is_some() {
         tool_source.ids()
     } else {
         granted.clone()
@@ -1785,7 +1785,7 @@ async fn run_one_turn(
                     id: owner.id,
                     roles: owner.roles,
                 };
-                let access = crate::persona::personal_dot::current_pool_access(
+                let access = crate::persona::personal_agent::current_pool_access(
                     &d.state, &principal, &access,
                 )
                 .for_request(&ctx.model);

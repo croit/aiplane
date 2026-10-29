@@ -18,14 +18,14 @@ pub(super) fn resume_error(err: AgentResumeError, lang: Lang) -> Response {
             return json_error(
                 StatusCode::CONFLICT,
                 "turn_in_progress",
-                &t(lang, "dot-communication-error-busy"),
+                &t(lang, "agent-communication-error-busy"),
             );
         }
         AgentResumeError::Unavailable => {
             return json_error(
                 StatusCode::CONFLICT,
-                "dot_unavailable",
-                &t(lang, "dot-communication-error-unavailable"),
+                "agent_unavailable",
+                &t(lang, "agent-communication-error-unavailable"),
             );
         }
         AgentResumeError::Refused(ResumeRefused::NotSuspended)
@@ -56,12 +56,12 @@ mod tests {
                 (
                     AgentResumeError::Busy,
                     "turn_in_progress",
-                    "dot-communication-error-busy",
+                    "agent-communication-error-busy",
                 ),
                 (
                     AgentResumeError::Unavailable,
-                    "dot_unavailable",
-                    "dot-communication-error-unavailable",
+                    "agent_unavailable",
+                    "agent-communication-error-unavailable",
                 ),
             ] {
                 let response = resume_error(error, lang);

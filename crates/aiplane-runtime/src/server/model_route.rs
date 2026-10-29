@@ -174,12 +174,12 @@ pub(crate) async fn validate_model_authority(
     let Principal::System(initial) = principal else {
         return Ok(None);
     };
-    let organization = aiplane_agents::db::agents::dot_owner(&state.db, &initial.id)
+    let organization = aiplane_agents::db::agents::agent_owner(&state.db, &initial.id)
         .await
         .map_err(|error| error.to_string())?;
     let is_organization = matches!(
         organization,
-        Some(aiplane_agents::db::agents::DotOwner::Organization(_))
+        Some(aiplane_agents::db::agents::AgentOwner::Organization(_))
     );
     if !is_organization && authority.is_none_or(|authority| authority.run.organization().is_none())
     {
@@ -594,7 +594,7 @@ mod tests {
             .unwrap()
             .allows_model(&params.model)
         );
-        sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
+        sqlx::query("UPDATE agent_owners SET active=0 WHERE principal_id=?")
             .bind(&profile.principal.id)
             .execute(&state.db)
             .await

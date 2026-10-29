@@ -111,8 +111,8 @@ async fn open_private_turn(
     options: &RunOptions,
     initiator_user_id: Option<&str>,
 ) -> Result<(RunProfile, OpenedTurn), AgentRunError> {
-    let organization = match agents_db::dot_owner(&state.db, turn.agent_id).await? {
-        Some(agents_db::DotOwner::Organization(id)) => {
+    let organization = match agents_db::agent_owner(&state.db, turn.agent_id).await? {
+        Some(agents_db::AgentOwner::Organization(id)) => {
             if initiator_user_id.is_none() || turn.visitor_id.is_some() {
                 return Err(AgentRunError::OrganizationExecutionUnavailable(
                     turn.agent_id.to_owned(),
@@ -168,13 +168,14 @@ async fn open_private_turn(
         prompt: turn.message,
         model: &profile.model,
         existing_session: turn.session_id.map(str::to_string),
-        dot_id: None,
+        personal_agent_id: None,
     };
     let opened = if let Some(organization_id) = organization {
         let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db).await?;
-        let current_owner = agents_db::get_dot_metadata_in(&mut tx, turn.agent_id).await?;
-        if current_owner.is_none_or(|dot| {
-            !dot.active || dot.owner != agents_db::DotOwner::Organization(organization_id)
+        let current_owner = agents_db::get_agent_metadata_in(&mut tx, turn.agent_id).await?;
+        if current_owner.is_none_or(|owned_agent| {
+            !owned_agent.active
+                || owned_agent.owner != agents_db::AgentOwner::Organization(organization_id)
         }) || crate::agents::access::organization_access_in(
             state,
             &mut tx,
@@ -500,8 +501,8 @@ mod private_source_tests {
         gateway_groups::set_can_manage_agents(&state.db, "writers", true)
             .await
             .unwrap();
-        let Some(agents_db::DotOwner::Organization(organization)) =
-            agents_db::dot_owner(&state.db, &id).await.unwrap()
+        let Some(agents_db::AgentOwner::Organization(organization)) =
+            agents_db::agent_owner(&state.db, &id).await.unwrap()
         else {
             panic!("organization expected")
         };

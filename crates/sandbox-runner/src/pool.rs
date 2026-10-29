@@ -27,7 +27,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 use std::time::Instant;
 
-use shared::sandbox::{DotWorkspace, DotWorkspaceScope, RunRequest, RunResponse};
+use shared::sandbox::{AgentWorkspaceScope, OwnedAgentWorkspace, RunRequest, RunResponse};
 use thiserror::Error;
 use tokio::sync::Semaphore;
 
@@ -78,7 +78,7 @@ struct Leased {
     /// run up to `max_timeout_secs`).
     busy: bool,
     retiring: bool,
-    scope: Option<DotWorkspaceScope>,
+    scope: Option<AgentWorkspaceScope>,
     network: Network,
     workspace: Option<Arc<Workspace>>,
     handover_generation: u64,
@@ -499,7 +499,7 @@ impl Pool {
 
     pub fn workspace_operation<T>(
         &self,
-        identity: &DotWorkspace,
+        identity: &OwnedAgentWorkspace,
         mutating: bool,
         operation: impl FnOnce(&Workspace, bool) -> Result<T, crate::workspace::WorkspaceError>,
     ) -> Result<T, RunnerError> {
@@ -524,7 +524,7 @@ impl Pool {
 
     pub async fn retire_workspace(
         self: &Arc<Self>,
-        identity: &DotWorkspace,
+        identity: &OwnedAgentWorkspace,
     ) -> Result<bool, RunnerError> {
         if !self.workspace_available() {
             return Err(RunnerError::WorkspaceUnavailable);
@@ -661,7 +661,7 @@ impl Pool {
             } else {
                 if leased.values().any(|lease| {
                     lease.scope.as_ref().is_some_and(|held| {
-                        held.workspace.dot_id == scope.workspace.dot_id
+                        held.workspace.agent_id == scope.workspace.agent_id
                             && (held.workspace != scope.workspace
                                 || held.turn_id != scope.turn_id
                                 || lease.retiring
@@ -1178,10 +1178,10 @@ mod tests {
         let backend = Arc::new(crate::backend::fake::FakeBackend::new());
         let pool = Pool::new(backend.clone(), Arc::new(Config::for_test()));
         let mut request = crate::backend::fake::req();
-        request.workspace = Some(shared::sandbox::DotWorkspaceScope {
-            workspace: shared::sandbox::DotWorkspace {
+        request.workspace = Some(shared::sandbox::AgentWorkspaceScope {
+            workspace: shared::sandbox::OwnedAgentWorkspace {
                 owner_user_id: "person".into(),
-                dot_id: "00000000-0000-4000-8000-000000000001".into(),
+                agent_id: "00000000-0000-4000-8000-000000000001".into(),
             },
             turn_id: "persisted-turn".into(),
             purpose: shared::sandbox::WorkspacePurpose::Workspace,
@@ -1222,10 +1222,10 @@ mod tests {
     fn scoped_request(turn: &str, purpose: shared::sandbox::WorkspacePurpose) -> RunRequest {
         let mut request = req();
         request.keep_alive = true;
-        request.workspace = Some(shared::sandbox::DotWorkspaceScope {
-            workspace: shared::sandbox::DotWorkspace {
+        request.workspace = Some(shared::sandbox::AgentWorkspaceScope {
+            workspace: shared::sandbox::OwnedAgentWorkspace {
                 owner_user_id: "person".into(),
-                dot_id: "00000000-0000-4000-8000-000000000001".into(),
+                agent_id: "00000000-0000-4000-8000-000000000001".into(),
             },
             turn_id: turn.into(),
             purpose,
@@ -1249,8 +1249,8 @@ mod tests {
         assert!(pool.retire_workspace(&identity).await.is_err());
         assert!(
             root.0
-                .join("dots")
-                .join(&identity.dot_id)
+                .join("agents")
+                .join(&identity.agent_id)
                 .join("files/keep.txt")
                 .exists()
         );
@@ -1259,7 +1259,7 @@ mod tests {
             .fail_destroy
             .store(false, std::sync::atomic::Ordering::SeqCst);
         assert!(pool.retire_workspace(&identity).await.unwrap());
-        assert!(!root.0.join("dots").join(&identity.dot_id).exists());
+        assert!(!root.0.join("agents").join(&identity.agent_id).exists());
         assert!(pool.retire_workspace(&identity).await.unwrap());
         assert!(pool.run(&request).await.is_err());
         assert!(!backend.destroyed.lock().unwrap().is_empty());
@@ -1327,7 +1327,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn browser_handover_fences_dot_execution_and_rejects_stale_input() {
+    async fn browser_handover_fences_agent_execution_and_rejects_stale_input() {
         use shared::sandbox::{
             BrowserControlOperation as Operation, BrowserControlRequest, BrowserInput,
             WorkspacePurpose,
@@ -1445,7 +1445,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workspace_failed_teardown_retains_dot_turn_occupancy_until_confirmed() {
+    async fn workspace_failed_teardown_retains_agent_turn_occupancy_until_confirmed() {
         let root = WorkspaceFixture::new();
         let backend = Arc::new(FakeBackend::new());
         let pool = Pool::new(backend.clone(), root.config());
@@ -1615,8 +1615,8 @@ mod tests {
             .unwrap();
         let payload = root
             .0
-            .join("dots")
-            .join(&identity.dot_id)
+            .join("agents")
+            .join(&identity.agent_id)
             .join("files/keep.txt");
         backend
             .hold_create
@@ -1638,8 +1638,8 @@ mod tests {
         .await;
         let tombstone = root
             .0
-            .join(".dot-retired")
-            .join(&identity.dot_id)
+            .join(".agent-retired")
+            .join(&identity.agent_id)
             .join("owner.json")
             .is_file();
         backend
@@ -1693,8 +1693,8 @@ mod tests {
             .unwrap();
         let payload = root
             .0
-            .join("dots")
-            .join(&identity.dot_id)
+            .join("agents")
+            .join(&identity.agent_id)
             .join("files/keep.txt");
         request.code = "hold-exec".into();
         let task_pool = pool.clone();
@@ -1714,8 +1714,8 @@ mod tests {
         .await;
         let tombstone = root
             .0
-            .join(".dot-retired")
-            .join(&identity.dot_id)
+            .join(".agent-retired")
+            .join(&identity.agent_id)
             .join("owner.json")
             .is_file();
         backend.exec_release.notify_one();

@@ -503,17 +503,18 @@ async fn granting_a2a_caller_needs_a_write_share_on_the_agent() {
     let (status, organization) = a.fx.post(&a.fx.root, "/api/v0/admin/organizations", json!({"name":"Private A2A guard organization","description":"A2A authorization fixture","member_groups":["admins"]})).await;
     assert_eq!(status, StatusCode::CREATED, "{organization}");
     let organization_id = organization["organization"]["id"].as_str().unwrap();
-    let (status, org_dot) =
+    let (status, org_agent) =
         a.fx.post(
             &a.fx.root,
-            &format!("/api/v0/organizations/{organization_id}/dots"),
+            &format!("/api/v0/organizations/{organization_id}/agents"),
             json!({"name":"Private A2A guard agent"}),
         )
         .await;
-    assert_eq!(status, StatusCode::CREATED, "{org_dot}");
-    let org_dot_id = org_dot["agent"]["id"].as_str().unwrap();
+    assert_eq!(status, StatusCode::CREATED, "{org_agent}");
+    let org_agent_id = org_agent["agent"]["id"].as_str().unwrap();
     assert_eq!(
-        a.fx.grant(&a.fx.bob, &bot, "a2a_caller", org_dot_id).await,
+        a.fx.grant(&a.fx.bob, &bot, "a2a_caller", org_agent_id)
+            .await,
         StatusCode::NOT_FOUND
     );
     let (status, _) =

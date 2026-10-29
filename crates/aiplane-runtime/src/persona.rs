@@ -2,7 +2,7 @@
 // Copyright (C) 2026 croit GmbH
 
 //! A person's conversation with a persona's system prompt and tool surface.
-//! Built-in personas provide their own tools; personal Dots select from the
+//! Built-in personas provide their own tools; personal agents select from the
 //! owner's granted tools and revalidate access before each invocation.
 //!
 //! The turn is still the person's: their pools, budget, usage and history.
@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 mod live;
-pub mod personal_dot;
+pub mod personal_agent;
 
 use crate::agents::approval::Permissions;
 use crate::agents::bind::{BoundTool, ToolBinds, without_bound};
@@ -125,7 +125,7 @@ impl ToolSource for PersonaToolSource<'_> {
         let gated = match self.permissions {
             Some(permissions) => match &self.state {
                 Some(state) => {
-                    return Some(Arc::new(live::LivePersonalDotTool {
+                    return Some(Arc::new(live::LivePersonalAgentTool {
                         state: state.clone(),
                         initial_bindings: self
                             .binds
@@ -136,7 +136,7 @@ impl ToolSource for PersonaToolSource<'_> {
                         initial: tool,
                     }));
                 }
-                None => permissions.gate_dot(tool),
+                None => permissions.gate_agent(tool),
             },
             None => tool,
         };
@@ -202,7 +202,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_personal_dot_hides_and_enforces_saved_constant_tool_arguments() {
+    async fn a_personal_agent_hides_and_enforces_saved_constant_tool_arguments() {
         let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
             .await
             .unwrap();
@@ -230,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn personal_dot_selection_intersects_the_current_granted_source() {
+    fn personal_agent_selection_intersects_the_current_granted_source() {
         use crate::agents::spec::AgentSpec;
         use crate::server::tools::GrantedToolSource;
         let spec = AgentSpec::from_value(&serde_json::json!({"main": {
@@ -251,7 +251,7 @@ mod tests {
     }
 
     #[test]
-    fn personal_dot_with_empty_selection_has_no_tools() {
+    fn personal_agent_with_empty_selection_has_no_tools() {
         let persona = ChatPersona::new("Agent", Arc::new(ToolRegistry::new().with(Echo)))
             .with_tool_access(crate::agents::spec::AgentSpec::empty());
         let registry = ToolRegistry::new().with(Echo);
@@ -262,7 +262,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn personal_dot_unknown_tool_asks_and_explicit_allow_runs() {
+    async fn personal_agent_unknown_tool_asks_and_explicit_allow_runs() {
         use crate::agents::spec::AgentSpec;
         use crate::server::tools::ToolContext;
         use crate::suspend::{Suspend, extract_suspend};

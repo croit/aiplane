@@ -453,7 +453,7 @@ fn proxy_tool_ctx(
         // A `/v1` request is never an agent run, even on a `gws_` token: the
         // caller drives the loop, so there is no chain to carry.
         agent: None,
-        personal_dot: None,
+        personal_agent: None,
         personal_execution: None,
         pending_actions: None,
         pending_execution_facts: None,

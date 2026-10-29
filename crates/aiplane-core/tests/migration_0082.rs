@@ -5,7 +5,7 @@ use aiplane_core::server::db::open;
 use sqlx::{Executor, Row};
 use std::path::Path;
 
-const SCHEMA: &str = include_str!("fixtures/schema_after_dot_sessions.txt");
+const SCHEMA: &str = include_str!("fixtures/schema_after_agent_sessions.txt");
 
 #[tokio::test]
 async fn connector_catalogue_upgrade_preserves_tool_cache_and_pins_known_provenance() {
@@ -243,18 +243,18 @@ async fn connector_owner_constraints_and_independent_principal_lifetime_are_enfo
 }
 
 #[tokio::test]
-async fn dot_background_schema_matches_its_fixture() {
+async fn agent_background_schema_matches_its_fixture() {
     let pool = open(Path::new(":memory:")).await.unwrap();
     let rows = sqlx::query(
         "SELECT type, name, sql FROM sqlite_schema
-         WHERE name IN ('personal_dot_sessions', 'idx_personal_dot_sessions_owner_dot',
+         WHERE name IN ('personal_agent_sessions', 'idx_personal_agent_sessions_owner_agent',
                         'scheduled_actions', 'webhooks', 'scheduled_runs', 'webhook_runs',
                         'scheduled_runs_assistant_turn', 'webhook_runs_assistant_turn',
                         'scheduled_actions_principal', 'scheduled_actions_owner_immutable',
                         'webhooks_principal', 'webhooks_owner_immutable',
                         'mcp_connections', 'mcp_connections_user_connector',
                         'mcp_connections_principal_connector', 'pending_mcp_oauth',
-                        'idx_pending_mcp_oauth_expires', 'mcp_oauth_cancel_before_initiator_delete', 'dot_connector_bindings',
+                        'idx_pending_mcp_oauth_expires', 'mcp_oauth_cancel_before_initiator_delete', 'agent_connector_bindings',
                         'cross_boundary_delegations', 'idx_cross_boundary_delegations_caller',
                         'mcp_catalog_connectors', 'mcp_connector_tools', 'agent_architect_sessions')
          ORDER BY type, name",
@@ -275,7 +275,7 @@ async fn dot_background_schema_matches_its_fixture() {
     if std::env::var_os("UPDATE_SCHEMA_FIXTURE").is_some() {
         std::fs::write(
             Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/schema_after_dot_sessions.txt"),
+                .join("tests/fixtures/schema_after_agent_sessions.txt"),
             &actual,
         )
         .unwrap();
@@ -292,7 +292,7 @@ async fn organization_schedule_owner_is_exclusive_and_survives_creator_deletion(
          INSERT INTO organizations(id,name,description,revision,created_by,created_at,updated_at) VALUES('acme','Acme','','initial','creator','2026-01-01','2026-01-01');
          INSERT INTO system_principals(id,name,display,created_by,created_at) VALUES('organization','organization','Harald','creator','2026-01-01');
          INSERT INTO agents(principal_id,draft_spec,created_at,updated_at) VALUES('organization','{}','2026-01-01','2026-01-01');
-         INSERT INTO dots(principal_id,owner_user_id,organization_id,name,created_at,updated_at) VALUES('organization',NULL,'acme','Harald','2026-01-01','2026-01-01');
+         INSERT INTO agent_owners(principal_id,owner_user_id,organization_id,name,created_at,updated_at) VALUES('organization',NULL,'acme','Harald','2026-01-01','2026-01-01');
          INSERT INTO scheduled_actions(id,principal_id,agent_version,configuration_generation,name,prompt,cron,timezone,created_at,updated_at)
          VALUES('org-action','organization',1,'original','Org action','Watch tickets','0 * * * *','Europe/Berlin','2026-01-01','2026-01-01');
          INSERT INTO scheduled_actions(id,user_id,name,prompt,model,cron,timezone,created_at,updated_at)
@@ -305,7 +305,7 @@ async fn organization_schedule_owner_is_exclusive_and_survives_creator_deletion(
         "UPDATE scheduled_actions SET principal_id=NULL,user_id='creator',model='model',agent_version=NULL WHERE id='org-action'",
         "UPDATE scheduled_actions SET agent_version=0 WHERE id='org-action'",
         "UPDATE scheduled_actions SET model='employee-model' WHERE id='org-action'",
-        "UPDATE scheduled_actions SET dot_id='organization' WHERE id='org-action'",
+        "UPDATE scheduled_actions SET personal_agent_id='organization' WHERE id='org-action'",
         "UPDATE scheduled_actions SET configuration_generation='' WHERE id='org-action'",
         "DELETE FROM system_principals WHERE id='organization'",
     ] {
@@ -529,23 +529,23 @@ async fn dot_background_upgrade_preserves_existing_triggers_and_terminal_history
 }
 
 #[tokio::test]
-async fn dot_session_tombstone_keeps_binding_without_retaining_deleted_owner_data() {
+async fn agent_session_tombstone_keeps_binding_without_retaining_deleted_owner_data() {
     let pool = open(Path::new(":memory:")).await.unwrap();
     pool.execute(sqlx::raw_sql(
         "INSERT INTO users(id,email,created_at,updated_at) VALUES('owner','owner@example.test','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
          INSERT INTO chat_sessions(id,user_id,created_at,updated_at) VALUES('session','owner','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');"
     )).await.unwrap();
-    sqlx::query("INSERT INTO personal_dot_sessions(session_id,owner_user_id,dot_id,created_at) VALUES('session','owner','deleted-dot','2026-01-01T00:00:00Z')")
+    sqlx::query("INSERT INTO personal_agent_sessions(session_id,owner_user_id,agent_id,created_at) VALUES('session','owner','deleted-agent','2026-01-01T00:00:00Z')")
         .execute(&pool).await.unwrap();
-    let dot: String = sqlx::query_scalar("SELECT dot_id FROM personal_dot_sessions")
+    let owned_agent: String = sqlx::query_scalar("SELECT agent_id FROM personal_agent_sessions")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(dot, "deleted-dot");
+    assert_eq!(owned_agent, "deleted-agent");
     pool.execute("DELETE FROM users WHERE id='owner'")
         .await
         .unwrap();
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM personal_dot_sessions")
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM personal_agent_sessions")
         .fetch_one(&pool)
         .await
         .unwrap();
@@ -556,9 +556,9 @@ async fn dot_session_tombstone_keeps_binding_without_retaining_deleted_owner_dat
 async fn child_binding_requires_complete_unique_relationship() {
     let pool = open(Path::new(":memory:")).await.unwrap();
     pool.execute(sqlx::raw_sql("INSERT INTO users(id,email,created_at,updated_at) VALUES('owner','owner@example.test','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z'); INSERT INTO chat_sessions(id,user_id,created_at,updated_at) VALUES('child','owner','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z'),('other','owner','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');")).await.unwrap();
-    assert!(sqlx::query("INSERT INTO personal_dot_sessions(session_id,owner_user_id,dot_id,created_at,parent_turn_id) VALUES('child','owner','receiver','2026-01-01T00:00:00Z','parent')").execute(&pool).await.is_err());
-    sqlx::query("INSERT INTO personal_dot_sessions(session_id,owner_user_id,dot_id,created_at,parent_turn_id,parent_tool_call_id,caller_dot_id,edge_generation) VALUES('child','owner','receiver','2026-01-01T00:00:00Z','parent','call','caller','generation')").execute(&pool).await.unwrap();
-    assert!(sqlx::query("INSERT INTO personal_dot_sessions(session_id,owner_user_id,dot_id,created_at,parent_turn_id,parent_tool_call_id,caller_dot_id,edge_generation) VALUES('other','owner','receiver','2026-01-01T00:00:00Z','parent','call','caller','generation')").execute(&pool).await.is_err());
+    assert!(sqlx::query("INSERT INTO personal_agent_sessions(session_id,owner_user_id,agent_id,created_at,parent_turn_id) VALUES('child','owner','receiver','2026-01-01T00:00:00Z','parent')").execute(&pool).await.is_err());
+    sqlx::query("INSERT INTO personal_agent_sessions(session_id,owner_user_id,agent_id,created_at,parent_turn_id,parent_tool_call_id,caller_agent_id,edge_generation) VALUES('child','owner','receiver','2026-01-01T00:00:00Z','parent','call','caller','generation')").execute(&pool).await.unwrap();
+    assert!(sqlx::query("INSERT INTO personal_agent_sessions(session_id,owner_user_id,agent_id,created_at,parent_turn_id,parent_tool_call_id,caller_agent_id,edge_generation) VALUES('other','owner','receiver','2026-01-01T00:00:00Z','parent','call','caller','generation')").execute(&pool).await.is_err());
 }
 
 #[tokio::test]
@@ -569,7 +569,7 @@ async fn organization_webhook_owner_pin_and_identity_survive_creator_deletion() 
          INSERT INTO organizations(id,name,description,revision,created_by,created_at,updated_at) VALUES('acme','Acme','','initial','creator','2026-01-01','2026-01-01');
          INSERT INTO system_principals(id,name,display,created_by,created_at) VALUES('organization','organization','Harald','creator','2026-01-01');
          INSERT INTO agents(principal_id,draft_spec,created_at,updated_at) VALUES('organization','{}','2026-01-01','2026-01-01');
-         INSERT INTO dots(principal_id,owner_user_id,organization_id,name,created_at,updated_at) VALUES('organization',NULL,'acme','Harald','2026-01-01','2026-01-01');
+         INSERT INTO agent_owners(principal_id,owner_user_id,organization_id,name,created_at,updated_at) VALUES('organization',NULL,'acme','Harald','2026-01-01','2026-01-01');
          INSERT INTO webhooks(id,principal_id,created_by,agent_version,configuration_generation,name,prompt,secret_hash,created_at,updated_at)
          VALUES('org-hook','organization','creator',1,'original','Org event','Watch tickets','org-hash','2026-01-01','2026-01-01');
          INSERT INTO webhooks(id,user_id,name,prompt,model,secret_hash,created_at,updated_at)
@@ -582,7 +582,7 @@ async fn organization_webhook_owner_pin_and_identity_survive_creator_deletion() 
         "UPDATE webhooks SET principal_id=NULL,user_id='creator',model='model',agent_version=NULL WHERE id='org-hook'",
         "UPDATE webhooks SET agent_version=0 WHERE id='org-hook'",
         "UPDATE webhooks SET model='employee-model' WHERE id='org-hook'",
-        "UPDATE webhooks SET dot_id='organization' WHERE id='org-hook'",
+        "UPDATE webhooks SET personal_agent_id='organization' WHERE id='org-hook'",
         "UPDATE webhooks SET reuse_conversation=1 WHERE id='org-hook'",
         "UPDATE webhooks SET synchronous=1 WHERE id='org-hook'",
         "UPDATE webhooks SET configuration_generation='' WHERE id='org-hook'",

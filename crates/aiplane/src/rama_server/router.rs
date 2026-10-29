@@ -291,11 +291,11 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         // chat that plans an agent with them.
         .with_post("/api/v0/agent-architect", pages::architect::start)
         .with_get(
-            "/api/v0/agent-architect/{session_id}/dot-plan",
+            "/api/v0/agent-architect/{session_id}/agent-plan",
             pages::architect::get_plan,
         )
         .with_post(
-            "/api/v0/agent-architect/{session_id}/dot-plan",
+            "/api/v0/agent-architect/{session_id}/agent-plan",
             pages::architect::apply_plan,
         )
         // The inbox (docs/agent-hil.md): before `/agents/{id}`,
@@ -326,105 +326,109 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
             pages::json_organizations::detail,
         )
         .with_post(
-            "/api/v0/organizations/{id}/dots",
-            pages::json_organizations::create_dot,
+            "/api/v0/organizations/{id}/agents",
+            pages::json_organizations::create_owned_agent,
         )
         .with_post(
-            "/api/v0/organizations/{id}/dots/{dot}/active",
+            "/api/v0/organizations/{id}/agents/{agent}/active",
             pages::json_organizations::set_active,
         )
-        .with_get("/api/v0/dots", pages::json_dots::list)
-        .with_post("/api/v0/dots", pages::json_dots::create)
         .with_post(
             "/api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/claim",
-            pages::json_dot_browser::claim,
+            pages::json_agent_browser::claim,
         )
         .with_post(
             "/api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/frame",
-            pages::json_dot_browser::frame,
+            pages::json_agent_browser::frame,
         )
         .with_post(
             "/api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/input",
-            pages::json_dot_browser::input,
+            pages::json_agent_browser::input,
         )
         .with_post(
             "/api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/finish",
-            pages::json_dot_browser::finish,
+            pages::json_agent_browser::finish,
         )
         .with_post(
             "/api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/abort",
-            pages::json_dot_browser::abort,
+            pages::json_agent_browser::abort,
         )
         .with_get(
-            "/api/v0/dots/{id}/workspace",
-            pages::json_dot_workspace::list,
+            "/api/v0/agents/{id}/workspace",
+            pages::json_agent_workspace::list,
         )
         .with_get(
-            "/api/v0/dots/{id}/workspace/file",
-            pages::json_dot_workspace::file_get,
+            "/api/v0/agents/{id}/workspace/file",
+            pages::json_agent_workspace::file_get,
         )
         .with_put(
-            "/api/v0/dots/{id}/workspace/file",
-            pages::json_dot_workspace::file_put,
+            "/api/v0/agents/{id}/workspace/file",
+            pages::json_agent_workspace::file_put,
         )
         .with_post(
-            "/api/v0/dots/{id}/workspace/folder",
-            pages::json_dot_workspace::folder_create,
+            "/api/v0/agents/{id}/workspace/folder",
+            pages::json_agent_workspace::folder_create,
         )
         .with_delete(
-            "/api/v0/dots/{id}/workspace/entry",
-            pages::json_dot_workspace::entry_delete,
+            "/api/v0/agents/{id}/workspace/entry",
+            pages::json_agent_workspace::entry_delete,
         )
-        .with_get("/api/v0/dots/{id}/profile", pages::json_dots::profile_get)
-        .with_put("/api/v0/dots/{id}/profile", pages::json_dots::profile_put)
-        .with_get("/api/v0/dots/{id}/access", pages::json_dots::access_get)
-        .with_put("/api/v0/dots/{id}/access", pages::json_dots::access_put)
         .with_get(
-            "/api/v0/dots/{id}/connections",
-            pages::json_dots::connections_get,
+            "/api/v0/agents/{id}/profile",
+            pages::json_owned_agents::profile_get,
         )
         .with_put(
-            "/api/v0/dots/{id}/connections/{key}",
-            pages::json_dots::connections_put,
+            "/api/v0/agents/{id}/profile",
+            pages::json_owned_agents::profile_put,
+        )
+        .with_get(
+            "/api/v0/agents/{id}/access",
+            pages::json_owned_agents::access_get,
+        )
+        .with_put(
+            "/api/v0/agents/{id}/access",
+            pages::json_owned_agents::access_put,
+        )
+        .with_get(
+            "/api/v0/agents/{id}/connections",
+            pages::json_owned_agents::connections_get,
+        )
+        .with_put(
+            "/api/v0/agents/{id}/connections/{key}",
+            pages::json_owned_agents::connections_put,
         )
         .with_delete(
-            "/api/v0/dots/{id}/connections/{key}",
-            pages::json_dots::connections_delete,
+            "/api/v0/agents/{id}/connections/{key}",
+            pages::json_owned_agents::connections_delete,
         )
         .with_post(
-            "/api/v0/dots/{id}/connections/{key}/connect",
-            pages::json_dots::connections_connect,
-        )
-        .with_get(
-            "/api/v0/dots/{id}/communication",
-            pages::json_dots::communication_get,
+            "/api/v0/agents/{id}/connections/{key}/connect",
+            pages::json_owned_agents::connections_connect,
         )
         .with_put(
-            "/api/v0/dots/{id}/communication",
-            pages::json_dots::communication_put,
+            "/api/v0/agents/{id}/active",
+            pages::json_owned_agents::set_active,
         )
-        .with_put("/api/v0/dots/{id}/active", pages::json_dots::set_active)
         .with_post(
-            "/api/v0/dots/{id}/sessions",
-            pages::json_dots::create_session,
+            "/api/v0/agents/{id}/sessions",
+            pages::json_owned_agents::create_session,
         )
         .with_get(
-            "/api/v0/dots/{id}/memories",
-            pages::json_dots::memories_list,
+            "/api/v0/agents/{id}/memories",
+            pages::json_owned_agents::memories_list,
         )
         .with_post(
-            "/api/v0/dots/{id}/memories",
-            pages::json_dots::memories_create,
+            "/api/v0/agents/{id}/memories",
+            pages::json_owned_agents::memories_create,
         )
         .with_put(
-            "/api/v0/dots/{id}/memories/{memory_id}",
-            pages::json_dots::memories_update,
+            "/api/v0/agents/{id}/memories/{memory_id}",
+            pages::json_owned_agents::memories_update,
         )
         .with_delete(
-            "/api/v0/dots/{id}/memories/{memory_id}",
-            pages::json_dots::memories_delete,
+            "/api/v0/agents/{id}/memories/{memory_id}",
+            pages::json_owned_agents::memories_delete,
         )
-        .with_get("/api/v0/dots/{id}/activity", pages::json_dots::activity)
         .with_get("/api/v0/agents/{id}", pages::json_agents::detail)
         .with_delete("/api/v0/agents/{id}", pages::json_agents::delete)
         .with_put(
@@ -492,10 +496,7 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
             "/api/v0/agents/{id}/analytics",
             pages::json_agents::analytics,
         )
-        .with_get(
-            "/api/v0/agents/{id}/activity",
-            pages::json_agent_activity::list,
-        )
+        .with_get("/api/v0/agents/{id}/activity", pages::json_agents::activity)
         .with_get(
             "/api/v0/agents/{id}/activity/export",
             pages::json_agent_activity::export,
@@ -508,11 +509,11 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         .with_get("/api/v0/agents/{id}/shares", pages::json_agents::shares)
         .with_get(
             "/api/v0/agents/{id}/communication",
-            pages::json_agents::organization_communication_get,
+            pages::json_agents::communication_get,
         )
         .with_put(
             "/api/v0/agents/{id}/communication",
-            pages::json_agents::organization_communication_put,
+            pages::json_agents::communication_put,
         )
         .with_post("/api/v0/agents/{id}/shares", pages::json_agents::share)
         .with_post(

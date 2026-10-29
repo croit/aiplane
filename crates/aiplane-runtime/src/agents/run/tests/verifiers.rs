@@ -1264,7 +1264,7 @@ async fn a_slot_the_host_may_not_write_stores_nothing_and_leaves_the_jti_unspent
 }
 
 async fn organization_otp_support(world: &World, erp: &MockServer, spec: &Value) -> String {
-    use aiplane_agents::db::{dot_connections, organizations};
+    use aiplane_agents::db::{agent_connections, organizations};
     use aiplane_core::server::db::{WriteTx, gateway_groups, mcp_connections};
     gateway_groups::upsert_group(world.db(), "organization-staff", "", false, true)
         .await
@@ -1286,7 +1286,7 @@ async fn organization_otp_support(world: &World, erp: &MockServer, spec: &Value)
         panic!("actual organization expected");
     };
     let mut tx = WriteTx::begin(world.db()).await.unwrap();
-    let (_, agent) = agents_db::create_organization_dot_in(
+    let (_, agent) = agents_db::create_organization_agent_in(
         &mut tx,
         &organization.organization.id,
         &sp::NewPrincipal {
@@ -1344,20 +1344,20 @@ async fn organization_otp_support(world: &World, erp: &MockServer, spec: &Value)
     .unwrap();
     let mut tx = WriteTx::begin(world.db()).await.unwrap();
     assert!(matches!(
-        dot_connections::save_in(
+        agent_connections::save_in(
             &mut tx,
-            dot_connections::Selection {
-                owner: &agents_db::DotOwner::Organization(organization.organization.id),
-                dot_id: &agent,
+            agent_connections::Selection {
+                owner: &agents_db::AgentOwner::Organization(organization.organization.id),
+                agent_id: &agent,
                 connector_key: "erp",
-                identity_mode: dot_connections::IdentityMode::Principal,
+                identity_mode: agent_connections::IdentityMode::Principal,
                 connection_generation: &identity.generation,
                 expected_binding_generation: None,
             }
         )
         .await
         .unwrap(),
-        dot_connections::SaveOutcome::Saved(Some(_))
+        agent_connections::SaveOutcome::Saved(Some(_))
     ));
     tx.commit().await.unwrap();
     agent
@@ -1541,7 +1541,7 @@ async fn organization_otp_changed_binding_refuses_claim_without_consuming_origin
         .await
         .unwrap()
         .unwrap();
-    sqlx::query("UPDATE dot_connector_bindings SET binding_generation='changed-after-pause' WHERE dot_id=? AND connector_key='erp'")
+    sqlx::query("UPDATE agent_connector_bindings SET binding_generation='changed-after-pause' WHERE agent_id=? AND connector_key='erp'")
         .bind(&agent).execute(world.db()).await.unwrap();
     let restarted = restarted_organization_world(&world);
     assert!(
@@ -1581,7 +1581,7 @@ async fn organization_otp_changed_binding_refuses_claim_without_consuming_origin
 async fn organization_otp_resume_current_authority_failures_preserve_original_pause() {
     let changes = [
         "DELETE FROM organization_groups",
-        "UPDATE dots SET active=0 WHERE principal_id=?",
+        "UPDATE agent_owners SET active=0 WHERE principal_id=?",
         "UPDATE system_principals SET disabled_at='2026-10-11T00:00:00Z' WHERE id=?",
         "DELETE FROM principal_grants WHERE principal_id=? AND kind='connector' AND ref='erp'",
         "DELETE FROM principal_grants WHERE principal_id=? AND kind='model' AND ref='support-model'",

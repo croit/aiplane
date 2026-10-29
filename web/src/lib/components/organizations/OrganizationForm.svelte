@@ -20,8 +20,8 @@
 </script>
 <form class="fieldset min-w-0 gap-3" onsubmit={(event) => { event.preventDefault(); void save(); }}>
     <fieldset class="fieldset min-w-0 gap-3" disabled={busy}>
-        <label class="fieldset"><span class="label">{t('dots-create-name')}</span><input class="input w-full" bind:value={draft.name} maxlength="80" required /></label>
-        <label class="fieldset"><span class="label">{t('dots-create-description')}</span><textarea class="textarea w-full" bind:value={draft.description} maxlength="16384"></textarea></label>
+        <label class="fieldset"><span class="label">{t('agents-create-name')}</span><input class="input w-full" bind:value={draft.name} maxlength="80" required /></label>
+        <label class="fieldset"><span class="label">{t('owned-agents-create-description')}</span><textarea class="textarea w-full" bind:value={draft.description} maxlength="16384"></textarea></label>
         <div class="fieldset min-w-0"><span class="label">{t('organization-member-groups')}</span><GroupSelect {groups} bind:values={draft.member_groups} label={t('organization-member-groups')} /></div>
         <p class="text-sm text-base-content/70">{t('organization-membership-explanation')}</p>
         <button class="btn btn-primary w-fit" type="submit" disabled={!valid || !change}>{t(row ? 'groups-save' : 'organization-create')}</button>

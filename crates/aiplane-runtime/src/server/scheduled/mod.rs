@@ -10,7 +10,7 @@
 pub mod cron;
 pub mod worker;
 
-use aiplane_agents::db::{WriteTx, agents, dot_sessions, run_sessions};
+use aiplane_agents::db::{WriteTx, agent_sessions, agents, run_sessions};
 use jiff::Timestamp;
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
@@ -27,7 +27,7 @@ pub struct ScheduledAction {
     pub owner: AutomationOwner,
     pub created_by: Option<String>,
     pub configuration_generation: String,
-    pub dot_id: Option<String>,
+    pub personal_agent_id: Option<String>,
     pub name: String,
     pub prompt: String,
     pub model: Option<String>,
@@ -66,7 +66,7 @@ pub struct ScheduledAction {
 pub struct NewAction {
     pub owner: AutomationOwner,
     pub created_by: String,
-    pub dot_id: Option<String>,
+    pub personal_agent_id: Option<String>,
     pub name: String,
     pub prompt: String,
     pub model: Option<String>,
@@ -83,7 +83,7 @@ pub struct NewAction {
 /// The mutable fields of an existing action, as submitted by the edit
 /// form. `next_run_at` is recomputed by the caller from the new schedule.
 pub struct EditAction {
-    pub dot_id: Option<String>,
+    pub personal_agent_id: Option<String>,
     pub name: String,
     pub prompt: String,
     pub model: Option<String>,
@@ -110,7 +110,7 @@ fn map_row(row: &SqliteRow) -> Result<ScheduledAction, DbError> {
         },
         created_by: row.try_get("created_by")?,
         configuration_generation: row.try_get("configuration_generation")?,
-        dot_id: row.try_get("dot_id")?,
+        personal_agent_id: row.try_get("personal_agent_id")?,
         name: row.try_get("name")?,
         prompt: row.try_get("prompt")?,
         model: row.try_get("model")?,
@@ -131,7 +131,7 @@ fn map_row(row: &SqliteRow) -> Result<ScheduledAction, DbError> {
     })
 }
 
-const COLS: &str = "id, user_id, principal_id, created_by, configuration_generation, agent_version, dot_id, name, prompt, model, cron, timezone, tools_enabled, \
+const COLS: &str = "id, user_id, principal_id, created_by, configuration_generation, agent_version, personal_agent_id, name, prompt, model, cron, timezone, tools_enabled, \
      reuse_conversation, reuse_rounds, enabled, next_run_at, last_run_at, last_status, \
      last_session_id, last_error, created_at, updated_at";
 
@@ -141,7 +141,7 @@ fn invalid(message: &str) -> DbError {
 }
 
 struct ScheduleBinding<'a> {
-    dot_id: Option<&'a str>,
+    personal_agent_id: Option<&'a str>,
     model: Option<&'a str>,
     version: Option<i64>,
     reuse: bool,
@@ -151,11 +151,11 @@ struct ScheduleBinding<'a> {
 async fn validate_configuration_in(
     tx: &mut WriteTx,
     owner: &AutomationOwner,
-    previous_dot: Option<&str>,
+    previous_agent: Option<&str>,
     binding: ScheduleBinding<'_>,
 ) -> Result<(), DbError> {
     let ScheduleBinding {
-        dot_id,
+        personal_agent_id,
         model,
         version,
         reuse,
@@ -165,14 +165,17 @@ async fn validate_configuration_in(
         AutomationOwner::User(user) => {
             if model.is_none_or(|value| value.is_empty())
                 || version.is_some()
-                || !dot_sessions::binding_valid(tx, user, dot_id, previous_dot).await?
+                || !agent_sessions::binding_valid(tx, user, personal_agent_id, previous_agent)
+                    .await?
             {
                 return Err(invalid(
                     "The schedule model or agent binding is unavailable",
                 ));
             }
             if let Some(session) = linked
-                && (!reuse || !dot_sessions::session_matches(tx, user, session, dot_id).await?)
+                && (!reuse
+                    || !agent_sessions::session_matches(tx, user, session, personal_agent_id)
+                        .await?)
             {
                 return Err(invalid(
                     "The linked conversation does not match this automation",
@@ -181,7 +184,7 @@ async fn validate_configuration_in(
         }
         AutomationOwner::Principal(principal) => {
             if model.is_some()
-                || dot_id.is_some()
+                || personal_agent_id.is_some()
                 || reuse
                 || linked.is_some()
                 || version.is_none_or(|value| value <= 0)
@@ -191,8 +194,8 @@ async fn validate_configuration_in(
                 ));
             }
             if !matches!(
-                agents::dot_owner_in(tx, principal).await?,
-                Some(agents::DotOwner::Organization(_))
+                agents::agent_owner_in(tx, principal).await?,
+                Some(agents::AgentOwner::Organization(_))
             ) || agents::version_in(tx, principal, version.expect("positive version checked"))
                 .await?
                 .is_none()
@@ -219,7 +222,7 @@ pub async fn create_in(tx: &mut WriteTx, new: NewAction) -> Result<ScheduledActi
         &new.owner,
         None,
         ScheduleBinding {
-            dot_id: new.dot_id.as_deref(),
+            personal_agent_id: new.personal_agent_id.as_deref(),
             model: new.model.as_deref(),
             version: new.agent_version,
             reuse: new.reuse_conversation,
@@ -233,7 +236,7 @@ pub async fn create_in(tx: &mut WriteTx, new: NewAction) -> Result<ScheduledActi
         owner: new.owner,
         created_by: Some(new.created_by),
         configuration_generation: Uuid::new_v4().to_string(),
-        dot_id: new.dot_id,
+        personal_agent_id: new.personal_agent_id,
         name: new.name,
         prompt: new.prompt,
         model: new.model,
@@ -253,9 +256,9 @@ pub async fn create_in(tx: &mut WriteTx, new: NewAction) -> Result<ScheduledActi
         updated_at: now,
     };
     let (user, principal) = row.owner.columns();
-    sqlx::query("INSERT INTO scheduled_actions(id,user_id,principal_id,created_by,configuration_generation,agent_version,dot_id,name,prompt,model,cron,timezone,tools_enabled,reuse_conversation,reuse_rounds,enabled,next_run_at,last_session_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?)")
+    sqlx::query("INSERT INTO scheduled_actions(id,user_id,principal_id,created_by,configuration_generation,agent_version,personal_agent_id,name,prompt,model,cron,timezone,tools_enabled,reuse_conversation,reuse_rounds,enabled,next_run_at,last_session_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?)")
         .bind(&row.id).bind(user).bind(principal).bind(&row.created_by).bind(&row.configuration_generation).bind(row.agent_version)
-        .bind(&row.dot_id).bind(&row.name).bind(&row.prompt).bind(&row.model).bind(&row.cron).bind(&row.timezone)
+        .bind(&row.personal_agent_id).bind(&row.name).bind(&row.prompt).bind(&row.model).bind(&row.cron).bind(&row.timezone)
         .bind(row.tools_enabled).bind(row.reuse_conversation).bind(row.reuse_rounds)
         .bind(row.next_run_at.map(|v|v.to_string())).bind(&row.last_session_id).bind(now.to_string()).bind(now.to_string())
         .execute(&mut **tx).await?;
@@ -359,15 +362,19 @@ pub async fn update_in(
     };
     let linked = match &edit.linked_session_id {
         Some(linked) => linked.clone(),
-        None if previous.dot_id != edit.dot_id || !edit.reuse_conversation => None,
+        None if previous.personal_agent_id != edit.personal_agent_id
+            || !edit.reuse_conversation =>
+        {
+            None
+        }
         None => previous.last_session_id.clone(),
     };
     validate_configuration_in(
         tx,
         owner,
-        previous.dot_id.as_deref(),
+        previous.personal_agent_id.as_deref(),
         ScheduleBinding {
-            dot_id: edit.dot_id.as_deref(),
+            personal_agent_id: edit.personal_agent_id.as_deref(),
             model: edit.model.as_deref(),
             version: edit.agent_version,
             reuse: edit.reuse_conversation,
@@ -375,7 +382,7 @@ pub async fn update_in(
         },
     )
     .await?;
-    let changed = previous.dot_id != edit.dot_id
+    let changed = previous.personal_agent_id != edit.personal_agent_id
         || previous.prompt != edit.prompt
         || previous.model != edit.model
         || previous.agent_version != edit.agent_version
@@ -393,8 +400,8 @@ pub async fn update_in(
     } else {
         previous.configuration_generation.clone()
     };
-    sqlx::query("UPDATE scheduled_actions SET dot_id=?,last_session_id=?,name=?,prompt=?,model=?,agent_version=?,cron=?,timezone=?,tools_enabled=?,reuse_conversation=?,reuse_rounds=?,next_run_at=?,configuration_generation=?,updated_at=? WHERE id=?")
-        .bind(&edit.dot_id).bind(linked).bind(&edit.name).bind(&edit.prompt).bind(&edit.model).bind(edit.agent_version).bind(&edit.cron).bind(&edit.timezone)
+    sqlx::query("UPDATE scheduled_actions SET personal_agent_id=?,last_session_id=?,name=?,prompt=?,model=?,agent_version=?,cron=?,timezone=?,tools_enabled=?,reuse_conversation=?,reuse_rounds=?,next_run_at=?,configuration_generation=?,updated_at=? WHERE id=?")
+        .bind(&edit.personal_agent_id).bind(linked).bind(&edit.name).bind(&edit.prompt).bind(&edit.model).bind(edit.agent_version).bind(&edit.cron).bind(&edit.timezone)
         .bind(edit.tools_enabled).bind(edit.reuse_conversation).bind(edit.reuse_rounds).bind(if previous.enabled {(if changed {edit.next_run_at} else {previous.next_run_at}).map(|v|v.to_string())} else {None})
         .bind(generation).bind(Timestamp::now().to_string()).bind(id).execute(&mut **tx).await?;
     Ok(EditOutcome::Saved(Box::new(
@@ -682,7 +689,13 @@ pub async fn attach_run_turn_in(
     }
     let valid_session = match &action.owner {
         AutomationOwner::User(user) => {
-            dot_sessions::session_matches(tx, user, session_id, action.dot_id.as_deref()).await?
+            agent_sessions::session_matches(
+                tx,
+                user,
+                session_id,
+                action.personal_agent_id.as_deref(),
+            )
+            .await?
         }
         AutomationOwner::Principal(principal) => run_sessions::get_private_principal_session_in(
             tx,
@@ -921,7 +934,7 @@ mod tests {
 
     fn sample(user_id: &str, next: Option<Timestamp>) -> NewAction {
         NewAction {
-            dot_id: None,
+            personal_agent_id: None,
             linked_session_id: None,
             owner: AutomationOwner::User(user_id.to_string()),
             created_by: user_id.into(),
@@ -1304,7 +1317,7 @@ mod tests {
         let source = create(&pool, new).await.unwrap();
         assert_eq!(source.last_session_id.as_deref(), Some(chat.id.as_str()));
         let edit = || EditAction {
-            dot_id: None,
+            personal_agent_id: None,
             linked_session_id: Some(None),
             name: source.name.clone(),
             prompt: source.prompt.clone(),
@@ -1594,28 +1607,35 @@ mod tests {
         };
         let spec = serde_json::json!({"main":{"instructions":"Monitor incidents.","model":"qwen","tools":[]}}).to_string();
         let mut tx = WriteTx::begin(pool).await.unwrap();
-        let (agents::DotCreate::Created, Some(dot)) = agents::create_organization_dot_in(
-            &mut tx,
-            &org.organization.id,
-            &NewPrincipal {
-                name: "schedule-dot",
-                display: "Harald",
-                description: "Monitors incidents",
-            },
-            &spec,
-            "schedule-creator",
-            4,
-        )
-        .await
-        .unwrap() else {
-            panic!("Agent fixture")
-        };
-        let version = agents::publish_in(&mut tx, &dot.principal.id, &spec, "schedule-creator")
+        let (agents::AgentCreate::Created, Some(owned_agent)) =
+            agents::create_organization_agent_in(
+                &mut tx,
+                &org.organization.id,
+                &NewPrincipal {
+                    name: "schedule-agent",
+                    display: "Harald",
+                    description: "Monitors incidents",
+                },
+                &spec,
+                "schedule-creator",
+                4,
+            )
             .await
             .unwrap()
-            .unwrap();
+        else {
+            panic!("Agent fixture")
+        };
+        let version = agents::publish_in(
+            &mut tx,
+            &owned_agent.principal.id,
+            &spec,
+            "schedule-creator",
+        )
+        .await
+        .unwrap()
+        .unwrap();
         tx.commit().await.unwrap();
-        (dot.principal.id, version)
+        (owned_agent.principal.id, version)
     }
 
     #[tokio::test]
@@ -1627,7 +1647,7 @@ mod tests {
             NewAction {
                 owner: AutomationOwner::Principal(principal.clone()),
                 created_by: "schedule-creator".into(),
-                dot_id: None,
+                personal_agent_id: None,
                 name: "Incident review".into(),
                 prompt: "Review incidents".into(),
                 model: None,
@@ -1681,7 +1701,7 @@ mod tests {
 
     fn edit_action(action: &ScheduledAction) -> EditAction {
         EditAction {
-            dot_id: action.dot_id.clone(),
+            personal_agent_id: action.personal_agent_id.clone(),
             name: action.name.clone(),
             prompt: action.prompt.clone(),
             model: action.model.clone(),

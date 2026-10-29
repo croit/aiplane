@@ -379,7 +379,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn organization_dot_owner_cap_and_creator_share_commit_together() {
+    async fn organization_agent_owner_cap_and_creator_share_commit_together() {
         let p = pool().await;
         let organization = created(
             create(
@@ -395,7 +395,7 @@ mod tests {
             .unwrap(),
         );
         let mut tx = WriteTx::begin(&p).await.unwrap();
-        let (outcome, row) = agents::create_organization_dot_in(
+        let (outcome, row) = agents::create_organization_agent_in(
             &mut tx,
             &organization.organization.id,
             &NewPrincipal {
@@ -409,28 +409,28 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(outcome, agents::DotCreate::Created);
+        assert_eq!(outcome, agents::AgentCreate::Created);
         let row = row.unwrap();
-        let metadata = agents::get_dot_metadata_in(&mut tx, &row.principal.id)
+        let metadata = agents::get_agent_metadata_in(&mut tx, &row.principal.id)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(
             metadata.owner,
-            agents::DotOwner::Organization(organization.organization.id.clone())
+            agents::AgentOwner::Organization(organization.organization.id.clone())
         );
         assert_eq!(metadata.name, "Harald");
         assert_eq!(
-            agents::dot_owner_in(&mut tx, &row.principal.id)
+            agents::agent_owner_in(&mut tx, &row.principal.id)
                 .await
                 .unwrap(),
             Some(metadata.owner.clone())
         );
         assert!(
-            !agents::set_dot_active_in(
+            !agents::set_agent_active_in(
                 &mut tx,
                 &row.principal.id,
-                &agents::DotOwner::User("admin".into()),
+                &agents::AgentOwner::User("admin".into()),
                 false,
                 1,
                 "admin"
@@ -447,35 +447,35 @@ mod tests {
         );
         tx.commit().await.unwrap();
         assert_eq!(
-            agents::dot_owner(&p, &row.principal.id).await.unwrap(),
+            agents::agent_owner(&p, &row.principal.id).await.unwrap(),
             Some(metadata.owner.clone())
         );
         assert_eq!(
-            agents::get_dot_metadata(&p, &row.principal.id)
+            agents::get_agent_metadata(&p, &row.principal.id)
                 .await
                 .unwrap(),
             Some(metadata.clone())
         );
         let batch =
-            agents::dot_metadata_for_agents(&p, &[row.principal.id.clone(), "missing".into()])
+            agents::agent_metadata_for_agents(&p, &[row.principal.id.clone(), "missing".into()])
                 .await
                 .unwrap();
         assert_eq!(batch.len(), 1);
         assert_eq!(batch.get(&row.principal.id), Some(&metadata));
         assert!(
-            agents::personal_dot_owner(&p, &row.principal.id)
+            agents::personal_agent_owner(&p, &row.principal.id)
                 .await
                 .unwrap()
                 .is_none()
         );
         assert!(
-            agents::get_personal_dot(&p, "admin", &row.principal.id)
+            agents::get_personal_agent(&p, "admin", &row.principal.id)
                 .await
                 .unwrap()
                 .is_none()
         );
         let mut tx = WriteTx::begin(&p).await.unwrap();
-        let (limit, second) = agents::create_organization_dot_in(
+        let (limit, second) = agents::create_organization_agent_in(
             &mut tx,
             &organization.organization.id,
             &NewPrincipal {
@@ -489,10 +489,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(limit, agents::DotCreate::ActiveLimit);
+        assert_eq!(limit, agents::AgentCreate::ActiveLimit);
         assert!(second.is_none());
         assert!(
-            agents::set_dot_active_in(
+            agents::set_agent_active_in(
                 &mut tx,
                 &row.principal.id,
                 &metadata.owner,
@@ -676,7 +676,7 @@ mod tests {
             .await
             .unwrap(),
         );
-        let (_, dot) = agents::create_organization_dot_in(
+        let (_, owned_agent) = agents::create_organization_agent_in(
             &mut tx,
             &organization.organization.id,
             &NewPrincipal {
@@ -690,8 +690,8 @@ mod tests {
         )
         .await
         .unwrap();
-        let dot = dot.unwrap();
-        let ids = vec![dot.principal.id.clone()];
+        let owned_agent = owned_agent.unwrap();
+        let ids = vec![owned_agent.principal.id.clone()];
         assert_eq!(
             list_admin_in(&mut tx).await.unwrap(),
             vec![organization.clone()]
@@ -708,13 +708,13 @@ mod tests {
         );
         assert_eq!(
             agents::list_all_in(&mut tx).await.unwrap(),
-            vec![dot.clone()]
+            vec![owned_agent.clone()]
         );
         assert_eq!(
             agents::list_shared_with_in(&mut tx, "admin", &groups)
                 .await
                 .unwrap(),
-            vec![(dot.clone(), agents::Access::Write)]
+            vec![(owned_agent.clone(), agents::Access::Write)]
         );
         assert!(
             agents::list_shared_with_in(&mut tx, "other", &[])
@@ -722,17 +722,17 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        let metadata = agents::dot_metadata_for_agents_in(&mut tx, &ids)
+        let metadata = agents::agent_metadata_for_agents_in(&mut tx, &ids)
             .await
             .unwrap();
         assert_eq!(metadata.len(), 1);
-        assert_eq!(metadata[&dot.principal.id].name, "Inventory agent");
+        assert_eq!(metadata[&owned_agent.principal.id].name, "Inventory agent");
         assert_eq!(
-            metadata[&dot.principal.id].owner,
-            agents::DotOwner::Organization(organization.organization.id.clone())
+            metadata[&owned_agent.principal.id].owner,
+            agents::AgentOwner::Organization(organization.organization.id.clone())
         );
         assert!(
-            agents::dot_metadata_for_agents_in(&mut tx, &[])
+            agents::agent_metadata_for_agents_in(&mut tx, &[])
                 .await
                 .unwrap()
                 .is_empty()
@@ -748,7 +748,7 @@ mod tests {
                 .is_empty()
         );
         assert!(
-            agents::dot_metadata_for_agents(&p, &ids)
+            agents::agent_metadata_for_agents(&p, &ids)
                 .await
                 .unwrap()
                 .is_empty()

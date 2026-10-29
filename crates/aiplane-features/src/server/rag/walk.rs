@@ -238,7 +238,7 @@ mod tests {
     }
 
     #[test]
-    fn dot_git_is_always_excluded() {
+    fn agent_git_is_always_excluded() {
         let f = Filter::new(&[], &[], 1024);
         assert!(!f.accepts(".git/HEAD"));
         assert!(!f.accepts(".git"));
@@ -272,7 +272,7 @@ mod tests {
     }
 
     #[test]
-    fn walker_skips_dot_git_and_symlinks() {
+    fn walker_skips_agent_git_and_symlinks() {
         let dir = tempdir().unwrap();
         let root = dir.path();
         fs::create_dir(root.join(".git")).unwrap();

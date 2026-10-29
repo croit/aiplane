@@ -27,7 +27,7 @@ So "refresh all screenshots" means two steps:
    are out of step, start the example directly as above, on a built SPA.)
 2. The scenario images that need a real flow (OAuth, delegation, a team
    member) come from their e2e tests with `DOCS_*_CAPTURE=<png path>` and
-   `AIPLANE_DOT_MEMBER_SESSION_COOKIE` set to dev-ui's `eng_id` — see
+   `AIPLANE_AGENT_MEMBER_SESSION_COOKIE` set to dev-ui's `eng_id` — see
    `e2e/README.md`. They update their own entries.
 
 Then `mise run docs-check` must pass, and look at each changed image. Use the

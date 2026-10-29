@@ -162,8 +162,8 @@ pub async fn grant_scope_in(
 }
 
 struct ConnectorTarget {
-    dot_id: String,
-    owner: agents_db::DotOwner,
+    agent_id: String,
+    owner: agents_db::AgentOwner,
     can_write: bool,
 }
 
@@ -173,19 +173,19 @@ async fn connector_target_in(
     user_id: &str,
     target: Option<&str>,
 ) -> Result<Option<ConnectorTarget>, DbError> {
-    let Some(dot_id) = target else {
+    let Some(agent_id) = target else {
         return Ok(None);
     };
-    let Some(owner @ agents_db::DotOwner::Organization(_)) =
-        agents_db::dot_owner_in(tx, dot_id).await?
+    let Some(owner @ agents_db::AgentOwner::Organization(_)) =
+        agents_db::agent_owner_in(tx, agent_id).await?
     else {
         return Ok(None);
     };
-    let can_write = crate::agents::access::organization_access_in(state, tx, dot_id, user_id)
+    let can_write = crate::agents::access::organization_access_in(state, tx, agent_id, user_id)
         .await?
         == Some(Access::Write);
     Ok(Some(ConnectorTarget {
-        dot_id: dot_id.into(),
+        agent_id: agent_id.into(),
         owner,
         can_write,
     }))
@@ -218,7 +218,7 @@ async fn connector_held(
             crate::server::tools::mcp::identities::selected_principal_identity_in(
                 tx,
                 &target.owner,
-                &target.dot_id,
+                &target.agent_id,
                 &connector.key,
             )
             .await?
@@ -811,15 +811,22 @@ mod tests {
 
     #[tokio::test]
     async fn transactional_a2a_grant_requires_current_organization_membership_and_share() {
-        let (state, _, dot) = crate::agents::access::tests::fixture().await;
+        let (state, _, owned_agent) = crate::agents::access::tests::fixture().await;
         let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
             .await
             .unwrap();
         assert!(
-            grant_scope_in(&state, &mut tx, "creator", GrantKind::A2aCaller, &dot, None)
-                .await
-                .unwrap()
-                .is_some()
+            grant_scope_in(
+                &state,
+                &mut tx,
+                "creator",
+                GrantKind::A2aCaller,
+                &owned_agent,
+                None
+            )
+            .await
+            .unwrap()
+            .is_some()
         );
         assert!(
             grant_scope_in(
@@ -827,7 +834,7 @@ mod tests {
                 &mut tx,
                 "outsider",
                 GrantKind::A2aCaller,
-                &dot,
+                &owned_agent,
                 None
             )
             .await
@@ -839,16 +846,30 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            grant_scope_in(&state, &mut tx, "creator", GrantKind::A2aCaller, &dot, None)
-                .await
-                .unwrap()
-                .is_none()
+            grant_scope_in(
+                &state,
+                &mut tx,
+                "creator",
+                GrantKind::A2aCaller,
+                &owned_agent,
+                None
+            )
+            .await
+            .unwrap()
+            .is_none()
         );
         assert!(
-            grant_scope_in(&state, &mut tx, "admin", GrantKind::A2aCaller, &dot, None)
-                .await
-                .unwrap()
-                .is_some()
+            grant_scope_in(
+                &state,
+                &mut tx,
+                "admin",
+                GrantKind::A2aCaller,
+                &owned_agent,
+                None
+            )
+            .await
+            .unwrap()
+            .is_some()
         );
     }
 
@@ -907,9 +928,9 @@ mod tests {
         assert!(caps.touch_due("t2"));
     }
     async fn organization_connector_fixture() -> (RamaState, String, String) {
-        use aiplane_agents::db::{agents::DotOwner, dot_connections};
+        use aiplane_agents::db::{agent_connections, agents::AgentOwner};
         use aiplane_core::server::db::{gateway_groups, mcp_connections};
-        let (state, organization, dot) = crate::agents::access::tests::fixture().await;
+        let (state, organization, owned_agent) = crate::agents::access::tests::fixture().await;
         gateway_groups::set_tools_for_group(&state.db, "members", &["mcp__own-workspace".into()])
             .await
             .unwrap();
@@ -922,7 +943,7 @@ mod tests {
         let identity = mcp_connections::upsert_connection(
             &state.db,
             mcp_connections::NewConnection {
-                owner: mcp_connections::ConnectionOwner::Principal(dot.clone()),
+                owner: mcp_connections::ConnectionOwner::Principal(owned_agent.clone()),
                 connector_key: catalog.key,
                 catalog_generation: catalog.dispatch_generation,
                 access_token_ct: vec![1],
@@ -940,33 +961,33 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
-        let owner = DotOwner::Organization(organization.clone());
+        let owner = AgentOwner::Organization(organization.clone());
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
         assert!(matches!(
-            dot_connections::save_in(
+            agent_connections::save_in(
                 &mut tx,
-                dot_connections::Selection {
+                agent_connections::Selection {
                     owner: &owner,
-                    dot_id: &dot,
+                    agent_id: &owned_agent,
                     connector_key: "own-workspace",
-                    identity_mode: dot_connections::IdentityMode::Principal,
+                    identity_mode: agent_connections::IdentityMode::Principal,
                     connection_generation: &identity.generation,
                     expected_binding_generation: None,
                 }
             )
             .await
             .unwrap(),
-            dot_connections::SaveOutcome::Saved(Some(_))
+            agent_connections::SaveOutcome::Saved(Some(_))
         ));
         tx.commit().await.unwrap();
-        (state, organization, dot)
+        (state, organization, owned_agent)
     }
 
     #[tokio::test]
     async fn organization_connector_holding_uses_selected_own_identity_before_connector_grant() {
         use aiplane_core::server::db::gateway_groups;
-        let (state, organization, dot) = organization_connector_fixture().await;
-        let grants = aiplane_agents::db::system_principals::grants(&state.db, &dot)
+        let (state, organization, owned_agent) = organization_connector_fixture().await;
+        let grants = aiplane_agents::db::system_principals::grants(&state.db, &owned_agent)
             .await
             .unwrap();
         assert!(
@@ -981,7 +1002,7 @@ mod tests {
                     .await
                     .unwrap()
                     .unwrap();
-            assert!(!policy.can_manage_dots(&policy.role_ids_for(&user.roles)));
+            assert!(!policy.can_manage_personal_agents(&policy.role_ids_for(&user.roles)));
             assert!(
                 grant_scope_in(
                     &state,
@@ -989,14 +1010,14 @@ mod tests {
                     "creator",
                     GrantKind::Connector,
                     "own-workspace",
-                    Some(&dot)
+                    Some(&owned_agent)
                 )
                 .await
                 .unwrap()
                 .is_some()
             );
             assert_eq!(
-                grantable_connectors_in(&state, &mut tx, "creator", Some(&dot))
+                grantable_connectors_in(&state, &mut tx, "creator", Some(&owned_agent))
                     .await
                     .unwrap(),
                 BTreeSet::from(["own-workspace".into()])
@@ -1027,15 +1048,15 @@ mod tests {
                         user,
                         GrantKind::Connector,
                         "own-workspace",
-                        Some(&dot)
+                        Some(&owned_agent)
                     )
                     .await
                     .unwrap()
                     .is_none()
                 );
             }
-            sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
-                .bind(&dot)
+            sqlx::query("UPDATE agent_owners SET active=0 WHERE principal_id=?")
+                .bind(&owned_agent)
                 .execute(&mut *tx)
                 .await
                 .unwrap();
@@ -1046,7 +1067,7 @@ mod tests {
                     "creator",
                     GrantKind::Connector,
                     "own-workspace",
-                    Some(&dot)
+                    Some(&owned_agent)
                 )
                 .await
                 .unwrap()
@@ -1058,7 +1079,7 @@ mod tests {
                 .await
                 .unwrap();
             assert!(
-                grantable_connectors_in(&state, &mut tx, "creator", Some(&dot))
+                grantable_connectors_in(&state, &mut tx, "creator", Some(&owned_agent))
                     .await
                     .unwrap()
                     .is_empty()
@@ -1072,7 +1093,7 @@ mod tests {
             .unwrap();
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
         assert!(
-            grantable_connectors_in(&state, &mut tx, "creator", Some(&dot))
+            grantable_connectors_in(&state, &mut tx, "creator", Some(&owned_agent))
                 .await
                 .unwrap()
                 .is_empty()
@@ -1082,29 +1103,29 @@ mod tests {
     #[tokio::test]
     async fn organization_connector_holding_rechecks_saved_binding_credentials_and_catalogue_epochs()
      {
-        let (state, _, dot) = organization_connector_fixture().await;
+        let (state, _, owned_agent) = organization_connector_fixture().await;
         for mutation in [
-            "DELETE FROM dot_connector_bindings WHERE dot_id=?",
-            "UPDATE dot_connector_bindings SET identity_mode='user' WHERE dot_id=?",
-            "UPDATE dot_connector_bindings SET connection_generation='obsolete' WHERE dot_id=?",
+            "DELETE FROM agent_connector_bindings WHERE agent_id=?",
+            "UPDATE agent_connector_bindings SET identity_mode='user' WHERE agent_id=?",
+            "UPDATE agent_connector_bindings SET connection_generation='obsolete' WHERE agent_id=?",
             "UPDATE mcp_connections SET status='reauth' WHERE principal_id=?",
             "UPDATE mcp_connections SET catalog_generation=NULL WHERE principal_id=?",
             "UPDATE mcp_connections SET generation='obsolete' WHERE principal_id=?",
         ] {
             let mut tx = WriteTx::begin(&state.db).await.unwrap();
             assert!(
-                grantable_connectors_in(&state, &mut tx, "creator", Some(&dot))
+                grantable_connectors_in(&state, &mut tx, "creator", Some(&owned_agent))
                     .await
                     .unwrap()
                     .contains("own-workspace")
             );
             sqlx::query(mutation)
-                .bind(&dot)
+                .bind(&owned_agent)
                 .execute(&mut *tx)
                 .await
                 .unwrap();
             assert!(
-                grantable_connectors_in(&state, &mut tx, "creator", Some(&dot))
+                grantable_connectors_in(&state, &mut tx, "creator", Some(&owned_agent))
                     .await
                     .unwrap()
                     .is_empty(),
@@ -1117,7 +1138,7 @@ mod tests {
                     "creator",
                     GrantKind::Connector,
                     "own-workspace",
-                    Some(&dot)
+                    Some(&owned_agent)
                 )
                 .await
                 .unwrap()
@@ -1129,7 +1150,7 @@ mod tests {
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
         sqlx::query("UPDATE mcp_catalog_connectors SET dispatch_generation='changed' WHERE key='own-workspace'").execute(&mut *tx).await.unwrap();
         assert!(
-            grantable_connectors_in(&state, &mut tx, "creator", Some(&dot))
+            grantable_connectors_in(&state, &mut tx, "creator", Some(&owned_agent))
                 .await
                 .unwrap()
                 .is_empty()

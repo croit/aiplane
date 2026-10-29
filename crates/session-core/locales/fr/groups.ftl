@@ -53,5 +53,5 @@ groups-identity-unseen-hint = Configurée sur un groupe mais jamais présentée 
 groups-identity-empty = Aucune valeur de claim pour l’instant. Elles sont enregistrées à la connexion.
 groups-identity-create = Créer un groupe pour cette valeur
 groups-matrix-section-families = Familles entières
-groups-field-manage-dots = Gestionnaire d’agents personnels
-groups-field-manage-dots-help = Les membres peuvent créer, afficher, activer et désactiver leurs agents personnels. Les administrateurs disposent déjà de ce droit. Il ne donne accès ni à la gestion des agents ni aux outils.
+groups-field-manage-personal-agents = Gestionnaire d’agents personnels
+groups-field-manage-personal-agents-help = Les membres peuvent créer, afficher, activer et désactiver leurs agents personnels. Les administrateurs disposent déjà de ce droit. Il ne donne accès ni à la gestion des agents ni aux outils.

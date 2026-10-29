@@ -95,7 +95,7 @@ pub(super) async fn audit(
     tool: &str,
     policy: CallPolicy,
 ) -> bool {
-    if !ctx.agent_active() && ctx.personal_dot.is_none() {
+    if !ctx.agent_active() && ctx.personal_agent.is_none() {
         return true;
     }
     let detail = serde_json::json!({
@@ -104,7 +104,7 @@ pub(super) async fn audit(
         "decision": if policy.allows() { "allowed" } else { "denied" },
         "policy": policy.as_str(),
     });
-    if ctx.personal_dot.is_some() {
+    if ctx.personal_agent.is_some() {
         crate::agents::audit::record_personal_tool_call(
             ctx,
             Some(call_id),

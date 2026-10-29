@@ -6,7 +6,7 @@ use sqlx::{Executor, Row};
 use std::path::Path;
 
 #[tokio::test]
-async fn organization_dot_ownership_is_exclusive_immutable_and_independent_of_creator() {
+async fn organization_agent_ownership_is_exclusive_immutable_and_independent_of_creator() {
     let pool = open(Path::new(":memory:")).await.unwrap();
     pool.execute("INSERT INTO users(id,email,roles_json,created_at,updated_at) VALUES('creator','creator@example.test','[]','2026-01-01','2026-01-01')").await.unwrap();
     for id in ["acme", "other"] {
@@ -19,26 +19,30 @@ async fn organization_dot_ownership_is_exclusive_immutable_and_independent_of_cr
         sqlx::query("INSERT INTO agents(principal_id,draft_spec,created_at,updated_at) VALUES(?,'{}','2026-01-01','2026-01-01')")
             .bind(id).execute(&pool).await.unwrap();
     }
-    pool.execute("INSERT INTO dots(principal_id,owner_user_id,organization_id,name,created_at,updated_at) VALUES('personal','creator',NULL,'Harald','2026-01-01','2026-01-01'),('organization',NULL,'acme','Harald','2026-01-01','2026-01-01')").await.unwrap();
+    pool.execute("INSERT INTO agent_owners(principal_id,owner_user_id,organization_id,name,created_at,updated_at) VALUES('personal','creator',NULL,'Harald','2026-01-01','2026-01-01'),('organization',NULL,'acme','Harald','2026-01-01','2026-01-01')").await.unwrap();
     for (user, organization) in [(None, None), (Some("creator"), Some("acme"))] {
-        assert!(sqlx::query("INSERT INTO dots(principal_id,owner_user_id,organization_id,name,created_at,updated_at) VALUES('invalid',?,?,'Invalid','2026-01-01','2026-01-01')")
+        assert!(sqlx::query("INSERT INTO agent_owners(principal_id,owner_user_id,organization_id,name,created_at,updated_at) VALUES('invalid',?,?,'Invalid','2026-01-01','2026-01-01')")
             .bind(user).bind(organization).execute(&pool).await.is_err());
     }
     assert!(
-        pool.execute("UPDATE dots SET principal_id='invalid' WHERE principal_id='organization'")
-            .await
-            .is_err()
+        pool.execute(
+            "UPDATE agent_owners SET principal_id='invalid' WHERE principal_id='organization'"
+        )
+        .await
+        .is_err()
     );
     assert!(
-        pool.execute("UPDATE dots SET organization_id='other' WHERE principal_id='organization'")
-            .await
-            .is_err()
+        pool.execute(
+            "UPDATE agent_owners SET organization_id='other' WHERE principal_id='organization'"
+        )
+        .await
+        .is_err()
     );
-    assert!(pool.execute("UPDATE dots SET owner_user_id=NULL,organization_id='acme' WHERE principal_id='personal'").await.is_err());
+    assert!(pool.execute("UPDATE agent_owners SET owner_user_id=NULL,organization_id='acme' WHERE principal_id='personal'").await.is_err());
     pool.execute("DELETE FROM users WHERE id='creator'")
         .await
         .unwrap();
-    for table in ["dots", "agents", "system_principals"] {
+    for table in ["agents", "agents", "system_principals"] {
         let key = if table == "system_principals" {
             "id"
         } else {
@@ -72,37 +76,39 @@ async fn organization_dot_ownership_is_exclusive_immutable_and_independent_of_cr
 }
 
 #[tokio::test]
-async fn dot_memory_scopes_are_exclusive_and_reject_missing_owners() {
+async fn agent_memory_scopes_are_exclusive_and_reject_missing_owners() {
     let pool = open(Path::new(":memory:")).await.unwrap();
     pool.execute("INSERT INTO organizations(id,name,description,revision,created_by,created_at,updated_at) VALUES('acme','Acme','','initial','creator','2026-01-01','2026-01-01')").await.unwrap();
-    pool.execute("INSERT INTO system_principals(id,name,display,created_by,created_at) VALUES('dot','dot','agent','creator','2026-01-01')").await.unwrap();
-    pool.execute("INSERT INTO agents(principal_id,draft_spec,created_at,updated_at) VALUES('dot','{}','2026-01-01','2026-01-01')").await.unwrap();
-    pool.execute("INSERT INTO dots(principal_id,owner_user_id,organization_id,name,created_at,updated_at) VALUES('dot',NULL,'acme','agent','2026-01-01','2026-01-01')").await.unwrap();
+    pool.execute("INSERT INTO system_principals(id,name,display,created_by,created_at) VALUES('agent','agent','agent','creator','2026-01-01')").await.unwrap();
+    pool.execute("INSERT INTO agents(principal_id,draft_spec,created_at,updated_at) VALUES('agent','{}','2026-01-01','2026-01-01')").await.unwrap();
+    pool.execute("INSERT INTO agent_owners(principal_id,owner_user_id,organization_id,name,created_at,updated_at) VALUES('agent',NULL,'acme','agent','2026-01-01','2026-01-01')").await.unwrap();
 
-    for (dot, organization) in [
+    for (owned_agent, organization) in [
         (None, None),
-        (Some("dot"), Some("acme")),
+        (Some("agent"), Some("acme")),
         (Some("missing"), None),
         (None, Some("missing")),
     ] {
-        assert!(sqlx::query("INSERT INTO dot_memories(id,dot_id,organization_id,kind,content,created_at,updated_at) VALUES('invalid',?,?,'fact','Note','2026-01-01','2026-01-01')")
-            .bind(dot).bind(organization).execute(&pool).await.is_err());
+        assert!(sqlx::query("INSERT INTO agent_memories(id,agent_id,organization_id,kind,content,created_at,updated_at) VALUES('invalid',?,?,'fact','Note','2026-01-01','2026-01-01')")
+            .bind(owned_agent).bind(organization).execute(&pool).await.is_err());
     }
-    for (id, dot, organization) in [("own", Some("dot"), None), ("shared", None, Some("acme"))] {
-        sqlx::query("INSERT INTO dot_memories(id,dot_id,organization_id,kind,content,created_at,updated_at) VALUES(?,?,?,'fact','Same content','2026-01-01','2026-01-01')")
-            .bind(id).bind(dot).bind(organization).execute(&pool).await.unwrap();
+    for (id, owned_agent, organization) in
+        [("own", Some("agent"), None), ("shared", None, Some("acme"))]
+    {
+        sqlx::query("INSERT INTO agent_memories(id,agent_id,organization_id,kind,content,created_at,updated_at) VALUES(?,?,?,'fact','Same content','2026-01-01','2026-01-01')")
+            .bind(id).bind(owned_agent).bind(organization).execute(&pool).await.unwrap();
     }
     assert!(
-        pool.execute("UPDATE dot_memories SET organization_id='acme' WHERE id='own'")
+        pool.execute("UPDATE agent_memories SET organization_id='acme' WHERE id='own'")
             .await
             .is_err()
     );
     assert!(
-        pool.execute("UPDATE dot_memories SET organization_id=NULL WHERE id='shared'")
+        pool.execute("UPDATE agent_memories SET organization_id=NULL WHERE id='shared'")
             .await
             .is_err()
     );
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dot_memories")
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_memories")
         .fetch_one(&pool)
         .await
         .unwrap();
@@ -117,22 +123,22 @@ async fn dot_memory_scopes_are_exclusive_and_reject_missing_owners() {
 }
 
 #[tokio::test]
-async fn organization_dot_schema_matches_its_fixture() {
+async fn organization_agent_schema_matches_its_fixture() {
     let pool = open(Path::new(":memory:")).await.unwrap();
     let rows = sqlx::query(
         "SELECT type, name, sql FROM sqlite_schema
-         WHERE name IN ('organizations', 'organization_groups', 'dots',
-             'idx_organization_groups_group', 'idx_dots_user_name',
-             'idx_dots_organization_name', 'idx_dots_user_active',
-             'idx_dots_organization_active', 'dots_reject_owner_update',
+         WHERE name IN ('organizations', 'organization_groups', 'agent_owners',
+             'idx_organization_groups_group', 'idx_agent_owners_user_name',
+             'idx_agent_owners_organization_name', 'idx_agent_owners_user_active',
+             'idx_agent_owners_organization_active', 'agent_owners_reject_owner_update',
              'organization_groups_rotate_revision_after_insert',
              'organization_groups_rotate_revision_after_delete',
              'organization_groups_reject_update',
-             'personal_dots_delete_principals_before_owner_delete',
-             'dot_memories', 'idx_dot_memories_dot_content',
-             'idx_dot_memories_organization_content', 'idx_dot_memories_dot_created',
-             'idx_dot_memories_organization_created', 'dot_workspace_cleanup',
-             'idx_dot_workspace_cleanup_due', 'personal_dot_workspace_cleanup_after_delete')
+             'personal_agents_delete_principals_before_owner_delete',
+             'agent_memories', 'idx_agent_memories_agent_content',
+             'idx_agent_memories_organization_content', 'idx_agent_memories_agent_created',
+             'idx_agent_memories_organization_created', 'agent_workspace_cleanup',
+             'idx_agent_workspace_cleanup_due', 'personal_agent_workspace_cleanup_after_delete')
          ORDER BY type, name",
     )
     .fetch_all(&pool)
@@ -152,13 +158,13 @@ async fn organization_dot_schema_matches_its_fixture() {
         })
         .collect::<String>();
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/schema_after_dot_organizations.txt");
+        .join("tests/fixtures/schema_after_agent_organizations.txt");
     if std::env::var_os("UPDATE_SCHEMA_FIXTURE").is_some() {
         std::fs::write(fixture, actual).unwrap();
     } else {
         assert_eq!(
             actual,
-            include_str!("fixtures/schema_after_dot_organizations.txt")
+            include_str!("fixtures/schema_after_agent_organizations.txt")
         );
     }
 }
@@ -199,7 +205,7 @@ async fn personal_dot_management_is_false_for_existing_groups() {
 }
 
 #[tokio::test]
-async fn dot_group_permission_schema_matches_its_fixture() {
+async fn agent_group_permission_schema_matches_its_fixture() {
     let pool = open(Path::new(":memory:")).await.unwrap();
     let sql: String = sqlx::query_scalar(
         "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'gateway_groups'",
@@ -211,24 +217,24 @@ async fn dot_group_permission_schema_matches_its_fixture() {
     if std::env::var_os("UPDATE_SCHEMA_FIXTURE").is_some() {
         std::fs::write(
             Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/schema_after_dot_permissions.txt"),
+                .join("tests/fixtures/schema_after_agent_permissions.txt"),
             &actual,
         )
         .unwrap();
     } else {
         assert_eq!(
             actual,
-            include_str!("fixtures/schema_after_dot_permissions.txt")
+            include_str!("fixtures/schema_after_agent_permissions.txt")
         );
     }
 }
 
 #[tokio::test]
-async fn dot_delegation_schema_matches_its_fixture() {
+async fn agent_delegation_schema_matches_its_fixture() {
     let pool = open(Path::new(":memory:")).await.unwrap();
     let rows = sqlx::query(
         "SELECT type, name, sql FROM sqlite_schema
-         WHERE name IN ('dot_delegation_edges', 'idx_dot_delegation_edges_receiver')
+         WHERE name IN ('agent_delegation_edges', 'idx_agent_delegation_edges_receiver')
          ORDER BY type, name",
     )
     .fetch_all(&pool)
@@ -248,14 +254,14 @@ async fn dot_delegation_schema_matches_its_fixture() {
     if std::env::var_os("UPDATE_SCHEMA_FIXTURE").is_some() {
         std::fs::write(
             Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/schema_after_dot_delegation.txt"),
+                .join("tests/fixtures/schema_after_agent_delegation.txt"),
             &actual,
         )
         .unwrap();
     } else {
         assert_eq!(
             actual,
-            include_str!("fixtures/schema_after_dot_delegation.txt")
+            include_str!("fixtures/schema_after_agent_delegation.txt")
         );
     }
 }

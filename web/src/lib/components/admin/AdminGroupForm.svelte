@@ -13,7 +13,7 @@
 		is_admin: boolean;
 		is_default: boolean;
 		can_manage_agents: boolean;
-		can_manage_dots: boolean;
+		can_manage_personal_agents: boolean;
 		oidc_values: string[];
 		tools: string[];
 		skills: string[];
@@ -52,7 +52,7 @@
 	let isAdmin = $state(untrack(() => group?.is_admin ?? false));
 	let isDefault = $state(untrack(() => group?.is_default ?? false));
 	let canManageAgents = $state(untrack(() => group?.can_manage_agents ?? false));
-	let canManageDots = $state(untrack(() => group?.can_manage_dots ?? false));
+	let canManagePersonalAgents = $state(untrack(() => group?.can_manage_personal_agents ?? false));
 	let oidcValues = $state<string[]>(untrack(() => group?.oidc_values ?? (seedOidcValue ? [seedOidcValue] : [])));
 	let newOidcValue = $state('');
 	let tools = $state(untrack(() => normalizeSelection(group?.tools ?? [])));
@@ -138,7 +138,7 @@
 				is_admin: isAdmin,
 				is_default: isDefault,
 				can_manage_agents: canManageAgents,
-				can_manage_dots: canManageDots,
+				can_manage_personal_agents: canManagePersonalAgents,
 				oidc_values: oidcValues,
 				tools,
 				skills
@@ -150,7 +150,7 @@
 				isAdmin = false;
 				isDefault = false;
 				canManageAgents = false;
-				canManageDots = false;
+				canManagePersonalAgents = false;
 				oidcValues = [];
 				newOidcValue = '';
 				tools = [];
@@ -191,17 +191,17 @@
 					{/if}
 					<span>{t('groups-field-manage-agents')}</span>
 				</label>
-				<label class="label cursor-pointer justify-start gap-2" title={t('groups-field-manage-dots-help')}>
+				<label class="label cursor-pointer justify-start gap-2" title={t('groups-field-manage-personal-agents-help')}>
 					{#if isAdmin}
 						<input type="checkbox" class="checkbox checkbox-sm" checked disabled />
 					{:else}
-						<input type="checkbox" class="checkbox checkbox-sm" bind:checked={canManageDots} />
+						<input type="checkbox" class="checkbox checkbox-sm" bind:checked={canManagePersonalAgents} />
 					{/if}
-					<span>{t('groups-field-manage-dots')}</span>
+					<span>{t('groups-field-manage-personal-agents')}</span>
 				</label>
 			</div>
 			<span class="-mt-2 text-xs text-base-content/60">{t('groups-field-manage-agents-help')}</span>
-			<span class="-mt-2 text-xs text-base-content/60">{t('groups-field-manage-dots-help')}</span>
+			<span class="-mt-2 text-xs text-base-content/60">{t('groups-field-manage-personal-agents-help')}</span>
 			<div class="flex flex-col gap-2">
 				<span class="label-text text-xs">{t('groups-field-oidc')}</span>
 				<SearchableSelect multiple bind:values={oidcValues} options={oidcOptions} ariaLabel={t('groups-field-oidc')} summary={oidcSummary} placeholder={t('groups-oidc-none')} />

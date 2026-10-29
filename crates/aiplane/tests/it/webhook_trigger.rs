@@ -19,7 +19,7 @@ async fn an_endless_body_is_cut_at_the_payload_cap_instead_of_buffered() {
     let hook = webhooks::create(
         &state.db,
         NewWebhook {
-            dot_id: None,
+            personal_agent_id: None,
             linked_session_id: None,
             owner: aiplane_runtime::server::background::AutomationOwner::User("owner".into()),
             created_by: "owner".into(),
@@ -58,7 +58,7 @@ async fn hook(state: &aiplane::rama_server::RamaState, synchronous: bool) -> Str
     webhooks::create(
         &state.db,
         NewWebhook {
-            dot_id: None,
+            personal_agent_id: None,
             linked_session_id: None,
             owner: aiplane_runtime::server::background::AutomationOwner::User("owner".into()),
             created_by: "owner".into(),

@@ -53,8 +53,8 @@ settings-s-usage = 用量指标
 settings-s-usage-blurb = /usage 背后的按请求计量。
 settings-s-limits = 速率限制与配额
 settings-s-limits-blurb = /admin/limits 中所配规则的总开关。
-settings-s-dots = 个人智能体
-settings-s-dots-blurb = 个人智能体 的数量上限。
+settings-s-agents = 个人智能体
+settings-s-agents-blurb = 个人智能体 的数量上限。
 settings-s-content_guard = 内容检查
 settings-s-content_guard-blurb = 在发送给所选模型之前检查内容。
 settings-f-content_guard-enabled = 启用内容检查
@@ -211,8 +211,8 @@ settings-f-usage-currency-help = 费用以哪种货币显示。
 
 settings-f-limits-enabled = 强制执行限制与配额
 settings-f-limits-enabled-help = 关闭时 /admin/limits 中的规则会被忽略。
-settings-f-dots-max_active_per_user = 每位用户可启用的个人智能体
-settings-f-dots-max_active_per_user-help = 每位用户可拥有的个人智能体 最大启用数量。默认值：4。
+settings-f-agents-max_active_per_user = 每位用户可启用的个人智能体
+settings-f-agents-max_active_per_user-help = 每位用户可拥有的个人智能体 最大启用数量。默认值：4。
 
 settings-f-feedback-enabled = 提供反馈组件
 settings-f-feedback-enabled-help = 应用内反馈按钮的总开关。
@@ -299,8 +299,8 @@ settings-f-gateway-default_priority-opt-low = 低
 settings-f-gateway-default_priority-opt-medium = 中
 settings-f-gateway-default_priority-opt-high = 高
 
-settings-f-dots-max_active_per_organization = 每个组织可启用的智能体
-settings-f-dots-max_active_per_organization-help = 组织可拥有的已启用智能体数量上限，包括空闲的智能体。默认值：4。
+settings-f-agents-max_active_per_organization = 每个组织可启用的智能体
+settings-f-agents-max_active_per_organization-help = 组织可拥有的已启用智能体数量上限，包括空闲的智能体。默认值：4。
 
 # Branding — 由运营人员上传的公司标志。这是手写的管理卡片，不是
 # settings.rs 分区，因此使用简单名称。

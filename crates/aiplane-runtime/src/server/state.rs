@@ -1058,10 +1058,10 @@ impl AppState {
                 .await;
         }
         if matches!(
-            aiplane_agents::db::agents::dot_owner(&self.db, &run.system_principal().id)
+            aiplane_agents::db::agents::agent_owner(&self.db, &run.system_principal().id)
                 .await
                 .map_err(|error| crate::server::tools::ToolError::Failed(error.to_string()))?,
-            Some(aiplane_agents::db::agents::DotOwner::Organization(_))
+            Some(aiplane_agents::db::agents::AgentOwner::Organization(_))
         ) {
             return Err(crate::server::tools::ToolError::Failed(
                 crate::agents::profile::AgentRunError::OrganizationExecutionUnavailable(
@@ -1078,28 +1078,28 @@ impl AppState {
             .await)
     }
 
-    pub async fn mcp_layer_for_dot(
+    pub async fn mcp_layer_for_agent(
         &self,
         principal: &Principal,
-        dot: Option<&crate::agent_run::PersonalDotIdentity>,
+        owned_agent: Option<&crate::agent_run::PersonalAgentIdentity>,
         ask: crate::server::tools::mcp::manager::AskContext<'_>,
     ) -> crate::server::tools::mcp::manager::UserMcpLayer {
-        let Some(dot) = dot else {
+        let Some(owned_agent) = owned_agent else {
             return self.mcp_layer_for(principal, ask).await;
         };
         let Principal::User { id, .. } = principal else {
             return Default::default();
         };
-        if id != &dot.owner_user_id {
+        if id != &owned_agent.owner_user_id {
             return Default::default();
         }
         let Ok(Some(user)) = aiplane_core::server::db::users::find_by_id(&self.db, id).await else {
             return Default::default();
         };
-        crate::server::tools::mcp::identities::layer_for_personal_dot(
+        crate::server::tools::mcp::identities::layer_for_personal_agent(
             self,
             &user,
-            &dot.dot_id,
+            &owned_agent.agent_id,
             ask,
             true,
         )

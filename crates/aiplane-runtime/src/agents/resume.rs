@@ -212,8 +212,8 @@ pub async fn claim(
         .ok_or_else(not_suspended)?;
     let testing = levels[0].session.agent_version == Some(agents_db::DRAFT_VERSION);
     let organization = matches!(
-        agents_db::dot_owner(db, &levels[0].session.principal_id).await?,
-        Some(agents_db::DotOwner::Organization(_))
+        agents_db::agent_owner(db, &levels[0].session.principal_id).await?,
+        Some(agents_db::AgentOwner::Organization(_))
     );
     match (&resume.by, kind.answered_by()) {
         (ResumedBy::Participant, Answerer::Staff) => {
@@ -240,8 +240,8 @@ pub async fn claim(
         }
     }
     for level in &levels {
-        let owner = agents_db::dot_owner_in(&mut tx, &level.session.principal_id).await?;
-        if let Some(agents_db::DotOwner::Organization(organization_id)) = owner {
+        let owner = agents_db::agent_owner_in(&mut tx, &level.session.principal_id).await?;
+        if let Some(agents_db::AgentOwner::Organization(organization_id)) = owner {
             // A parented organization session is legitimate only as a recorded
             // cross-boundary child; its live consent is re-checked before the
             // claim, so a revoked edge refuses the resume.
@@ -266,8 +266,8 @@ pub async fn claim(
                     &mut tx,
                     &aiplane_agents::db::cross_boundary::NewCrossBoundaryChild {
                         child_session_id: &link.child_session_id,
-                        caller_dot_id: &link.caller_dot_id,
-                        receiver_dot_id: &link.receiver_dot_id,
+                        caller_agent_id: &link.caller_agent_id,
+                        receiver_agent_id: &link.receiver_agent_id,
                         caller_owner_user_id: &link.caller_owner_user_id,
                         caller_role_ids: &super::access::role_ids_for_user(
                             state,
@@ -422,7 +422,7 @@ async fn validate_organization_pending_in(
             || !connectors.contains(&expected.connection.connector_key)
             || selected_principal_identity_in(
                 tx,
-                &agents_db::DotOwner::Organization(authority.organization_id.clone()),
+                &agents_db::AgentOwner::Organization(authority.organization_id.clone()),
                 &authority.principal_id,
                 &expected.connection.connector_key,
             )
@@ -529,8 +529,8 @@ async fn rebuild(
             Role::SubAgent { route_binds: binds }
         };
         let profile = if matches!(
-            agents_db::dot_owner(&state.db, &level.session.principal_id).await?,
-            Some(agents_db::DotOwner::Organization(_))
+            agents_db::agent_owner(&state.db, &level.session.principal_id).await?,
+            Some(agents_db::AgentOwner::Organization(_))
         ) {
             let authority =
                 OrganizationResumeAuthority::from_context(level.suspension.run_context.as_ref())
@@ -846,8 +846,8 @@ pub async fn resume_expired(state: &Arc<RamaState>) {
 }
 
 struct PersonalLevel {
-    binding: aiplane_agents::db::dot_sessions::PersonalDotSession,
-    link: Option<aiplane_agents::db::dot_sessions::PersonalChildLink>,
+    binding: aiplane_agents::db::agent_sessions::PersonalAgentSession,
+    link: Option<aiplane_agents::db::agent_sessions::PersonalChildLink>,
     /// A cross-boundary child of this level whose organization work has
     /// already settled: its bounded answer settles this level's
     /// `forward_request` call, and no personal run is driven for it.
@@ -888,13 +888,13 @@ async fn validate_personal_level_in(
 ) -> Result<(), AgentResumeError> {
     let valid: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM chat_turns t JOIN chat_sessions s ON s.id = t.session_id
-         JOIN personal_dot_sessions p ON p.session_id = s.id JOIN dots d ON d.principal_id = p.dot_id
+         JOIN personal_agent_sessions p ON p.session_id = s.id JOIN agent_owners d ON d.principal_id = p.agent_id
          JOIN system_principals principal ON principal.id = d.principal_id
          WHERE t.id = ? AND t.role = 'assistant' AND t.model = ? AND s.id = ? AND s.user_id = ?
-           AND s.principal_id IS NULL AND s.shared = 0 AND p.owner_user_id = ? AND p.dot_id = ?
+           AND s.principal_id IS NULL AND s.shared = 0 AND p.owner_user_id = ? AND p.agent_id = ?
            AND d.owner_user_id = ? AND d.active = 1 AND principal.disabled_at IS NULL AND s.parent_turn_id IS ? AND p.parent_turn_id IS ?)",
     ).bind(&level.suspension.turn_id).bind(&level.model).bind(&level.binding.session_id).bind(owner)
-        .bind(owner).bind(&level.binding.dot_id).bind(owner)
+        .bind(owner).bind(&level.binding.agent_id).bind(owner)
         .bind(level.link.as_ref().map(|link| link.parent_turn_id.as_str()))
         .bind(level.link.as_ref().map(|link| link.parent_turn_id.as_str()))
         .fetch_one(&mut *connection).await.map_err(DbError::from)?;
@@ -919,8 +919,8 @@ async fn validate_personal_level_in(
             connection,
             &aiplane_agents::db::cross_boundary::NewCrossBoundaryChild {
                 child_session_id: &cross.link.child_session_id,
-                caller_dot_id: &cross.link.caller_dot_id,
-                receiver_dot_id: &cross.link.receiver_dot_id,
+                caller_agent_id: &cross.link.caller_agent_id,
+                receiver_agent_id: &cross.link.receiver_agent_id,
                 caller_owner_user_id: owner,
                 caller_role_ids,
                 receiver_org_id: &cross.link.receiver_org_id,
@@ -944,7 +944,7 @@ pub async fn claim_personal(
     request_id: Option<&str>,
     decision: Decision,
 ) -> Result<ClaimedPersonalResume, AgentResumeError> {
-    use aiplane_agents::db::{child_sessions, dot_sessions};
+    use aiplane_agents::db::{agent_sessions, child_sessions};
     if chat::user_for_root_turn(&state.db, root_turn)
         .await?
         .as_deref()
@@ -968,7 +968,7 @@ pub async fn claim_personal(
         .fetch_one(&state.db)
         .await
         .map_err(DbError::from)?;
-    let binding = dot_sessions::for_session(&state.db, owner, &root_session)
+    let binding = agent_sessions::for_session(&state.db, owner, &root_session)
         .await?
         .filter(|binding| binding.active)
         .ok_or(AgentResumeError::Unavailable)?;
@@ -996,11 +996,11 @@ pub async fn claim_personal(
                 if child.session.owner_user_id != owner
                     || child.link.parent_turn_id != parent.suspension.turn_id
                     || child.link.parent_tool_call_id != parent.suspension.tool_call.id
-                    || child.link.caller_dot_id != parent.binding.dot_id
+                    || child.link.caller_agent_id != parent.binding.agent_id
                     || parent.suspension.tool_call.name != super::router::FORWARD_TOOL_NAME
                     || levels
                         .iter()
-                        .any(|level| level.binding.dot_id == child.session.dot_id)
+                        .any(|level| level.binding.agent_id == child.session.agent_id)
                 {
                     return Err(AgentResumeError::Unavailable);
                 }
@@ -1032,7 +1032,7 @@ pub async fn claim_personal(
                 let parent = levels.last().ok_or(AgentResumeError::Unavailable)?;
                 if link.parent_turn_id != parent.suspension.turn_id
                     || link.parent_tool_call_id != parent.suspension.tool_call.id
-                    || link.caller_dot_id != parent.binding.dot_id
+                    || link.caller_agent_id != parent.binding.agent_id
                     || link.caller_owner_user_id != owner
                     || parent.suspension.tool_call.name != super::router::FORWARD_TOOL_NAME
                 {
@@ -1075,11 +1075,13 @@ pub async fn claim_personal(
         if !offered.iter().any(|model| model.id == level.model) {
             return Err(AgentResumeError::Unavailable);
         }
-        let dot = agents_db::get_personal_dot(&state.db, owner, &level.binding.dot_id)
+        let owned_agent = agents_db::get_personal_agent(&state.db, owner, &level.binding.agent_id)
             .await?
-            .filter(|dot| dot.active && dot.agent.principal.disabled_at.is_none())
+            .filter(|owned_agent| {
+                owned_agent.active && owned_agent.agent.principal.disabled_at.is_none()
+            })
             .ok_or(AgentResumeError::Unavailable)?;
-        let spec: super::spec::AgentSpec = serde_json::from_str(&dot.agent.draft_spec)
+        let spec: super::spec::AgentSpec = serde_json::from_str(&owned_agent.agent.draft_spec)
             .map_err(|_| AgentResumeError::Unavailable)?;
         if (index + 1 < levels.len() || level.cross_boundary.is_some())
             && !super::router::local::forward_available(state, &user, &spec)
@@ -1155,10 +1157,10 @@ async fn run_personal_children_inner(
     mut claimed: ClaimedPersonalResume,
 ) -> Result<ResumeFrom, AgentResumeError> {
     use crate::agent_run::{
-        Actor, PersonalDotExecution, PersonalDotIdentity, PersonalExecutionBinding,
+        Actor, PersonalAgentExecution, PersonalAgentIdentity, PersonalExecutionBinding,
     };
-    use crate::persona::personal_dot::{
-        PersonalDotContext, PersonalTurnContext, initialize_for_turn,
+    use crate::persona::personal_agent::{
+        PersonalAgentContext, PersonalTurnContext, initialize_for_turn,
     };
     let user = aiplane_core::server::db::users::find_by_id(&state.db, &claimed.owner)
         .await?
@@ -1178,7 +1180,7 @@ async fn run_personal_children_inner(
         |context| context.source,
     );
     let history_limit = background.and_then(|context| context.history_limit);
-    let Some(PersonalDotContext::Active { actor, .. }) = initialize_for_turn(
+    let Some(PersonalAgentContext::Active { actor, .. }) = initialize_for_turn(
         state,
         &user,
         enabled,
@@ -1203,18 +1205,21 @@ async fn run_personal_children_inner(
     for level in claimed.levels.iter().skip(1) {
         let parent = executions.last().ok_or(AgentResumeError::Unavailable)?;
         let link = level.link.as_ref().ok_or(AgentResumeError::Unavailable)?;
-        let dot = agents_db::get_personal_dot(&state.db, &claimed.owner, &level.binding.dot_id)
-            .await?
-            .filter(|dot| dot.active && dot.agent.principal.disabled_at.is_none())
-            .ok_or(AgentResumeError::Unavailable)?;
-        let spec: super::spec::AgentSpec = serde_json::from_str(&dot.agent.draft_spec)
+        let owned_agent =
+            agents_db::get_personal_agent(&state.db, &claimed.owner, &level.binding.agent_id)
+                .await?
+                .filter(|owned_agent| {
+                    owned_agent.active && owned_agent.agent.principal.disabled_at.is_none()
+                })
+                .ok_or(AgentResumeError::Unavailable)?;
+        let spec: super::spec::AgentSpec = serde_json::from_str(&owned_agent.agent.draft_spec)
             .map_err(|_| AgentResumeError::Unavailable)?;
         let chain = Arc::new(
             parent
                 .chain()
                 .enter(Frame {
-                    principal_id: dot.agent.principal.id.clone(),
-                    name: dot.agent.principal.display.clone(),
+                    principal_id: owned_agent.agent.principal.id.clone(),
+                    name: owned_agent.agent.principal.display.clone(),
                     version: None,
                     via: Some(CallSite {
                         turn_id: link.parent_turn_id.clone(),
@@ -1235,12 +1240,12 @@ async fn run_personal_children_inner(
             .budget()
             .intersect(crate::budget::Budget::from_limits(saved.local_limits));
         executions.push(Arc::new(
-            PersonalDotExecution::new(
+            PersonalAgentExecution::new(
                 state.clone(),
                 PersonalExecutionBinding {
-                    identity: PersonalDotIdentity {
+                    identity: PersonalAgentIdentity {
                         owner_user_id: claimed.owner.clone(),
-                        dot_id: level.binding.dot_id.clone(),
+                        agent_id: level.binding.agent_id.clone(),
                     },
                     session_id: level.binding.session_id.clone(),
                     assistant_turn_id: level.suspension.turn_id.clone(),
@@ -1258,7 +1263,7 @@ async fn run_personal_children_inner(
         && let Some(cross) = &level.cross_boundary
     {
         let parent_actor =
-            Actor::personal_dot(&claimed.owner, user.roles.clone(), &level.binding.dot_id)
+            Actor::personal_agent(&claimed.owner, user.roles.clone(), &level.binding.agent_id)
                 .with_personal_execution(executions[claimed.levels.len() - 1].clone())
                 .map_err(|_| AgentResumeError::Unavailable)?;
         let mut ctx = crate::openai_driver::build_tool_context(
@@ -1280,7 +1285,7 @@ async fn run_personal_children_inner(
                 state,
                 &ctx,
                 &claimed.owner,
-                &level.binding.dot_id,
+                &level.binding.agent_id,
                 &cross.link,
                 &cross.child_turn,
             )
@@ -1291,9 +1296,10 @@ async fn run_personal_children_inner(
     for index in (1..claimed.levels.len()).rev() {
         let level = &claimed.levels[index];
         let execution = executions[index].clone();
-        let actor = Actor::personal_dot(&claimed.owner, user.roles.clone(), &level.binding.dot_id)
-            .with_personal_execution(execution)
-            .map_err(|_| AgentResumeError::Unavailable)?;
+        let actor =
+            Actor::personal_agent(&claimed.owner, user.roles.clone(), &level.binding.agent_id)
+                .with_personal_execution(execution)
+                .map_err(|_| AgentResumeError::Unavailable)?;
         let mut suspension = level.suspension.clone();
         suspension.budget_used.tree = Some(
             root_execution
@@ -1321,7 +1327,7 @@ async fn run_personal_children_inner(
         .await;
         let parent = &claimed.levels[index - 1];
         let parent_actor =
-            Actor::personal_dot(&claimed.owner, user.roles.clone(), &parent.binding.dot_id)
+            Actor::personal_agent(&claimed.owner, user.roles.clone(), &parent.binding.agent_id)
                 .with_personal_execution(executions[index - 1].clone())
                 .map_err(|_| AgentResumeError::Unavailable)?;
         let mut ctx = crate::openai_driver::build_tool_context(
@@ -1414,10 +1420,11 @@ async fn settle_cross_boundary_child_inner(
             .fetch_one(&state.db)
             .await
             .map_err(DbError::from)?;
-    let binding = aiplane_agents::db::dot_sessions::for_session(&state.db, owner, &parent_session)
-        .await?
-        .filter(|binding| binding.active)
-        .ok_or(AgentResumeError::Unavailable)?;
+    let binding =
+        aiplane_agents::db::agent_sessions::for_session(&state.db, owner, &parent_session)
+            .await?
+            .filter(|binding| binding.active)
+            .ok_or(AgentResumeError::Unavailable)?;
     let model = chat::get_turn(&state.db, &parent_session, parent_turn)
         .await?
         .and_then(|turn| turn.model)
@@ -1441,8 +1448,8 @@ async fn settle_cross_boundary_child_inner(
         &mut tx,
         &aiplane_agents::db::cross_boundary::NewCrossBoundaryChild {
             child_session_id: &link.child_session_id,
-            caller_dot_id: &link.caller_dot_id,
-            receiver_dot_id: &link.receiver_dot_id,
+            caller_agent_id: &link.caller_agent_id,
+            receiver_agent_id: &link.receiver_agent_id,
             caller_owner_user_id: &link.caller_owner_user_id,
             caller_role_ids: &caller_role_ids,
             receiver_org_id: &link.receiver_org_id,
@@ -1498,7 +1505,7 @@ async fn settle_cross_boundary_child_inner(
 /// the child's bounded answer and drive the caller's turn on.
 struct MirrorSettlement<'a> {
     owner: &'a str,
-    binding: &'a aiplane_agents::db::dot_sessions::PersonalDotSession,
+    binding: &'a aiplane_agents::db::agent_sessions::PersonalAgentSession,
     model: &'a str,
     parent_session: &'a str,
     parent_turn: &'a str,
@@ -1528,8 +1535,8 @@ async fn settle_and_drive(
         authorized,
     } = settlement;
     use crate::agent_run::Actor;
-    use crate::persona::personal_dot::{
-        PersonalDotContext, PersonalTurnContext, initialize_for_turn,
+    use crate::persona::personal_agent::{
+        PersonalAgentContext, PersonalTurnContext, initialize_for_turn,
     };
     let user = aiplane_core::server::db::users::find_by_id(&state.db, owner)
         .await?
@@ -1548,7 +1555,7 @@ async fn settle_and_drive(
         |context| context.source,
     );
     let history_limit = background.and_then(|context| context.history_limit);
-    let Some(PersonalDotContext::Active { actor, .. }) = initialize_for_turn(
+    let Some(PersonalAgentContext::Active { actor, .. }) = initialize_for_turn(
         state,
         &user,
         enabled,
@@ -1588,7 +1595,7 @@ async fn settle_and_drive(
             state,
             &ctx,
             owner,
-            &binding.dot_id,
+            &binding.agent_id,
             link,
             child_turn,
         )
@@ -1605,7 +1612,7 @@ async fn settle_and_drive(
             .meter()
             .snapshot(root_execution.local_budget()),
     );
-    let actor = Actor::personal_dot(owner, user.roles.clone(), &binding.dot_id)
+    let actor = Actor::personal_agent(owner, user.roles.clone(), &binding.agent_id)
         .with_personal_execution(root_execution)
         .map_err(|_| AgentResumeError::Unavailable)?;
     drive_resumed(
@@ -1636,12 +1643,12 @@ pub async fn cancel_private_turn(
     session_id: &str,
     turn_id: &str,
 ) -> Result<bool, AgentRunError> {
-    use aiplane_agents::db::agents::{Access, DotOwner};
+    use aiplane_agents::db::agents::{Access, AgentOwner};
     use aiplane_core::server::db::WriteTx;
     let mut tx = WriteTx::begin(&state.db).await?;
     let organization = matches!(
-        agents_db::dot_owner_in(&mut tx, principal_id).await?,
-        Some(DotOwner::Organization(_))
+        agents_db::agent_owner_in(&mut tx, principal_id).await?,
+        Some(AgentOwner::Organization(_))
     );
     let access = if organization {
         super::access::organization_access_in(state, &mut tx, principal_id, initiator_user_id)
@@ -1673,7 +1680,7 @@ pub async fn cancel_private_turn(
     let cross_boundary_child =
         aiplane_agents::db::cross_boundary::link_of_session_in(&mut tx, session_id)
             .await?
-            .is_some_and(|link| link.receiver_dot_id == principal_id);
+            .is_some_and(|link| link.receiver_agent_id == principal_id);
     if !private && !cross_boundary_child {
         return Ok(false);
     }
@@ -1802,20 +1809,20 @@ pub async fn cancel_personal_tree(
     for (link, turn, _depth) in principal_children.into_iter().rev() {
         state
             .chats
-            .cancel_turn(&link.receiver_dot_id, &link.child_session_id, &turn);
+            .cancel_turn(&link.receiver_agent_id, &link.child_session_id, &turn);
         if !chat::cancel_suspended_turn(&state.db, &turn).await?
             && let Some(current) = chat::get_turn(&state.db, &link.child_session_id, &turn).await?
             && current.status == TurnStatus::InProgress
             && !state
                 .chats
-                .get(&link.receiver_dot_id, &link.child_session_id)
+                .get(&link.receiver_agent_id, &link.child_session_id)
                 .is_some_and(|worker| worker.turn_id == turn)
         {
             chat::finalize_turn(&state.db, &turn, TurnStatus::Cancelled, None).await?;
         }
         crate::server::background::reconcile_turn(
             &state.db,
-            &crate::server::background::AutomationOwner::Principal(link.receiver_dot_id.clone()),
+            &crate::server::background::AutomationOwner::Principal(link.receiver_agent_id.clone()),
             &turn,
         )
         .await?;
@@ -1823,13 +1830,14 @@ pub async fn cancel_personal_tree(
     Ok(())
 }
 
-pub async fn cancel_personal_runs_for_dot(
+pub async fn cancel_personal_runs_for_agent(
     state: &Arc<RamaState>,
     owner: &str,
-    dot_id: &str,
+    agent_id: &str,
 ) -> Result<(), DbError> {
     for turn in
-        aiplane_agents::db::child_sessions::active_roots_for_dot(&state.db, owner, dot_id).await?
+        aiplane_agents::db::child_sessions::active_roots_for_agent(&state.db, owner, agent_id)
+            .await?
     {
         cancel_personal_tree(state, owner, &turn).await?;
     }
@@ -2169,8 +2177,8 @@ mod private_cancel_tests {
         let (profile, params) =
             crate::server::headless::tests::organization_draft_fixture(&state).await;
         let principal = &profile.principal.id;
-        let Some(agents::DotOwner::Organization(organization)) =
-            agents::dot_owner(&state.db, principal).await.unwrap()
+        let Some(agents::AgentOwner::Organization(organization)) =
+            agents::agent_owner(&state.db, principal).await.unwrap()
         else {
             panic!("organization expected");
         };
@@ -2234,7 +2242,7 @@ mod private_cancel_tests {
         gateway_groups::set_can_manage_agents(&state.db, "writers", true)
             .await
             .unwrap();
-        sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
+        sqlx::query("UPDATE agent_owners SET active=0 WHERE principal_id=?")
             .bind(principal)
             .execute(&state.db)
             .await
@@ -2308,7 +2316,7 @@ mod private_cancel_tests {
             scheduled::NewAction {
                 owner: AutomationOwner::Principal(base.principal.id.clone()),
                 created_by: "creator".into(),
-                dot_id: None,
+                personal_agent_id: None,
                 agent_version: Some(version),
                 name: "Actual schedule".into(),
                 prompt: "Actual request".into(),
@@ -2353,7 +2361,7 @@ mod private_cancel_tests {
                 prompt: &action.prompt,
                 model: &profile.model,
                 existing_session: None,
-                dot_id: None,
+                personal_agent_id: None,
             },
         )
         .await
@@ -2499,8 +2507,8 @@ mod private_cancel_tests {
         let upstream = wiremock::MockServer::start().await;
         let state = crate::server::headless::tests::state_for(&upstream.uri()).await;
         let (level, run) = scheduled_pause(&state, SuspensionKind::Approval).await;
-        let Some(agents_db::DotOwner::Organization(organization)) =
-            agents_db::dot_owner(&state.db, &level.session.principal_id)
+        let Some(agents_db::AgentOwner::Organization(organization)) =
+            agents_db::agent_owner(&state.db, &level.session.principal_id)
                 .await
                 .unwrap()
         else {

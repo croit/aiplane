@@ -20,7 +20,7 @@ use sqlx::Row;
 
 use super::{DbError, Pool, WriteTx};
 
-const GROUPS_SQL: &str = "SELECT name, description, is_admin, is_default, can_manage_agents, can_manage_dots, priority FROM gateway_groups ORDER BY name";
+const GROUPS_SQL: &str = "SELECT name, description, is_admin, is_default, can_manage_agents, can_manage_personal_agents, priority FROM gateway_groups ORDER BY name";
 const MAPPINGS_SQL: &str = "SELECT oidc_value, gateway_group FROM oidc_group_mappings";
 const TOOL_GRANTS_SQL: &str = "SELECT gateway_group, tool_id FROM group_tool_grants";
 
@@ -36,7 +36,7 @@ pub struct GroupRow {
     /// May create and configure system principals (`docs/agents.md` → "Principals").
     /// `is_admin` implies it; see `Resolver::can_manage_agents`.
     pub can_manage_agents: bool,
-    pub can_manage_dots: bool,
+    pub can_manage_personal_agents: bool,
 }
 
 /// Everything the [`crate::server::rbac::Resolver`] needs to answer access
@@ -58,7 +58,7 @@ fn map_group(row: &sqlx::sqlite::SqliteRow) -> Result<GroupRow, DbError> {
         is_admin: row.try_get::<i64, _>("is_admin")? != 0,
         is_default: row.try_get::<i64, _>("is_default")? != 0,
         can_manage_agents: row.try_get::<i64, _>("can_manage_agents")? != 0,
-        can_manage_dots: row.try_get::<i64, _>("can_manage_dots")? != 0,
+        can_manage_personal_agents: row.try_get::<i64, _>("can_manage_personal_agents")? != 0,
     })
 }
 
@@ -210,15 +210,20 @@ pub async fn set_can_manage_agents(
     Ok(changed > 0)
 }
 
-pub async fn set_can_manage_dots(pool: &Pool, name: &str, enabled: bool) -> Result<bool, DbError> {
-    let changed =
-        sqlx::query("UPDATE gateway_groups SET can_manage_dots = ?, updated_at = ? WHERE name = ?")
-            .bind(i64::from(enabled))
-            .bind(Timestamp::now().to_string())
-            .bind(name)
-            .execute(pool)
-            .await?
-            .rows_affected();
+pub async fn set_can_manage_personal_agents(
+    pool: &Pool,
+    name: &str,
+    enabled: bool,
+) -> Result<bool, DbError> {
+    let changed = sqlx::query(
+        "UPDATE gateway_groups SET can_manage_personal_agents = ?, updated_at = ? WHERE name = ?",
+    )
+    .bind(i64::from(enabled))
+    .bind(Timestamp::now().to_string())
+    .bind(name)
+    .execute(pool)
+    .await?
+    .rows_affected();
     Ok(changed > 0)
 }
 
@@ -624,19 +629,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dot_management_defaults_false_and_is_independent_in_list_and_snapshot() {
+    async fn agent_management_defaults_false_and_is_independent_in_list_and_snapshot() {
         let pool = fresh().await;
         upsert_group(&pool, "managers", "", false, false)
             .await
             .unwrap();
         let group = &list_groups(&pool).await.unwrap()[0];
-        assert!(!group.can_manage_dots);
+        assert!(!group.can_manage_personal_agents);
         assert!(!group.can_manage_agents);
         set_can_manage_agents(&pool, "managers", true)
             .await
             .unwrap();
-        assert!(!list_groups(&pool).await.unwrap()[0].can_manage_dots);
-        assert!(set_can_manage_dots(&pool, "managers", true).await.unwrap());
+        assert!(!list_groups(&pool).await.unwrap()[0].can_manage_personal_agents);
+        assert!(
+            set_can_manage_personal_agents(&pool, "managers", true)
+                .await
+                .unwrap()
+        );
         set_can_manage_agents(&pool, "managers", false)
             .await
             .unwrap();
@@ -644,13 +653,21 @@ mod tests {
             .await
             .unwrap();
         let group = &list_groups(&pool).await.unwrap()[0];
-        assert!(group.can_manage_dots);
+        assert!(group.can_manage_personal_agents);
         assert!(!group.can_manage_agents);
         assert_eq!(group.description, "edited");
-        assert!(load_snapshot(&pool).await.unwrap().groups[0].can_manage_dots);
-        assert!(set_can_manage_dots(&pool, "managers", false).await.unwrap());
-        assert!(!load_snapshot(&pool).await.unwrap().groups[0].can_manage_dots);
-        assert!(!set_can_manage_dots(&pool, "missing", true).await.unwrap());
+        assert!(load_snapshot(&pool).await.unwrap().groups[0].can_manage_personal_agents);
+        assert!(
+            set_can_manage_personal_agents(&pool, "managers", false)
+                .await
+                .unwrap()
+        );
+        assert!(!load_snapshot(&pool).await.unwrap().groups[0].can_manage_personal_agents);
+        assert!(
+            !set_can_manage_personal_agents(&pool, "missing", true)
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
