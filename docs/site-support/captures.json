@@ -1,7 +1,7 @@
 [
   {
     "file": "docs/img/guide/chat-overview.png",
-    "route": "/chat/5d2cfe1f-8758-4759-a0b7-17508db389bc",
+    "route": "/chat/d1be6270-fec4-4b7e-82af-95618f3e659f",
     "selector": "[data-chat-composer]",
     "viewport": {
       "width": 1400,
@@ -14,7 +14,7 @@
   },
   {
     "file": "docs/img/guide/chat-composer.png",
-    "route": "/chat/5d2cfe1f-8758-4759-a0b7-17508db389bc",
+    "route": "/chat/d1be6270-fec4-4b7e-82af-95618f3e659f",
     "selector": "[data-chat-composer]",
     "viewport": {
       "width": 1400,
@@ -23,19 +23,6 @@
     "scale": 2,
     "width": 2128,
     "height": 196,
-    "data": "Synthetic dev-ui fixture; actual application components."
-  },
-  {
-    "file": "docs/img/guide/capability-picker.png",
-    "route": "/chat/5d2cfe1f-8758-4759-a0b7-17508db389bc",
-    "selector": "dialog[aria-labelledby=\"tool-selector-title\"] .modal-box",
-    "viewport": {
-      "width": 1400,
-      "height": 950
-    },
-    "scale": 2,
-    "width": 2800,
-    "height": 1900,
     "data": "Synthetic dev-ui fixture; actual application components."
   },
   {
@@ -53,19 +40,6 @@
     "data": "Synthetic dev-ui fixture; actual application components."
   },
   {
-    "file": "docs/img/guide/automatic-routes.png",
-    "route": "/admin/models?tab=routing",
-    "selector": "article.card",
-    "viewport": {
-      "width": 1400,
-      "height": 950
-    },
-    "scale": 2,
-    "width": 2128,
-    "height": 416,
-    "data": "Synthetic dev-ui fixture; actual application components."
-  },
-  {
     "file": "docs/img/guide/memory-preferences.png",
     "route": "/settings/memory",
     "selector": "section.card",
@@ -76,7 +50,7 @@
     },
     "scale": 2,
     "width": 2128,
-    "height": 308,
+    "height": 348,
     "data": "Synthetic dev-ui fixture; actual application components."
   },
   {
@@ -132,21 +106,7 @@
     },
     "scale": 2,
     "width": 2128,
-    "height": 422,
-    "data": "Synthetic dev-ui fixture; actual application components."
-  },
-  {
-    "file": "docs/img/guide/integration-card.png",
-    "route": "/tools/integrations",
-    "selector": ".card",
-    "matchingText": "Google",
-    "viewport": {
-      "width": 1400,
-      "height": 950
-    },
-    "scale": 2,
-    "width": 2128,
-    "height": 236,
+    "height": 382,
     "data": "Synthetic dev-ui fixture; actual application components."
   },
   {
@@ -164,7 +124,7 @@
   },
   {
     "file": "docs/img/guide/agent-checklist.png",
-    "route": "/agents/1020fa0d-2771-479a-ac85-edf4d9204782",
+    "route": "/agents/b3ca2989-c32f-43d4-861d-1d936451dcd4",
     "selector": "[data-agent-tab] aside section.card",
     "viewport": {
       "width": 1400,
@@ -177,7 +137,7 @@
   },
   {
     "file": "docs/img/guide/document-canvas.png",
-    "route": "/chat/e4e837cb-299b-4113-82d4-ac03e16e6e83",
+    "route": "/chat/20c031e8-5143-48c8-9d60-7c8f1daa4dff",
     "selector": "aside[aria-label=\"Canvas\"]",
     "viewport": {
       "width": 1400,
@@ -190,8 +150,9 @@
   },
   {
     "file": "docs/img/guide/dot-scheduled-work.png",
-    "route": "/scheduled/new",
+    "route": "/scheduled/new?dot_id=57714e86-7f9c-49ac-a72e-bb4ff3317240",
     "selector": "fieldset",
+    "matchingText": "Run as",
     "viewport": {
       "width": 1400,
       "height": 950
@@ -199,22 +160,21 @@
     "scale": 2,
     "width": 1692,
     "height": 256,
-    "data": "Synthetic dev-ui fixture; actual application components.",
-    "matchingText": "Run as"
+    "data": "Synthetic dev-ui fixture; actual application components."
   },
   {
     "file": "docs/img/guide/dot-action-rules.png",
-    "route": "/dots",
-    "selector": "article details",
-    "matchingText": "Access and approvals",
+    "route": "/agents/57714e86-7f9c-49ac-a72e-bb4ff3317240?tab=tools",
+    "selector": "[role=\"tabpanel\"] li details",
+    "matchingText": "Actions",
     "viewport": {
       "width": 1400,
       "height": 1500
     },
     "scale": 2,
-    "width": 626,
-    "height": 1332,
-    "data": "Synthetic dev-ui fixture; actual browse_page tool catalogue. Search browse_page, expand Actions; read Allow and fill Deny saved under tool Ask. Native list scroll bounds remain visible."
+    "width": 2008,
+    "height": 2408,
+    "data": "Synthetic dev-ui fixture; actual application components."
   },
   {
     "file": "docs/img/guide/dot-management-permission.png",
@@ -223,65 +183,26 @@
     "matchingText": "engineering",
     "viewport": {
       "width": 1400,
-      "height": 1500
+      "height": 950
     },
     "scale": 2,
-    "width": 2128,
-    "height": 1264,
-    "data": "Synthetic dev-ui fixture; actual Engineering group saved and reloaded with Personal Dot manager enabled, Agent manager and Admin disabled. Original group restored after capture. Existing wildcard tool grant and its warning remain visible."
+    "width": 1052,
+    "height": 340,
+    "data": "Synthetic dev-ui fixture; actual application components."
   },
   {
     "file": "docs/img/guide/dot-communication.png",
-    "route": "/dots",
-    "selector": "article",
-    "matchingText": "Harald",
-    "viewport": {
-      "width": 1280,
-      "height": 1500
-    },
-    "scale": 2,
-    "width": 616,
-    "height": 2236,
-    "data": "Synthetic dev-ui fixture; actual Harald and Clara personal Dots. Harald to Clara has both directional consents enabled; reverse consent is disabled. Actual Clara identifier filters the peer list. Capture Dots deactivated after capture."
-  },
-  {
-    "file": "docs/img/guide/dot-delegated-history.png",
-    "route": "/chat/58331db1-9872-4f8c-9859-207b1c0b3b1e",
-    "selector": "body",
+    "route": "/agents/57714e86-7f9c-49ac-a72e-bb4ff3317240?tab=communication",
+    "selector": "[role=\"tabpanel\"]:visible",
+    "matchingText": "Can ask",
     "viewport": {
       "width": 1400,
       "height": 950
     },
     "scale": 2,
-    "width": 2800,
-    "height": 1900,
-    "data": "Synthetic dev-ui fixture; actual Harald to Clara delegation awaiting the owner's memory approval. Private receiver history has no composer or independent approval; the root link comes from verified stored ancestry. Capture generated by spa-dots-delegation.test.mjs with DOCS_DOT_DELEGATION_CAPTURE."
-  },
-  {
-    "file": "docs/img/guide/dot-connector-identity.png",
-    "route": "/dots?dot_id=587b4410-a674-437e-bfe9-13729c8ed317",
-    "selector": "[id=\"dot-587b4410-a674-437e-bfe9-13729c8ed317\"] section[aria-label=\"Workspace\"]",
-    "viewport": {
-      "width": 1400,
-      "height": 950
-    },
-    "scale": 2,
-    "width": 557,
-    "height": 1008,
-    "data": "Synthetic dev-ui fixture; actual Harald Workspace principal connection explicitly selected after the real OAuth provider redirect and callback. The provider account label is absent; no account or email is invented. Capture generated by spa-dots-identities.test.mjs with DOCS_DOT_IDENTITY_CAPTURE."
-  },
-  {
-    "file": "docs/img/guide/organization-dot-identity.png",
-    "route": "/agents/f2ecc046-f3ec-40b3-b95c-12db7e94690e?tab=setup",
-    "selector": "section[aria-label=\"Connector identity\"] section[aria-label=\"Workspace\"]",
-    "viewport": {
-      "width": 1400,
-      "height": 950
-    },
-    "scale": 2,
-    "width": 2128,
-    "height": 816,
-    "data": "Synthetic dev-ui fixture; actual organization member writer without personal Dot management. Real OAuth round trip and explicit selection of Harald Support's own Workspace credential. No employee identity or invented account label. Captured by spa-dots-organization-identities.test.mjs with DOCS_ORG_DOT_IDENTITY_CAPTURE."
+    "width": 2060,
+    "height": 1456,
+    "data": "Synthetic dev-ui fixture; actual application components."
   },
   {
     "file": "docs/img/guide/organization-dot-draft-chat.png",
@@ -324,8 +245,8 @@
   },
   {
     "file": "docs/img/guide/dot-organization-schedule.png",
-    "route": "/scheduled/new?principal_id=6a926f7a-214a-45bf-987f-aaaf207ea8c5",
-    "selector": "form",
+    "route": "/scheduled/new?principal_id=f26cdf54-1a80-40b9-8188-c2dc7a836902",
+    "selector": "body",
     "viewport": {
       "width": 1400,
       "height": 950
@@ -333,16 +254,136 @@
     "scale": 2,
     "width": 2800,
     "height": 1900,
-    "data": "Synthetic dev-ui organization member and actual published Dot; real schedule form with pinned version and explicit UTC timezone."
+    "data": "Synthetic dev-ui fixture; actual application components."
   },
   {
     "file": "docs/img/guide/dot-organization-webhook.png",
     "route": "/webhooks/new?principal_id=ca1ad01e-f5b9-4794-a59e-59b16fc34282",
     "selector": "viewport",
-    "viewport": { "width": 1400, "height": 950 },
+    "viewport": {
+      "width": 1400,
+      "height": 950
+    },
     "scale": 2,
     "width": 2800,
     "height": 1900,
     "data": "Synthetic dev-ui fixture; actual Engineering organization Writer without personal Dot management. Harald Webhooks, authored published version 1, actual model demo-model, explicitly enabled Dot tools, and filled trusted prompt. Captured before secret creation by spa-dots-organization-webhooks.test.mjs with DOCS_ORG_DOT_WEBHOOK_CAPTURE."
+  },
+  {
+    "file": "docs/img/guide/request-priority.png",
+    "route": "/admin/tokens",
+    "selector": "body",
+    "viewport": {
+      "width": 1400,
+      "height": 950
+    },
+    "scale": 2,
+    "width": 2800,
+    "height": 1900,
+    "data": "Synthetic dev-ui fixture; actual application components."
+  },
+  {
+    "file": "docs/img/guide/request-priority-error.png",
+    "route": "/admin/models?tab=upstreams",
+    "selector": "body",
+    "viewport": {
+      "width": 1400,
+      "height": 950
+    },
+    "scale": 2,
+    "width": 2800,
+    "height": 1900,
+    "data": "Synthetic dev-ui fixture; actual application components."
+  },
+  {
+    "file": "docs/img/guide/organizations-admin.png",
+    "route": "/admin/organizations",
+    "selector": "body",
+    "viewport": {
+      "width": 1400,
+      "height": 950
+    },
+    "scale": 2,
+    "width": 2800,
+    "height": 1900,
+    "data": "Synthetic dev-ui fixture; actual application components."
+  },
+  {
+    "file": "docs/img/guide/organization-dots.png",
+    "route": "/organizations/27faeca6-9dbf-4f7a-b5a9-6ea678c8611b",
+    "selector": "body",
+    "viewport": {
+      "width": 1400,
+      "height": 950
+    },
+    "scale": 2,
+    "width": 2800,
+    "height": 1900,
+    "data": "Synthetic dev-ui fixture; actual application components."
+  },
+  {
+    "file": "docs/img/connectors.png",
+    "route": "/admin/connectors",
+    "selector": "body",
+    "viewport": {
+      "width": 1400,
+      "height": 950
+    },
+    "scale": 2,
+    "width": 2800,
+    "height": 1900,
+    "data": "Synthetic dev-ui fixture; actual application components."
+  },
+  {
+    "file": "docs/img/connector-audit.png",
+    "route": "/admin/connectors/discord/audit",
+    "selector": "body",
+    "viewport": {
+      "width": 1400,
+      "height": 950
+    },
+    "scale": 2,
+    "width": 2800,
+    "height": 1900,
+    "data": "Synthetic dev-ui fixture; actual application components."
+  },
+  {
+    "file": "docs/img/guide/dot-delegated-history.png",
+    "route": "/chat/f2274516-9432-4355-a938-9632f740a03d",
+    "selector": "body",
+    "viewport": {
+      "width": 1400,
+      "height": 950
+    },
+    "scale": 2,
+    "width": 2800,
+    "height": 1900,
+    "data": "Synthetic dev-ui fixture; actual Harald to Clara delegation awaiting the owner's memory approval. Private receiver history has no composer or independent approval; the root link comes from verified stored ancestry. Capture generated by spa-dots-delegation.test.mjs with DOCS_DOT_DELEGATION_CAPTURE."
+  },
+  {
+    "file": "docs/img/guide/dot-connector-identity.png",
+    "route": "/agents/63f376e0-de88-49a8-a7e9-4d60585b09a9?tab=tools",
+    "selector": "section[aria-label=\"Agent details\"] section[aria-label=\"Workspace\"]",
+    "viewport": {
+      "width": 1400,
+      "height": 950
+    },
+    "scale": 2,
+    "width": 2060,
+    "height": 816,
+    "data": "Synthetic dev-ui fixture; actual Harald Workspace principal connection explicitly selected after the real OAuth provider redirect and callback. The provider account label is absent; no account or email is invented. Capture generated by spa-dots-identities.test.mjs with DOCS_DOT_IDENTITY_CAPTURE."
+  },
+  {
+    "file": "docs/img/guide/organization-dot-identity.png",
+    "route": "/agents/0ce5141e-101d-4ea4-9f76-37f0bb757fbf?tab=setup",
+    "selector": "section[aria-label=\"Connector identity\"] section[aria-label=\"Workspace\"]",
+    "viewport": {
+      "width": 1400,
+      "height": 950
+    },
+    "scale": 2,
+    "width": 2128,
+    "height": 816,
+    "data": "Synthetic dev-ui fixture; actual organization member writer without personal Dot management. Real OAuth round trip and explicit selection of Harald Support's own Workspace credential. No employee identity or invented account label. Captured by spa-dots-organization-identities.test.mjs with DOCS_ORG_DOT_IDENTITY_CAPTURE."
   }
 ]

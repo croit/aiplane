@@ -5,6 +5,35 @@ description: Take clean PNG screenshots of the croit AIplane web UI (for README 
 
 # Take screenshots of the gateway UI
 
+## Refreshing the documentation's screenshots: all of them
+
+Every image under `docs/img/` is used by a page and has an entry in
+`docs/site-support/captures.json`; `mise run docs-check` fails otherwise
+(an unused image, an image without an entry, an entry without an image).
+So "refresh all screenshots" means two steps:
+
+1. `mise run docs-screenshots` against a fresh dev-ui. It seeds what it
+   shows through the API and shoots every image whose entry it owns, then
+   updates only those entries. Start dev-ui on :8080 and point it there:
+
+   ```bash
+   pkill -f "target/debug/examples/dev_ui"; sleep 1
+   AIPLANE_STATIC_DIR=target/frontend/build cargo run -q --example dev_ui -p aiplane > /tmp/devui.log 2>&1 &
+   until grep -q "seed cookie" /tmp/devui.log; do sleep 2; done
+   AIPLANE_URL=http://127.0.0.1:8080 DOCS_SEED_LOG=/tmp/devui.log mise run docs-screenshots
+   ```
+
+   (`mise run dev-ui` builds the docs and so runs `docs-check`; while images
+   are out of step, start the example directly as above, on a built SPA.)
+2. The scenario images that need a real flow (OAuth, delegation, a team
+   member) come from their e2e tests with `DOCS_*_CAPTURE=<png path>` and
+   `AIPLANE_DOT_MEMBER_SESSION_COOKIE` set to dev-ui's `eng_id` — see
+   `e2e/README.md`. They update their own entries.
+
+Then `mise run docs-check` must pass, and look at each changed image. Use the
+single-shot flow below only for an image outside the docs.
+
+
 The README images in `docs/img/*.png` are **2800×1900** (viewport 1400×950 at
 `deviceScaleFactor: 2`, dark theme). Match that. The reliable path is
 Playwright (already installed via mise as `npm:@playwright/cli`) driving a
@@ -87,6 +116,5 @@ cached Chromium binary, so you don't hunt for paths.
 - **Generic vs real data** → dev-ui = generic (safe for public README); the
   real gateway = Martin's email + real conversations (do **not** put in the
   public README).
-- **`docs/images/take-screenshots.mjs`** in the repo is the older canonical
-  script but references the removed `/__dev/seed-session` endpoint — it's stale;
-  use this skill's flow instead.
+- A new documentation image needs a capture in `e2e/docs-screenshots.mjs`
+  (or an e2e `DOCS_*_CAPTURE` scenario), or `docs-check` fails.

@@ -49,6 +49,15 @@ Refresh screenshots when the control they explain changes. Capture the
 relevant component from a synthetic `dev-ui` instance, inspect the image and
 put it next to the instructions it supports. Do not use real user data.
 
+Every image under `docs/img/` must be used by a page and recorded in
+`docs/site-support/captures.json`; the coverage checker fails on an unused
+image, an image without a capture entry and an entry without an image. So
+each image has a way to be refreshed: `mise run docs-screenshots` seeds its
+state through the API and shoots the images it owns, updating only their
+entries, and the scenario images that need a real flow (OAuth, delegation, a
+team member) come from their e2e tests with a `DOCS_*_CAPTURE` path set
+(`e2e/README.md`).
+
 ## Implementation sources
 
 - [`Coverage checker`](../site-support/check_coverage.py)

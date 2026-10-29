@@ -2,6 +2,14 @@
 
 End-to-end browser tests for AIplane, driven by Playwright through Node's built-in test runner. Zero project-level `node_modules` — the tests import `playwright` directly out of the mise-installed `npm:@playwright/cli` tool.
 
+## Documentation screenshots
+
+`mise run docs-screenshots` (`docs-screenshots.mjs`) refreshes every
+documentation image it owns from a fresh dev-ui; the scenario tests below
+refresh theirs when a `DOCS_*_CAPTURE` path is set. Both update only their own
+entries in `docs/site-support/captures.json`, and `mise run docs-check` fails
+on an image that neither path can refresh.
+
 ## Run
 
 ```bash

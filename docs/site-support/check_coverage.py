@@ -49,8 +49,33 @@ def check(root):
             target_path = target.split('#', 1)[0]
             if target_path and not (path.parent / target_path).exists():
                 errors.append(f'Broken relative link in {page}: {target}')
+    screenshots = check_screenshots(root, errors)
     return errors, {'ui_pages': len(actual_pages), 'api_operations': len(actual_operations),
-                    'settings_fields': len(declared_fields), 'published_pages': len(published)}
+                    'settings_fields': len(declared_fields), 'published_pages': len(published),
+                    'screenshots': screenshots}
+
+
+def check_screenshots(root, errors):
+    """Every screenshot is used by a page and recorded in the capture manifest
+    that `mise run docs-screenshots` and the e2e capture scenarios write, so a
+    refresh can reach each one; a manifest entry names an existing image."""
+    docs = root / 'docs'
+    images = {str(p.relative_to(root)) for p in (docs / 'img').rglob('*.png')} if (docs / 'img').is_dir() else set()
+    used = set()
+    for page in list(docs.rglob('*.md')) + [root / 'README.md']:
+        if not page.is_file():
+            continue
+        for target in re.findall(r'\]\(([^\s)]+\.png)\)', page.read_text()):
+            used.add(str((page.parent / target).resolve().relative_to(root.resolve())))
+    manifest_path = docs / 'site-support/captures.json'
+    captured = {entry['file'] for entry in json.loads(manifest_path.read_text())} if manifest_path.is_file() else set()
+    for image in sorted(images - used):
+        errors.append(f'Screenshot is not used by any page: {image}')
+    for image in sorted(images - captured):
+        errors.append(f'Screenshot has no capture entry in docs/site-support/captures.json: {image}')
+    for entry in sorted(captured - images):
+        errors.append(f'Capture entry names a missing screenshot: {entry}')
+    return len(images)
 
 
 if __name__ == '__main__':

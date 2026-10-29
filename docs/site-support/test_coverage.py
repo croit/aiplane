@@ -52,5 +52,28 @@ class CoverageTests(unittest.TestCase):
         self.assertIn('Broken relative link in guide.md: missing.md', errors)
 
 
+    def test_every_screenshot_is_used_and_has_a_capture_entry(self):
+        self.write('docs/img/guide/used.png', '')
+        self.write('docs/guide.md', '# Guide\n![Used](img/guide/used.png)\n')
+        self.write('docs/site-support/captures.json', '[{"file": "docs/img/guide/used.png", "route": "/"}]')
+        errors, counts = coverage.check(self.root)
+        self.assertEqual(errors, [])
+        self.assertEqual(counts['screenshots'], 1)
+
+    def test_an_unused_screenshot_fails(self):
+        self.write('docs/img/old.png', '')
+        self.write('docs/site-support/captures.json', '[{"file": "docs/img/old.png", "route": "/"}]')
+        errors, _ = coverage.check(self.root)
+        self.assertIn('Screenshot is not used by any page: docs/img/old.png', errors)
+
+    def test_a_screenshot_without_a_capture_entry_fails(self):
+        self.write('docs/img/new.png', '')
+        self.write('docs/guide.md', '# Guide\n![New](img/new.png)\n')
+        self.write('docs/site-support/captures.json', '[{"file": "docs/img/gone.png", "route": "/"}]')
+        errors, _ = coverage.check(self.root)
+        self.assertIn('Screenshot has no capture entry in docs/site-support/captures.json: docs/img/new.png', errors)
+        self.assertIn('Capture entry names a missing screenshot: docs/img/gone.png', errors)
+
+
 if __name__ == '__main__':
     unittest.main()
