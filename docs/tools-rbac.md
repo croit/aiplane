@@ -356,7 +356,7 @@ server/authentication configuration invalidate these earlier facts; token
 refresh preserves credential generation only while the catalogue provenance
 still matches. Final dispatch reloads current user or active principal grants
 and resource authority in the existing write transaction. Late handshakes
-cannot publish stale tool metadata. See [Dot identities](dots-identities.md#catalogue-dispatch-fence).
+cannot publish stale tool metadata. See [Agent identities](agents-identities.md#catalogue-dispatch-fence).
 
 Authoring per-tool grants needs a tool list, and an MCP server's tools are only
 visible while connected on some user's behalf — which an admin editing a group

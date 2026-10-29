@@ -25,7 +25,7 @@ export type SpecIssue = ApiIssue;
 export type OrganizationOwner = { kind: 'organization'; id: string; name: string };
 /** A person; `name` and `email` are null once the user is no longer known. */
 export type UserOwner = { kind: 'user'; id: string; name: string | null; email: string | null };
-export interface AgentDotMetadata { name: string; active: boolean }
+export interface AgentOwnership { name: string; active: boolean }
 /** Whom an agent works for: its owner alone, an organization's members, or outside visitors. */
 export type AgentKind = 'personal' | 'team' | 'public';
 
@@ -35,7 +35,7 @@ export interface AgentSummary {
 	owner: UserOwner | OrganizationOwner;
 	/** Who shared it with the caller; set only in the caller's workspace on an agent that is not theirs. */
 	shared_by: ShareOrigin | null;
-	dot: AgentDotMetadata | null;
+	ownership: AgentOwnership | null;
 	id: string;
 	name: string;
 	display: string;
@@ -66,11 +66,11 @@ export function organizationOwner(agent: Pick<AgentSummary, 'owner'> | null | un
  * that lets them, public with agent management.
  */
 export function creatableKinds(
-	me: { can_manage_agents?: boolean; can_manage_dots?: boolean } | null | undefined,
+	me: { can_manage_agents?: boolean; can_manage_personal_agents?: boolean } | null | undefined,
 	teams: readonly unknown[]
 ): AgentKind[] {
 	const kinds: AgentKind[] = [];
-	if (me?.can_manage_dots) kinds.push('personal');
+	if (me?.can_manage_personal_agents) kinds.push('personal');
 	if (me?.can_manage_agents && teams.length) kinds.push('team');
 	if (me?.can_manage_agents) kinds.push('public');
 	return kinds;
@@ -81,8 +81,8 @@ export function ownerLabel(owner: AgentSummary['owner']): string {
     return owner.kind === 'organization' ? owner.name : (owner.name ?? owner.email ?? owner.id);
 }
 
-export function agentPublicName(agent: Pick<AgentSummary, 'dot' | 'name'>): string {
-    return agent.dot?.name ?? agent.name;
+export function agentPublicName(agent: Pick<AgentSummary, 'ownership' | 'name'>): string {
+    return agent.ownership?.name ?? agent.name;
 }
 
 export function agentUiCapabilities(agent: (Pick<AgentSummary, 'owner'> & Partial<Pick<AgentSummary, 'access'>>) | null | undefined) {
@@ -404,15 +404,15 @@ export const agentsApi = {
 	restoreDraft: (id: string, revision: number) =>
 		call<{ draft_spec: Spec; revision: number | null }>(`/api/v0/agents/${id}/draft/restore`, json('POST', { revision })),
 	/** The person's architect conversation about `agent_id` (or a new agent). */
-	startArchitect: (body: { agent_id?: string; title: string; fresh?: boolean; dot_owner?: 'personal' }) =>
+	startArchitect: (body: { agent_id?: string; title: string; fresh?: boolean; agent_owner?: 'personal' }) =>
 		call<{ session_id: string; model: string; agent_id: string | null; resumed: boolean }>(
 			'/api/v0/agent-architect',
 			json('POST', body)
 		),
-	dotPlan: (sessionId: string) =>
-		call<{ proposal: import('./architect.ts').DotSetupPlan | null; dot_id: string | null }>(`/api/v0/agent-architect/${sessionId}/dot-plan`),
-	applyDotPlan: (sessionId: string, revision: string) =>
-		call<{ dot: import('./dots.ts').Dot; session_id: string }>(`/api/v0/agent-architect/${sessionId}/dot-plan`, json('POST', { revision })),
+	agentPlan: (sessionId: string) =>
+		call<{ proposal: import('./architect.ts').AgentSetupPlan | null; agent_id: string | null }>(`/api/v0/agent-architect/${sessionId}/agent-plan`),
+	applyAgentPlan: (sessionId: string, revision: string) =>
+		call<{ agent: import('./owned-agents.ts').OwnedAgent; session_id: string }>(`/api/v0/agent-architect/${sessionId}/agent-plan`, json('POST', { revision })),
 	publish: (id: string) =>
 		call<{ version: number; live_version: number }>(`/api/v0/agents/${id}/publish`, json('POST', {})),
 	versions: (id: string) =>

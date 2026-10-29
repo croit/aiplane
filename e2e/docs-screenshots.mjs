@@ -78,12 +78,12 @@ try {
         { name: 'request-priority', route: '/admin/tokens', selector: fullPage, full: true },
         { name: 'request-priority-error', route: '/admin/models?tab=upstreams', selector: fullPage, full: true, prepare: 'priority-error' },
         { name: 'organizations-admin', route: '/admin/organizations', selector: fullPage, full: true },
-        { name: 'organization-dots', route: `/organizations/${seeded.organization}`, selector: fullPage, full: true },
-        { name: 'dot-management-permission', route: '/admin/groups', selector: 'article', text: 'engineering' },
-        { name: 'dot-action-rules', route: `/agents/${seeded.harald}?tab=tools`, selector: '[role="tabpanel"] li details', text: 'Actions', prepare: 'action-rules', height: 1500 },
-        { name: 'dot-communication', route: `/agents/${seeded.harald}?tab=communication`, selector: '[role="tabpanel"]:visible', text: 'Can ask' },
-        { name: 'dot-scheduled-work', route: `/scheduled/new?dot_id=${seeded.harald}`, selector: 'fieldset', text: 'Run as' },
-        { name: 'dot-organization-schedule', route: `/scheduled/new?principal_id=${seeded.team}`, selector: fullPage, full: true, prepare: 'organization-schedule' },
+        { name: 'organization-agents', route: `/organizations/${seeded.organization}`, selector: fullPage, full: true },
+        { name: 'agent-management-permission', route: '/admin/groups', selector: 'article', text: 'engineering' },
+        { name: 'agent-action-rules', route: `/agents/${seeded.harald}?tab=tools`, selector: '[role="tabpanel"] li details', text: 'Actions', prepare: 'action-rules', height: 1500 },
+        { name: 'agent-communication', route: `/agents/${seeded.harald}?tab=communication`, selector: '[role="tabpanel"]:visible', text: 'Can ask' },
+        { name: 'agent-scheduled-work', route: `/scheduled/new?personal_agent_id=${seeded.harald}`, selector: 'fieldset', text: 'Run as' },
+        { name: 'agent-organization-schedule', route: `/scheduled/new?principal_id=${seeded.team}`, selector: fullPage, full: true, prepare: 'organization-schedule' },
         { name: 'connectors', file: 'docs/img/connectors.png', route: '/admin/connectors', selector: fullPage, full: true },
         { name: 'connector-audit', file: 'docs/img/connector-audit.png', route: '/admin/connectors/discord/audit', selector: fullPage, full: true }
     ];
@@ -140,16 +140,16 @@ async function seed(context) {
     }
     const groups = await api('GET', '/api/v0/admin/groups');
     const engineering = (Array.isArray(groups) ? groups : groups.groups).find((group) => group.name === 'engineering');
-    await api('PUT', '/api/v0/admin/groups', { ...engineering, can_manage_agents: false, can_manage_dots: true });
+    await api('PUT', '/api/v0/admin/groups', { ...engineering, can_manage_agents: false, can_manage_personal_agents: true });
 
     const organization = (await api('GET', '/api/v0/admin/organizations')).organizations
         .find((row) => row.name === 'Acme Support')?.id ?? (await api('POST', '/api/v0/admin/organizations', {
             name: 'Acme Support', description: 'Team assistants for support operations.', member_groups: ['admin']
         })).organization.id;
-    let team = (await api('GET', `/api/v0/organizations/${organization}`)).dots
+    let team = (await api('GET', `/api/v0/organizations/${organization}`)).agents
         .find((agent) => agent.display === 'Harald Support')?.id;
     if (!team) {
-        team = (await api('POST', `/api/v0/organizations/${organization}/dots`, {
+        team = (await api('POST', `/api/v0/organizations/${organization}/agents`, {
             name: 'Harald Support', description: 'Review support requests and prepare the next steps for approval.'
         })).agent.id;
         await api('POST', `/api/v0/system-principals/${team}/grants`, { kind: 'model', ref: 'demo-model' });
@@ -158,29 +158,29 @@ async function seed(context) {
         await api('POST', `/api/v0/agents/${team}/publish`);
     }
 
-    const owned = (await api('GET', '/api/v0/dots')).dots;
+    const owned = (await api('GET', '/api/v0/agents')).agents;
     const personal = async (name, description, task, topics) => {
-        const existing = owned.find((dot) => dot.display === name);
+        const existing = owned.find((owned_agent) => owned_agent.display === name);
         if (existing) return existing.id;
-        const id = (await api('POST', '/api/v0/dots', { name, description })).dot.id;
-        const profile = await api('GET', `/api/v0/dots/${id}/profile`);
-        await api('PUT', `/api/v0/dots/${id}/profile`, { revision: profile.revision, display: name, description, task, tone: '', topics });
+        const id = (await api('POST', '/api/v0/agents', { kind: "personal", name, description })).agent.id;
+        const profile = await api('GET', `/api/v0/agents/${id}/profile`);
+        await api('PUT', `/api/v0/agents/${id}/profile`, { revision: profile.revision, display: name, description, task, tone: '', topics });
         return id;
     };
     const harald = await personal('Harald', 'Keeps support tickets visible and flags those nearing escalation.',
         'Watch the support queue every morning and flag tickets older than two days.', ['Support', 'Escalations']);
     const clara = await personal('Clara', 'Researches public documentation and cites its sources.',
         'Answer research questions from public documentation, with sources.', ['Documentation']);
-    if (owned.some((dot) => dot.display === 'Harald')) return { organization, team, harald, clara };
-    const access = await api('GET', `/api/v0/dots/${harald}/access`);
+    if (owned.some((owned_agent) => owned_agent.display === 'Harald')) return { organization, team, harald, clara };
+    const access = await api('GET', `/api/v0/agents/${harald}/access`);
     const kept = access.tools.filter((tool) => tool.selected && tool.id !== 'browse_page')
         .map((tool) => ({ id: tool.id, permission: tool.permission, actions: tool.action_rules }));
-    await api('PUT', `/api/v0/dots/${harald}/access`, { revision: access.revision, tools: [...kept,
+    await api('PUT', `/api/v0/agents/${harald}/access`, { revision: access.revision, tools: [...kept,
         { id: 'browse_page', permission: 'always_ask', actions: [{ id: 'read', rule: 'allow' }, { id: 'fill', rule: 'deny' }] }] });
-    const consent = await api('PUT', `/api/v0/dots/${harald}/communication`,
+    const consent = await api('PUT', `/api/v0/agents/${harald}/communication`,
         { peer_id: clara, direction: 'outbound', enabled: true, expected_generation: null });
-    const generation = consent.peers.find((peer) => peer.dot.id === clara).outgoing.generation;
-    await api('PUT', `/api/v0/dots/${clara}/communication`,
+    const generation = consent.peers.find((peer) => peer.agent.id === clara).outgoing.generation;
+    await api('PUT', `/api/v0/agents/${clara}/communication`,
         { peer_id: harald, direction: 'inbound', enabled: true, expected_generation: generation });
     return { organization, team, harald, clara };
 }

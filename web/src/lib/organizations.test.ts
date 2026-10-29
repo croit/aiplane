@@ -44,7 +44,7 @@ test('organization API uses actual scoped routes and sends authored fields plus 
     const calls: { path: string; method: string; body: unknown }[] = [];
     globalThis.fetch = async (input, init) => {
         calls.push({ path: String(input), method: init?.method ?? 'GET', body: init?.body ? JSON.parse(String(init.body)) : null });
-        return new Response(JSON.stringify({ organization: organization(), organizations: [], groups: [], dots: [], agent: { id: 'actual-dot' }, active_count: 1, active_limit: 4, can_create_dot: true }), { status: 200 });
+        return new Response(JSON.stringify({ organization: organization(), organizations: [], groups: [], agents: [], agent: { id: 'actual-agent' }, active_count: 1, active_limit: 4, can_create_agent: true }), { status: 200 });
     };
     context.after(() => globalThis.fetch = fetchOriginal);
     const body = { name: 'Acme Support', description: 'Authored', member_groups: ['engineering'] };
@@ -53,15 +53,15 @@ test('organization API uses actual scoped routes and sends authored fields plus 
     await adminOrganizationsApi.save('actual/org', { ...body, expected_revision: 'current' });
     await organizationsApi.list();
     await organizationsApi.detail('actual/org');
-    await organizationsApi.createDot('actual/org', { name: 'Harald', display: 'Harald Support', description: 'Authored task' });
-    await organizationsApi.setActive('actual/org', 'actual/dot', false);
+    await organizationsApi.createAgent('actual/org', { name: 'Harald', display: 'Harald Support', description: 'Authored task' });
+    await organizationsApi.setActive('actual/org', 'actual/agent', false);
     assert.deepEqual(calls, [
         { path: '/api/v0/admin/organizations', method: 'GET', body: null },
         { path: '/api/v0/admin/organizations', method: 'POST', body },
         { path: '/api/v0/admin/organizations/actual%2Forg', method: 'PUT', body: { ...body, expected_revision: 'current' } },
         { path: '/api/v0/organizations', method: 'GET', body: null },
         { path: '/api/v0/organizations/actual%2Forg', method: 'GET', body: null },
-        { path: '/api/v0/organizations/actual%2Forg/dots', method: 'POST', body: { name: 'Harald', display: 'Harald Support', description: 'Authored task' } },
-        { path: '/api/v0/organizations/actual%2Forg/dots/actual%2Fdot/active', method: 'POST', body: { active: false } }
+        { path: '/api/v0/organizations/actual%2Forg/agents', method: 'POST', body: { name: 'Harald', display: 'Harald Support', description: 'Authored task' } },
+        { path: '/api/v0/organizations/actual%2Forg/agents/actual%2Fagent/active', method: 'POST', body: { active: false } }
     ]);
 });

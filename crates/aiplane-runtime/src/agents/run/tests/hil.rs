@@ -531,7 +531,7 @@ async fn a_persons_paused_run_is_their_own_inbox_item() {
             prompt: "Refund what is due.",
             model: "support-model",
             existing_session: None,
-            dot_id: None,
+            personal_agent_id: None,
         },
     )
     .await
@@ -543,7 +543,7 @@ async fn a_persons_paused_run_is_their_own_inbox_item() {
             owner: crate::server::background::AutomationOwner::User("u1".into()),
             created_by: "u1".into(),
             agent_version: None,
-            dot_id: None,
+            personal_agent_id: None,
             name: "Nightly refunds".into(),
             prompt: "Refund what is due.".into(),
             model: Some("support-model".into()),

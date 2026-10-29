@@ -515,7 +515,7 @@ mod tests {
                 granted.iter().map(|id| id.to_string()).collect(),
             )),
             agent: None,
-            personal_dot: None,
+            personal_agent: None,
             personal_execution: None,
             pending_actions: None,
             pending_execution_facts: None,

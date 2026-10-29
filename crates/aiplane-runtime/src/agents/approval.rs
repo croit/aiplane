@@ -66,7 +66,7 @@ impl Permissions {
         self.gate_with_default(tool, ask)
     }
 
-    pub fn gate_dot(&self, tool: Arc<dyn Tool>) -> Arc<dyn Tool> {
+    pub fn gate_agent(&self, tool: Arc<dyn Tool>) -> Arc<dyn Tool> {
         let ask = !tool.read_only();
         self.gate_with_default(tool, ask)
     }
@@ -460,7 +460,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn personal_dot_defaults_require_positive_read_only_metadata() {
+    async fn personal_agent_defaults_require_positive_read_only_metadata() {
         let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
             .await
             .unwrap();
@@ -477,7 +477,7 @@ mod tests {
             ),
         ] {
             let body = permissions
-                .gate_dot(tool)
+                .gate_agent(tool)
                 .run(ctx.clone(), json!({}))
                 .await
                 .unwrap();

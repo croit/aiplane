@@ -7,7 +7,7 @@ test('schedule inventory retains authoritative principal scope, versions and exp
 	const { scheduledApi } = await import('./scheduled.ts');
 	const original = globalThis.fetch;
 	const paths: string[] = [];
-	const actual = { actions: [], dots: [{ id: 'principal/id', name: 'Harald', active: true }], models: [], default_timezone: null, principal_id: 'principal/id', can_write: true, versions: [{ version: 3, spec: { main: { model: 'demo-model' } }, published_by: 'writer', published_at: '2026-10-11T00:00:00Z' }] };
+	const actual = { actions: [], agents: [{ id: 'principal/id', name: 'Harald', active: true }], models: [], default_timezone: null, principal_id: 'principal/id', can_write: true, versions: [{ version: 3, spec: { main: { model: 'demo-model' } }, published_by: 'writer', published_at: '2026-10-11T00:00:00Z' }] };
 	globalThis.fetch = async (input) => {
 		paths.push(String(input));
 		return new Response(JSON.stringify(actual), { status: 200 });

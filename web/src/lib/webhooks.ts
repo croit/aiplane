@@ -1,11 +1,11 @@
 import type { ChatModelOption } from './model-option';
-import type { Dot } from './dot-state.ts';
-import type { DotBinding } from './dot-background.ts';
+import type { OwnedAgent } from './agent-state.ts';
+import type { AgentBinding } from './agent-background.ts';
 import type { AgentVersion } from './agents.ts';
 import { adminDelete, adminJson, adminPost, adminPut } from './admin-client.ts';
 import { request } from './api.ts';
 
-export interface Webhook extends DotBinding {
+export interface Webhook extends AgentBinding {
 	id: string;
 	name: string;
 	prompt: string;
@@ -49,7 +49,7 @@ export interface WebhookRun {
 
 export interface WebhooksData {
 	webhooks: Webhook[];
-	dots: Dot[];
+	agents: OwnedAgent[];
 	models: ChatModelOption[];
 	principal_id: string | null;
 	can_write: boolean;
@@ -60,7 +60,7 @@ export interface WebhookBody {
 	name: string;
 	prompt: string;
 	model?: string;
-	dot_id?: string | null;
+	personal_agent_id?: string | null;
 	principal_id?: string;
 	agent_version?: number;
 	tools_enabled: boolean;

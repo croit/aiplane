@@ -96,7 +96,7 @@ const DYNAMIC_ID_IMPLS: &[&str] = &[
     "aiplane-runtime/src/server/tools/ask_first.rs",
     // ActionPolicy preserves the wrapped tool's id.
     "aiplane-runtime/src/agents/approval.rs",
-    // LivePersonalDotTool preserves the selected tool's id.
+    // LivePersonalAgentTool preserves the selected tool's id.
     "aiplane-runtime/src/persona/live.rs",
     // OrganizationTool preserves the admitted principal tool's id.
     "aiplane-runtime/src/agents/profile.rs",

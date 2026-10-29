@@ -504,7 +504,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn personal_dot_mcp_defaults_pause_unknown_and_write_tools_before_dispatch() {
+    async fn personal_agent_mcp_defaults_pause_unknown_and_write_tools_before_dispatch() {
         use crate::agents::spec::AgentSpec;
         use crate::persona::ChatPersona;
         use crate::server::tools::ToolSource;

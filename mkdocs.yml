@@ -62,10 +62,10 @@ nav:
       - Test and publish: agent-guide/test-publish.md
       - Runs and decisions: agent-guide/run-observe.md
       - Advanced spec: agent-guide/spec-reference.md
-  - Dots:
-      - Product and architecture: dots.md
-      - Organizations: dots-organizations.md
-      - Connector identities: dots-identities.md
+  - Personal and team agents:
+      - Product and architecture: personal-agents.md
+      - Organizations: agents-organizations.md
+      - Connector identities: agents-identities.md
   - Administration:
       - Request priority: request-priority.md
       - Models and routing: admin/models.md

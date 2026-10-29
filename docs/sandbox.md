@@ -281,32 +281,32 @@ through the conversation's attachment store:
   (newest match wins), so the model doesn't have to track turn ids;
 - `list_attachments` gives the model an inventory of everything available.
 
-### Personal Dot workspaces
+### Personal agent workspaces
 
-A personal Dot also has a durable `/workspace` directory when the runner
+A personal agent also has a durable `/workspace` directory when the runner
 verifies persistent storage. Its files survive new turns, scheduled actions,
 webhook runs, container expiry and runner restarts. `/work` remains scratch;
 only its explicit artifacts become chat attachments. Files in `/workspace`
 are not automatically attached or sent to the model. Copy a result into
 `/work` when it should be delivered as an attachment.
 
-The gateway derives the owner, Dot and persisted assistant turn from admitted
+The gateway derives the owner, agent and persisted assistant turn from admitted
 execution state. Tool arguments cannot choose the workspace identity. Scoped
 containers bypass the ordinary warm pool and reuse only their exact
-owner/Dot/turn/purpose/network lease. A different turn cannot use the same
-Dot's workspace until all occupying containers have been confirmed absent.
+owner/agent/turn/purpose/network lease. A different turn cannot use the same
+Agent's workspace until all occupying containers have been confirmed absent.
 The code and browser containers for one turn may share its files. Both mount
 files only: browser login cookies and profiles are not persisted, and there
 is no browser-profile reset operation in this increment.
 
-The owner's workspace API permits inspection and file management while a Dot
+The owner's workspace API permits inspection and file management while an agent
 is inactive. It requires the actual personal owner, without an additional
-Dot-management permission. Organization workspaces are not offered. Listing
+Agent-management permission. Organization workspaces are not offered. Listing
 and bounded downloads remain available while the computer is occupied;
 upload, folder creation and deletion return a conflict until it is idle.
 Idle leased and retiring containers still occupy the workspace. Failed teardown retains that
 occupancy, and HTTP cancellation does not abandon a creation reservation.
-See the [workspace specification](dots-workspace.md) and
+See the [workspace specification](agents-workspace.md) and
 [API reference](reference/api.md) for the routes.
 
 #### Storage readiness
@@ -332,37 +332,37 @@ scratch execution remains available under its existing configuration; a
 scoped request refuses rather than running with scratch storage. Starting a
 runner or configuring a volume alone does not establish persistent readiness.
 
-The root contains `dots/<Dot UUID>/files` and private owner metadata. Only the
+The root contains `agents/<agent UUID>/files` and private owner metadata. Only the
 files directory is mounted into workloads. Protected traversal refuses path
 escapes, symlinks and special files. File upload and download are bounded at
 50 MiB; paths are limited to 4096 UTF-8 bytes and 32 components. Listings
 return up to 100 entries per page and inspect at most 10,000 entries in one
 directory. Split larger directories before listing them.
 
-`SANDBOX_WORK_SIZE` limits tmpfs scratch, not persistent Dot storage.
-Host-backed scratch and Dot files use the backing filesystem's capacity.
+`SANDBOX_WORK_SIZE` limits tmpfs scratch, not persistent agent storage.
+Host-backed scratch and agent files use the backing filesystem's capacity.
 Monitor its free space and choose an appropriately sized dedicated volume.
 
 #### Deletion, recovery and backups
 
-Deleting a personal Dot or its user records the original owner and Dot IDs in
+Deleting a personal agent or its user records the original owner and agent IDs in
 an independent durable cleanup queue in the same database transaction. Those
 records survive ownership cascades. The gateway cleanup worker polls every
 30 seconds and processes at most 16 claims serially per pass. Each claim has
 a 120-second lease; a runner request is bounded at 30 seconds. Failure retains
 the record with exponential retries from 30 seconds to one hour.
 
-Runner retirement first seals the identity under `.dot-retired/<Dot UUID>`,
+Runner retirement first seals the identity under `.agent-retired/<agent UUID>`,
 preventing delayed requests from reopening its workspace. It then confirms
 all scoped containers absent, quarantines the payload and removes it through
 protected traversal. Cleanup advances by at most 1000 nodes per request and
 refuses nesting beyond depth 128. Busy execution, failed teardown or unsafe
 storage retains the queue entry for retry. The permanent tombstone retains
-only the original owner/Dot identity after payload removal; keep it to prevent
+only the original owner/agent identity after payload removal; keep it to prevent
 recreation by stale requests.
 
 Back up the gateway database and the runner's persistent root, including
-`dots/` and `.dot-retired/`. Quiesce gateway writes and runner executions for a
+`agents/` and `.agent-retired/`. Quiesce gateway writes and runner executions for a
 consistent restore point across the database and filesystem. Follow the
 existing [database backup procedure](operations/backup-recovery.md); a gateway
 volume snapshot alone does not include the external runner's files. Restore
@@ -420,7 +420,7 @@ Mechanics:
   idle; without `SANDBOX_WORK_ROOT`, its `/work` and `/tmp` are tmpfs charged
   to `--memory`. When the cap is reached an ordinary keep-alive request runs its job
   single-use and simply returns no `container_id` (the turn gracefully loses
-  persistence rather than the runner over-committing host RAM). Scoped Dot
+  persistence rather than the runner over-committing host RAM). Scoped agent
   requests refuse at capacity; they do not fall back to ordinary scratch.
 - **A lost lease is reported, not swallowed.** Graceful degradation still means
   `/work` empties out mid-turn, so when a call lands in a different container

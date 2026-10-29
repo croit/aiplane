@@ -220,7 +220,7 @@
 		</label>
 		{#if conversation}<p class="text-sm text-base-content/70">{conversation.source === 'draft' ? t('agents-test-conversation-draft') : t('agents-test-conversation-published', { version: conversation.agent_version })}</p>{/if}
 	{/if}
-	{#if historyLoading}<p class="flex items-center gap-2 text-sm text-base-content/70"><span class="loading loading-spinner loading-sm"></span>{t('dot-activity-loading-more')}</p>{/if}
+	{#if historyLoading}<p class="flex items-center gap-2 text-sm text-base-content/70"><span class="loading loading-spinner loading-sm"></span>{t('agent-activity-loading-more')}</p>{/if}
 	{#if dirty && !historyLoading && source === 'draft'}
 		<div class="alert alert-warning alert-soft text-sm">
 			<span>{t('agents-test-unsaved')}</span>

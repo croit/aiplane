@@ -53,5 +53,5 @@ groups-identity-unseen-hint = Configured on a group but never presented — chec
 groups-identity-empty = No claim values yet. They are recorded as users sign in.
 groups-identity-create = Create a group for this
 groups-matrix-section-families = Whole families
-groups-field-manage-dots = Personal agent manager
-groups-field-manage-dots-help = Members can create, list, activate and deactivate their personal agents. Admins hold this already. This permission does not grant agent management or tool access.
+groups-field-manage-personal-agents = Personal agent manager
+groups-field-manage-personal-agents-help = Members can create, list, activate and deactivate their personal agents. Admins hold this already. This permission does not grant agent management or tool access.

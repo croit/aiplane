@@ -73,8 +73,8 @@ pub struct Config {
     /// with no rules configured every caller is unlimited. See
     /// `server::limits`.
     pub limits: LimitsConfig,
-    /// Active personal-Dot capacity, controlled from `/admin/settings`.
-    pub dots: DotsConfig,
+    /// Active personal-agent capacity, controlled from `/admin/settings`.
+    pub agents: AgentsConfig,
     /// Code-execution sandbox. Optional — when unset the
     /// `run_in_sandbox` tool family is not registered and the gateway
     /// boots fine. When set, `runner_url` points at the standalone
@@ -510,12 +510,12 @@ pub struct LimitsConfig {
 }
 
 #[derive(Debug, Clone)]
-pub struct DotsConfig {
+pub struct AgentsConfig {
     pub max_active_per_user: u32,
     pub max_active_per_organization: u32,
 }
 
-impl Default for DotsConfig {
+impl Default for AgentsConfig {
     fn default() -> Self {
         Self {
             max_active_per_user: 4,

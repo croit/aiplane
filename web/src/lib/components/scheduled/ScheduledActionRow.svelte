@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import { locale, t } from '#lib/i18n.svelte.js';
-	import DotAssociation from '#lib/components/dots/DotAssociation.svelte';
+	import AgentAssociation from '#lib/components/agents/AgentAssociation.svelte';
 	import { runLinks } from '#lib/run-links.js';
 	import { scheduledApi, formatScheduledRun, type ScheduledAction } from '#lib/scheduled.js';
 
@@ -59,8 +59,8 @@
 					<span class="badge badge-sm {action.enabled ? 'badge-success' : 'badge-ghost'}">{action.enabled ? t('scheduled-badge-active') : t('scheduled-badge-paused')}</span>
 					{#if action.reuse_conversation}<span class="badge badge-ghost badge-sm">{t('scheduled-badge-reuses-chat')}</span>{/if}
 				</div>
-				<DotAssociation binding={action} />
-				{#if action.principal_id && action.dot}<a class="link link-hover text-sm" href={`/agents/${encodeURIComponent(action.principal_id)}`}>{action.dot.display || action.dot.name}</a>{/if}
+				<AgentAssociation binding={action} />
+				{#if action.principal_id && action.agent}<a class="link link-hover text-sm" href={`/agents/${encodeURIComponent(action.principal_id)}`}>{action.agent.display || action.agent.name}</a>{/if}
 				<p class="mt-1 line-clamp-2 text-sm text-base-content/70">{action.prompt}</p>
 				<div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-base-content/60">
 					{#if action.principal_id && action.agent_version}<span>{t('agents-test-source-published', { version: action.agent_version })}</span>{:else}<span class="font-mono">{action.model}</span>{/if}
@@ -71,7 +71,7 @@
 				</div>
 				{#if action.last_run_at}
 					<p class="mt-1 text-xs {action.last_status === 'ok' ? 'text-success' : action.last_status === 'waiting' ? 'text-warning' : 'text-error'}">
-						{t(action.last_status === 'ok' ? 'scheduled-last-success' : action.last_status === 'waiting' ? 'dot-background-last-waiting' : 'scheduled-last-failure', { when: runTime(action.last_run_at) })}
+						{t(action.last_status === 'ok' ? 'scheduled-last-success' : action.last_status === 'waiting' ? 'agent-background-last-waiting' : 'scheduled-last-failure', { when: runTime(action.last_run_at) })}
 					</p>
 				{/if}
 				{#if action.last_status === 'waiting'}<a class="link link-hover text-sm" href="/inbox">{t('inbox-heading')}</a>{/if}

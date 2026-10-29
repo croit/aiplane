@@ -2324,7 +2324,7 @@ mod tests {
             pending_execution_facts: None,
             granted_tools: None,
             agent: None,
-            personal_dot: None,
+            personal_agent: None,
             personal_execution: None,
             call_id: None,
         };

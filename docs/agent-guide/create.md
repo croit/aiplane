@@ -41,9 +41,9 @@ provider’s real account authorization; it does not create a provider account.
 Personal agent management permission is not required. OAuth completion does not
 select the account automatically, and the selector offers no employee account.
 Organization execution and memory require the runtime packages described
-in [organization agents](../dots-organizations.md).
+in [organization agents](../agents-organizations.md).
 
-![An organization lists its named agent and active capacity, with creation available through a dialog. The image uses synthetic data in the real application.](../img/guide/organization-dots.png)
+![An organization lists its named agent and active capacity, with creation available through a dialog. The image uses synthetic data in the real application.](../img/guide/organization-agents.png)
 
 ## Follow the setup assistant
 

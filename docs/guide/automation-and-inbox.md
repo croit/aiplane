@@ -181,7 +181,7 @@ never selected. The unavailable row offers no connection or selection action
 and does not disclose the restricted connector's details or your separate
 personal account. Disconnect does not revoke the account at the provider.
 
-![The actual Workspace connector uses Harald's separately authorized connection.](../img/guide/dot-connector-identity.png)
+![The actual Workspace connector uses Harald's separately authorized connection.](../img/guide/agent-connector-identity.png)
 
 For `browse_page` or `browser_control`, open **Actions** under the selected tool. Choose **Use tool
 rule**, **Allow**, **Ask**, or **Deny** for each action. For example, keep the tool
@@ -194,7 +194,7 @@ Connector restrictions still apply. Other tools show action controls only when
 their implementation supplies a catalogue. If a saved action is unavailable,
 remove its rule before saving; the interface preserves it for review.
 
-![A personal agent’s access and action rules](../img/guide/dot-action-rules.png)
+![A personal agent’s access and action rules](../img/guide/agent-action-rules.png)
 
 A personal agent you create with **New agent** starts with the tools of a
 personal assistant that your account holds: memory, the current time, web
@@ -216,7 +216,7 @@ disabling it in your account prevents a pending approval from running it.
 Deactivating an agent retains its data and conversations and cancels its active
 personal runs and linked delegation work. Organization agents support member
 configuration, their own connected identities, private draft or published conversations and
-scoped memory. See [Organization agents](../dots-organizations.md) for their
+scoped memory. See [Organization agents](../agents-organizations.md) for their
 current access requirements. Organization agents also support scheduled work as
 described below. Organization event triggers are described in **Create an
 organization agent webhook**. The organization agent page links to its schedules
@@ -227,8 +227,8 @@ Personal agent computers provide persistent files and a saved server-side browse
 profile when the runner has verified persistent storage. During an agent chat,
 **handover** lets you operate that agent's browser for a login or other browser
 step, then return control to the agent. See [Personal agent browser
-handover](../dots-browser-handover.md) and [workspace
-availability](../dots-workspace.md#operator-implications).
+handover](../agents-browser-handover.md) and [workspace
+availability](../agents-workspace.md#operator-implications).
 
 ## Configure communication consent
 
@@ -247,9 +247,9 @@ the existing forwarding tool in the sending agent's access rules. The receiving
 Agent uses its own selected tools, current permissions and memory. Both consents
 are checked before dispatch; reverse requests require their own consent.
 Approvals return to your existing Inbox and originating chat. See
-[Agent communication](../dots-communication.md).
+[Agent communication](../agents-communication.md).
 
-![Directional consent between actual personal agents](../img/guide/dot-communication.png)
+![Directional consent between actual personal agents](../img/guide/agent-communication.png)
 
 ## Run scheduled or event-driven work as an agent
 
@@ -258,7 +258,7 @@ creation forms with that agent selected. You can also choose it in **Run as**
 when creating or editing an automation. The available model, timing, tools,
 mode and conversation settings remain those of the existing form.
 
-![Run as selects the named agent and links to its access and approval settings.](../img/guide/dot-scheduled-work.png)
+![Run as selects the named agent and links to its access and approval settings.](../img/guide/agent-scheduled-work.png)
 
 A reused conversation must be private, owned by you and bound to the same
 Agent. The linked-chat picker shows matching conversations only. Changing
@@ -300,7 +300,7 @@ limits remain attached to your account rather than a separate agent budget.
 
 ## Schedule work for an organization agent
 
-![An organization schedule uses the actual published agent version and an explicit timezone.](../img/guide/dot-organization-schedule.png)
+![An organization schedule uses the actual published agent version and an explicit timezone.](../img/guide/agent-organization-schedule.png)
 
 1. Open the organization agent's agent editor with current membership and Write
    access, then choose **Scheduled actions**. This opens `/scheduled?principal_id=<id>`.
@@ -361,7 +361,7 @@ Deleting a schedule removes its recorded run history.
    Only current member writers can inspect its payload and conversation or
    answer its pending decisions.
 
-![An organization webhook uses its agent's published version and own permissions.](../img/guide/dot-organization-webhook.png)
+![An organization webhook uses its agent's published version and own permissions.](../img/guide/agent-organization-webhook.png)
 
 Organization triggers are asynchronous and always open a fresh private principal
 conversation. HTTP 202 returns only its opaque session ID; it does not expose

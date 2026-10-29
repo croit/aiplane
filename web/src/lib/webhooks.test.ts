@@ -9,10 +9,10 @@ test('personal webhook calls retain their existing shared JSON transport and bod
 	const calls: { path: string; method: string; body: unknown }[] = [];
 	globalThis.fetch = async (input, init) => {
 		calls.push({ path: String(input), method: init?.method ?? 'GET', body: init?.body ? JSON.parse(String(init.body)) : null });
-		return new Response(JSON.stringify({ webhooks: [], dots: [], models: [], secret: 'fixture-secret', session_id: 'session' }), { status: 200 });
+		return new Response(JSON.stringify({ webhooks: [], agents: [], models: [], secret: 'fixture-secret', session_id: 'session' }), { status: 200 });
 	};
 	context.after(() => globalThis.fetch = original);
-	const body = { name: 'Personal support', prompt: 'Review the event', model: 'demo-model', dot_id: null, tools_enabled: false, synchronous: true, reuse_conversation: false, reuse_rounds: 5 };
+	const body = { name: 'Personal support', prompt: 'Review the event', model: 'demo-model', personal_agent_id: null, tools_enabled: false, synchronous: true, reuse_conversation: false, reuse_rounds: 5 };
 	await webhooksApi.list();
 	await webhooksApi.create(body);
 	await webhooksApi.update('hook', { ...body, expected_configuration_generation: 'personal-generation' });
@@ -42,7 +42,7 @@ test('organization webhook inventory scopes the existing endpoint and retains ac
 	const { webhooksApi } = await import('./webhooks.ts');
 	const original = globalThis.fetch;
 	const paths: string[] = [];
-	const actual = { webhooks: [], dots: [{ id: 'principal/id', name: 'Harald', active: false }], models: [], principal_id: 'principal/id', can_write: true, versions: [{ version: 3, spec: { main: { model: 'demo-model' } }, published_by: 'writer', published_at: '2026-10-11T00:00:00Z' }] };
+	const actual = { webhooks: [], agents: [{ id: 'principal/id', name: 'Harald', active: false }], models: [], principal_id: 'principal/id', can_write: true, versions: [{ version: 3, spec: { main: { model: 'demo-model' } }, published_by: 'writer', published_at: '2026-10-11T00:00:00Z' }] };
 	globalThis.fetch = async (input) => {
 		paths.push(String(input));
 		return new Response(JSON.stringify(actual), { status: 200 });

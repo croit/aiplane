@@ -13,13 +13,21 @@
 
 mod a2a;
 mod admin_json_api;
+mod agent_access;
 mod agent_activity;
 mod agent_analytics;
 mod agent_architect;
 mod agent_assist;
+mod agent_background_chat;
+mod agent_communication;
+mod agent_connections;
+mod agent_cross_organization;
 mod agent_evaluation;
+mod agent_oauth;
 mod agent_test_chat;
+mod agent_workspace;
 mod agents;
+mod agents_background;
 mod anthropic_messages;
 mod architecture;
 mod ask_feedback;
@@ -35,14 +43,6 @@ mod cors;
 #[cfg(debug_assertions)]
 mod dev_seed;
 mod docs_current;
-mod dot_access;
-mod dot_background_chat;
-mod dot_communication;
-mod dot_connections;
-mod dot_cross_organization;
-mod dot_oauth;
-mod dot_workspace;
-mod dots_background;
 mod embed;
 mod feedback_extract;
 mod healthz;

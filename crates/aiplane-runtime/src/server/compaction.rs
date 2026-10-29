@@ -741,7 +741,7 @@ mod tests {
                 .await
                 .unwrap();
             } else {
-                sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
+                sqlx::query("UPDATE agent_owners SET active=0 WHERE principal_id=?")
                     .bind(&profile.principal.id)
                     .execute(&state.db)
                     .await

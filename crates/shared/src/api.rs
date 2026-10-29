@@ -35,7 +35,7 @@ pub struct Me {
     #[serde(default)]
     pub can_manage_agents: bool,
     #[serde(default)]
-    pub can_manage_dots: bool,
+    pub can_manage_personal_agents: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]

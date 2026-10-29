@@ -2,7 +2,7 @@
 	import Modal from '#lib/components/ui/Modal.svelte';
 	import ArchitectModal from '#lib/components/agents/ArchitectModal.svelte';
 	import ArchitectChat from '#lib/components/agents/ArchitectChat.svelte';
-	import { dotsApi } from '#lib/dots.js';
+	import { ownedAgentsApi } from '#lib/owned-agents.js';
 	import { organizationsApi, type OrganizationListRow } from '#lib/organizations.js';
 	import { creatableKinds } from '#lib/agents.js';
 	import StatusPill from '#lib/components/ui/StatusPill.svelte';
@@ -68,7 +68,7 @@
 	$effect(() => {
 		if (teamsAsked || !me.value?.can_manage_agents) return;
 		teamsAsked = true;
-		organizationsApi.list().then((result) => (teams = result.organizations.filter((row) => row.can_create_dot)), () => (teams = []));
+		organizationsApi.list().then((result) => (teams = result.organizations.filter((row) => row.can_create_agent)), () => (teams = []));
 	});
 
 	function openCreate() {
@@ -100,10 +100,10 @@
 		createError = null;
 		try {
 			if (kind === 'personal') {
-				const created = await dotsApi.create({ name: display.trim(), description: description.trim() });
-				await goto(`/agents/${encodeURIComponent(created.dot.id)}`);
+				const created = await ownedAgentsApi.create({ name: display.trim(), description: description.trim() });
+				await goto(`/agents/${encodeURIComponent(created.agent.id)}`);
 			} else if (kind === 'team') {
-				const created = await organizationsApi.createDot(team, { name: display.trim(), description: description.trim() });
+				const created = await organizationsApi.createAgent(team, { name: display.trim(), description: description.trim() });
 				await goto(`/agents/${encodeURIComponent(created.agent.id)}/setup/start`);
 			} else {
 				const agent = await agentsApi.create({ name: id, display: display.trim(), description });
@@ -163,8 +163,8 @@
 				<span class="badge badge-outline badge-sm shrink-0">{kindLabel(agent)}</span>
 			</div>
 			<div class="flex flex-wrap items-center gap-2">
-				{#if agent.dot}
-					<StatusPill size="sm" tone={agent.dot.active ? 'ok' : 'warn'}>{t(agent.dot.active ? 'dots-status-active' : 'dots-status-inactive')}</StatusPill>
+				{#if agent.ownership}
+					<StatusPill size="sm" tone={agent.ownership.active ? 'ok' : 'warn'}>{t(agent.ownership.active ? 'agents-status-active' : 'agents-status-inactive')}</StatusPill>
 				{/if}
 				{#if agent.kind !== 'personal'}
 					{#if agent.live_version === null}
@@ -241,18 +241,18 @@
 		<label class="flex flex-col gap-1">
 			<span class="label-text">{t('agents-create-description')}</span>
 			<textarea class="textarea w-full" bind:value={description}></textarea>
-			<span class="text-xs text-base-content/60">{t(kind === 'public' ? 'agents-create-description-help' : 'dots-create-description-help')}</span>
+			<span class="text-xs text-base-content/60">{t(kind === 'public' ? 'agents-create-description-help' : 'owned-agents-create-description-help')}</span>
 		</label>
 		{#if kind === 'personal'}
-			<button class="btn btn-ghost btn-sm self-start" type="button" onclick={() => { creating = false; planningPersonal = true; }}>🎙 {t('dot-setup-title')}</button>
+			<button class="btn btn-ghost btn-sm self-start" type="button" onclick={() => { creating = false; planningPersonal = true; }}>🎙 {t('agent-setup-title')}</button>
 		{:else if kind === 'public'}
 			<button class="btn btn-ghost btn-sm self-start" type="button" onclick={planInstead}>🎙 {t('architect-create-option')}</button>
 		{/if}
 	</form>
 </Modal>
 
-<Modal bind:open={planningPersonal} title={t('dot-setup-title')} size="lg">
-	<ArchitectChat dotOwner="personal" oncreated={(created) => { planningPersonal = false; void goto(`/agents/${encodeURIComponent(created)}`); }} />
+<Modal bind:open={planningPersonal} title={t('agent-setup-title')} size="lg">
+	<ArchitectChat agentOwner="personal" oncreated={(created) => { planningPersonal = false; void goto(`/agents/${encodeURIComponent(created)}`); }} />
 </Modal>
 
 <ArchitectModal bind:open={planning} onchanged={() => void reload()} />

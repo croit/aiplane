@@ -114,7 +114,7 @@ pub async fn run_turn_with(
             prompt: turn.message,
             model: &profile.model,
             existing_session: turn.session_id.map(str::to_string),
-            dot_id: None,
+            personal_agent_id: None,
         },
     )
     .await

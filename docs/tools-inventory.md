@@ -35,7 +35,7 @@ message rather than being absent.
 | `get_current_timestamp` | — | `get_current_timestamp` | Timezone-aware current date/time, from the caller's `users.timezone`. |
 | `convert_currency` | — | `convert_currency` | Currency conversion at daily ECB reference rates. |
 | `ask_user` | yes | `ask_user` | Ask the user a short question mid-turn and wait for the answer, rather than guessing. Needs a live chat turn *and* someone watching it; times out and reports `answered: false` otherwise. |
-| `forward_request` | yes | `forward_request` | An active personal Dot sends an explicit task to another active Dot it may address: a personal Dot belonging to its owner (both directed consents), or an organization Dot the caller's member organization consented to receive from (cross-boundary consent plus the caller's current membership). The receiver uses its own tools, memory, credentials and approval rules. Ordinary chats and stateless `/v1` requests do not offer this personal variant. See [Dot communication](dots-communication.md) and [cross-organization delegation](dots-cross-organization.md). |
+| `forward_request` | yes | `forward_request` | An active personal agent sends an explicit task to another active agent it may address: a personal agent belonging to its owner (both directed consents), or an organization agent the caller's member organization consented to receive from (cross-boundary consent plus the caller's current membership). The receiver uses its own tools, memory, credentials and approval rules. Ordinary chats and stateless `/v1` requests do not offer this personal variant. See [Agent communication](agents-communication.md) and [cross-organization delegation](agents-cross-organization.md). |
 | `notify_user` | — | `notify_user` | Send the user a Web Push notification (long work finished, a scheduled action found something). Deliberately *not* chat-only — a notification lands on a device, not in a conversation, so it also works from the headless scheduler. Hard limit of **one per turn**, latched in `PushNotifier`; errors clearly when Web Push is unconfigured or the user has no subscribed device. |
 | `get_user_location` | — | `get_user_location` | Caller's location: a browser GPS prompt when a live chat turn is watching, else coarse GeoIP. |
 | `generate_qr_code` | yes | `generate_qr_code` | QR codes (URL, WiFi, vCard, SEPA) as PNG/SVG, rendered in-process. |
@@ -72,10 +72,10 @@ message rather than being absent.
 | `rag_query_documents` | — | `rag_query_documents` | Filter, sort and total the documents of a collection by the fields its extraction profile pulled out (vendor, date, amount, project). The answer to any question about a *set* of documents — the latest, the largest, how many, how much — which top-k passage retrieval structurally cannot give: it returns five similar chunks and no way to know whether that was all of them. Always reports `total_matches` alongside the returned page, and surfaces the distinct values a text filter matched so `ACME` hitting both `ACME GmbH` and `ACME Deutschland AG` is visible rather than silently resolved. |
 | `rag_list_documents` | — | `rag_query_documents` | Folder-scoped document listing with the **stored** per-document summaries written at index time. Turns "find everything about project X and summarise it" into one call over ~200 tokens per document rather than re-reading every file. |
 | `rag_fetch_document` | — | `rag_query_documents` | Full extracted text of one indexed document by `document_id`. The drill-down after a hit; truncates long documents with a note rather than flooding the context. |
-| `remember` | — | `memory` | Persist a durable fact for the user or acting Dot. Personal and organization Dot writes remain in that Dot's own scope; new content is bounded to 2,000 UTF-8 bytes. |
-| `recall` | — | `memory` | Read at most 200 recent notes with explicit scopes. A personal Dot reads own and user notes; an organization Dot reads own and shared organization notes, without employee profiles. |
-| `update_memory` | — | `memory` | Correct an authorized fact by its returned ID and scope, within 2,000 UTF-8 bytes. Dots can change only their own notes. |
-| `forget` | — | `memory` | Delete an authorized fact by ID and scope. Dots cannot delete user or shared organization notes. |
+| `remember` | — | `memory` | Persist a durable fact for the user or acting agent. Personal and organization agent writes remain in that agent's own scope; new content is bounded to 2,000 UTF-8 bytes. |
+| `recall` | — | `memory` | Read at most 200 recent notes with explicit scopes. A personal agent reads own and user notes; an organization agent reads own and shared organization notes, without employee profiles. |
+| `update_memory` | — | `memory` | Correct an authorized fact by its returned ID and scope, within 2,000 UTF-8 bytes. Agents can change only their own notes. |
+| `forget` | — | `memory` | Delete an authorized fact by ID and scope. Agents cannot delete user or shared organization notes. |
 
 The canvas tools, the four memory tools and the three scheduling tools
 collapse to the `document`, `memory` and `schedule` keys respectively — see
@@ -234,7 +234,7 @@ the user threw away.
 
 These have no fixed id — one tool per discovered template / workflow /
 connected server. The drift guard matches them by prefix. Auditing, approval
-and live personal-Dot or organization-principal authorization wrappers retain the wrapped tool's actual
+and live personal-agent or organization-principal authorization wrappers retain the wrapped tool's actual
 ID and schema; they do not add another tool or toggle.
 
 | Tool IDs | When they are available | Toggle key |

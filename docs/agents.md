@@ -6,18 +6,18 @@ specialised sub-agents and people in the loop. They embed it on their own
 website, where it talks to visitors who are never trusted, or serve it to
 other agent platforms over A2A.
 
-Organization Dots reuse the same principal, spec, model grants and share
+Organization agents reuse the same principal, spec, model grants and share
 editor, with an immutable organization owner and current group-derived
 membership. Members with write access can manage their conversations,
-automation, publication and the Dot’s own OAuth credential in the existing
+automation, publication and the agent’s own OAuth credential in the existing
 Setup connection panel. Administrator configuration recovery alone supplies
-no credential access. See [organization Dots](dots-organizations.md).
+no credential access. See [organization agents](agents-organizations.md).
 
-The `/agents` list can include personal and organization Dots alongside
-ordinary agents. Dot cards identify the Dot type and active state, and omit the
+The `/agents` list can include personal and organization agents alongside
+ordinary agents. Agent cards identify the agent type and active state, and omit the
 generated principal ID; ordinary agent cards continue to show their authored
-agent ID and publication state. The Dot owner and type come from the existing
-Dot metadata returned with each agent, not from its principal name.
+agent ID and publication state. The agent owner and type come from the existing
+Agent metadata returned with each agent, not from its principal name.
 
 This file covers what an agent *is* — the trust rules, principals and grants,
 the agent definition with its shares, models — and where the code lives. The
@@ -61,9 +61,9 @@ is a bug, even if it works.
 |---|---|
 | **System principal** | An identity that is not a person: an agent, a CI job, an integration. Holds exactly its grants |
 | **Agent** | A system principal plus a spec: a mutable draft and immutable published versions |
-| **Personal agent** | A named agent owned by one user (a personal Dot, [`dots.md`](dots.md)); it acts with its owner's own rights and answers no one else |
-| **Team agent** | A named agent with an immutable organization owner, independent active-slot accounting and access narrowed by current membership and existing shares (an organization Dot) |
-| **Public agent** | An agent without a Dot owner: it answers visitors, A2A callers and hand-offs as its own principal |
+| **Personal agent** | A named agent owned by one user (a personal agent, [`personal-agents.md`](personal-agents.md)); it acts with its owner's own rights and answers no one else |
+| **Team agent** | A named agent with an immutable organization owner, independent active-slot accounting and access narrowed by current membership and existing shares (an organization agent) |
+| **Public agent** | An agent without an agent owner: it answers visitors, A2A callers and hand-offs as its own principal |
 | **Manager** | A person whose groups have `can_manage_agents` (admins have it), acting on an agent through a share |
 | **Share** | `respond` < `read` < `write` on one agent, held by a user or a group |
 | **Conversation** | A `chat_sessions` row owned by the agent's principal; a visitor's, an A2A context, or a test conversation (version 0) |
@@ -327,9 +327,9 @@ log event on the same transaction (`agent_created`, `agent_draft_updated`,
 - **A personal agent is never served here.** Every `/api/v0/agents/{id}`
   and `/api/v0/system-principals/{id}` route answers `404` for it, admins
   included, so it cannot be shared and a share on one never takes effect. Its
-  owner, and an admin for its settings, use `/api/v0/dots/{id}/*`, which check
+  owner, and an admin for its settings, use `/api/v0/agents/{id}/*`, which check
   every tool against the owner's own grants
-  ([`dots.md`](dots.md#administrator-changes)). The runtime's
+  ([`personal-agents.md`](personal-agents.md#administrator-changes)). The runtime's
   `effective_access` still holds an admin's `write` for the Inbox and
   resumption.
 - **A share names a subject that exists**: a user id from `users`, or a group
@@ -351,23 +351,23 @@ log event on the same transaction (`agent_created`, `agent_draft_updated`,
 
 ### Agent kinds
 
-Every agent row is one of three kinds, read from its `dots` row
+Every agent row is one of three kinds, read from its `agent_owners` row
 (`AgentView.kind`, `AgentView.owner`):
 
 | Kind | Owner | Acts as | Shared with |
 |---|---|---|---|
-| `personal` | one user (`dots.owner_user_id`) | that user's own rights ([`dots-identities.md`](dots-identities.md)) | nobody |
-| `team` | an organization (`dots.organization_id`) | its own principal | current members, through shares |
+| `personal` | one user (`agent_owners.owner_user_id`) | that user's own rights ([`agents-identities.md`](agents-identities.md)) | nobody |
+| `team` | an organization (`agent_owners.organization_id`) | its own principal | current members, through shares |
 | `public` | the creator (`system_principals.created_by`) is shown as owner | its own principal | managers, through shares |
 
 ### Who sees an agent
 
 `GET /api/v0/agents` is the caller's workspace, admins included: their own
-personal agents (with `can_manage_dots`), and with `can_manage_agents` the
+personal agents (with `can_manage_personal_agents`), and with `can_manage_agents` the
 agents shared with them `read` or `write`, a team agent only for a current
 member. Either permission opens the list. A personal agent is listed with
-`write` but edited through its own `/api/v0/dots/{id}/*` routes
-([`dots.md`](dots.md#personal-agent-profile)); the agent builder's routes
+`write` but edited through its own `/api/v0/agents/{id}/*` routes
+([`personal-agents.md`](personal-agents.md#personal-agent-profile)); the agent builder's routes
 answer `404` for it, and it is never offered as a route or hand-off target. An admin's workspace
 holds no other user's agent. *Chosen (privacy):* another user's personal
 agent in an admin's own list looked like the admin's own and invited changes

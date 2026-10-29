@@ -309,7 +309,7 @@ async fn open_run_session(
             prompt: &action.prompt,
             model,
             existing_session,
-            dot_id: action.dot_id.as_deref(),
+            personal_agent_id: action.personal_agent_id.as_deref(),
         },
     )
     .await
@@ -438,7 +438,7 @@ async fn try_run_organization(
             prompt: &action.prompt,
             model: &profile.model,
             existing_session: None,
-            dot_id: None,
+            personal_agent_id: None,
         },
     )
     .await
@@ -530,7 +530,7 @@ mod tests {
             reuse_conversation,
             reuse_rounds: 5,
             next_run_at: None,
-            dot_id: None,
+            personal_agent_id: None,
             linked_session_id: None,
         }
     }
@@ -649,7 +649,7 @@ mod tests {
             NewAction {
                 owner: super::super::AutomationOwner::Principal(profile.principal.id),
                 created_by: "creator".into(),
-                dot_id: None,
+                personal_agent_id: None,
                 agent_version: Some(1),
                 name: "Organization schedule".into(),
                 prompt: "Scheduled task".into(),

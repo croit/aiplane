@@ -182,18 +182,18 @@ pub(crate) async fn boot_as(
 const AN_HOUR: Duration = Duration::from_secs(3600);
 
 #[derive(Clone, Copy)]
-enum DotResumeCase {
+enum AgentResumeCase {
     ApproveAfterRestart,
     Deny,
     SelectionRevoked,
     UserToolDisabled,
 }
 
-async fn dot_memory_approval(case: DotResumeCase) {
-    use aiplane_agents::db::{agents, dot_memories, dot_sessions, system_principals};
+async fn agent_memory_approval(case: AgentResumeCase) {
+    use aiplane_agents::db::{agent_memories, agent_sessions, agents, system_principals};
     use aiplane_tools::memory::Remember;
     let directory = tempfile::tempdir().unwrap();
-    let db_path = directory.path().join("dots.db");
+    let db_path = directory.path().join("agents.db");
     let server = upstream_calling(
         tool_call(
             "remember",
@@ -211,16 +211,16 @@ async fn dot_memory_approval(case: DotResumeCase) {
     )
     .await;
     let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
-    let (_, dot) = agents::create_personal_dot(
+    let (_, owned_agent) = agents::create_personal_agent(
         &state.db,
-        &system_principals::NewPrincipal { name: "approval-dot", display: "Approval agent", description: "" },
+        &system_principals::NewPrincipal { name: "approval-agent", display: "Approval agent", description: "" },
         r#"{"main":{"tools":["remember"],"tool_resources":{"remember":{"permission":"always_ask"}}}}"#,
         "alice", 4,
     ).await.unwrap();
-    let dot_id = dot.unwrap().principal.id;
+    let agent_id = owned_agent.unwrap().principal.id;
     let session_id = conversation(&state).await;
     assert!(
-        dot_sessions::link(&state.db, "alice", &dot_id, &session_id)
+        agent_sessions::link(&state.db, "alice", &agent_id, &session_id)
             .await
             .unwrap()
     );
@@ -228,11 +228,11 @@ async fn dot_memory_approval(case: DotResumeCase) {
     let paused = wait_for_status(&state, &session_id, &turn_id, TurnStatus::Suspended).await;
     assert!(paused.suspension.is_some());
     assert!(
-        dot_memories::list(
+        agent_memories::list(
             &state.db,
-            aiplane_agents::db::dot_memories::MemoryScope::Dot {
-                owner: &aiplane_agents::db::agents::DotOwner::User("alice".into()),
-                dot_id: &dot_id
+            aiplane_agents::db::agent_memories::MemoryScope::Agent {
+                owner: &aiplane_agents::db::agents::AgentOwner::User("alice".into()),
+                agent_id: &agent_id
             },
             10
         )
@@ -265,7 +265,7 @@ async fn dot_memory_approval(case: DotResumeCase) {
     .await;
     assert!(other_inbox["items"].as_array().unwrap().is_empty());
     match case {
-        DotResumeCase::ApproveAfterRestart => {
+        AgentResumeCase::ApproveAfterRestart => {
             state = boot_with(
                 &db_path,
                 &server.uri(),
@@ -274,10 +274,10 @@ async fn dot_memory_approval(case: DotResumeCase) {
             )
             .await;
         }
-        DotResumeCase::SelectionRevoked => {
+        AgentResumeCase::SelectionRevoked => {
             agents::update_draft(
                 &state.db,
-                &dot_id,
+                &agent_id,
                 r#"{"main":{"tools":[]}}"#,
                 "alice",
                 agents::DraftChange::default(),
@@ -286,19 +286,19 @@ async fn dot_memory_approval(case: DotResumeCase) {
             .unwrap()
             .unwrap();
         }
-        DotResumeCase::UserToolDisabled => {
+        AgentResumeCase::UserToolDisabled => {
             db::user_tool_prefs::set(&state.db, "alice", "memory", false)
                 .await
                 .unwrap();
         }
-        DotResumeCase::Deny => {}
+        AgentResumeCase::Deny => {}
     }
-    let decision = if matches!(case, DotResumeCase::Deny) {
+    let decision = if matches!(case, AgentResumeCase::Deny) {
         "deny"
     } else {
         "allow_once"
     };
-    let (status, body) = if matches!(case, DotResumeCase::ApproveAfterRestart) {
+    let (status, body) = if matches!(case, AgentResumeCase::ApproveAfterRestart) {
         let response = router(state.clone())
             .serve(post(
                 format!("/api/v0/agents/inbox/{request_id}/answer"),
@@ -320,18 +320,18 @@ async fn dot_memory_approval(case: DotResumeCase) {
     };
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
     let done = wait_for_status(&state, &session_id, &turn_id, TurnStatus::Completed).await;
-    let memories = dot_memories::list(
+    let memories = agent_memories::list(
         &state.db,
-        aiplane_agents::db::dot_memories::MemoryScope::Dot {
-            owner: &aiplane_agents::db::agents::DotOwner::User("alice".into()),
-            dot_id: &dot_id,
+        aiplane_agents::db::agent_memories::MemoryScope::Agent {
+            owner: &aiplane_agents::db::agents::AgentOwner::User("alice".into()),
+            agent_id: &agent_id,
         },
         10,
     )
     .await
     .unwrap()
     .unwrap();
-    if matches!(case, DotResumeCase::ApproveAfterRestart) {
+    if matches!(case, AgentResumeCase::ApproveAfterRestart) {
         assert_eq!(memories.len(), 1);
         assert_eq!(memories[0].content, "Private approved lesson");
         assert_eq!(done.tool_calls[0].status, ToolCallStatus::Completed);
@@ -351,23 +351,23 @@ async fn dot_memory_approval(case: DotResumeCase) {
 }
 
 #[tokio::test]
-async fn personal_dot_approval_survives_restart_and_writes_only_its_memory() {
-    dot_memory_approval(DotResumeCase::ApproveAfterRestart).await;
+async fn personal_agent_approval_survives_restart_and_writes_only_its_memory() {
+    agent_memory_approval(AgentResumeCase::ApproveAfterRestart).await;
 }
 
 #[tokio::test]
-async fn personal_dot_denial_never_writes_memory() {
-    dot_memory_approval(DotResumeCase::Deny).await;
+async fn personal_agent_denial_never_writes_memory() {
+    agent_memory_approval(AgentResumeCase::Deny).await;
 }
 
 #[tokio::test]
-async fn personal_dot_resume_rechecks_its_selected_tools() {
-    dot_memory_approval(DotResumeCase::SelectionRevoked).await;
+async fn personal_agent_resume_rechecks_its_selected_tools() {
+    agent_memory_approval(AgentResumeCase::SelectionRevoked).await;
 }
 
 #[tokio::test]
-async fn personal_dot_resume_rechecks_the_users_enabled_tools() {
-    dot_memory_approval(DotResumeCase::UserToolDisabled).await;
+async fn personal_agent_resume_rechecks_the_users_enabled_tools() {
+    agent_memory_approval(AgentResumeCase::UserToolDisabled).await;
 }
 
 /// Two personal agents made the way the product makes them — created by
@@ -376,7 +376,7 @@ async fn personal_dot_resume_rechecks_the_users_enabled_tools() {
 /// starter tools give the caller "Ask another agent", allowed by default.
 #[tokio::test]
 async fn personal_agents_made_by_hand_delegate_once_both_consents_are_set() {
-    use aiplane_agents::db::dot_sessions;
+    use aiplane_agents::db::agent_sessions;
     use aiplane_runtime::agents::router::ForwardRequest;
     use aiplane_tools::memory::Remember;
 
@@ -397,15 +397,15 @@ async fn personal_agents_made_by_hand_delegate_once_both_consents_are_set() {
     for name in ["Planner", "Researcher"] {
         let resp = router(state.clone())
             .serve(post(
-                "/api/v0/dots".into(),
+                "/api/v0/agents".into(),
                 &cookie,
-                json!({ "name": name }),
+                json!({ "kind": "personal", "name": name }),
             ))
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::CREATED);
         ids.push(
-            json_body(resp).await["dot"]["id"]
+            json_body(resp).await["agent"]["id"]
                 .as_str()
                 .unwrap()
                 .to_owned(),
@@ -413,7 +413,7 @@ async fn personal_agents_made_by_hand_delegate_once_both_consents_are_set() {
     }
     let access = json_body(
         router(state.clone())
-            .serve(get(format!("/api/v0/dots/{}/access", ids[0]), &cookie))
+            .serve(get(format!("/api/v0/agents/{}/access", ids[0]), &cookie))
             .await
             .unwrap(),
     )
@@ -432,7 +432,7 @@ async fn personal_agents_made_by_hand_delegate_once_both_consents_are_set() {
 
     let outbound = router(state.clone())
         .serve(put(
-            format!("/api/v0/dots/{}/communication", ids[0]),
+            format!("/api/v0/agents/{}/communication", ids[0]),
             &cookie,
             json!({ "peer_id": ids[1], "direction": "outbound", "enabled": true, "expected_generation": null }),
         ))
@@ -443,12 +443,12 @@ async fn personal_agents_made_by_hand_delegate_once_both_consents_are_set() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|peer| peer["dot"]["id"] == ids[1].as_str())
+        .find(|peer| peer["agent"]["id"] == ids[1].as_str())
         .unwrap()["outgoing"]["generation"]
         .clone();
     let inbound = router(state.clone())
         .serve(put(
-            format!("/api/v0/dots/{}/communication", ids[1]),
+            format!("/api/v0/agents/{}/communication", ids[1]),
             &cookie,
             json!({ "peer_id": ids[0], "direction": "inbound", "enabled": true, "expected_generation": generation }),
         ))
@@ -462,7 +462,7 @@ async fn personal_agents_made_by_hand_delegate_once_both_consents_are_set() {
             deltas: vec![
                 tool_call(
                     "forward_request",
-                    json!({"receiver_dot_id": ids[1], "message": "Find the Ceph release date"}),
+                    json!({"receiver_agent_id": ids[1], "message": "Find the Ceph release date"}),
                 ),
                 json!({"content": "Ceph Tentacle shipped in 2025."}),
                 json!({"content": "The researcher says Ceph Tentacle shipped in 2025."}),
@@ -474,7 +474,7 @@ async fn personal_agents_made_by_hand_delegate_once_both_consents_are_set() {
         .await;
     let session_id = conversation(&state).await;
     assert!(
-        dot_sessions::link(&state.db, "alice", &ids[0], &session_id)
+        agent_sessions::link(&state.db, "alice", &ids[0], &session_id)
             .await
             .unwrap()
     );
@@ -496,7 +496,7 @@ async fn personal_agents_made_by_hand_delegate_once_both_consents_are_set() {
 #[tokio::test]
 async fn personal_delegation_resumes_from_the_root_after_restart_and_writes_only_receiver_memory() {
     use aiplane_agents::db::{
-        agents, dot_delegation, dot_memories, dot_sessions, system_principals,
+        agent_delegation, agent_memories, agent_sessions, agents, system_principals,
     };
     use aiplane_runtime::agents::router::ForwardRequest;
     use aiplane_tools::memory::Remember;
@@ -525,7 +525,7 @@ async fn personal_delegation_resumes_from_the_root_after_restart_and_writes_only
             r#"{"main":{"tools":["remember"],"tool_resources":{"remember":{"permission":"always_ask"}}}}"#,
         ),
     ] {
-        let (_, dot) = agents::create_personal_dot(
+        let (_, owned_agent) = agents::create_personal_agent(
             &state.db,
             &system_principals::NewPrincipal {
                 name,
@@ -538,39 +538,39 @@ async fn personal_delegation_resumes_from_the_root_after_restart_and_writes_only
         )
         .await
         .unwrap();
-        ids.push(dot.unwrap().principal.id);
+        ids.push(owned_agent.unwrap().principal.id);
     }
-    let saved = dot_delegation::set_consent(
+    let saved = agent_delegation::set_consent(
         &state.db,
-        dot_delegation::ConsentEdit {
+        agent_delegation::ConsentEdit {
             owner_user_id: "alice",
-            dot_id: &ids[0],
+            agent_id: &ids[0],
             peer_id: &ids[1],
-            direction: dot_delegation::ConsentDirection::Outbound,
+            direction: agent_delegation::ConsentDirection::Outbound,
             enabled: true,
             expected_generation: None,
         },
     )
     .await
     .unwrap();
-    let dot_delegation::ConsentSaved::Saved(edge) = saved else {
+    let agent_delegation::ConsentSaved::Saved(edge) = saved else {
         panic!("outbound consent saved");
     };
     assert!(matches!(
-        dot_delegation::set_consent(
+        agent_delegation::set_consent(
             &state.db,
-            dot_delegation::ConsentEdit {
+            agent_delegation::ConsentEdit {
                 owner_user_id: "alice",
-                dot_id: &ids[1],
+                agent_id: &ids[1],
                 peer_id: &ids[0],
-                direction: dot_delegation::ConsentDirection::Inbound,
+                direction: agent_delegation::ConsentDirection::Inbound,
                 enabled: true,
                 expected_generation: Some(&edge.generation),
             }
         )
         .await
         .unwrap(),
-        dot_delegation::ConsentSaved::Saved(_)
+        agent_delegation::ConsentSaved::Saved(_)
     ));
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
@@ -578,7 +578,7 @@ async fn personal_delegation_resumes_from_the_root_after_restart_and_writes_only
             deltas: vec![
                 tool_call(
                     "forward_request",
-                    json!({"receiver_dot_id": ids[1], "message": "Save this explicit lesson"}),
+                    json!({"receiver_agent_id": ids[1], "message": "Save this explicit lesson"}),
                 ),
                 tool_call(
                     "remember",
@@ -594,7 +594,7 @@ async fn personal_delegation_resumes_from_the_root_after_restart_and_writes_only
         .await;
     let session_id = conversation(&state).await;
     assert!(
-        dot_sessions::link(&state.db, "alice", &ids[0], &session_id)
+        agent_sessions::link(&state.db, "alice", &ids[0], &session_id)
             .await
             .unwrap()
     );
@@ -615,11 +615,11 @@ async fn personal_delegation_resumes_from_the_root_after_restart_and_writes_only
     };
     let child_session = child.session.session_id;
     assert!(
-        dot_memories::list(
+        agent_memories::list(
             &state.db,
-            aiplane_agents::db::dot_memories::MemoryScope::Dot {
-                owner: &aiplane_agents::db::agents::DotOwner::User("alice".into()),
-                dot_id: &ids[1]
+            aiplane_agents::db::agent_memories::MemoryScope::Agent {
+                owner: &aiplane_agents::db::agents::AgentOwner::User("alice".into()),
+                agent_id: &ids[1]
             },
             10
         )
@@ -657,11 +657,11 @@ async fn personal_delegation_resumes_from_the_root_after_restart_and_writes_only
             .status,
         TurnStatus::Completed
     );
-    let notes = dot_memories::list(
+    let notes = agent_memories::list(
         &state.db,
-        aiplane_agents::db::dot_memories::MemoryScope::Dot {
-            owner: &aiplane_agents::db::agents::DotOwner::User("alice".into()),
-            dot_id: &ids[1],
+        aiplane_agents::db::agent_memories::MemoryScope::Agent {
+            owner: &aiplane_agents::db::agents::AgentOwner::User("alice".into()),
+            agent_id: &ids[1],
         },
         10,
     )
@@ -671,11 +671,11 @@ async fn personal_delegation_resumes_from_the_root_after_restart_and_writes_only
     assert_eq!(notes.len(), 1);
     assert_eq!(notes[0].content, "Receiver approved lesson");
     assert!(
-        dot_memories::list(
+        agent_memories::list(
             &state.db,
-            aiplane_agents::db::dot_memories::MemoryScope::Dot {
-                owner: &aiplane_agents::db::agents::DotOwner::User("alice".into()),
-                dot_id: &ids[0]
+            aiplane_agents::db::agent_memories::MemoryScope::Agent {
+                owner: &aiplane_agents::db::agents::AgentOwner::User("alice".into()),
+                agent_id: &ids[0]
             },
             10
         )
@@ -1354,7 +1354,7 @@ async fn background_resume_busy_leaves_original_approval_unclaimed_for_retry() {
     )
     .await;
     let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
-    let (_, dot) = aiplane_agents::db::agents::create_personal_dot(
+    let (_, owned_agent) = aiplane_agents::db::agents::create_personal_agent(
         &state.db,
         &aiplane_agents::db::system_principals::NewPrincipal {
             name: "Harald",
@@ -1367,7 +1367,7 @@ async fn background_resume_busy_leaves_original_approval_unclaimed_for_retry() {
     )
     .await
     .unwrap();
-    let dot = dot.unwrap().principal.id;
+    let owned_agent = owned_agent.unwrap().principal.id;
     let (session, turn) = headless::open_session(
         &state.db,
         headless::OpenParams {
@@ -1376,7 +1376,7 @@ async fn background_resume_busy_leaves_original_approval_unclaimed_for_retry() {
             prompt: "echo something",
             model: "model-a",
             existing_session: None,
-            dot_id: Some(&dot),
+            personal_agent_id: Some(&owned_agent),
         },
     )
     .await
@@ -1396,7 +1396,7 @@ async fn background_resume_busy_leaves_original_approval_unclaimed_for_retry() {
             reuse_conversation: true,
             reuse_rounds: 3,
             next_run_at: None,
-            dot_id: Some(dot),
+            personal_agent_id: Some(owned_agent),
             linked_session_id: None,
         },
     )

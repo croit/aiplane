@@ -201,8 +201,8 @@ Examples of its task families:
 | `/api/v0/memories*`, `/api/v0/tools*`, `/api/v0/integrations*`, `/api/v0/skills*` | Personal capabilities, connections and memories; [tools](../guide/tools-and-integrations.md). |
 | `/api/v0/scheduled*`, `/api/v0/webhooks*`, `/api/v0/inbox*` | Automation and durable decisions; [automation guide](../guide/automation-and-inbox.md). |
 | `/api/v0/agents*` | Agent drafts, grants, evaluation, publication and observation; agent guides. |
-| `/api/v0/dots*` | List/create/active-state require resolved `can_manage_dots`; owner-scoped access remains enforced. The four connection routes additionally admit organization member writers for explicit own-principal OAuth management; they return independent action capabilities and no user credential. The memory routes also admit organization member readers and writers through current membership and existing shares; shared-note writes additionally require gateway administration. The workspace routes retain personal ownership, including inactive Dots. Listing returns actual storage availability, busy state and nullable metadata; raw downloads use attachment disposition, `nosniff` and `no-store`. Uploads and reads are capped at 50 MiB; writes, folder creation and removal require idle storage. Remaining routes retain personal ownership. Personal Dot lifecycle, tool selection, tool/action approval rules, private chats, memory and activity; scheduled actions and webhooks can run as an owned Dot; [AIplane Dots](../dots.md). |
-| `/api/v0/organizations*` | Current group-derived membership, organization details and named organization Dot creation/activation. Creation requires membership and agent-management permission; configuration uses existing agent shares and principal grants. Organization member writers can run private saved-draft and pinned published conversations through the existing agent test routes; [organization Dots](../dots-organizations.md). |
+| `/api/v0/agents*` | List/create/active-state require resolved `can_manage_personal_agents`; owner-scoped access remains enforced. The four connection routes additionally admit organization member writers for explicit own-principal OAuth management; they return independent action capabilities and no user credential. The memory routes also admit organization member readers and writers through current membership and existing shares; shared-note writes additionally require gateway administration. The workspace routes retain personal ownership, including inactive agents. Listing returns actual storage availability, busy state and nullable metadata; raw downloads use attachment disposition, `nosniff` and `no-store`. Uploads and reads are capped at 50 MiB; writes, folder creation and removal require idle storage. Remaining routes retain personal ownership. Personal agent lifecycle, tool selection, tool/action approval rules, private chats, memory and activity; scheduled actions and webhooks can run as an owned agent; [AIplane agents](../personal-agents.md). |
+| `/api/v0/organizations*` | Current group-derived membership, organization details and named organization agent creation/activation. Creation requires membership and agent-management permission; configuration uses existing agent shares and principal grants. Organization member writers can run private saved-draft and pinned published conversations through the existing agent test routes; [organization agents](../agents-organizations.md). |
 | `/api/v0/rag*` | Knowledge collections, snapshots, indexing and profiles; [knowledge](../admin/knowledge.md). |
 | `/api/v0/admin/*` | Administrative models, grants, settings and catalogs; administration guides. |
 | `/api/v0/setup/*` | Verified setup/recovery state machine. |
@@ -243,19 +243,31 @@ not a live IdP directory count. An empty list grants no membership. Updates requ
 `expected_revision` returned by the server; a stale revision returns `409`
 without replacing metadata or group bindings.
 
-Member organization lists contain actual memberships. Dot configuration access
+Member organization lists contain actual memberships. Agent configuration access
 intersects that membership with the existing user/group share and
-agent-management permission. Membership alone does not expose a Dot's
+agent-management permission. Membership alone does not expose an agent's
 configuration. Respond-only shares supply existing Inbox standing rather than
 the agent configuration response. Administrator recovery remains available
 through the existing administration and agent-management surfaces.
 
-Agent summaries carry nullable `dot` metadata with the persisted Dot name,
-typed owner and active state. A Dot's organization owner is immutable. The
-organization detail reports its total active count and configured limit, while
-its Dot list includes only configurations the caller may read. Active idle
-Dots count towards the limit. Creation and activation enforce that limit in
+Agent summaries carry nullable `ownership` metadata with the persisted name
+and active state of a personal or team agent, beside its typed `owner`. An
+agent's organization owner is immutable. The organization detail reports its
+total active count and configured limit, while its agent list includes only
+configurations the caller may read. Active idle agents count towards the
+limit. Creation and activation enforce that limit in
 the same transaction as the current authority check.
+
+`POST /api/v0/agents` creates a personal agent for the caller when the body
+carries `"kind": "personal"` (with `can_manage_personal_agents`; a `spec` is
+refused, since a personal agent starts from its owner's tools) and a public
+agent otherwise. A team agent is created with
+`POST /api/v0/organizations/{id}/agents`. `GET` and `PUT
+/api/v0/agents/{id}/communication` and `GET /api/v0/agents/{id}/activity`
+answer by kind: for a personal agent its owner's consent with its peers and its
+runs (paged with `cursor` and `limit`; the decision-trail filters,
+`/activity/export` and `/activity/verify` apply to the other kinds), for any
+other agent the callers it accepts and its decision trail.
 
 `GET /api/v0/agent-resources?agent_id={id}` resolves the actual target agent's
 configuration inventory. An organization connector is offered and grantable
@@ -266,7 +278,7 @@ a selected credential is separate from the principal's Connector grant.
 
 `POST /api/v0/agents/{id}/test/messages` requires
 `{message, source:"draft"|"published", session_id?}`. Ordinary agents accept
-explicit `draft`; active organization Dots additionally accept `published` for
+explicit `draft`; active organization agents additionally accept `published` for
 current member writers. A new published conversation uses the actual current
 live version. Continuing it keeps its stored positive version after publishing
 or rollback; changing source requires a new conversation. The response is
@@ -302,21 +314,21 @@ thousand matching candidates. When more candidates remain at that boundary,
 `truncated` is `true`; narrow the query before relying on the result. Group
 suggestions contain the organization's actual bound groups.
 
-### Dot memory scopes
+### Agent memory scopes
 
-`GET /api/v0/dots/{id}/memories` returns at most 500 merged notes and a
+`GET /api/v0/agents/{id}/memories` returns at most 500 merged notes and a
 `scopes` array with each actual scope's `scope`, configured `name` and current
-`writable` flag. Each note includes its `scope`. Personal Dots expose `dot`;
-organization Dots expose `dot` and `organization`. The server derives the
-organization from the target Dot, never from an input organization ID.
+`writable` flag. Each note includes its `scope`. Personal agents expose `agent`;
+organization agents expose `agent` and `organization`. The server derives the
+organization from the target agent, never from an input organization ID.
 
-POST and PUT require `{kind,content,scope}`; DELETE requires `?scope=dot` or
+POST and PUT require `{kind,content,scope}`; DELETE requires `?scope=agent` or
 `?scope=organization`. Missing or invalid scope returns 400. New and updated
 content is limited to 2,000 UTF-8 bytes; existing longer notes remain readable.
 Kinds are `preference`, `project` and `fact`.
 
 Organization reads require current membership, agent-management permission
-and effective Read or Write access to that Dot. Own-note changes require
+and effective Read or Write access to that agent. Own-note changes require
 Write; shared organization-note changes also require current gateway
 administration rights. A narrowly shared writer receives 403 on shared
 mutation. Respond-only and nonmember recovery access expose no notes. The
@@ -324,10 +336,10 @@ server rechecks authority and applies each operation in the same transaction;
 returned writable flags do not authorize a later request. Foreign note IDs
 return 404 without revealing content.
 
-### Personal Dot browser handover
+### Personal agent browser handover
 
-An active personal Dot can request owner help through its existing `browse_page`
-tool. The exact chat turn pauses while the owner uses the Dot's server-side
+An active personal agent can request owner help through its existing `browse_page`
+tool. The exact chat turn pauses while the owner uses the agent's server-side
 browser in the web conversation. The five `browser-handover` routes in the
 operation index claim one controller, return private JPEG frames, accept typed
 input, return control to the same turn, or stop that run. All require the same
@@ -335,9 +347,9 @@ authenticated owner session and same-origin `Origin`; responses use
 `Cache-Control: no-store, private`. The claim body carries a client-generated
 `controller_id`; retrying with that same ID is idempotent, while another
 controller is refused. Frames and input are never added to model messages or
-chat attachments. This flow is personal-Dot-only and uses the runner's
-persistent browser profile when persistent storage is available; see [browser handover](../dots-browser-handover.md)
-and [workspace deployment limits](../dots-workspace.md#operator-implications).
+chat attachments. This flow is personal-agent-only and uses the runner's
+persistent browser profile when persistent storage is available; see [browser handover](../agents-browser-handover.md)
+and [workspace deployment limits](../agents-workspace.md#operator-implications).
 
 ### Conversation events
 
@@ -348,20 +360,23 @@ AIplane JSON event protocol (`snapshot`, `turn_delta`, tool and state events),
 not OpenAI chat chunks. Reconnect using the existing protocol's snapshot and
 event handling; do not append a reconnect snapshot as if it were new text.
 
-### Personal Dot automation
+### Personal agent automation
 
-Schedule and webhook create/update bodies accept `dot_id: string | null`.
+Schedule and webhook create/update bodies accept
+`personal_agent_id: string | null`, the personal agent the run is bound to
+(`agent_version` belongs to an organization agent's `principal_id`).
 Omitting it selects ordinary user execution. A changed binding must select an
-active owned Dot; an unchanged unavailable binding can be retained while other
+active owned agent; an unchanged unavailable binding can be retained while other
 configuration is edited, but cannot execute. Responses include the stored
-`dot_id` and the actual owned Dot metadata when that Dot exists.
+`personal_agent_id` and, as `agent`, the actual owned agent metadata when that
+agent exists.
 
 `linked_session_id` is valid only with conversation reuse. Omission retains
 the link, an empty string clears it, and a concrete ID must identify a private
-owned conversation with the same Dot binding. Changing the Dot binding clears
+owned conversation with the same agent binding. Changing the agent binding clears
 the existing link unless a matching replacement is supplied. The chat-session
-list accepts `dot_id`: absence lists all conversations, an empty value selects
-ordinary conversations, and a Dot ID selects that owner's Dot conversations.
+list accepts `agent_id`: absence lists all conversations, an empty value selects
+ordinary conversations, and an agent ID selects that owner's agent conversations.
 This scope also applies to text search before its result limit.
 
 Run history includes the exact `assistant_turn_id`. A synchronous webhook or
@@ -375,29 +390,29 @@ messages, steering and history rewrites are refused while that turn runs.
 
 ### Organization scheduled actions
 
-`GET /api/v0/scheduled?principal_id={dot_id}` selects an organization Dot's
+`GET /api/v0/scheduled?principal_id={agent_id}` selects an organization agent's
 schedule inventory. Without that query, the route lists the authenticated
 user's schedules. The scoped response contains `principal_id`, `can_write`,
-`actions`, the actual target in `dots`, and its published `versions` using the
+`actions`, the actual target in `agent_owners`, and its published `versions` using the
 existing agent version shape. Organization responses have `models: []` and
 `default_timezone: null`; the client must supply a timezone. An empty schedule
-list still returns the actual Dot and its versions.
+list still returns the actual agent and its versions.
 
 Creation uses the existing `POST /api/v0/scheduled` route. For an organization
-Dot, send `principal_id`, a positive `agent_version`, `name`, `prompt`, `cron`,
+Agent, send `principal_id`, a positive `agent_version`, `name`, `prompt`, `cron`,
 `timezone`, `tools_enabled`, `reuse_conversation: false` and `reuse_rounds`.
-Omit `model`, `dot_id` and `linked_session_id`. The model comes from the pinned
+Omit `model`, `agent_id` and `linked_session_id`. The model comes from the pinned
 published spec, or the existing gateway Chat default when the spec omits it,
-under the Dot principal's current grants. Each fire opens a fresh private principal-owned
+under the agent principal's current grants. Each fire opens a fresh private principal-owned
 conversation. Organization conversation reuse is unavailable.
 
 The returned action includes `principal_id`, `agent_version` and
-`configuration_generation`; its `model` and `dot_id` are null. Ownership is
+`configuration_generation`; its `model` and `agent_id` are null. Ownership is
 immutable. The schedule belongs to the principal and survives deletion of its
 creating user. Inventory, creation, edits, toggles, deletion and run history
 require current organization membership and effective Write access, checked in
 the operation's transaction. Nonmember administrator recovery rights do not
-expose these private surfaces. Personal Dot management permission is not a
+expose these private surfaces. Personal agent management permission is not a
 prerequisite.
 
 `PUT /api/v0/scheduled/{id}` requires the complete configuration and
@@ -428,24 +443,24 @@ principal disablement, grant removal or configuration changes. Success returns
 for their private draft conversations.
 
 Deleting a schedule with a running, waiting or starting run returns 409.
-Stop or settle it before retrying. Deleting a Dot with retained principal-owned
+Stop or settle it before retrying. Deleting an agent with retained principal-owned
 schedules also returns 409: delete those schedules first, even if their runs
 have finished. Schedule deletion removes its recorded run history.
 
 ### Organization webhooks
 
-`GET /api/v0/webhooks?principal_id={dot_id}` selects an organization Dot's
+`GET /api/v0/webhooks?principal_id={agent_id}` selects an organization agent's
 webhook inventory. Without this query, it returns the authenticated user's
 webhooks. The scoped response contains `principal_id`, `can_write`, `webhooks`,
-the actual target in `dots` and its retained published `versions`.
+the actual target in `agent_owners` and its retained published `versions`.
 
 `POST /api/v0/webhooks` accepts `principal_id`, positive `agent_version`, `name`,
 `prompt` and `tools_enabled`. Organization sources require asynchronous mode
-and fresh conversations: omit `model`, `dot_id` and `linked_session_id`, and
+and fresh conversations: omit `model`, `agent_id` and `linked_session_id`, and
 keep `synchronous` and `reuse_conversation` false. The response contains
 `{webhook,secret}`; only this creation and rotation disclose the minted secret.
 The stored webhook includes `principal_id`, `agent_version` and its nonempty
-`configuration_generation`. Its model and personal Dot binding are null.
+`configuration_generation`. Its model and personal agent binding are null.
 Ownership is immutable; creator deletion does not delete the principal's source.
 
 Current member Write guards inventory, configuration, secret rotation, deletion,
@@ -476,7 +491,7 @@ under the current source's retained publication. Membership and Write are checke
 again before returning its private result. Rotation and pause preserve admitted
 decisions; execution edits invalidate further dispatch from older generations.
 Exact Stop uses the private cancellation endpoint described above. Pending or
-starting runs prevent source deletion; retained sources prevent Dot deletion.
+starting runs prevent source deletion; retained sources prevent agent deletion.
 
 ## Public entry points and credentials
 
@@ -593,39 +608,34 @@ Debug fixture routes exist only in development builds.
 | `GET /api/v0/admin/users` |
 | `POST /api/v0/admin/users/{id}/impersonate` |
 | `POST /api/v0/agent-architect` |
-| `GET /api/v0/agent-architect/{session_id}/dot-plan` |
-| `POST /api/v0/agent-architect/{session_id}/dot-plan` |
+| `GET /api/v0/agent-architect/{session_id}/agent-plan` |
+| `POST /api/v0/agent-architect/{session_id}/agent-plan` |
 | `GET /api/v0/agent-resources` |
 | `GET /api/v0/agents` |
 | `POST /api/v0/agents` |
 | `GET /api/v0/organizations` |
 | `GET /api/v0/organizations/{id}` |
-| `POST /api/v0/organizations/{id}/dots` |
-| `POST /api/v0/organizations/{id}/dots/{dot}/active` |
-| `GET /api/v0/dots` |
-| `POST /api/v0/dots` |
-| `PUT /api/v0/dots/{id}/active` |
-| `GET /api/v0/dots/{id}/profile` |
-| `PUT /api/v0/dots/{id}/profile` |
-| `GET /api/v0/dots/{id}/access` |
-| `PUT /api/v0/dots/{id}/access` |
-| `GET /api/v0/dots/{id}/connections` |
-| `PUT /api/v0/dots/{id}/connections/{key}` |
-| `POST /api/v0/dots/{id}/connections/{key}/connect` |
-| `DELETE /api/v0/dots/{id}/connections/{key}` |
-| `GET /api/v0/dots/{id}/communication` |
-| `PUT /api/v0/dots/{id}/communication` |
-| `GET /api/v0/dots/{id}/memories` |
-| `POST /api/v0/dots/{id}/memories` |
-| `PUT /api/v0/dots/{id}/memories/{memory_id}` |
-| `DELETE /api/v0/dots/{id}/memories/{memory_id}` |
-| `GET /api/v0/dots/{id}/activity` |
-| `GET /api/v0/dots/{id}/workspace` |
-| `GET /api/v0/dots/{id}/workspace/file` |
-| `PUT /api/v0/dots/{id}/workspace/file` |
-| `POST /api/v0/dots/{id}/workspace/folder` |
-| `DELETE /api/v0/dots/{id}/workspace/entry` |
-| `POST /api/v0/dots/{id}/sessions` |
+| `POST /api/v0/organizations/{id}/agents` |
+| `POST /api/v0/organizations/{id}/agents/{agent}/active` |
+| `PUT /api/v0/agents/{id}/active` |
+| `GET /api/v0/agents/{id}/profile` |
+| `PUT /api/v0/agents/{id}/profile` |
+| `GET /api/v0/agents/{id}/access` |
+| `PUT /api/v0/agents/{id}/access` |
+| `GET /api/v0/agents/{id}/connections` |
+| `PUT /api/v0/agents/{id}/connections/{key}` |
+| `POST /api/v0/agents/{id}/connections/{key}/connect` |
+| `DELETE /api/v0/agents/{id}/connections/{key}` |
+| `GET /api/v0/agents/{id}/memories` |
+| `POST /api/v0/agents/{id}/memories` |
+| `PUT /api/v0/agents/{id}/memories/{memory_id}` |
+| `DELETE /api/v0/agents/{id}/memories/{memory_id}` |
+| `GET /api/v0/agents/{id}/workspace` |
+| `GET /api/v0/agents/{id}/workspace/file` |
+| `PUT /api/v0/agents/{id}/workspace/file` |
+| `POST /api/v0/agents/{id}/workspace/folder` |
+| `DELETE /api/v0/agents/{id}/workspace/entry` |
+| `POST /api/v0/agents/{id}/sessions` |
 | `GET /api/v0/agents/inbox` |
 | `GET /api/v0/agents/inbox/events` |
 | `POST /api/v0/agents/inbox/{id}/answer` |

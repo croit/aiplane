@@ -386,14 +386,14 @@ test('organization draft chat requires actual current Write access without enabl
     assert.equal(agentUiCapabilities({ owner: { kind: 'user', id: 'owner', name: null, email: null }, access: 'read' as const }).draftChat, true);
 });
 
-test('agent owner presentation preserves authored Dot name and actual organization return path', async () => {
+test('agent owner presentation preserves authored agent name and actual organization return path', async () => {
     const { organizationOwner, agentPublicName } = await import('./agents.ts');
     const org = { id: 'actual/org', name: 'Acme Support', kind: 'organization' as const };
-    const dot = { name: 'internal-principal-id', display: 'Harald Support', owner: org, dot: { name: 'Harald', active: true } };
-    assert.deepEqual(organizationOwner(dot), org);
-    assert.equal(agentPublicName(dot), 'Harald');
-    assert.equal(organizationOwner({ ...dot, owner: { kind: 'user', id: 'u', name: null, email: null } }), null);
-    assert.equal(agentPublicName({ ...dot, dot: null }), 'internal-principal-id');
+    const owned_agent = { name: 'internal-principal-id', display: 'Harald Support', owner: org, ownership: { name: 'Harald', active: true } };
+    assert.deepEqual(organizationOwner(owned_agent), org);
+    assert.equal(agentPublicName(owned_agent), 'Harald');
+    assert.equal(organizationOwner({ ...owned_agent, owner: { kind: 'user', id: 'u', name: null, email: null } }), null);
+    assert.equal(agentPublicName({ ...owned_agent, ownership: null }), 'internal-principal-id');
 });
 
 test('agent resource API scopes the existing inventory by the actual target ID', async (context) => {
@@ -496,9 +496,9 @@ test('the agent list asks for every user only when told to', async (context) => 
 
 test('the agent kinds offered for creation follow the permissions and the teams at hand', async () => {
     const { creatableKinds } = await import('./agents.ts');
-    assert.deepEqual(creatableKinds({ can_manage_dots: true, can_manage_agents: true }, [{}]), ['personal', 'team', 'public']);
-    assert.deepEqual(creatableKinds({ can_manage_dots: true, can_manage_agents: true }, []), ['personal', 'public']);
-    assert.deepEqual(creatableKinds({ can_manage_dots: true }, [{}]), ['personal']);
+    assert.deepEqual(creatableKinds({ can_manage_personal_agents: true, can_manage_agents: true }, [{}]), ['personal', 'team', 'public']);
+    assert.deepEqual(creatableKinds({ can_manage_personal_agents: true, can_manage_agents: true }, []), ['personal', 'public']);
+    assert.deepEqual(creatableKinds({ can_manage_personal_agents: true }, [{}]), ['personal']);
     assert.deepEqual(creatableKinds({ can_manage_agents: true }, []), ['public']);
     assert.deepEqual(creatableKinds(null, [{}]), []);
 });

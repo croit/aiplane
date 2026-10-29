@@ -108,14 +108,14 @@ async fn access_in(
     if policy.is_admin(&groups) && !organization_only {
         return Ok(Some(Access::Write));
     }
-    match agents_db::dot_owner_in(tx, agent_id).await? {
-        Some(agents_db::DotOwner::Organization(organization)) => {
+    match agents_db::agent_owner_in(tx, agent_id).await? {
+        Some(agents_db::AgentOwner::Organization(organization)) => {
             if !aiplane_agents::db::organizations::is_member_in(tx, &organization, &groups).await? {
                 return Ok(None);
             }
         }
         _ if organization_only => return Ok(None),
-        Some(agents_db::DotOwner::User(owner)) if owner != user_id => return Ok(None),
+        Some(agents_db::AgentOwner::User(owner)) if owner != user_id => return Ok(None),
         _ => {}
     }
     if policy.is_admin(&groups) {
@@ -143,40 +143,40 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn organization_access_requires_current_membership_before_admin_recovery() {
-        let (state, organization, dot) = fixture().await;
+        let (state, organization, owned_agent) = fixture().await;
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
         assert_eq!(
-            effective_access_in(&state, &mut tx, &dot, "admin")
+            effective_access_in(&state, &mut tx, &owned_agent, "admin")
                 .await
                 .unwrap(),
             Some(Access::Write)
         );
         assert_eq!(
-            organization_access_in(&state, &mut tx, &dot, "admin")
+            organization_access_in(&state, &mut tx, &owned_agent, "admin")
                 .await
                 .unwrap(),
             None
         );
         assert_eq!(
-            organization_access_in(&state, &mut tx, &dot, "creator")
+            organization_access_in(&state, &mut tx, &owned_agent, "creator")
                 .await
                 .unwrap(),
             Some(Access::Write)
         );
         assert_eq!(
-            organization_access_in(&state, &mut tx, &dot, "responder")
+            organization_access_in(&state, &mut tx, &owned_agent, "responder")
                 .await
                 .unwrap(),
             Some(Access::Respond)
         );
         assert_eq!(
-            organization_access_in(&state, &mut tx, &dot, "outsider")
+            organization_access_in(&state, &mut tx, &owned_agent, "outsider")
                 .await
                 .unwrap(),
             None
         );
         assert_eq!(
-            organization_access_in(&state, &mut tx, &dot, "absent")
+            organization_access_in(&state, &mut tx, &owned_agent, "absent")
                 .await
                 .unwrap(),
             None
@@ -189,13 +189,13 @@ pub(crate) mod tests {
         .await
         .unwrap();
         assert_eq!(
-            organization_access_in(&state, &mut tx, &dot, "creator")
+            organization_access_in(&state, &mut tx, &owned_agent, "creator")
                 .await
                 .unwrap(),
             None
         );
         assert_eq!(
-            organization_access_in(&state, &mut tx, &dot, "responder")
+            organization_access_in(&state, &mut tx, &owned_agent, "responder")
                 .await
                 .unwrap(),
             Some(Access::Respond)
@@ -203,7 +203,7 @@ pub(crate) mod tests {
         drop(tx);
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
         assert_eq!(
-            organization_access_in(&state, &mut tx, &dot, "creator")
+            organization_access_in(&state, &mut tx, &owned_agent, "creator")
                 .await
                 .unwrap(),
             Some(Access::Write)
@@ -265,7 +265,7 @@ pub(crate) mod tests {
             panic!("organization expected");
         };
         let mut tx = WriteTx::begin(&pool).await.unwrap();
-        let (_, dot) = agents_db::create_organization_dot_in(
+        let (_, owned_agent) = agents_db::create_organization_agent_in(
             &mut tx,
             &organization.organization.id,
             &NewPrincipal {
@@ -279,12 +279,12 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-        let dot = dot.unwrap().principal.id;
+        let owned_agent = owned_agent.unwrap().principal.id;
         tx.commit().await.unwrap();
         for (user, access) in [("responder", Access::Respond), ("outsider", Access::Write)] {
             agents_db::set_share(
                 &pool,
-                &dot,
+                &owned_agent,
                 agents_db::SubjectKind::User,
                 user,
                 access,
@@ -309,41 +309,53 @@ pub(crate) mod tests {
             aiplane_core::rama_server::SessionStore::new(pool, [9u8; 32]),
             aiplane_core::server::usage::UsageHandle::disabled(),
         );
-        (state, organization.organization.id, dot)
+        (state, organization.organization.id, owned_agent)
     }
 
     #[tokio::test]
     async fn organization_access_requires_current_membership_and_share_with_admin_recovery() {
-        let (state, organization, dot) = fixture().await;
+        let (state, organization, owned_agent) = fixture().await;
         assert_eq!(
-            effective_access(&state, &dot, "creator").await.unwrap(),
+            effective_access(&state, &owned_agent, "creator")
+                .await
+                .unwrap(),
             Some(Access::Write)
         );
         assert_eq!(
-            effective_access(&state, &dot, "responder").await.unwrap(),
+            effective_access(&state, &owned_agent, "responder")
+                .await
+                .unwrap(),
             Some(Access::Respond)
         );
         assert_eq!(
-            effective_access(&state, &dot, "outsider").await.unwrap(),
+            effective_access(&state, &owned_agent, "outsider")
+                .await
+                .unwrap(),
             None
         );
         assert_eq!(
-            effective_access(&state, &dot, "admin").await.unwrap(),
+            effective_access(&state, &owned_agent, "admin")
+                .await
+                .unwrap(),
             Some(Access::Write)
         );
         assert_eq!(
-            effective_access(&state, &dot, "missing-user")
+            effective_access(&state, &owned_agent, "missing-user")
                 .await
                 .unwrap(),
             None
         );
         sqlx::query("DELETE FROM organization_groups WHERE organization_id=? AND gateway_group='responders'").bind(&organization).execute(&state.db).await.unwrap();
         assert_eq!(
-            effective_access(&state, &dot, "responder").await.unwrap(),
+            effective_access(&state, &owned_agent, "responder")
+                .await
+                .unwrap(),
             None
         );
         assert_eq!(
-            effective_access(&state, &dot, "creator").await.unwrap(),
+            effective_access(&state, &owned_agent, "creator")
+                .await
+                .unwrap(),
             Some(Access::Write)
         );
         sqlx::query("DELETE FROM organization_groups WHERE organization_id=?")
@@ -352,11 +364,15 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert_eq!(
-            effective_access(&state, &dot, "creator").await.unwrap(),
+            effective_access(&state, &owned_agent, "creator")
+                .await
+                .unwrap(),
             None
         );
         assert_eq!(
-            effective_access(&state, &dot, "admin").await.unwrap(),
+            effective_access(&state, &owned_agent, "admin")
+                .await
+                .unwrap(),
             Some(Access::Write)
         );
     }
@@ -364,7 +380,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn organization_access_uses_transaction_policy_without_global_reload_or_stale_user_roles()
     {
-        let (state, _, dot) = fixture().await;
+        let (state, _, owned_agent) = fixture().await;
         let cached = state.role_ids_for(&["claim-members".into()]);
         assert!(state.rbac.can_manage_agents(&cached));
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
@@ -373,7 +389,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert_eq!(
-            effective_access_in(&state, &mut tx, &dot, "creator")
+            effective_access_in(&state, &mut tx, &owned_agent, "creator")
                 .await
                 .unwrap(),
             None
@@ -387,7 +403,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert_eq!(
-            effective_access_in(&state, &mut tx, &dot, "creator")
+            effective_access_in(&state, &mut tx, &owned_agent, "creator")
                 .await
                 .unwrap(),
             None
@@ -398,19 +414,19 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert_eq!(
-            effective_access_in(&state, &mut tx, &dot, "creator")
+            effective_access_in(&state, &mut tx, &owned_agent, "creator")
                 .await
                 .unwrap(),
             None
         );
         assert_eq!(
-            effective_access_in(&state, &mut tx, &dot, "responder")
+            effective_access_in(&state, &mut tx, &owned_agent, "responder")
                 .await
                 .unwrap(),
             Some(Access::Respond)
         );
         assert_eq!(
-            effective_access_in(&state, &mut tx, &dot, "admin")
+            effective_access_in(&state, &mut tx, &owned_agent, "admin")
                 .await
                 .unwrap(),
             Some(Access::Write)
@@ -418,14 +434,16 @@ pub(crate) mod tests {
         drop(tx);
         assert!(state.rbac.can_manage_agents(&cached));
         assert_eq!(
-            effective_access(&state, &dot, "creator").await.unwrap(),
+            effective_access(&state, &owned_agent, "creator")
+                .await
+                .unwrap(),
             Some(Access::Write)
         );
     }
 
     #[tokio::test]
     async fn organization_profile_refuses_live_and_pinned_execution_before_loading_a_model() {
-        let (state, _, dot) = fixture().await;
+        let (state, _, owned_agent) = fixture().await;
         let state = Arc::new(state);
         for source in [
             crate::agents::profile::SpecSource::Live,
@@ -433,7 +451,7 @@ pub(crate) mod tests {
         ] {
             let result = crate::agents::profile::RunProfile::load_from(
                 &state,
-                &dot,
+                &owned_agent,
                 source,
                 crate::agents::profile::Role::Main,
                 &Default::default(),

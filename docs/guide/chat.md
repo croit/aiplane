@@ -72,7 +72,7 @@ Deleting the root cancels its linked work. Retained child histories remain
 private and read-only; when the root is unavailable, the banner explains that
 there is no root link.
 
-![Private delegated agent history with root navigation and a pending decision](../img/guide/dot-delegated-history.png)
+![Private delegated agent history with root navigation and a pending decision](../img/guide/agent-delegated-history.png)
 
 ## Troubleshooting
 

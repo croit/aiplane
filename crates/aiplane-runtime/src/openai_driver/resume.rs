@@ -288,16 +288,16 @@ pub(super) async fn resume_into(
             .await
             .map_err(persist_err("cached_reply_owner", &ctx.assistant_turn_id))?
             .ok_or_else(refused)?;
-        let dot = aiplane_agents::db::agents::get_personal_dot(
+        let owned_agent = aiplane_agents::db::agents::get_personal_agent(
             &d.state.db,
             owner,
-            &execution.identity().dot_id,
+            &execution.identity().agent_id,
         )
         .await
-        .map_err(persist_err("cached_reply_dot", &ctx.assistant_turn_id))?
+        .map_err(persist_err("cached_reply_agent", &ctx.assistant_turn_id))?
         .ok_or_else(refused)?;
         let spec: crate::agents::spec::AgentSpec =
-            serde_json::from_str(&dot.agent.draft_spec).map_err(|_| refused())?;
+            serde_json::from_str(&owned_agent.agent.draft_spec).map_err(|_| refused())?;
         if !crate::agents::router::local::forward_available(&d.state, &user, &spec)
             .await
             .map_err(|_| refused())?
@@ -336,7 +336,7 @@ pub(super) async fn resume_into(
                 else {
                     return Err(refused());
                 };
-                if link.caller_dot_id != execution.identity().dot_id
+                if link.caller_agent_id != execution.identity().agent_id
                     || link.caller_owner_user_id != *owner
                 {
                     return Err(refused());
@@ -348,8 +348,8 @@ pub(super) async fn resume_into(
                     &mut connection,
                     &aiplane_agents::db::cross_boundary::NewCrossBoundaryChild {
                         child_session_id: &session.id,
-                        caller_dot_id: &link.caller_dot_id,
-                        receiver_dot_id: &link.receiver_dot_id,
+                        caller_agent_id: &link.caller_agent_id,
+                        receiver_agent_id: &link.receiver_agent_id,
                         caller_owner_user_id: owner,
                         caller_role_ids: &caller_role_ids,
                         receiver_org_id: &link.receiver_org_id,
@@ -502,10 +502,10 @@ async fn settled_without_running(
     status: &str,
     result: Value,
 ) -> Result<(), TurnError> {
-    if !ctx.agent_active() && ctx.personal_dot.is_none() {
+    if !ctx.agent_active() && ctx.personal_agent.is_none() {
         return Ok(());
     }
-    let detail = if ctx.personal_dot.is_some() {
+    let detail = if ctx.personal_agent.is_some() {
         json!({
             "tool": call.name,
             "call_id": call.id,

@@ -26,9 +26,9 @@ pub const STAGE_TOTAL_MAX_BYTES: usize = 50 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DotWorkspace {
+pub struct OwnedAgentWorkspace {
     pub owner_user_id: String,
-    pub dot_id: String,
+    pub agent_id: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -40,8 +40,8 @@ pub enum WorkspacePurpose {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DotWorkspaceScope {
-    pub workspace: DotWorkspace,
+pub struct AgentWorkspaceScope {
+    pub workspace: OwnedAgentWorkspace,
     pub turn_id: String,
     pub purpose: WorkspacePurpose,
 }
@@ -77,14 +77,14 @@ pub struct WorkspaceListResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceRequest {
-    pub workspace: DotWorkspace,
+    pub workspace: OwnedAgentWorkspace,
     pub operation: WorkspaceOperation,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct BrowserControlRequest {
-    pub workspace: DotWorkspace,
+    pub workspace: OwnedAgentWorkspace,
     pub turn_id: String,
     pub container_id: String,
     pub handover_id: String,
@@ -241,7 +241,7 @@ pub struct RunRequest {
     #[serde(default)]
     pub keep_alive: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace: Option<DotWorkspaceScope>,
+    pub workspace: Option<AgentWorkspaceScope>,
 }
 
 /// A single file the run produced under `/work` (anything that wasn't an
@@ -309,13 +309,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dot_workspace_scope_survives_request_round_trip() {
+    fn agent_workspace_scope_survives_request_round_trip() {
         let value = serde_json::json!({
             "language": "python", "code": "print(1)", "files": [],
             "timeout_secs": null, "network": false, "container_id": null,
             "keep_alive": true,
             "workspace": {
-                "workspace": {"owner_user_id": "person/opaque", "dot_id": "00000000-0000-4000-8000-000000000001"},
+                "workspace": {"owner_user_id": "person/opaque", "agent_id": "00000000-0000-4000-8000-000000000001"},
                 "turn_id": "persisted-assistant-turn", "purpose": "workspace"
             }
         });
@@ -324,23 +324,23 @@ mod tests {
     }
 
     #[test]
-    fn dot_workspace_scope_rejects_extra_authority_and_unknown_purpose() {
+    fn agent_workspace_scope_rejects_extra_authority_and_unknown_purpose() {
         let value = serde_json::json!({
-            "workspace": {"owner_user_id": "person", "dot_id": "dot"},
+            "workspace": {"owner_user_id": "person", "agent_id": "agent"},
             "turn_id": "turn", "purpose": "workspace"
         });
-        let scope: DotWorkspaceScope = serde_json::from_value(value.clone()).unwrap();
+        let scope: AgentWorkspaceScope = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(scope.workspace.owner_user_id, "person");
         assert_eq!(scope.purpose, WorkspacePurpose::Workspace);
         let mut unknown_owner = value.clone();
         unknown_owner["workspace"]["organization_id"] = serde_json::json!("organization");
-        assert!(serde_json::from_value::<DotWorkspaceScope>(unknown_owner).is_err());
+        assert!(serde_json::from_value::<AgentWorkspaceScope>(unknown_owner).is_err());
         let mut unknown_scope = value.clone();
         unknown_scope["host_path"] = serde_json::json!("/etc");
-        assert!(serde_json::from_value::<DotWorkspaceScope>(unknown_scope).is_err());
+        assert!(serde_json::from_value::<AgentWorkspaceScope>(unknown_scope).is_err());
         let mut unknown_purpose = value;
         unknown_purpose["purpose"] = serde_json::json!("host");
-        assert!(serde_json::from_value::<DotWorkspaceScope>(unknown_purpose).is_err());
+        assert!(serde_json::from_value::<AgentWorkspaceScope>(unknown_purpose).is_err());
     }
 
     #[test]

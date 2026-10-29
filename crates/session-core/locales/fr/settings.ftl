@@ -53,8 +53,8 @@ settings-s-usage = Métriques d'utilisation
 settings-s-usage-blurb = Comptabilisation par requête derrière /usage.
 settings-s-limits = Limites de débit & quotas
 settings-s-limits-blurb = Interrupteur principal des règles configurées dans /admin/limits.
-settings-s-dots = Agents personnels
-settings-s-dots-blurb = Capacité des agents personnels.
+settings-s-agents = Agents personnels
+settings-s-agents-blurb = Capacité des agents personnels.
 settings-s-content_guard = Contrôle du contenu
 settings-s-content_guard-blurb = Vérifie le contenu avant que le modèle sélectionné ne le reçoive.
 
@@ -212,8 +212,8 @@ settings-f-usage-currency-help = Devise dans laquelle les coûts sont indiqués.
 
 settings-f-limits-enabled = Appliquer les limites et quotas
 settings-f-limits-enabled-help = Désactivé, les règles de /admin/limits sont ignorées.
-settings-f-dots-max_active_per_user = Agents personnels actifs par utilisateur
-settings-f-dots-max_active_per_user-help = Nombre maximal d’agents personnels actifs par utilisateur. Valeur par défaut : 4.
+settings-f-agents-max_active_per_user = Agents personnels actifs par utilisateur
+settings-f-agents-max_active_per_user-help = Nombre maximal d’agents personnels actifs par utilisateur. Valeur par défaut : 4.
 
 settings-f-feedback-enabled = Proposer le widget de retour
 settings-f-feedback-enabled-help = Interrupteur principal du bouton de retour intégré.
@@ -300,8 +300,8 @@ settings-f-gateway-default_priority-opt-low = Basse
 settings-f-gateway-default_priority-opt-medium = Moyenne
 settings-f-gateway-default_priority-opt-high = Haute
 
-settings-f-dots-max_active_per_organization = Agents actifs par organisation
-settings-f-dots-max_active_per_organization-help = Nombre maximal d’agents actifs appartenant à une organisation, y compris les agents inactifs en attente. Valeur par défaut : 4.
+settings-f-agents-max_active_per_organization = Agents actifs par organisation
+settings-f-agents-max_active_per_organization-help = Nombre maximal d’agents actifs appartenant à une organisation, y compris les agents inactifs en attente. Valeur par défaut : 4.
 
 # Branding — le logo de l'entreprise téléversé par l'opérateur. Une carte
 # d'admin faite main, pas une section settings.rs, d'où des noms simples.

@@ -743,7 +743,7 @@ const SPEC_JSON_READERS: &[Allowed] = &[
               yet, and hands every result to the validator; it never runs a spec",
     },
     Allowed {
-        path: "aiplane-api/src/pages/architect/dot.rs",
+        path: "aiplane-api/src/pages/architect/owned_agent.rs",
         why: "the personal proposal builder writes reviewed permissions into draft JSON before \
               AgentSpec validation, like assist/; its task, tools, defaults and bindings are \
               read through typed AgentSpec fields, and it never executes a spec",
@@ -934,25 +934,25 @@ fn agent_resume_claims_use_one_request_aware_transaction() {
 }
 
 #[test]
-fn personal_dot_calls_revalidate_access_before_execution() {
+fn personal_agent_calls_revalidate_access_before_execution() {
     let source = production_sources()
         .iter()
         .find(|source| source.rel == "aiplane-runtime/src/persona/live.rs")
         .expect("the personal agent dispatch wrapper must exist");
     for mechanism in [
         "users::find_by_id",
-        "agents::get_personal_dot",
-        "dot.active",
+        "agents::get_personal_agent",
+        "agent.active",
         "spec.main.tools",
         "GrantedToolSource::new",
-        "gate_dot",
+        "gate_agent",
     ] {
         assert!(
             source.code.contains(mechanism),
             "personal agent dispatch must keep {mechanism} before executing a tool"
         );
     }
-    let wrapping = scan(&["LivePersonalDotTool {"], |source| source.code.as_str());
+    let wrapping = scan(&["LivePersonalAgentTool {"], |source| source.code.as_str());
     assert_within(
         "Only the grant-filtered personal agent source may wrap a tool for live dispatch.",
         &[
@@ -970,7 +970,7 @@ fn personal_dot_calls_revalidate_access_before_execution() {
 }
 
 #[test]
-fn organization_dot_calls_revalidate_private_authority_before_execution() {
+fn organization_agent_calls_revalidate_private_authority_before_execution() {
     let source = production_sources()
         .iter()
         .find(|source| source.rel == "aiplane-runtime/src/agents/profile.rs")
@@ -1267,11 +1267,11 @@ const ACTIVITY_LOG_WRITERS: &[Allowed] = &[
         why: "notification channels created and deleted",
     },
     Allowed {
-        path: "aiplane-agents/src/db/dot_sessions.rs",
+        path: "aiplane-agents/src/db/agent_sessions.rs",
         why: "private agent session binding and its event share one write transaction",
     },
     Allowed {
-        path: "aiplane-agents/src/db/dot_delegation.rs",
+        path: "aiplane-agents/src/db/agent_delegation.rs",
         why: "directed consent and its management audit event share one write transaction",
     },
     Allowed {

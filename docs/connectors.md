@@ -59,7 +59,7 @@ when the callback reports an expired or unknown authorization.
 
 Connections retain the catalogue resource generation under which they were
 authorized. Changes to the server, authentication, scope or applicable OAuth
-configuration require reconnecting user and Dot accounts separately. Stale
+configuration require reconnecting user and agent accounts separately. Stale
 credentials remain locally disconnectable and are not sent to the changed
 server. In-flight authorization or refresh cannot overwrite a connection after
 its catalogue resource changes. Returning to an earlier configuration does

@@ -1972,7 +1972,7 @@ async fn schedules_and_webhooks_continue_in_a_linked_chat() {
     assert!(
         err.to_string().contains(&session_core::i18n::t(
             session_core::i18n::Lang::En,
-            "dot-background-error-linked"
+            "agent-background-error-linked"
         )),
         "{err}"
     );
@@ -1991,7 +1991,7 @@ async fn schedules_and_webhooks_continue_in_a_linked_chat() {
     assert!(
         err.to_string().contains(&session_core::i18n::t(
             session_core::i18n::Lang::En,
-            "dot-background-error-linked"
+            "agent-background-error-linked"
         )),
         "{err}"
     );
@@ -2926,7 +2926,7 @@ async fn unconfigured_features_and_missing_resources_refuse_by_meaning() {
     let hook = aiplane_runtime::server::webhooks::create(
         &state.db,
         aiplane_runtime::server::webhooks::NewWebhook {
-            dot_id: None,
+            personal_agent_id: None,
             linked_session_id: None,
             owner: aiplane_runtime::server::background::AutomationOwner::User("boss".into()),
             created_by: "boss".into(),
@@ -3077,14 +3077,14 @@ async fn priority_errors_use_the_selected_ui_language_over_browser_language() {
 }
 
 #[tokio::test]
-async fn groups_save_sets_clears_and_preserves_independent_dot_management() {
+async fn groups_save_sets_clears_and_preserves_independent_agent_management() {
     let (state, cookie) = setup().await;
     let app = common::app((*state).clone());
     for (extra, expected) in [
         ("", false),
-        (r#","can_manage_dots":true"#, true),
+        (r#","can_manage_personal_agents":true"#, true),
         ("", true),
-        (r#","can_manage_dots":false"#, false),
+        (r#","can_manage_personal_agents":false"#, false),
     ] {
         let saved = app
             .serve(req(
@@ -3092,7 +3092,7 @@ async fn groups_save_sets_clears_and_preserves_independent_dot_management() {
                 "/api/v0/admin/groups",
                 &cookie,
                 Some(format!(
-                    r#"{{"name":"dot-users","can_manage_agents":false{extra}}}"#
+                    r#"{{"name":"agent-users","can_manage_agents":false{extra}}}"#
                 )),
             ))
             .await
@@ -3107,9 +3107,9 @@ async fn groups_save_sets_clears_and_preserves_independent_dot_management() {
             .as_array()
             .unwrap()
             .iter()
-            .find(|g| g["name"] == "dot-users")
+            .find(|g| g["name"] == "agent-users")
             .unwrap();
-        assert_eq!(group["can_manage_dots"], expected);
+        assert_eq!(group["can_manage_personal_agents"], expected);
         assert_eq!(group["can_manage_agents"], false);
     }
 }

@@ -77,4 +77,4 @@ provides verified persistent storage. This directory is separate from
 conversation attachments. Download a file to inspect it, upload files of at most
 50 MiB, create folders or delete files and empty folders after confirmation.
 Writes wait until the agent computer is idle; directory browsing and downloads
-may observe files changing during a run. See [personal agent files](../dots.md#personal-dot-files).
+may observe files changing during a run. See [personal agent files](../personal-agents.md#personal-agent-files).

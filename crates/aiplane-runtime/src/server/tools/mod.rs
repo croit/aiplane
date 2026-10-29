@@ -43,7 +43,7 @@ pub use registry::{GrantedToolSource, ToolPhase, ToolRegistry, ToolSource};
 /// preferences) through the trait signature each time we add one.
 #[derive(Clone)]
 pub struct ToolContext {
-    pub personal_execution: Option<Arc<crate::agent_run::PersonalDotExecution>>,
+    pub personal_execution: Option<Arc<crate::agent_run::PersonalAgentExecution>>,
     /// Who the tool acts for. A person on the chat page and on a `gwk_`
     /// bearer; a system principal on a `gws_` bearer. Scope rows by
     /// [`Principal::subject_id`]; a tool that acts *for a person* must go
@@ -180,9 +180,9 @@ pub struct ToolContext {
     /// scheduled action or a `/v1` request. `principal` is then its
     /// principal; see [`Self::agent_active`].
     pub agent: Option<std::sync::Arc<crate::agent_run::AgentRun>>,
-    /// Personal Dot identity carried beside the user's principal. It scopes
-    /// Dot-owned data without changing the permissions of the user.
-    pub personal_dot: Option<crate::agent_run::PersonalDotIdentity>,
+    /// Personal agent identity carried beside the user's principal. It scopes
+    /// agent-owned data without changing the permissions of the user.
+    pub personal_agent: Option<crate::agent_run::PersonalAgentIdentity>,
     /// The id of the tool call this run answers. The runner sets it on the
     /// copy of the context it hands each call; `None` outside a call. A
     /// sub-agent dispatch records it as the call site of the run it starts.
@@ -228,7 +228,7 @@ impl ToolContext {
             pending_execution_facts: None,
             granted_tools: None,
             agent: None,
-            personal_dot: None,
+            personal_agent: None,
             personal_execution: None,
             call_id: None,
         }
@@ -583,7 +583,7 @@ pub trait Tool: Send + Sync + 'static {
         false
     }
 
-    /// Positive read-only metadata for autonomous personal Dot calls. Unknown
+    /// Positive read-only metadata for autonomous personal agent calls. Unknown
     /// tools require approval unless the owner's spec permits them explicitly.
     fn read_only(&self) -> bool {
         false

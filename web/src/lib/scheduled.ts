@@ -9,12 +9,12 @@ export interface ScheduleFields {
 	advanced: string;
 }
 
-import type { Dot } from './dot-state.ts';
-import type { DotBinding } from './dot-background.ts';
+import type { OwnedAgent } from './agent-state.ts';
+import type { AgentBinding } from './agent-background.ts';
 import type { AgentVersion } from './agents.ts';
 import { adminJson, adminPost, adminPut, adminDelete } from './admin-client.ts';
 
-export interface ScheduledAction extends DotBinding {
+export interface ScheduledAction extends AgentBinding {
 	id: string;
 	name: string;
 	prompt: string;
@@ -59,7 +59,7 @@ export interface ScheduledRun {
 
 export interface ScheduledData {
 	actions: ScheduledAction[];
-	dots: Dot[];
+	agents: OwnedAgent[];
 	models: ChatModelOption[];
 	default_timezone: string | null;
 	principal_id: string | null;
@@ -76,7 +76,7 @@ export interface ScheduledBody {
 	reuse_conversation: boolean;
 	reuse_rounds: number;
 	model?: string;
-	dot_id?: string | null;
+	personal_agent_id?: string | null;
 	principal_id?: string;
 	agent_version?: number;
 	linked_session_id?: string | null;

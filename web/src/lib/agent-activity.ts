@@ -64,7 +64,7 @@ export const KIND_GROUPS = {
 		'agent_share_set',
 		'agent_share_removed',
 		'agent_deleted',
-		'personal_dot_session_started',
+		'personal_agent_session_started',
 		'assist_suggested',
 		'principal_created',
 		'principal_disabled',
@@ -176,10 +176,10 @@ export function summarize(event: ActivityEvent): Summary | null {
 			return { key: 'agents-act-sum-tool', args: { tool: str(d.tool), status: str(d.decision) } };
 		case 'state_written':
 			return { key: 'agents-act-sum-state', args: { slot: str(d.slot), provenance: str(d.provenance) } };
-		case 'personal_dot_session_started':
-			return { key: 'dot-activity-session-started', args: {} };
-		case 'personal_dot_delegation_changed':
-			return { key: 'dot-activity-communication-changed', args: {} };
+		case 'personal_agent_session_started':
+			return { key: 'agent-activity-session-started', args: {} };
+		case 'personal_agent_delegation_changed':
+			return { key: 'agent-activity-communication-changed', args: {} };
 		case 'turn_started':
 			return d.resumed
 				? { key: 'agents-act-sum-resumed', args: {} }

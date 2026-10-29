@@ -78,8 +78,8 @@
 			<WebhookForm
 				{webhook}
 				models={data.models}
-				dots={data.dots}
-				presetDotId={id === null ? page.url.searchParams.get('dot_id') : null}
+				agents={data.agents}
+				presetAgentId={id === null ? page.url.searchParams.get('personal_agent_id') : null}
 				principalId={data.principal_id}
 				versions={data.versions}
 				canWrite={data.can_write}

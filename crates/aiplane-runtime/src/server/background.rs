@@ -29,20 +29,20 @@ pub struct BackgroundTurn {
 
 const MATCHED_RUNS: &str = "SELECT 'scheduled' AS source, r.id AS run_id, r.session_id,
     r.tools_enabled AS snapshot_tools, r.history_limit, a.user_id AS owner,
-    a.principal_id AS owner_principal, a.tools_enabled AS current_tools, a.dot_id,
+    a.principal_id AS owner_principal, a.tools_enabled AS current_tools, a.personal_agent_id,
     s.user_id AS session_owner, s.principal_id, s.shared, s.agent_version,
-    s.visitor_id, s.parent_turn_id, p.dot_id AS session_dot,
+    s.visitor_id, s.parent_turn_id, p.agent_id AS session_agent,
     r.agent_version AS run_agent_version, a.agent_version AS current_agent_version,
     r.configuration_generation AS run_generation, a.configuration_generation AS current_generation
     FROM scheduled_runs r LEFT JOIN scheduled_actions a ON a.id=r.action_id
     LEFT JOIN chat_sessions s ON s.id=r.session_id
-    LEFT JOIN personal_dot_sessions p ON p.session_id=s.id WHERE r.assistant_turn_id=?
+    LEFT JOIN personal_agent_sessions p ON p.session_id=s.id WHERE r.assistant_turn_id=?
     UNION ALL SELECT 'webhook', r.id, r.session_id, r.tools_enabled, r.history_limit,
-    a.user_id, a.principal_id, a.tools_enabled, a.dot_id, s.user_id, s.principal_id, s.shared,
-    s.agent_version, s.visitor_id, s.parent_turn_id, p.dot_id, r.agent_version, a.agent_version, r.configuration_generation, a.configuration_generation
+    a.user_id, a.principal_id, a.tools_enabled, a.personal_agent_id, s.user_id, s.principal_id, s.shared,
+    s.agent_version, s.visitor_id, s.parent_turn_id, p.agent_id, r.agent_version, a.agent_version, r.configuration_generation, a.configuration_generation
     FROM webhook_runs r LEFT JOIN webhooks a ON a.id=r.webhook_id
     LEFT JOIN chat_sessions s ON s.id=r.session_id
-    LEFT JOIN personal_dot_sessions p ON p.session_id=s.id WHERE r.assistant_turn_id=?";
+    LEFT JOIN personal_agent_sessions p ON p.session_id=s.id WHERE r.assistant_turn_id=?";
 
 fn has_original_run_pin(row: &sqlx::sqlite::SqliteRow) -> Result<bool, DbError> {
     let run_version: Option<i64> = row.try_get("run_agent_version")?;
@@ -128,12 +128,12 @@ pub async fn for_turn(
         ));
     }
     let row = &rows[0];
-    let dot: Option<String> = row.try_get("dot_id")?;
-    let session_dot: Option<String> = row.try_get("session_dot")?;
-    // An unbound (person) session is a valid home for a Dot-configured run —
-    // the Dot is optional — but a session bound to a *different* Dot is not.
-    let dot_mismatch = !(session_dot.is_none() || session_dot == dot);
-    if !owner_matches(row, owner)? || row.try_get::<bool, _>("shared")? || dot_mismatch {
+    let owned_agent: Option<String> = row.try_get("personal_agent_id")?;
+    let session_agent: Option<String> = row.try_get("session_agent")?;
+    // An unbound (person) session is a valid home for an agent-configured run —
+    // the agent is optional — but a session bound to a *different* agent is not.
+    let agent_mismatch = !(session_agent.is_none() || session_agent == owned_agent);
+    if !owner_matches(row, owner)? || row.try_get::<bool, _>("shared")? || agent_mismatch {
         return Err(invalid(
             "The background run no longer matches its owner and conversation binding. Restore its original binding before continuing.",
         ));
@@ -733,17 +733,17 @@ mod tests {
     #[tokio::test]
     async fn changed_trigger_binding_and_missing_state_refuse_continuation() {
         let db = fixture().await;
-        // A session bound to a *different* Dot than the run's configured Dot is
+        // A session bound to a *different* agent than the run's configured agent is
         // a mismatch and refuses continuation.
         sqlx::query(
-            "INSERT INTO personal_dot_sessions(session_id,owner_user_id,dot_id,created_at)
-             SELECT id,'owner','bound-dot',? FROM chat_sessions WHERE user_id='owner'",
+            "INSERT INTO personal_agent_sessions(session_id,owner_user_id,agent_id,created_at)
+             SELECT id,'owner','bound-agent',? FROM chat_sessions WHERE user_id='owner'",
         )
         .bind(jiff::Timestamp::now().to_string())
         .execute(&db)
         .await
         .unwrap();
-        sqlx::query("UPDATE scheduled_actions SET dot_id='another-dot'")
+        sqlx::query("UPDATE scheduled_actions SET personal_agent_id='another-agent'")
             .execute(&db)
             .await
             .unwrap();
@@ -760,12 +760,12 @@ mod tests {
         );
     }
 
-    /// A Dot-configured run whose session is unbound (person) is a valid home —
-    /// the Dot is optional — so `for_turn` accepts it instead of refusing.
+    /// An agent-configured run whose session is unbound (person) is a valid home —
+    /// the agent is optional — so `for_turn` accepts it instead of refusing.
     #[tokio::test]
-    async fn dot_configured_run_accepts_an_unbound_session() {
+    async fn agent_configured_run_accepts_an_unbound_session() {
         let db = fixture().await;
-        sqlx::query("UPDATE scheduled_actions SET dot_id='some-dot'")
+        sqlx::query("UPDATE scheduled_actions SET personal_agent_id='some-agent'")
             .execute(&db)
             .await
             .unwrap();

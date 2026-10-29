@@ -39,7 +39,7 @@ integrations and features vary with each installation's configuration.*
 | Upload files, edit canvas documents, inspect versions and download results | [Files and documents](guide/files-and-canvas.md) |
 | Enable capabilities, connect your accounts, use browser control and skills | [Tools and integrations](guide/tools-and-integrations.md) |
 | Manage preferences, tokens, notifications, usage and limits | [Your account](guide/account-and-usage.md) |
-| Run prompts as the ordinary assistant or a personal Dot, trigger webhooks and respond to pending decisions | [Automation and inbox](guide/automation-and-inbox.md) |
+| Run prompts as the ordinary assistant or a personal agent, trigger webhooks and respond to pending decisions | [Automation and inbox](guide/automation-and-inbox.md) |
 
 ## Administer the installation
 
@@ -55,21 +55,21 @@ integrations and features vary with each installation's configuration.*
 
 ## Build and publish agents
 
-- [AIplane Dots: implemented personal behavior and product specification](dots.md).
-- [Conversational Dot setup and chat participation](dots-conversational-setup.md): implemented personal setup and the design for organization setup, reconfiguration, guided connections and attributed Dot mentions.
-- [Personal Dot scheduled and event-driven work](guide/automation-and-inbox.md#run-scheduled-or-event-driven-work-as-an-agent).
-- [Organization Dot webhooks](dots-webhooks.md): event-driven private runs with retained published versions, own identities, secret rotation and explicit replay.
-- [Personal Dot files](dots.md#personal-dot-files) and the [workspace design](dots-workspace.md): persistent file storage and Dot-owned browser profiles on supported runner deployments.
-- [Dot identities](dots-identities.md): personal and organization Dot-owned connector identities.
-- [Organization Dots](dots-organizations.md): ownership, membership, configuration, own OAuth credentials, private conversations and pinned scheduled or event-driven work, with exact-turn Stop, writer-only Inbox decisions, isolated Dot notes and shared organization knowledge.
-- [Memory curation proposal](dots-memory-curation.md): planned reviewed learning through existing scheduling and approval mechanisms.
-- [Personal Dot management permission](dots-permissions.md): independent group rights through existing RBAC.
-- [Dot action rules](dots-action-rules.md): implemented permissions within `browse_page` and `browser_control`, with durable approval checks.
-- [Dot communication](dots-communication.md): directed consent and implemented personal request/reply delegation.
-- [Cross-organization delegation](dots-cross-organization.md): a personal Dot delegating to an organization Dot — consent, dispatch, the data boundary and durable waiting.
-- [Grok Bot comparison](dots-grok-comparison.md): researched capabilities, coverage and additional product gaps.
-- [Personal Dot browser handover](dots-browser-handover.md): owner login assistance and exclusive control of a suspended Dot browser.
-- [Dot workflow teaching](dots-workflow-teaching.md): generate a reviewed personal Skill draft from written workflow steps.
+- [AIplane agents: implemented personal behavior and product specification](personal-agents.md).
+- [Conversational agent setup and chat participation](agents-conversational-setup.md): implemented personal setup and the design for organization setup, reconfiguration, guided connections and attributed agent mentions.
+- [Personal agent scheduled and event-driven work](guide/automation-and-inbox.md#run-scheduled-or-event-driven-work-as-an-agent).
+- [Organization agent webhooks](agents-webhooks.md): event-driven private runs with retained published versions, own identities, secret rotation and explicit replay.
+- [Personal agent files](personal-agents.md#personal-agent-files) and the [workspace design](agents-workspace.md): persistent file storage and agent-owned browser profiles on supported runner deployments.
+- [Agent identities](agents-identities.md): personal and organization agent-owned connector identities.
+- [Organization agents](agents-organizations.md): ownership, membership, configuration, own OAuth credentials, private conversations and pinned scheduled or event-driven work, with exact-turn Stop, writer-only Inbox decisions, isolated agent notes and shared organization knowledge.
+- [Memory curation proposal](agents-memory-curation.md): planned reviewed learning through existing scheduling and approval mechanisms.
+- [Personal agent management permission](agents-permissions.md): independent group rights through existing RBAC.
+- [Agent action rules](agents-action-rules.md): implemented permissions within `browse_page` and `browser_control`, with durable approval checks.
+- [Agent communication](agents-communication.md): directed consent and implemented personal request/reply delegation.
+- [Cross-organization delegation](agents-cross-organization.md): a personal agent delegating to an organization agent — consent, dispatch, the data boundary and durable waiting.
+- [Grok Bot comparison](agents-grok-comparison.md): researched capabilities, coverage and additional product gaps.
+- [Personal agent browser handover](agents-browser-handover.md): owner login assistance and exclusive control of a suspended agent browser.
+- [Agent workflow teaching](agents-workflow-teaching.md): generate a reviewed personal Skill draft from written workflow steps.
 - [Create an agent](agent-guide/create.md).
 - [Configure permissions](agent-guide/permissions.md).
 - [Test and publish](agent-guide/test-publish.md).

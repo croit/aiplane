@@ -2,8 +2,8 @@
 	import type { Snippet } from 'svelte';
 	import { page } from '$app/state';
 	import AgentShell from '#lib/components/agents/AgentShell.svelte';
-	import PersonalAgentEditor from '#lib/components/dots/PersonalAgentEditor.svelte';
-	import { dotsApi, type DotProfile } from '#lib/dots.js';
+	import PersonalAgentEditor from '#lib/components/agents/PersonalAgentEditor.svelte';
+	import { ownedAgentsApi, type AgentProfile } from '#lib/owned-agents.js';
 	import { ApiError } from '#lib/api.js';
 
 	let { children }: { children: Snippet } = $props();
@@ -14,9 +14,9 @@
 
 	// A personal agent answers its profile to its owner and to admins; every
 	// other agent answers 404 there and opens in the agent builder.
-	async function personal(id: string): Promise<DotProfile | null> {
+	async function personal(id: string): Promise<AgentProfile | null> {
 		try {
-			return await dotsApi.profile(id);
+			return await ownedAgentsApi.profile(id);
 		} catch (error) {
 			if (error instanceof ApiError && error.status === 404) return null;
 			throw error;

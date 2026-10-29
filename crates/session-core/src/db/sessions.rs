@@ -55,7 +55,7 @@ pub async fn list_sessions(pool: &Pool, user_id: &str) -> Result<Vec<Session>, D
 
 /// The user's most recent blank conversation: untitled, unshared, without a
 /// parent, with no turn yet. Every flow that opens a
-/// conversation for a purpose (an architect, a Dot, a background run) titles it
+/// conversation for a purpose (an architect, an agent, a background run) titles it
 /// at creation, so a blank one is an unused plain chat.
 pub async fn blank_session(pool: &Pool, user_id: &str) -> Result<Option<Session>, DbError> {
     let row = sqlx::query(

@@ -44,8 +44,8 @@ use aiplane_features::server::file_refs;
 pub(crate) async fn personal_workspace_scope(
     ctx: &ToolContext,
     purpose: shared::sandbox::WorkspacePurpose,
-) -> Result<Option<shared::sandbox::DotWorkspaceScope>, ToolError> {
-    if ctx.personal_dot.is_none() && ctx.personal_execution.is_none() {
+) -> Result<Option<shared::sandbox::AgentWorkspaceScope>, ToolError> {
+    if ctx.personal_agent.is_none() && ctx.personal_execution.is_none() {
         return Ok(None);
     }
     let unavailable = || {
@@ -57,7 +57,7 @@ pub(crate) async fn personal_workspace_scope(
     let execution = ctx.personal_execution.as_ref().ok_or_else(unavailable)?;
     let binding = execution.binding();
     if ctx.person("run_in_sandbox")? != binding.identity.owner_user_id
-        || ctx.personal_dot.as_ref() != Some(&binding.identity)
+        || ctx.personal_agent.as_ref() != Some(&binding.identity)
         || ctx.session_id.as_deref() != Some(binding.session_id.as_str())
         || ctx.assistant_turn_id.as_deref() != Some(binding.assistant_turn_id.as_str())
     {
@@ -69,10 +69,10 @@ pub(crate) async fn personal_workspace_scope(
         .map_err(|error| ToolError::Failed(error.to_string()))?
         .filter(|turn| turn.status == chat::TurnStatus::InProgress)
         .ok_or_else(unavailable)?;
-    Ok(Some(shared::sandbox::DotWorkspaceScope {
-        workspace: shared::sandbox::DotWorkspace {
+    Ok(Some(shared::sandbox::AgentWorkspaceScope {
+        workspace: shared::sandbox::OwnedAgentWorkspace {
             owner_user_id: binding.identity.owner_user_id.clone(),
-            dot_id: binding.identity.dot_id.clone(),
+            agent_id: binding.identity.agent_id.clone(),
         },
         turn_id: binding.assistant_turn_id.clone(),
         purpose,
@@ -112,7 +112,7 @@ const RUN_IN_SANDBOX_DESC: &str = "Run Python or shell in a secure, isolated san
      beautifulsoup4, requests. \
      CLI tools: ripgrep (rg), jq, yq, jc, awk/sed, duckdb + sqlite3 \
      (SQL over CSV/JSON/Parquet/large logs), ffmpeg, imagemagick, vips, \
-     tesseract (OCR), tshark/tcpdump (read .pcap), graphviz (dot), \
+     tesseract (OCR), tshark/tcpdump (read .pcap), graphviz (owned_agent), \
      LibreOffice (`soffice --headless` for office↔pdf), pandoc, typst \
      (with the offline `@preview/gribouille` ggplot-style charts \
      package), excalirender (`.excalidraw` scene → svg/png/pdf), \
@@ -595,7 +595,7 @@ pub struct SandboxLease {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BrowserHandoverBinding {
-    pub workspace: shared::sandbox::DotWorkspace,
+    pub workspace: shared::sandbox::OwnedAgentWorkspace,
     pub turn_id: String,
     pub container_id: String,
     pub handover_id: String,
@@ -632,7 +632,7 @@ impl SandboxLease {
 
     pub async fn begin_browser_handover(
         &self,
-        scope: &shared::sandbox::DotWorkspaceScope,
+        scope: &shared::sandbox::AgentWorkspaceScope,
         handover_id: String,
     ) -> Result<BrowserHandoverBinding, ToolError> {
         if scope.purpose != shared::sandbox::WorkspacePurpose::Browser
@@ -1359,7 +1359,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workspace_scope_preserves_ordinary_calls_and_rejects_unproved_dot_identity() {
+    async fn workspace_scope_preserves_ordinary_calls_and_rejects_unproved_agent_identity() {
         let mut context = ctx().await;
         assert!(
             personal_workspace_scope(&context, shared::sandbox::WorkspacePurpose::Workspace)
@@ -1367,9 +1367,9 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        context.personal_dot = Some(crate::agent_run::PersonalDotIdentity {
+        context.personal_agent = Some(crate::agent_run::PersonalAgentIdentity {
             owner_user_id: "u".into(),
-            dot_id: "00000000-0000-4000-8000-000000000001".into(),
+            agent_id: "00000000-0000-4000-8000-000000000001".into(),
         });
         assert!(
             personal_workspace_scope(&context, shared::sandbox::WorkspacePurpose::Workspace)
@@ -1434,10 +1434,10 @@ mod tests {
                 .mount(&server)
                 .await;
             let mut request = lease_req();
-            request.workspace = Some(shared::sandbox::DotWorkspaceScope {
-                workspace: shared::sandbox::DotWorkspace {
+            request.workspace = Some(shared::sandbox::AgentWorkspaceScope {
+                workspace: shared::sandbox::OwnedAgentWorkspace {
                     owner_user_id: "u".into(),
-                    dot_id: "12345678-1234-4234-8234-123456789abc".into(),
+                    agent_id: "12345678-1234-4234-8234-123456789abc".into(),
                 },
                 turn_id: "persisted-turn".into(),
                 purpose: shared::sandbox::WorkspacePurpose::Workspace,

@@ -10,7 +10,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use shared::sandbox::{
-    DotWorkspace, STAGE_TOTAL_MAX_BYTES, WorkspaceEntry, WorkspaceEntryKind, WorkspaceListing,
+    OwnedAgentWorkspace, STAGE_TOTAL_MAX_BYTES, WorkspaceEntry, WorkspaceEntryKind,
+    WorkspaceListing,
 };
 use thiserror::Error;
 
@@ -63,11 +64,11 @@ pub struct Workspace {
     work_root: PathBuf,
     files_path: PathBuf,
     browser_profile_path: PathBuf,
-    identity: DotWorkspace,
+    identity: OwnedAgentWorkspace,
 }
 
 impl Workspace {
-    pub fn open(work_root: &Path, identity: &DotWorkspace) -> Result<Self, WorkspaceError> {
+    pub fn open(work_root: &Path, identity: &OwnedAgentWorkspace) -> Result<Self, WorkspaceError> {
         validate_identity(identity)?;
         let work_root = if work_root.is_absolute() {
             work_root.to_path_buf()
@@ -77,31 +78,34 @@ impl Workspace {
         let root = open_root(&work_root)?;
         require_private(&root)?;
         check_not_retired(&root, identity)?;
-        let dots = directory(&root, "dots", true)?;
-        require_private(&dots)?;
-        let dot = directory(&dots, &identity.dot_id, true)?;
-        require_private(&dot)?;
-        match open_regular(&dot, "owner.json") {
+        let owned_agents = directory(&root, "agents", true)?;
+        require_private(&owned_agents)?;
+        let owned_agent = directory(&owned_agents, &identity.agent_id, true)?;
+        require_private(&owned_agent)?;
+        match open_regular(&owned_agent, "owner.json") {
             Ok(manifest) => {
                 drop(manifest);
-                check_manifest(&dot, identity)?;
+                check_manifest(&owned_agent, identity)?;
             }
             Err(WorkspaceError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
-                if unclaimed_nonempty(&dot)? {
+                if unclaimed_nonempty(&owned_agent)? {
                     return Err(WorkspaceError::OwnerMismatch);
                 }
-                publish_manifest(&dot, identity)?;
+                publish_manifest(&owned_agent, identity)?;
             }
             Err(error) => return Err(error),
         }
-        let files_path = work_root.join("dots").join(&identity.dot_id).join("files");
+        let files_path = work_root
+            .join("agents")
+            .join(&identity.agent_id)
+            .join("files");
         let browser_profile_path = work_root
-            .join("dots")
-            .join(&identity.dot_id)
+            .join("agents")
+            .join(&identity.agent_id)
             .join("browser-profile");
         Ok(Self {
-            files: directory(&dot, "files", true)?,
-            browser_profile: directory(&dot, "browser-profile", true)?,
+            files: directory(&owned_agent, "files", true)?,
+            browser_profile: directory(&owned_agent, "browser-profile", true)?,
             work_root,
             files_path,
             browser_profile_path,
@@ -111,36 +115,36 @@ impl Workspace {
 
     pub fn seal_retirement(
         work_root: &Path,
-        identity: &DotWorkspace,
+        identity: &OwnedAgentWorkspace,
     ) -> Result<(), WorkspaceError> {
         validate_identity(identity)?;
         let root = open_root(work_root)?;
         require_private(&root)?;
-        if let Some(dots) = optional_directory(&root, "dots")? {
-            require_private(&dots)?;
-            if let Some(dot) = optional_directory(&dots, &identity.dot_id)? {
-                require_private(&dot)?;
-                check_manifest(&dot, identity)?;
+        if let Some(owned_agents) = optional_directory(&root, "agents")? {
+            require_private(&owned_agents)?;
+            if let Some(owned_agent) = optional_directory(&owned_agents, &identity.agent_id)? {
+                require_private(&owned_agent)?;
+                check_manifest(&owned_agent, identity)?;
             }
         }
-        let retired = directory(&root, ".dot-retired", true)?;
+        let retired = directory(&root, ".agent-retired", true)?;
         require_private(&retired)?;
-        let dot = directory(&retired, &identity.dot_id, true)?;
-        require_private(&dot)?;
-        match open_regular(&dot, "owner.json") {
+        let owned_agent = directory(&retired, &identity.agent_id, true)?;
+        require_private(&owned_agent)?;
+        match open_regular(&owned_agent, "owner.json") {
             Ok(manifest) => {
                 drop(manifest);
-                check_manifest(&dot, identity)?;
+                check_manifest(&owned_agent, identity)?;
             }
             Err(WorkspaceError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
-                if unclaimed_nonempty(&dot)? {
+                if unclaimed_nonempty(&owned_agent)? {
                     return Err(WorkspaceError::OwnerMismatch);
                 }
-                publish_manifest(&dot, identity)?;
+                publish_manifest(&owned_agent, identity)?;
             }
             Err(error) => return Err(error),
         }
-        dot.sync_all()?;
+        owned_agent.sync_all()?;
         retired.sync_all()?;
         root.sync_all()?;
         Ok(())
@@ -148,49 +152,49 @@ impl Workspace {
 
     pub fn cleanup_retired(
         work_root: &Path,
-        identity: &DotWorkspace,
+        identity: &OwnedAgentWorkspace,
     ) -> Result<bool, WorkspaceError> {
         validate_identity(identity)?;
         let root = open_root(work_root)?;
         require_private(&root)?;
-        let retired = directory(&root, ".dot-retired", false)?;
+        let retired = directory(&root, ".agent-retired", false)?;
         require_private(&retired)?;
-        let dot = directory(&retired, &identity.dot_id, false)?;
-        require_private(&dot)?;
-        check_manifest(&dot, identity)?;
-        let dots = optional_directory(&root, "dots")?;
-        let original = if let Some(dots) = &dots {
-            require_private(dots)?;
-            optional_directory(dots, &identity.dot_id)?
+        let owned_agent = directory(&retired, &identity.agent_id, false)?;
+        require_private(&owned_agent)?;
+        check_manifest(&owned_agent, identity)?;
+        let owned_agents = optional_directory(&root, "agents")?;
+        let original = if let Some(owned_agents) = &owned_agents {
+            require_private(owned_agents)?;
+            optional_directory(owned_agents, &identity.agent_id)?
         } else {
             None
         };
-        let payload = optional_directory(&dot, "payload")?;
+        let payload = optional_directory(&owned_agent, "payload")?;
         if let Some(original) = &original {
             require_private(original)?;
             check_manifest(original, identity)?;
             if payload.is_some() {
                 return Err(WorkspaceError::UnsafeEntry);
             }
-            let dots = dots.as_ref().ok_or(WorkspaceError::UnsafeEntry)?;
-            let original_name = cstring(&identity.dot_id)?;
-            let linked = directory(dots, &identity.dot_id, false)?;
+            let owned_agents = owned_agents.as_ref().ok_or(WorkspaceError::UnsafeEntry)?;
+            let original_name = cstring(&identity.agent_id)?;
+            let linked = directory(owned_agents, &identity.agent_id, false)?;
             same_directory(&linked, original)?;
             if unsafe {
                 libc::renameat(
-                    dots.as_raw_fd(),
+                    owned_agents.as_raw_fd(),
                     original_name.as_ptr(),
-                    dot.as_raw_fd(),
+                    owned_agent.as_raw_fd(),
                     c"payload".as_ptr(),
                 )
             } != 0
             {
                 return Err(std::io::Error::last_os_error().into());
             }
-            let moved = directory(&dot, "payload", false)?;
+            let moved = directory(&owned_agent, "payload", false)?;
             same_directory(&moved, original)?;
-            dots.sync_all()?;
-            dot.sync_all()?;
+            owned_agents.sync_all()?;
+            owned_agent.sync_all()?;
         } else if let Some(payload) = &payload {
             require_private(payload)?;
             // The retained retirement owner authorizes partially removed payloads after a crash.
@@ -198,8 +202,8 @@ impl Workspace {
             return Ok(true);
         }
         let mut remaining = 1000;
-        let complete = remove_retired_node(&dot, c"payload", 0, &mut remaining)?;
-        dot.sync_all()?;
+        let complete = remove_retired_node(&owned_agent, c"payload", 0, &mut remaining)?;
+        owned_agent.sync_all()?;
         Ok(complete)
     }
 
@@ -231,18 +235,18 @@ impl Workspace {
         let root = open_root(&self.work_root)?;
         require_private(&root)?;
         check_not_retired(&root, &self.identity)?;
-        let dots = directory(&root, "dots", false)?;
-        require_private(&dots)?;
-        let dot = directory(&dots, &self.identity.dot_id, false)?;
-        require_private(&dot)?;
-        let mut manifest = open_regular(&dot, "owner.json")?;
+        let owned_agents = directory(&root, "agents", false)?;
+        require_private(&owned_agents)?;
+        let owned_agent = directory(&owned_agents, &self.identity.agent_id, false)?;
+        require_private(&owned_agent)?;
+        let mut manifest = open_regular(&owned_agent, "owner.json")?;
         require_private(&manifest)?;
-        let saved: DotWorkspace =
+        let saved: OwnedAgentWorkspace =
             serde_json::from_slice(&read_bounded(&mut manifest, MAX_MANIFEST_BYTES)?)?;
         if saved != self.identity {
             return Err(WorkspaceError::OwnerMismatch);
         }
-        let browser_profile = directory(&dot, "browser-profile", false)?;
+        let browser_profile = directory(&owned_agent, "browser-profile", false)?;
         same_directory(&browser_profile, &self.browser_profile)
     }
 
@@ -253,18 +257,18 @@ impl Workspace {
         let root = open_root(&self.work_root)?;
         require_private(&root)?;
         check_not_retired(&root, &self.identity)?;
-        let dots = directory(&root, "dots", false)?;
-        require_private(&dots)?;
-        let dot = directory(&dots, &self.identity.dot_id, false)?;
-        require_private(&dot)?;
-        let mut manifest = open_regular(&dot, "owner.json")?;
+        let owned_agents = directory(&root, "agents", false)?;
+        require_private(&owned_agents)?;
+        let owned_agent = directory(&owned_agents, &self.identity.agent_id, false)?;
+        require_private(&owned_agent)?;
+        let mut manifest = open_regular(&owned_agent, "owner.json")?;
         require_private(&manifest)?;
-        let saved: DotWorkspace =
+        let saved: OwnedAgentWorkspace =
             serde_json::from_slice(&read_bounded(&mut manifest, MAX_MANIFEST_BYTES)?)?;
         if saved != self.identity {
             return Err(WorkspaceError::OwnerMismatch);
         }
-        let files = directory(&dot, "files", false)?;
+        let files = directory(&owned_agent, "files", false)?;
         same_directory(&files, &self.files)
     }
 
@@ -602,8 +606,8 @@ fn unlink(parent: &File, name: &str, directory: bool) -> Result<(), WorkspaceErr
 
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
-fn validate_identity(identity: &DotWorkspace) -> Result<(), WorkspaceError> {
-    let uuid = identity.dot_id.as_bytes();
+fn validate_identity(identity: &OwnedAgentWorkspace) -> Result<(), WorkspaceError> {
+    let uuid = identity.agent_id.as_bytes();
     if identity.owner_user_id.is_empty()
         || uuid.len() != 36
         || !uuid.iter().enumerate().all(|(index, byte)| {
@@ -871,10 +875,10 @@ fn optional_directory(parent: &File, name: &str) -> Result<Option<File>, Workspa
     }
 }
 
-fn check_manifest(directory: &File, identity: &DotWorkspace) -> Result<(), WorkspaceError> {
+fn check_manifest(directory: &File, identity: &OwnedAgentWorkspace) -> Result<(), WorkspaceError> {
     let mut manifest = open_regular(directory, "owner.json")?;
     require_private(&manifest)?;
-    let saved: DotWorkspace =
+    let saved: OwnedAgentWorkspace =
         serde_json::from_slice(&read_bounded(&mut manifest, MAX_MANIFEST_BYTES)?)?;
     if saved != *identity {
         return Err(WorkspaceError::OwnerMismatch);
@@ -882,20 +886,23 @@ fn check_manifest(directory: &File, identity: &DotWorkspace) -> Result<(), Works
     Ok(())
 }
 
-fn check_not_retired(root: &File, identity: &DotWorkspace) -> Result<(), WorkspaceError> {
-    if let Some(retired) = optional_directory(root, ".dot-retired")? {
+fn check_not_retired(root: &File, identity: &OwnedAgentWorkspace) -> Result<(), WorkspaceError> {
+    if let Some(retired) = optional_directory(root, ".agent-retired")? {
         require_private(&retired)?;
-        if let Some(dot) = optional_directory(&retired, &identity.dot_id)? {
-            require_private(&dot)?;
+        if let Some(owned_agent) = optional_directory(&retired, &identity.agent_id)? {
+            require_private(&owned_agent)?;
             // An interrupted seal is also closed until retirement is repaired, never a fresh claim.
-            check_manifest(&dot, identity)?;
+            check_manifest(&owned_agent, identity)?;
             return Err(WorkspaceError::Retired);
         }
     }
     Ok(())
 }
 
-fn publish_manifest(directory: &File, identity: &DotWorkspace) -> Result<(), WorkspaceError> {
+fn publish_manifest(
+    directory: &File,
+    identity: &OwnedAgentWorkspace,
+) -> Result<(), WorkspaceError> {
     let bytes = serde_json::to_vec(identity)?;
     if bytes.len() > MAX_MANIFEST_BYTES {
         return Err(WorkspaceError::OwnerMismatch);
@@ -950,10 +957,10 @@ fn held_stat(file: &File) -> Result<libc::stat, WorkspaceError> {
 }
 
 fn open_stream(directory: &File) -> Result<DirectoryStream, WorkspaceError> {
-    let dot = c".";
+    let owned_agent = c".";
     let fd = open_fd(
         directory.as_raw_fd(),
-        dot,
+        owned_agent,
         libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW,
         0,
     )?
@@ -1081,12 +1088,12 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use shared::sandbox::{DotWorkspace, STAGE_TOTAL_MAX_BYTES};
+    use shared::sandbox::{OwnedAgentWorkspace, STAGE_TOTAL_MAX_BYTES};
 
     use super::*;
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    const DOT: &str = "12345678-1234-4234-8234-123456789abc";
+    const AGENT: &str = "12345678-1234-4234-8234-123456789abc";
 
     struct Fixture(PathBuf);
 
@@ -1102,15 +1109,15 @@ mod tests {
             Self(fs::canonicalize(root).unwrap())
         }
 
-        fn identity(&self) -> DotWorkspace {
-            DotWorkspace {
+        fn identity(&self) -> OwnedAgentWorkspace {
+            OwnedAgentWorkspace {
                 owner_user_id: "opaque/owner:ß".into(),
-                dot_id: DOT.into(),
+                agent_id: AGENT.into(),
             }
         }
 
-        fn dot_root(&self) -> PathBuf {
-            self.0.join("dots").join(DOT)
+        fn agent_root(&self) -> PathBuf {
+            self.0.join("agents").join(AGENT)
         }
     }
 
@@ -1135,13 +1142,13 @@ mod tests {
         let files = Workspace::open(&fixture.0, &identity).unwrap();
         assert_eq!(files.read("notes/result.txt").unwrap(), b"replacement");
         assert_eq!(
-            fs::read_dir(fixture.dot_root().join("files/notes"))
+            fs::read_dir(fixture.agent_root().join("files/notes"))
                 .unwrap()
                 .count(),
             1
         );
         assert_eq!(
-            fs::metadata(fixture.dot_root().join("owner.json"))
+            fs::metadata(fixture.agent_root().join("owner.json"))
                 .unwrap()
                 .permissions()
                 .mode()
@@ -1149,7 +1156,7 @@ mod tests {
             0o600
         );
         assert_eq!(
-            fs::metadata(fixture.dot_root())
+            fs::metadata(fixture.agent_root())
                 .unwrap()
                 .permissions()
                 .mode()
@@ -1163,43 +1170,46 @@ mod tests {
         let fixture = Fixture::new();
         let identity = fixture.identity();
         drop(Workspace::open(&fixture.0, &identity).unwrap());
-        let original = fs::read(fixture.dot_root().join("owner.json")).unwrap();
+        let original = fs::read(fixture.agent_root().join("owner.json")).unwrap();
         let mut foreign = identity.clone();
         foreign.owner_user_id = "another-owner".into();
         assert!(Workspace::open(&fixture.0, &foreign).is_err());
         assert_eq!(
-            fs::read(fixture.dot_root().join("owner.json")).unwrap(),
+            fs::read(fixture.agent_root().join("owner.json")).unwrap(),
             original
         );
-        fs::write(fixture.dot_root().join("owner.json"), b"{malformed").unwrap();
+        fs::write(fixture.agent_root().join("owner.json"), b"{malformed").unwrap();
         assert!(Workspace::open(&fixture.0, &identity).is_err());
         assert_eq!(
-            fs::read(fixture.dot_root().join("owner.json")).unwrap(),
+            fs::read(fixture.agent_root().join("owner.json")).unwrap(),
             b"{malformed"
         );
     }
 
     #[test]
-    fn workspace_files_refuse_unclaimed_nonempty_dot_directory() {
+    fn workspace_files_refuse_unclaimed_nonempty_agent_directory() {
         let fixture = Fixture::new();
-        fs::create_dir_all(fixture.dot_root().join("files")).unwrap();
-        fs::write(fixture.dot_root().join("files/existing"), b"unclaimed").unwrap();
+        fs::create_dir_all(fixture.agent_root().join("files")).unwrap();
+        fs::write(fixture.agent_root().join("files/existing"), b"unclaimed").unwrap();
         assert!(Workspace::open(&fixture.0, &fixture.identity()).is_err());
-        assert!(!fixture.dot_root().join("owner.json").exists());
+        assert!(!fixture.agent_root().join("owner.json").exists());
     }
 
     #[test]
-    fn workspace_files_require_canonical_dot_uuid_and_safe_relative_paths() {
+    fn workspace_files_require_canonical_agent_uuid_and_safe_relative_paths() {
         let fixture = Fixture::new();
-        for dot_id in [
+        for agent_id in [
             "../escape",
             "12345678-1234-4234-8234-123456789ABC",
             "not-a-uuid",
             "",
         ] {
             let mut identity = fixture.identity();
-            identity.dot_id = dot_id.into();
-            assert!(Workspace::open(&fixture.0, &identity).is_err(), "{dot_id}");
+            identity.agent_id = agent_id.into();
+            assert!(
+                Workspace::open(&fixture.0, &identity).is_err(),
+                "{agent_id}"
+            );
         }
         let files = Workspace::open(&fixture.0, &fixture.identity()).unwrap();
         for path in [
@@ -1229,7 +1239,7 @@ mod tests {
         let outside = Fixture::new();
         fs::write(outside.0.join("secret"), b"outside").unwrap();
         let files = Workspace::open(&fixture.0, &fixture.identity()).unwrap();
-        let root = fixture.dot_root().join("files");
+        let root = fixture.agent_root().join("files");
         symlink(&outside.0, root.join("linked")).unwrap();
         symlink(outside.0.join("secret"), root.join("leaf")).unwrap();
         for path in ["linked/secret", "leaf"] {
@@ -1253,11 +1263,11 @@ mod tests {
         symlink(&outside.0, &linked).unwrap();
         assert!(Workspace::open(&linked, &fixture.identity()).is_err());
         drop(Workspace::open(&fixture.0, &fixture.identity()).unwrap());
-        fs::remove_file(fixture.dot_root().join("owner.json")).unwrap();
+        fs::remove_file(fixture.agent_root().join("owner.json")).unwrap();
         fs::write(outside.0.join("owner"), b"outside").unwrap();
         symlink(
             outside.0.join("owner"),
-            fixture.dot_root().join("owner.json"),
+            fixture.agent_root().join("owner.json"),
         )
         .unwrap();
         assert!(Workspace::open(&fixture.0, &fixture.identity()).is_err());
@@ -1269,7 +1279,7 @@ mod tests {
         let files = Workspace::open(&fixture.0, &fixture.identity()).unwrap();
         let fifo = std::ffi::CString::new(
             fixture
-                .dot_root()
+                .agent_root()
                 .join("files/fifo")
                 .as_os_str()
                 .as_encoded_bytes(),
@@ -1280,7 +1290,7 @@ mod tests {
         assert!(files.write("fifo", b"refused").is_err());
         assert!(files.remove("fifo").is_err());
         let socket =
-            std::os::unix::net::UnixListener::bind(fixture.dot_root().join("files/socket"))
+            std::os::unix::net::UnixListener::bind(fixture.agent_root().join("files/socket"))
                 .unwrap();
         assert!(files.read("socket").is_err());
         assert!(files.write("socket", b"refused").is_err());
@@ -1292,7 +1302,7 @@ mod tests {
     fn workspace_files_enforce_existing_staging_budget_before_read_or_write() {
         let fixture = Fixture::new();
         let files = Workspace::open(&fixture.0, &fixture.identity()).unwrap();
-        let oversized = fs::File::create(fixture.dot_root().join("files/large")).unwrap();
+        let oversized = fs::File::create(fixture.agent_root().join("files/large")).unwrap();
         oversized.set_len(STAGE_TOTAL_MAX_BYTES as u64 + 1).unwrap();
         assert!(files.read("large").is_err());
         files.write("keep", b"original").unwrap();
@@ -1314,7 +1324,7 @@ mod tests {
         assert_eq!(files.read("directory/file").unwrap(), b"retained");
         files.remove("directory/file").unwrap();
         files.remove("directory").unwrap();
-        assert!(!fixture.dot_root().join("files/directory").exists());
+        assert!(!fixture.agent_root().join("files/directory").exists());
     }
     #[test]
     fn workspace_files_list_bounded_sorted_pages_without_control_metadata() {
@@ -1343,7 +1353,7 @@ mod tests {
         let fixture = Fixture::new();
         let outside = Fixture::new();
         let files = Workspace::open(&fixture.0, &fixture.identity()).unwrap();
-        let root = fixture.dot_root().join("files");
+        let root = fixture.agent_root().join("files");
         symlink(&outside.0, root.join("linked")).unwrap();
         assert!(files.list("", None).is_err());
         fs::remove_file(root.join("linked")).unwrap();
@@ -1359,7 +1369,7 @@ mod tests {
         use std::os::unix::ffi::OsStringExt;
         let fixture = Fixture::new();
         let files = Workspace::open(&fixture.0, &fixture.identity()).unwrap();
-        let root = fixture.dot_root().join("files");
+        let root = fixture.agent_root().join("files");
         fs::write(
             root.join(std::ffi::OsString::from_vec(vec![0xff])),
             b"value",
@@ -1372,7 +1382,7 @@ mod tests {
     fn workspace_files_listing_refuses_over_scan_budget() {
         let fixture = Fixture::new();
         let files = Workspace::open(&fixture.0, &fixture.identity()).unwrap();
-        let root = fixture.dot_root().join("files");
+        let root = fixture.agent_root().join("files");
         for index in 0..10001 {
             fs::File::create(root.join(format!("file-{index:05}"))).unwrap();
         }
@@ -1400,13 +1410,13 @@ mod tests {
             .filter(|admitted| *admitted)
             .count();
         assert!(admitted >= 1);
-        let original = fs::read(fixture.dot_root().join("owner.json")).unwrap();
+        let original = fs::read(fixture.agent_root().join("owner.json")).unwrap();
         for _ in 0..4 {
             let files = Workspace::open(&fixture.0, &identity).unwrap();
             files.write("retained", b"same owner").unwrap();
         }
         assert_eq!(
-            fs::read(fixture.dot_root().join("owner.json")).unwrap(),
+            fs::read(fixture.agent_root().join("owner.json")).unwrap(),
             original
         );
     }
@@ -1435,12 +1445,12 @@ mod tests {
             .map(|handle| handle.join().unwrap())
             .collect();
         assert_eq!(outcomes.iter().filter(|admitted| **admitted).count(), 1);
-        let original = fs::read(fixture.dot_root().join("owner.json")).unwrap();
+        let original = fs::read(fixture.agent_root().join("owner.json")).unwrap();
         for (identity, admitted) in identities.iter().zip(outcomes) {
             assert_eq!(Workspace::open(&fixture.0, identity).is_ok(), admitted);
         }
         assert_eq!(
-            fs::read(fixture.dot_root().join("owner.json")).unwrap(),
+            fs::read(fixture.agent_root().join("owner.json")).unwrap(),
             original
         );
     }
@@ -1452,9 +1462,9 @@ mod tests {
         let files = Workspace::open(&fixture.0, &fixture.identity()).unwrap();
         files.mkdir("nested").unwrap();
         files.write("nested/file", b"value").unwrap();
-        let parent = fs::metadata(fixture.dot_root().join("files")).unwrap();
+        let parent = fs::metadata(fixture.agent_root().join("files")).unwrap();
         for relative in ["nested", "nested/file"] {
-            let metadata = fs::metadata(fixture.dot_root().join("files").join(relative)).unwrap();
+            let metadata = fs::metadata(fixture.agent_root().join("files").join(relative)).unwrap();
             assert_eq!(
                 (metadata.uid(), metadata.gid()),
                 (parent.uid(), parent.gid())
@@ -1468,15 +1478,15 @@ mod tests {
     fn workspace_files_mount_revalidation_rejects_path_substitution_and_public_control_parent() {
         let fixture = Fixture::new();
         let files = Workspace::open(&fixture.0, &fixture.identity()).unwrap();
-        let original = fixture.dot_root().join("files");
+        let original = fixture.agent_root().join("files");
         files.validate_path(&original).unwrap();
-        fs::rename(&original, fixture.dot_root().join("old-files")).unwrap();
+        fs::rename(&original, fixture.agent_root().join("old-files")).unwrap();
         fs::create_dir(&original).unwrap();
         assert!(files.validate_path(&original).is_err());
         fs::remove_dir(&original).unwrap();
-        fs::rename(fixture.dot_root().join("old-files"), &original).unwrap();
+        fs::rename(fixture.agent_root().join("old-files"), &original).unwrap();
         assert!(files.validate_path(&original).is_ok());
-        fs::set_permissions(fixture.dot_root(), fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(fixture.agent_root(), fs::Permissions::from_mode(0o755)).unwrap();
         assert!(files.validate_path(&original).is_err());
     }
 
@@ -1485,7 +1495,7 @@ mod tests {
         use std::os::unix::fs::MetadataExt;
         let fixture = Fixture::new();
         let files = Workspace::open(&fixture.0, &fixture.identity()).unwrap();
-        let root = fixture.dot_root().join("files");
+        let root = fixture.agent_root().join("files");
         let before = fs::metadata(&root).unwrap();
         if cfg!(target_os = "linux") && unsafe { libc::geteuid() } == 0 {
             files.prepare_workload_owner(1001, 1001).unwrap();
@@ -1502,7 +1512,7 @@ mod tests {
                 let metadata = fs::metadata(root.join(relative)).unwrap();
                 assert_eq!((metadata.uid(), metadata.gid()), (1001, 1001));
             }
-            assert_eq!(fs::metadata(fixture.dot_root()).unwrap().uid(), 0);
+            assert_eq!(fs::metadata(fixture.agent_root()).unwrap().uid(), 0);
             assert_eq!(files.mount_path().unwrap(), root);
             files.validate_mount_path(&root).unwrap();
         } else {
@@ -1515,12 +1525,12 @@ mod tests {
     }
 
     #[test]
-    fn workspace_probe_uses_private_non_dot_storage_and_cleans_only_known_entries() {
+    fn workspace_probe_uses_private_non_agent_storage_and_cleans_only_known_entries() {
         let fixture = Fixture::new();
         let probe = WorkspaceProbe::create(&fixture.0).unwrap();
         let files = probe.mount_path().unwrap();
         assert!(files.starts_with(fixture.0.join(".workspace-probes")));
-        assert!(!fixture.0.join("dots").exists());
+        assert!(!fixture.0.join("agents").exists());
         assert_eq!(
             fs::metadata(files.parent().unwrap())
                 .unwrap()
@@ -1612,9 +1622,14 @@ mod tests {
         assert!(files.mount_path().is_err());
         assert!(files.validate_mount_path(&path).is_err());
         assert!(Workspace::cleanup_retired(&fixture.0, &identity).unwrap());
-        assert!(!fixture.dot_root().exists());
-        let manifest = fixture.0.join(".dot-retired").join(DOT).join("owner.json");
-        let saved: DotWorkspace = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+        assert!(!fixture.agent_root().exists());
+        let manifest = fixture
+            .0
+            .join(".agent-retired")
+            .join(AGENT)
+            .join("owner.json");
+        let saved: OwnedAgentWorkspace =
+            serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
         assert_eq!(saved, identity);
         assert!(!manifest.parent().unwrap().join("payload").exists());
         assert_eq!(
@@ -1631,9 +1646,9 @@ mod tests {
         let fixture = Fixture::new();
         let identity = fixture.identity();
         Workspace::seal_retirement(&fixture.0, &identity).unwrap();
-        assert!(!fixture.0.join("dots").exists());
+        assert!(!fixture.0.join("agents").exists());
         assert!(Workspace::cleanup_retired(&fixture.0, &identity).unwrap());
-        assert!(!fixture.0.join("dots").exists());
+        assert!(!fixture.0.join("agents").exists());
         assert!(Workspace::open(&fixture.0, &identity).is_err());
     }
 
@@ -1648,13 +1663,17 @@ mod tests {
         assert!(Workspace::seal_retirement(&fixture.0, &foreign).is_err());
         assert_eq!(files.read("retained").unwrap(), b"original");
         Workspace::seal_retirement(&fixture.0, &identity).unwrap();
-        let manifest = fixture.0.join(".dot-retired").join(DOT).join("owner.json");
+        let manifest = fixture
+            .0
+            .join(".agent-retired")
+            .join(AGENT)
+            .join("owner.json");
         let original = fs::read(&manifest).unwrap();
         assert!(Workspace::seal_retirement(&fixture.0, &foreign).is_err());
         assert!(Workspace::cleanup_retired(&fixture.0, &foreign).is_err());
         assert_eq!(fs::read(&manifest).unwrap(), original);
         assert_eq!(
-            fs::read(fixture.dot_root().join("files/retained")).unwrap(),
+            fs::read(fixture.agent_root().join("files/retained")).unwrap(),
             b"original"
         );
     }
@@ -1665,7 +1684,7 @@ mod tests {
         let outside = Fixture::new();
         let identity = fixture.identity();
         drop(Workspace::open(&fixture.0, &identity).unwrap());
-        let root = fixture.dot_root().join("files");
+        let root = fixture.agent_root().join("files");
         fs::write(outside.0.join("secret"), b"outside").unwrap();
         symlink(&outside.0, root.join("linked-directory")).unwrap();
         symlink(outside.0.join("secret"), root.join("linked-file")).unwrap();
@@ -1684,13 +1703,13 @@ mod tests {
         let fixture = Fixture::new();
         let identity = fixture.identity();
         drop(Workspace::open(&fixture.0, &identity).unwrap());
-        let root = fixture.dot_root().join("files");
+        let root = fixture.agent_root().join("files");
         for index in 0..1500 {
             fs::write(root.join(format!("entry-{index}")), b"data").unwrap();
         }
         Workspace::seal_retirement(&fixture.0, &identity).unwrap();
         assert!(!Workspace::cleanup_retired(&fixture.0, &identity).unwrap());
-        let payload = fixture.0.join(".dot-retired").join(DOT).join("payload");
+        let payload = fixture.0.join(".agent-retired").join(AGENT).join("payload");
         let remaining = fs::read_dir(payload.join("files")).unwrap().count();
         assert!(remaining > 0 && remaining < 1500);
         assert!(1500 - remaining <= 1000);
@@ -1703,14 +1722,14 @@ mod tests {
         let fixture = Fixture::new();
         let identity = fixture.identity();
         drop(Workspace::open(&fixture.0, &identity).unwrap());
-        fs::write(fixture.dot_root().join("owner.json"), b"malformed").unwrap();
+        fs::write(fixture.agent_root().join("owner.json"), b"malformed").unwrap();
         assert!(Workspace::seal_retirement(&fixture.0, &identity).is_err());
         fs::write(
-            fixture.dot_root().join("owner.json"),
+            fixture.agent_root().join("owner.json"),
             serde_json::to_vec(&identity).unwrap(),
         )
         .unwrap();
-        let mut directory = fixture.dot_root().join("files");
+        let mut directory = fixture.agent_root().join("files");
         for _ in 0..130 {
             directory = directory.join("d");
             fs::create_dir(&directory).unwrap();
@@ -1720,8 +1739,8 @@ mod tests {
         assert!(
             fixture
                 .0
-                .join(".dot-retired")
-                .join(DOT)
+                .join(".agent-retired")
+                .join(AGENT)
                 .join("owner.json")
                 .exists()
         );
@@ -1737,7 +1756,7 @@ mod tests {
         drop(Workspace::open(&fixture.0, &identity).unwrap());
         fs::write(
             fixture
-                .dot_root()
+                .agent_root()
                 .join("files")
                 .join(std::ffi::OsString::from_vec(vec![0xff])),
             b"data",

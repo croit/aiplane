@@ -169,10 +169,10 @@ async fn organization_test_access(
         .await
         .map_err(internal)?;
     let organization = matches!(
-        agents_db::dot_owner_in(&mut tx, &agent.principal.id)
+        agents_db::agent_owner_in(&mut tx, &agent.principal.id)
             .await
             .map_err(internal)?,
-        Some(agents_db::DotOwner::Organization(_))
+        Some(agents_db::AgentOwner::Organization(_))
     );
     if !organization {
         return Ok(false);
@@ -317,10 +317,10 @@ async fn turn_view(
         .filter(|version| *version >= 0)
         .ok_or_else(|| not_found(t(lang, "organization-error-not-found")))?;
     let organization = matches!(
-        agents_db::dot_owner_in(&mut tx, &agent.principal.id)
+        agents_db::agent_owner_in(&mut tx, &agent.principal.id)
             .await
             .map_err(internal)?,
-        Some(agents_db::DotOwner::Organization(_))
+        Some(agents_db::AgentOwner::Organization(_))
     );
     let (source, spec) = if organization {
         aiplane_runtime::agents::profile::private_session_spec_in(

@@ -69,7 +69,7 @@ pub struct AdminOrganizationReply {
 pub struct OrganizationListRow {
     #[serde(flatten)]
     pub organization: OrganizationView,
-    pub can_create_dot: bool,
+    pub can_create_agent: bool,
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
@@ -80,14 +80,14 @@ pub struct OrganizationList {
 #[derive(Serialize, schemars::JsonSchema)]
 pub struct OrganizationDetail {
     pub organization: OrganizationView,
-    pub dots: Vec<super::json_agents::AgentView>,
+    pub agents: Vec<super::json_agents::AgentView>,
     pub active_count: u32,
     pub active_limit: u32,
-    pub can_create_dot: bool,
+    pub can_create_agent: bool,
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
-pub struct OrganizationDotReply {
+pub struct OrganizationAgentReply {
     pub agent: super::json_agents::AgentView,
 }
 
@@ -110,21 +110,21 @@ pub struct OrganizationEditBody {
 
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct OrganizationDotBody {
+pub struct OrganizationAgentBody {
     pub name: String,
     pub display: Option<String>,
     #[serde(default)]
     pub description: String,
     /// One of the caller's own personal agents to start from: its task,
     /// tone and topics are copied, never its memory, files, tools or accounts
-    /// (`docs/dots-organizations.md` → "Copying a personal agent").
+    /// (`docs/agents-organizations.md` → "Copying a personal agent").
     #[serde(default)]
     pub copy_from: Option<String>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct OrganizationDotActiveBody {
+pub struct OrganizationAgentActiveBody {
     pub active: bool,
 }
 
@@ -368,7 +368,7 @@ pub async fn list(State(state): State<Arc<RamaState>>, req: Request) -> Response
         let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
         let (current, policy) = current_policy_in(&state, &mut tx, &user.id, lang).await?;
         let groups = policy.role_ids_for(&current.roles);
-        let can_create_dot = policy.can_manage_agents(&groups);
+        let can_create_agent = policy.can_manage_agents(&groups);
         let rows = organizations::list_for_groups_in(&mut tx, &groups)
             .await
             .map_err(internal)?;
@@ -376,7 +376,7 @@ pub async fn list(State(state): State<Arc<RamaState>>, req: Request) -> Response
             .iter()
             .map(|row| OrganizationListRow {
                 organization: OrganizationView::from(row),
-                can_create_dot,
+                can_create_agent,
             })
             .collect();
         tx.commit().await.map_err(internal)?;
@@ -393,11 +393,11 @@ pub async fn detail(State(state): State<Arc<RamaState>>, req: Request) -> Respon
         let id = raw_path_segment(&req, 0).ok_or_else(|| invalid(lang))?;
         let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
         let (org, current, policy) = member_in(&state, &mut tx, &user.id, &id, lang).await?;
-        let owner = agents::DotOwner::Organization(id);
-        let active_count = agents::active_dot_count_in(&mut tx, &owner)
+        let owner = agents::AgentOwner::Organization(id);
+        let active_count = agents::active_agent_count_in(&mut tx, &owner)
             .await
             .map_err(internal)?;
-        let can_create_dot = policy.can_manage_agents(&policy.role_ids_for(&current.roles));
+        let can_create_agent = policy.can_manage_agents(&policy.role_ids_for(&current.roles));
         // An admin member recovers the team's agents here, shared with them or
         // not, as they hold `write` on each (`docs/agents.md` → "Shares").
         let visible = if policy.is_admin(&policy.role_ids_for(&current.roles)) {
@@ -414,7 +414,7 @@ pub async fn detail(State(state): State<Arc<RamaState>>, req: Request) -> Respon
             .iter()
             .map(|(row, _)| row.principal.id.clone())
             .collect::<Vec<_>>();
-        let metadata = agents::dot_metadata_for_agents_in(&mut tx, &ids)
+        let metadata = agents::agent_metadata_for_agents_in(&mut tx, &ids)
             .await
             .map_err(internal)?;
         let rows = visible
@@ -422,16 +422,16 @@ pub async fn detail(State(state): State<Arc<RamaState>>, req: Request) -> Respon
             .filter(|(row, _)| {
                 metadata
                     .get(&row.principal.id)
-                    .is_some_and(|dot| dot.owner == owner)
+                    .is_some_and(|owned_agent| owned_agent.owner == owner)
             })
             .collect::<Vec<_>>();
-        let dots = super::json_agents::agent_views_in(&mut tx, &rows).await?;
+        let owned_agents = super::json_agents::agent_views_in(&mut tx, &rows).await?;
         let detail = OrganizationDetail {
             organization: OrganizationView::from(&org.organization),
-            dots,
+            agents: owned_agents,
             active_count,
-            active_limit: state.config().dots.max_active_per_organization,
-            can_create_dot,
+            active_limit: state.config().agents.max_active_per_organization,
+            can_create_agent,
         };
         tx.commit().await.map_err(internal)?;
         Ok::<_, Response>(json_ok(StatusCode::OK, detail))
@@ -440,13 +440,13 @@ pub async fn detail(State(state): State<Arc<RamaState>>, req: Request) -> Respon
     .unwrap_or_else(|response| response)
 }
 
-pub async fn create_dot(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+pub async fn create_owned_agent(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_, user) = require_session_json!(state, req);
     let lang = Lang::from_request(req.headers());
     async {
         let id = raw_path_segment(&req, 1).ok_or_else(|| invalid(lang))?;
         preflight_member(&state, &user.id, &id, true, lang).await?;
-        let body: OrganizationDotBody =
+        let body: OrganizationAgentBody =
             super::read_json(req.into_body(), "the organization agent body").await?;
         if !valid_name(&body.name) || body.description.len() > 16384 {
             return Err(invalid(lang));
@@ -464,7 +464,7 @@ pub async fn create_dot(State(state): State<Arc<RamaState>>, req: Request) -> Re
         let (draft, copied_description) = match body.copy_from.as_deref() {
             None => ("{}".to_owned(), String::new()),
             Some(source) => {
-                let Some(personal) = agents::get_personal_dot(&state.db, &user.id, source)
+                let Some(personal) = agents::get_personal_agent(&state.db, &user.id, source)
                     .await
                     .map_err(internal)?
                 else {
@@ -472,7 +472,7 @@ pub async fn create_dot(State(state): State<Arc<RamaState>>, req: Request) -> Re
                         lang,
                         StatusCode::NOT_FOUND,
                         "not_found",
-                        "dot-error-not-found",
+                        "agent-error-not-found",
                     ));
                 };
                 (
@@ -496,7 +496,7 @@ pub async fn create_dot(State(state): State<Arc<RamaState>>, req: Request) -> Re
                 "organization-error-permission-required",
             ));
         }
-        let (outcome, agent) = agents::create_organization_dot_in(
+        let (outcome, agent) = agents::create_organization_agent_in(
             &mut tx,
             &id,
             &NewPrincipal {
@@ -506,13 +506,13 @@ pub async fn create_dot(State(state): State<Arc<RamaState>>, req: Request) -> Re
             },
             &draft,
             &current.id,
-            state.config().dots.max_active_per_organization,
+            state.config().agents.max_active_per_organization,
         )
         .await
         .map_err(internal)?;
         let agent = match (outcome, agent) {
-            (agents::DotCreate::Created, Some(agent)) => agent,
-            (agents::DotCreate::NameTaken, _) => {
+            (agents::AgentCreate::Created, Some(agent)) => agent,
+            (agents::AgentCreate::NameTaken, _) => {
                 return Err(error(
                     lang,
                     StatusCode::CONFLICT,
@@ -533,7 +533,10 @@ pub async fn create_dot(State(state): State<Arc<RamaState>>, req: Request) -> Re
             .await?
             .remove(0);
         tx.commit().await.map_err(internal)?;
-        Ok::<_, Response>(json_ok(StatusCode::CREATED, OrganizationDotReply { agent }))
+        Ok::<_, Response>(json_ok(
+            StatusCode::CREATED,
+            OrganizationAgentReply { agent },
+        ))
     }
     .await
     .unwrap_or_else(|response| response)
@@ -544,21 +547,21 @@ pub async fn set_active(State(state): State<Arc<RamaState>>, req: Request) -> Re
     let lang = Lang::from_request(req.headers());
     async {
         let org_id = raw_path_segment(&req, 3).ok_or_else(|| invalid(lang))?;
-        let dot_id = raw_path_segment(&req, 1).ok_or_else(|| invalid(lang))?;
+        let agent_id = raw_path_segment(&req, 1).ok_or_else(|| invalid(lang))?;
         preflight_member(&state, &user.id, &org_id, false, lang).await?;
-        let body: OrganizationDotActiveBody =
+        let body: OrganizationAgentActiveBody =
             super::read_json(req.into_body(), "the organization agent active body").await?;
         let mut tx = WriteTx::begin(&state.db).await.map_err(internal)?;
         member_in(&state, &mut tx, &user.id, &org_id, lang).await?;
-        if effective_access_in(&state, &mut tx, &dot_id, &user.id)
+        if effective_access_in(&state, &mut tx, &agent_id, &user.id)
             .await
             .map_err(internal)?
             != Some(agents::Access::Write)
         {
             return Err(missing(lang));
         }
-        let owner = agents::DotOwner::Organization(org_id);
-        if agents::dot_owner_in(&mut tx, &dot_id)
+        let owner = agents::AgentOwner::Organization(org_id);
+        if agents::agent_owner_in(&mut tx, &agent_id)
             .await
             .map_err(internal)?
             .as_ref()
@@ -566,12 +569,12 @@ pub async fn set_active(State(state): State<Arc<RamaState>>, req: Request) -> Re
         {
             return Err(missing(lang));
         }
-        if !agents::set_dot_active_in(
+        if !agents::set_agent_active_in(
             &mut tx,
-            &dot_id,
+            &agent_id,
             &owner,
             body.active,
-            state.config().dots.max_active_per_organization,
+            state.config().agents.max_active_per_organization,
             &user.id,
         )
         .await
@@ -584,7 +587,7 @@ pub async fn set_active(State(state): State<Arc<RamaState>>, req: Request) -> Re
                 "organization-error-active-limit",
             ));
         }
-        let agent = agents::get_in(&mut tx, &dot_id)
+        let agent = agents::get_in(&mut tx, &agent_id)
             .await
             .map_err(internal)?
             .ok_or_else(|| missing(lang))?;
@@ -592,7 +595,7 @@ pub async fn set_active(State(state): State<Arc<RamaState>>, req: Request) -> Re
             .await?
             .remove(0);
         tx.commit().await.map_err(internal)?;
-        Ok::<_, Response>(json_ok(StatusCode::OK, OrganizationDotReply { agent }))
+        Ok::<_, Response>(json_ok(StatusCode::OK, OrganizationAgentReply { agent }))
     }
     .await
     .unwrap_or_else(|response| response)

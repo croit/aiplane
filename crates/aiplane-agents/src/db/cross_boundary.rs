@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 croit GmbH
 
-//! The cross-boundary delegation link: a personal caller Dot delegating to an
-//! organization receiver Dot. The child is a principal session (owned by the
-//! receiver's principal), so it is not a row in `personal_dot_sessions`. This
+//! The cross-boundary delegation link: a personal caller agent delegating to an
+//! organization receiver agent. The child is a principal session (owned by the
+//! receiver's principal), so it is not a row in `personal_agent_sessions`. This
 //! table records the facts that connect it to the personal parent — the caller
-//! Dot, the parent turn and tool-call, and the consent edge generation — so
+//! agent, the parent turn and tool-call, and the consent edge generation — so
 //! resume and cancellation can re-validate the chain. `session-core` stays
 //! owner-agnostic; only this agent-layer module names the cross-boundary pair.
 
 use jiff::Timestamp;
 use sqlx::Row;
 
-use super::{DbError, Pool, WriteTx, dot_delegation};
+use super::{DbError, Pool, WriteTx, agent_delegation};
 
 /// The immutable link between a personal caller and an organization receiver.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CrossBoundaryChildLink {
     pub child_session_id: String,
-    pub caller_dot_id: String,
-    pub receiver_dot_id: String,
+    pub caller_agent_id: String,
+    pub receiver_agent_id: String,
     pub caller_owner_user_id: String,
     pub receiver_org_id: String,
     pub parent_turn_id: String,
@@ -30,8 +30,8 @@ pub struct CrossBoundaryChildLink {
 #[derive(Debug, Clone, Copy)]
 pub struct NewCrossBoundaryChild<'a> {
     pub child_session_id: &'a str,
-    pub caller_dot_id: &'a str,
-    pub receiver_dot_id: &'a str,
+    pub caller_agent_id: &'a str,
+    pub receiver_agent_id: &'a str,
     pub caller_owner_user_id: &'a str,
     /// The caller owner's role IDs resolved against the current RBAC
     /// snapshot, for the live membership recheck.
@@ -53,13 +53,13 @@ pub async fn record_in(
     let valid: bool = sqlx::query_scalar(
         "SELECT EXISTS(
             SELECT 1 FROM chat_sessions s
-            JOIN dots r ON r.principal_id = s.principal_id AND r.organization_id = ? AND r.owner_user_id IS NULL
-            JOIN dots c ON c.principal_id = ? AND c.owner_user_id = ? AND c.organization_id IS NULL
+            JOIN agent_owners r ON r.principal_id = s.principal_id AND r.organization_id = ? AND r.owner_user_id IS NULL
+            JOIN agent_owners c ON c.principal_id = ? AND c.owner_user_id = ? AND c.organization_id IS NULL
             WHERE s.id = ? AND s.user_id IS NULL
         )",
     )
     .bind(new.receiver_org_id)
-    .bind(new.caller_dot_id)
+    .bind(new.caller_agent_id)
     .bind(new.caller_owner_user_id)
     .bind(new.child_session_id)
     .fetch_one(&mut **tx)
@@ -67,12 +67,12 @@ pub async fn record_in(
     if !valid {
         return Ok(None);
     }
-    if dot_delegation::authorized_cross_boundary_in(
+    if agent_delegation::authorized_cross_boundary_in(
         tx,
         new.caller_owner_user_id,
-        new.caller_dot_id,
+        new.caller_agent_id,
         new.receiver_org_id,
-        new.receiver_dot_id,
+        new.receiver_agent_id,
         new.edge_generation,
         new.caller_role_ids,
     )
@@ -82,13 +82,13 @@ pub async fn record_in(
         return Ok(None);
     }
     sqlx::query(
-        "INSERT INTO cross_boundary_delegations (child_session_id, caller_dot_id, receiver_dot_id, \
+        "INSERT INTO cross_boundary_delegations (child_session_id, caller_agent_id, receiver_agent_id, \
          caller_owner_user_id, receiver_org_id, parent_turn_id, parent_tool_call_id, edge_generation, created_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(new.child_session_id)
-    .bind(new.caller_dot_id)
-    .bind(new.receiver_dot_id)
+    .bind(new.caller_agent_id)
+    .bind(new.receiver_agent_id)
     .bind(new.caller_owner_user_id)
     .bind(new.receiver_org_id)
     .bind(new.parent_turn_id)
@@ -99,8 +99,8 @@ pub async fn record_in(
     .await?;
     Ok(Some(CrossBoundaryChildLink {
         child_session_id: new.child_session_id.into(),
-        caller_dot_id: new.caller_dot_id.into(),
-        receiver_dot_id: new.receiver_dot_id.into(),
+        caller_agent_id: new.caller_agent_id.into(),
+        receiver_agent_id: new.receiver_agent_id.into(),
         caller_owner_user_id: new.caller_owner_user_id.into(),
         receiver_org_id: new.receiver_org_id.into(),
         parent_turn_id: new.parent_turn_id.into(),
@@ -133,7 +133,7 @@ pub async fn link_of_session_in(
     child_session_id: &str,
 ) -> Result<Option<CrossBoundaryChildLink>, DbError> {
     let row = sqlx::query(
-        "SELECT child_session_id, caller_dot_id, receiver_dot_id, caller_owner_user_id, \
+        "SELECT child_session_id, caller_agent_id, receiver_agent_id, caller_owner_user_id, \
          receiver_org_id, parent_turn_id, parent_tool_call_id, edge_generation \
          FROM cross_boundary_delegations WHERE child_session_id = ?",
     )
@@ -143,8 +143,8 @@ pub async fn link_of_session_in(
     row.map(|row| {
         Ok(CrossBoundaryChildLink {
             child_session_id: row.try_get("child_session_id")?,
-            caller_dot_id: row.try_get("caller_dot_id")?,
-            receiver_dot_id: row.try_get("receiver_dot_id")?,
+            caller_agent_id: row.try_get("caller_agent_id")?,
+            receiver_agent_id: row.try_get("receiver_agent_id")?,
             caller_owner_user_id: row.try_get("caller_owner_user_id")?,
             receiver_org_id: row.try_get("receiver_org_id")?,
             parent_turn_id: row.try_get("parent_turn_id")?,
@@ -162,7 +162,7 @@ pub async fn links_for_parent_turn(
     parent_turn_id: &str,
 ) -> Result<Vec<CrossBoundaryChildLink>, DbError> {
     sqlx::query(
-        "SELECT child_session_id, caller_dot_id, receiver_dot_id, caller_owner_user_id, \
+        "SELECT child_session_id, caller_agent_id, receiver_agent_id, caller_owner_user_id, \
          receiver_org_id, parent_turn_id, parent_tool_call_id, edge_generation \
          FROM cross_boundary_delegations WHERE parent_turn_id = ? ORDER BY child_session_id",
     )
@@ -173,8 +173,8 @@ pub async fn links_for_parent_turn(
     .map(|row| {
         Ok(CrossBoundaryChildLink {
             child_session_id: row.try_get("child_session_id")?,
-            caller_dot_id: row.try_get("caller_dot_id")?,
-            receiver_dot_id: row.try_get("receiver_dot_id")?,
+            caller_agent_id: row.try_get("caller_agent_id")?,
+            receiver_agent_id: row.try_get("receiver_agent_id")?,
             caller_owner_user_id: row.try_get("caller_owner_user_id")?,
             receiver_org_id: row.try_get("receiver_org_id")?,
             parent_turn_id: row.try_get("parent_turn_id")?,
@@ -191,8 +191,8 @@ pub async fn links_for_parent_turn(
 pub async fn active_roots_for_edge(
     pool: &Pool,
     caller_owner_user_id: &str,
-    caller_dot_id: &str,
-    receiver_dot_id: &str,
+    caller_agent_id: &str,
+    receiver_agent_id: &str,
     edge_generation: &str,
 ) -> Result<Vec<String>, DbError> {
     Ok(sqlx::query_scalar(
@@ -202,13 +202,13 @@ pub async fn active_roots_for_edge(
              JOIN chat_sessions s ON s.id = t.session_id
              WHERE t.role = 'assistant' AND t.status IN ('in_progress', 'suspended')
                AND s.user_id = ? AND s.principal_id IS NULL AND s.shared = 0
-               AND cb.caller_owner_user_id = ? AND cb.caller_dot_id = ?
-               AND cb.receiver_dot_id = ? AND cb.edge_generation = ?",
+               AND cb.caller_owner_user_id = ? AND cb.caller_agent_id = ?
+               AND cb.receiver_agent_id = ? AND cb.edge_generation = ?",
     )
     .bind(caller_owner_user_id)
     .bind(caller_owner_user_id)
-    .bind(caller_dot_id)
-    .bind(receiver_dot_id)
+    .bind(caller_agent_id)
+    .bind(receiver_agent_id)
     .bind(edge_generation)
     .fetch_all(pool)
     .await?)
@@ -226,8 +226,8 @@ pub async fn validate_child_in(
     let Some(link) = link_of_session_in(connection, new.child_session_id).await? else {
         return Ok(false);
     };
-    if link.caller_dot_id != new.caller_dot_id
-        || link.receiver_dot_id != new.receiver_dot_id
+    if link.caller_agent_id != new.caller_agent_id
+        || link.receiver_agent_id != new.receiver_agent_id
         || link.caller_owner_user_id != new.caller_owner_user_id
         || link.receiver_org_id != new.receiver_org_id
         || link.parent_turn_id != new.parent_turn_id
@@ -240,11 +240,11 @@ pub async fn validate_child_in(
         "SELECT EXISTS(
         SELECT 1 FROM chat_turns t
         JOIN chat_sessions s ON s.id = t.session_id
-        JOIN personal_dot_sessions d ON d.session_id = s.id
+        JOIN personal_agent_sessions d ON d.session_id = s.id
         JOIN chat_tool_calls c ON c.turn_id = t.id AND c.id = ?
         WHERE t.id = ? AND t.role = 'assistant' AND t.status IN ('in_progress', 'suspended')
           AND s.user_id = ? AND s.principal_id IS NULL AND s.shared = 0
-          AND d.owner_user_id = ? AND d.dot_id = ?
+          AND d.owner_user_id = ? AND d.agent_id = ?
           AND c.name = 'forward_request' AND c.status = 'running'
     )",
     )
@@ -252,18 +252,18 @@ pub async fn validate_child_in(
     .bind(new.parent_turn_id)
     .bind(new.caller_owner_user_id)
     .bind(new.caller_owner_user_id)
-    .bind(new.caller_dot_id)
+    .bind(new.caller_agent_id)
     .fetch_one(&mut *connection)
     .await?;
     if !parent_valid {
         return Ok(false);
     }
-    Ok(dot_delegation::authorized_cross_boundary_in(
+    Ok(agent_delegation::authorized_cross_boundary_in(
         connection,
         new.caller_owner_user_id,
-        new.caller_dot_id,
+        new.caller_agent_id,
         new.receiver_org_id,
-        new.receiver_dot_id,
+        new.receiver_agent_id,
         expected_generation,
         new.caller_role_ids,
     )
@@ -342,7 +342,7 @@ mod tests {
             _ => panic!("organization created"),
         };
         let org_id = org.organization.id;
-        let (_, caller) = agents::create_personal_dot(
+        let (_, caller) = agents::create_personal_agent(
             &pool,
             &NewPrincipal {
                 name: "caller",
@@ -357,7 +357,7 @@ mod tests {
         .unwrap();
         let caller = caller.unwrap().principal.id;
         let mut tx = WriteTx::begin(&pool).await.unwrap();
-        let (_, receiver) = agents::create_organization_dot_in(
+        let (_, receiver) = agents::create_organization_agent_in(
             &mut tx,
             &org_id,
             &NewPrincipal {
@@ -374,36 +374,36 @@ mod tests {
         let receiver = receiver.unwrap().principal.id;
         tx.commit().await.unwrap();
 
-        let outbound = dot_delegation::set_cross_boundary_consent(
+        let outbound = agent_delegation::set_cross_boundary_consent(
             &pool,
-            dot_delegation::CrossBoundaryConsentEdit {
+            agent_delegation::CrossBoundaryConsentEdit {
                 actor_user_id: "alice",
-                caller_dot_id: &caller,
-                receiver_dot_id: &receiver,
-                direction: dot_delegation::ConsentDirection::Outbound,
+                caller_agent_id: &caller,
+                receiver_agent_id: &receiver,
+                direction: agent_delegation::ConsentDirection::Outbound,
                 enabled: true,
                 expected_generation: None,
             },
         )
         .await
         .unwrap();
-        let dot_delegation::ConsentSaved::Saved(outbound) = outbound else {
+        let agent_delegation::ConsentSaved::Saved(outbound) = outbound else {
             panic!("outbound consent");
         };
-        let both = dot_delegation::set_cross_boundary_consent(
+        let both = agent_delegation::set_cross_boundary_consent(
             &pool,
-            dot_delegation::CrossBoundaryConsentEdit {
+            agent_delegation::CrossBoundaryConsentEdit {
                 actor_user_id: "bob",
-                caller_dot_id: &caller,
-                receiver_dot_id: &receiver,
-                direction: dot_delegation::ConsentDirection::Inbound,
+                caller_agent_id: &caller,
+                receiver_agent_id: &receiver,
+                direction: agent_delegation::ConsentDirection::Inbound,
                 enabled: true,
                 expected_generation: Some(&outbound.generation),
             },
         )
         .await
         .unwrap();
-        let dot_delegation::ConsentSaved::Saved(both) = both else {
+        let agent_delegation::ConsentSaved::Saved(both) = both else {
             panic!("inbound consent");
         };
         Fixture {
@@ -422,7 +422,7 @@ mod tests {
         let session = session_core::db::create_session(&fx.pool, "alice")
             .await
             .unwrap();
-        dot_sessions_link(&fx.pool, &fx.caller, &session.id).await;
+        agent_sessions_link(&fx.pool, &fx.caller, &session.id).await;
         session_core::db::create_assistant_turn_in_progress(
             &fx.pool,
             &session.id,
@@ -443,8 +443,8 @@ mod tests {
         (session.id, "parent".to_owned())
     }
 
-    async fn dot_sessions_link(pool: &Pool, caller: &str, session_id: &str) {
-        crate::db::dot_sessions::link(pool, "alice", caller, session_id)
+    async fn agent_sessions_link(pool: &Pool, caller: &str, session_id: &str) {
+        crate::db::agent_sessions::link(pool, "alice", caller, session_id)
             .await
             .unwrap();
     }
@@ -470,8 +470,8 @@ mod tests {
     fn input<'a>(fx: &'a Fixture, child_session_id: &'a str) -> NewCrossBoundaryChild<'a> {
         NewCrossBoundaryChild {
             child_session_id,
-            caller_dot_id: &fx.caller,
-            receiver_dot_id: &fx.receiver,
+            caller_agent_id: &fx.caller,
+            receiver_agent_id: &fx.receiver,
             caller_owner_user_id: "alice",
             caller_role_ids: &fx.role_ids,
             receiver_org_id: &fx.org_id,
@@ -616,7 +616,7 @@ mod tests {
 
         // A mismatched link (wrong caller) is not the recorded child.
         let mut wrong = input(&fx, &child);
-        wrong.caller_dot_id = "someone-else";
+        wrong.caller_agent_id = "someone-else";
         assert!(
             !validate_child_in(&mut conn, &wrong, &fx.generation)
                 .await

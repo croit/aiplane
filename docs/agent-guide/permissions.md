@@ -79,7 +79,7 @@ current access; a resumed run retains its original source, version, authored sna
 Private published decisions appear only in the current member-writer Inbox.
 Automated and external organization callers remain unavailable. Configuration
 never gives the agent an employee's account. See [organization
-Agents](../dots-organizations.md) for the implementation boundary.
+Agents](../agents-organizations.md) for the implementation boundary.
 
 ## Organization agent memory
 
@@ -96,7 +96,7 @@ Preferences, Project context or Facts; edit existing text and select Save, or
 confirm Delete. New or edited notes must fit within 2,000 UTF-8 bytes. Some
 characters use multiple bytes; shorten a refused note and save again.
 
-![Harald's editable private lesson and read-only organization knowledge in the existing memory panel.](../img/guide/organization-dot-memory.png)
+![Harald's editable private lesson and read-only organization knowledge in the existing memory panel.](../img/guide/organization-agent-memory.png)
 
 *The current member writer can edit Harald's own lesson. Shared organization
 knowledge remains read-only for this writer. This example uses synthetic demo

@@ -20,7 +20,7 @@ function group(name: string, tools: string[], skills: string[] = [], oidc: strin
 		is_admin: false,
 		is_default: false,
 		can_manage_agents: false,
-		can_manage_dots: false,
+		can_manage_personal_agents: false,
 		oidc_values: oidc,
 		tools,
 		skills

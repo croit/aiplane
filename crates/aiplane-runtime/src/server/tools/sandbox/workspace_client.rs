@@ -143,7 +143,7 @@ mod tests {
     use super::*;
     use crate::server::tools::sandbox::SandboxClient;
     use aiplane_core::server::config::SandboxConfig;
-    use shared::sandbox::{DotWorkspace, WorkspaceOperation, WorkspaceRequest};
+    use shared::sandbox::{OwnedAgentWorkspace, WorkspaceOperation, WorkspaceRequest};
     use std::sync::Arc;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -162,9 +162,9 @@ mod tests {
 
     fn request(operation: WorkspaceOperation) -> WorkspaceRequest {
         WorkspaceRequest {
-            workspace: DotWorkspace {
+            workspace: OwnedAgentWorkspace {
                 owner_user_id: "owner".into(),
-                dot_id: "00000000-0000-4000-8000-000000000001".into(),
+                agent_id: "00000000-0000-4000-8000-000000000001".into(),
             },
             operation,
         }

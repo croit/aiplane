@@ -964,7 +964,7 @@ async fn run_one(
 ) -> ToolResultRecord {
     let journal = ctx.clone();
     let Some(tool) = tools.get(&call.name) else {
-        let audit_failed = ctx.personal_dot.is_some()
+        let audit_failed = ctx.personal_agent.is_some()
             && ctx.pending_execution_facts.is_none()
             && tools.personal_call_audit_is_deferred()
             && !crate::agents::audit::record_personal_tool_call(
@@ -1086,8 +1086,8 @@ async fn run_one(
         }
     };
     // Keep the tool's own answer only long enough to record agent-run details
-    // or the minimal personal-Dot outcome; the model reads the screened body.
-    let raw = (journal.agent.is_some() || journal.personal_dot.is_some()).then(|| body.clone());
+    // or the minimal personal-agent outcome; the model reads the screened body.
+    let raw = (journal.agent.is_some() || journal.personal_agent.is_some()).then(|| body.clone());
     let screened = screen_result(scan, &journal, &call, body).await;
     if let Some(raw) = &raw {
         let result = CallResult {
@@ -1135,7 +1135,7 @@ async fn record_call(
     result: CallResult<'_>,
 ) -> Result<(), ToolError> {
     let Some(run) = ctx.agent.as_deref() else {
-        if ctx.personal_dot.is_some() {
+        if ctx.personal_agent.is_some() {
             let status = if crate::suspend::extract_suspend(result.body).is_some() {
                 "awaiting_approval"
             } else {
@@ -1282,7 +1282,7 @@ pub async fn execute_tool_calls_guarded(
                     call_id: Some(call.id.clone()),
                     ..ctx.clone()
                 };
-                let audit_failed = ctx.personal_dot.is_some()
+                let audit_failed = ctx.personal_agent.is_some()
                     && ctx.pending_execution_facts.is_none()
                     && tools.personal_call_audit_is_deferred()
                     && !crate::agents::audit::record_personal_tool_call(

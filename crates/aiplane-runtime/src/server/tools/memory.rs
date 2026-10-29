@@ -2,8 +2,8 @@
 // Copyright (C) 2026 croit GmbH
 
 use aiplane_agents::db::{
-    agents::DotOwner,
-    dot_memories::{self, MemoryScope},
+    agent_memories::{self, MemoryScope},
+    agents::AgentOwner,
 };
 use aiplane_core::server::{
     db::WriteTx,
@@ -18,16 +18,16 @@ use crate::{
 };
 
 pub struct OrganizationMemory {
-    owner: DotOwner,
-    dot_id: String,
+    owner: AgentOwner,
+    agent_id: String,
     organization_id: String,
 }
 
 impl OrganizationMemory {
-    pub fn dot_scope(&self) -> MemoryScope<'_> {
-        MemoryScope::Dot {
+    pub fn agent_scope(&self) -> MemoryScope<'_> {
+        MemoryScope::Agent {
             owner: &self.owner,
-            dot_id: &self.dot_id,
+            agent_id: &self.agent_id,
         }
     }
     pub fn organization_scope(&self) -> MemoryScope<'_> {
@@ -64,8 +64,8 @@ async fn admitted_in(
         return Ok(None);
     }
     Ok(Some(OrganizationMemory {
-        owner: DotOwner::Organization(context.organization_id.clone()),
-        dot_id: current.id,
+        owner: AgentOwner::Organization(context.organization_id.clone()),
+        agent_id: current.id,
         organization_id: context.organization_id.clone(),
     }))
 }
@@ -134,10 +134,10 @@ pub async fn organization_standing_context(run: &AgentRun) -> Result<Option<Stri
     };
     let mut rows = Vec::new();
     for (scope, name) in [
-        (scope.dot_scope(), "dot"),
+        (scope.agent_scope(), "agent"),
         (scope.organization_scope(), "organization"),
     ] {
-        let notes = dot_memories::list_in(&mut tx, scope, 40)
+        let notes = agent_memories::list_in(&mut tx, scope, 40)
             .await
             .map_err(|error| ToolError::Failed(error.to_string()))?
             .ok_or_else(|| unavailable(run))?;

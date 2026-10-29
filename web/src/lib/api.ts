@@ -12,7 +12,7 @@
  */
 import { detect } from './locale.ts';
 
-export type DotBrowserInput =
+export type AgentBrowserInput =
 	| { kind: 'click'; x: number; y: number }
 	| { kind: 'key'; key: string }
 	| { kind: 'text'; text: string }
@@ -63,7 +63,7 @@ export interface Me {
 	features?: string[];
 	/** May build agents; the Agents section is shown only when true. */
 	can_manage_agents?: boolean;
-	can_manage_dots: boolean;
+	can_manage_personal_agents: boolean;
 }
 
 /** A canvas document belonging to a conversation. */
@@ -276,9 +276,9 @@ export const api = {
 	// --- Chat (issue #22 phase 2; wire shapes in chat-protocol.ts) --------
 
 	/** GET /api/v0/chat/sessions — the sidebar list (pinned first). */
-	listChatSessions: (dotId?: string | null) =>
+	listChatSessions: (agentId?: string | null) =>
 		request<{ sessions: import('./chat-protocol.js').ChatSession[] }>(
-			`/api/v0/chat/sessions${dotId === undefined ? '' : `?dot_id=${encodeURIComponent(dotId ?? '')}`}`
+			`/api/v0/chat/sessions${agentId === undefined ? '' : `?agent_id=${encodeURIComponent(agentId ?? '')}`}`
 		),
 
 	/** GET /api/v0/chat/landing — latest conversation, or the caller's first. */
@@ -407,8 +407,8 @@ export const api = {
 			}
 		),
 
-	/** Claim one private server-browser controller for a suspended personal Dot. */
-	dotBrowserClaim: async (sessionId: string, turnId: string, requestId: string) => {
+	/** Claim one private server-browser controller for a suspended personal agent. */
+	agentBrowserClaim: async (sessionId: string, turnId: string, requestId: string) => {
 		const path = `/api/v0/chat/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/browser-handover/${encodeURIComponent(requestId)}/claim`;
 		const controllerId = crypto.randomUUID();
 		const init = {
@@ -423,22 +423,22 @@ export const api = {
 			return request<{ controller_id: string; expires_at: string }>(path, init);
 		}
 	},
-	dotBrowserFrame: (sessionId: string, turnId: string, requestId: string, controllerId: string) =>
+	agentBrowserFrame: (sessionId: string, turnId: string, requestId: string, controllerId: string) =>
 		request<{ frame_b64: string | null; width: number | null; height: number | null; expires_at: string }>(
 			`/api/v0/chat/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/browser-handover/${encodeURIComponent(requestId)}/frame`,
 			{ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ controller_id: controllerId }) }
 		),
-	dotBrowserInput: (sessionId: string, turnId: string, requestId: string, controllerId: string, sequence: number, input: DotBrowserInput) =>
+	agentBrowserInput: (sessionId: string, turnId: string, requestId: string, controllerId: string, sequence: number, input: AgentBrowserInput) =>
 		request<{ expires_at: string }>(
 			`/api/v0/chat/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/browser-handover/${encodeURIComponent(requestId)}/input`,
 			{ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ controller_id: controllerId, sequence, input }) }
 		),
-	dotBrowserFinish: (sessionId: string, turnId: string, requestId: string, controllerId: string) =>
+	agentBrowserFinish: (sessionId: string, turnId: string, requestId: string, controllerId: string) =>
 		request<{ returned: boolean }>(
 			`/api/v0/chat/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/browser-handover/${encodeURIComponent(requestId)}/finish`,
 			{ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ controller_id: controllerId }) }
 		),
-	dotBrowserAbort: (sessionId: string, turnId: string, requestId: string, controllerId: string) =>
+	agentBrowserAbort: (sessionId: string, turnId: string, requestId: string, controllerId: string) =>
 		request<{ cancelled: boolean }>(
 			`/api/v0/chat/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/browser-handover/${encodeURIComponent(requestId)}/abort`,
 			{ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ controller_id: controllerId }) }

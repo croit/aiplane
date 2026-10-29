@@ -528,7 +528,7 @@ mod tests {
         let fx = fixture().await;
         let now = Timestamp::now();
         let expired = now - jiff::SignedDuration::from_secs(60);
-        // A member group, an organization, and the organization's receiver dot.
+        // A member group, an organization, and the organization's receiver owned_agent.
         sqlx::query("INSERT INTO gateway_groups(name,created_at,updated_at) VALUES ('ops', ?, ?)")
             .bind(now.to_string())
             .bind(now.to_string())
@@ -550,7 +550,7 @@ mod tests {
             panic!("organization created");
         };
         let mut tx = WriteTx::begin(&fx.pool).await.unwrap();
-        let (_, receiver) = agents::create_organization_dot_in(
+        let (_, receiver) = agents::create_organization_agent_in(
             &mut tx,
             &org.organization.id,
             &NewPrincipal {
@@ -566,7 +566,7 @@ mod tests {
         .unwrap();
         let receiver = receiver.unwrap().principal.id;
         tx.commit().await.unwrap();
-        let (_, caller) = agents::create_personal_dot(
+        let (_, caller) = agents::create_personal_agent(
             &fx.pool,
             &NewPrincipal {
                 name: "caller",
@@ -599,8 +599,8 @@ mod tests {
             .await
             .unwrap();
         sqlx::query(
-            "INSERT INTO cross_boundary_delegations (child_session_id, caller_dot_id, \
-             receiver_dot_id, caller_owner_user_id, receiver_org_id, parent_turn_id, \
+            "INSERT INTO cross_boundary_delegations (child_session_id, caller_agent_id, \
+             receiver_agent_id, caller_owner_user_id, receiver_org_id, parent_turn_id, \
              parent_tool_call_id, edge_generation, created_at) \
              VALUES (?, ?, ?, 'u1', ?, 'parent-turn', 'forward-call', 'gen-1', ?)",
         )

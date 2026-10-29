@@ -49,7 +49,7 @@
 	<header>
 		<h1 class="text-2xl font-bold">{t('webhooks-heading')}</h1>
 		<p class="mt-2 text-sm text-base-content/60">{t('webhooks-intro')}</p>
-		{#if data?.principal_id && data.dots[0]}<p class="mt-2 text-sm">{data.dots[0].display || data.dots[0].name}</p>{/if}
+		{#if data?.principal_id && data.agents[0]}<p class="mt-2 text-sm">{data.agents[0].display || data.agents[0].name}</p>{/if}
 	</header>
 
 	{#if error}<div class="alert alert-error"><span>{error}</span></div>{/if}

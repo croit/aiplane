@@ -377,7 +377,7 @@ the example Typst templates. Its sandbox client uses the same registry and
 `browse_page` action catalogue as production; the local mock refuses `/run`
 with an explicit fixture error and does not execute containers. This supports
 access-rule UI checks, not sandbox execution verification. The exact prompt
-`Dot action approval probe` produces a `browse_page` navigation call for
+`Agent action approval probe` produces a `browse_page` navigation call for
 checking action revocation through the real Inbox flow. Tools whose operator
 backend is missing (GeoIP) appear as disabled rows with setup links. A retained
 SQLite connection keeps the fixture database alive while the server is idle.

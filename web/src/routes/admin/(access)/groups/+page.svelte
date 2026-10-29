@@ -139,7 +139,7 @@
 									{#if group.is_admin}<span class="badge badge-outline">{t('groups-field-admin')}</span>{/if}
 									{#if group.is_default}<span class="badge badge-outline">{t('groups-field-default')}</span>{/if}
 									{#if group.can_manage_agents || group.is_admin}<span class="badge badge-outline">{t('groups-field-manage-agents')}</span>{/if}
-									{#if group.can_manage_dots || group.is_admin}<span class="badge badge-outline">{t('groups-field-manage-dots')}</span>{/if}
+									{#if group.can_manage_personal_agents || group.is_admin}<span class="badge badge-outline">{t('groups-field-manage-personal-agents')}</span>{/if}
 									{#if group.tools.length}<span class="badge badge-outline">{t('groups-field-tools')}: {group.tools.length}</span>{/if}
 									{#if group.skills.length}<span class="badge badge-outline">{t('groups-field-skills')}: {group.skills.length}</span>{/if}
 								</div>

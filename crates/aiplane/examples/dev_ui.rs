@@ -100,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
         .await;
     mount_agent_model(&chat_mock).await;
     mount_architect_model(&chat_mock).await;
-    mount_dot_delegation_model(&chat_mock).await;
+    mount_agent_delegation_model(&chat_mock).await;
     Mock::given(method("POST"))
         .and(path("/systemone"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -174,8 +174,8 @@ async fn main() -> anyhow::Result<()> {
                     messages.iter().any(|message| {
                         message["role"] == "user"
                             && message["content"].as_str().is_some_and(|content| {
-                                content.starts_with("Dot background approval probe")
-                                    || content.starts_with("Dot action approval probe")
+                                content.starts_with("Agent background approval probe")
+                                    || content.starts_with("Agent action approval probe")
                             })
                     })
                 })
@@ -186,21 +186,21 @@ async fn main() -> anyhow::Result<()> {
             let browser_probe = body["messages"].as_array().is_some_and(|messages| {
                 messages.iter().any(|message| {
                     message["role"] == "user"
-                        && message["content"]
-                            .as_str()
-                            .is_some_and(|content| content.starts_with("Dot action approval probe"))
+                        && message["content"].as_str().is_some_and(|content| {
+                            content.starts_with("Agent action approval probe")
+                        })
                 })
             });
             let (call_id, tool, arguments, content) = if browser_probe {
                 (
-                    "dot-action-browser",
+                    "agent-action-browser",
                     "browse_page",
                     serde_json::json!({"action": "navigate", "url": "https://example.com"}),
                     "The browser action probe finished.",
                 )
             } else {
                 (
-                    "dot-background-memory",
+                    "agent-background-memory",
                     "remember",
                     serde_json::json!({"content": "Approved background lesson.", "kind": "fact"}),
                     "The approved background lesson was recorded.",
@@ -762,8 +762,8 @@ async fn main() -> anyhow::Result<()> {
     seed_demo_data(&state).await?;
     let erp_mock = erp_mock().await;
     seed_embed_agent(&state, &erp_mock.uri()).await?;
-    let dot_workspace = dot_workspace_mock().await;
-    seed_dot_workspace(&state, &dot_workspace.uri()).await?;
+    let agent_workspace = agent_workspace_mock().await;
+    seed_agent_workspace(&state, &agent_workspace.uri()).await?;
 
     let session = state.sessions.create("dev").await?;
     let cookie = state.sessions.sign(&session.id);
@@ -1034,7 +1034,7 @@ async fn erp_mock() -> MockServer {
     server
 }
 
-async fn dot_workspace_mock() -> MockServer {
+async fn agent_workspace_mock() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/authorize"))
@@ -1049,7 +1049,7 @@ async fn dot_workspace_mock() -> MockServer {
             };
             redirect
                 .query_pairs_mut()
-                .append_pair("code", "dot-fixture-code")
+                .append_pair("code", "agent-fixture-code")
                 .append_pair("state", state);
             ResponseTemplate::new(302).insert_header("location", redirect.as_str())
         })
@@ -1058,7 +1058,7 @@ async fn dot_workspace_mock() -> MockServer {
     Mock::given(method("POST"))
         .and(path("/token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "access_token":"dot-principal-fixture", "token_type":"Bearer", "expires_in":3600
+            "access_token":"agent-principal-fixture", "token_type":"Bearer", "expires_in":3600
         })))
         .mount(&server)
         .await;
@@ -1068,7 +1068,7 @@ async fn dot_workspace_mock() -> MockServer {
                 return ResponseTemplate::new(400);
             };
             let result = match body["method"].as_str() {
-                Some("initialize") => serde_json::json!({"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"dot-workspace","version":"1"}}),
+                Some("initialize") => serde_json::json!({"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"agent-workspace","version":"1"}}),
                 Some("tools/list") => serde_json::json!({"tools":[
                     {"name":"read_workspace","description":"Read the fixture workspace.","inputSchema":{"type":"object"},"annotations":{"readOnlyHint":true}},
                     {"name":"write_workspace","description":"Write to the fixture workspace.","inputSchema":{"type":"object"},"annotations":{"readOnlyHint":false}}
@@ -1081,16 +1081,16 @@ async fn dot_workspace_mock() -> MockServer {
     server
 }
 
-async fn seed_dot_workspace(state: &RamaState, origin: &str) -> anyhow::Result<()> {
+async fn seed_agent_workspace(state: &RamaState, origin: &str) -> anyhow::Result<()> {
     use aiplane_core::server::db::{mcp_catalog, mcp_connections};
     #[cfg(debug_assertions)]
     aiplane::rama_server::dev_seed::ensure_user(&state.db).await?;
     mcp_catalog::create(
         &state.db,
         mcp_catalog::ConnectorInput {
-            key: "dot-workspace".into(),
+            key: "agent-workspace".into(),
             name: "Workspace".into(),
-            description: Some("Local OAuth workspace for Dot identity browser scenarios.".into()),
+            description: Some("Local OAuth workspace for agent identity browser scenarios.".into()),
             icon: None,
             category: None,
             url: format!("{origin}/mcp"),
@@ -1098,7 +1098,7 @@ async fn seed_dot_workspace(state: &RamaState, origin: &str) -> anyhow::Result<(
             scope: mcp_catalog::Scope::PerUser,
             audit: true,
             use_dcr: false,
-            client_id: Some("dot-ui-fixture".into()),
+            client_id: Some("agent-ui-fixture".into()),
             client_secret_ct: None,
             client_secret_nonce: None,
             authorize_url: Some(format!("{origin}/authorize")),
@@ -1109,10 +1109,10 @@ async fn seed_dot_workspace(state: &RamaState, origin: &str) -> anyhow::Result<(
         },
     )
     .await?;
-    mcp_catalog::set_enabled(&state.db, "dot-workspace", true).await?;
-    let catalog_generation = mcp_catalog::get(&state.db, "dot-workspace")
+    mcp_catalog::set_enabled(&state.db, "agent-workspace", true).await?;
+    let catalog_generation = mcp_catalog::get(&state.db, "agent-workspace")
         .await?
-        .context("the seeded Dot Workspace connector is missing")?
+        .context("the seeded agent Workspace connector is missing")?
         .dispatch_generation;
     let users = ["dev", "eng"];
     #[cfg(debug_assertions)]
@@ -1120,12 +1120,12 @@ async fn seed_dot_workspace(state: &RamaState, origin: &str) -> anyhow::Result<(
         .into_iter()
         .chain(std::iter::once(aiplane::rama_server::dev_seed::USER_ID));
     for user in users {
-        let sealed = state.crypto.seal_str("dot-user-fixture")?;
+        let sealed = state.crypto.seal_str("agent-user-fixture")?;
         mcp_connections::upsert_connection(
             &state.db,
             mcp_connections::NewConnection {
                 owner: mcp_connections::ConnectionOwner::User(user.into()),
-                connector_key: "dot-workspace".into(),
+                connector_key: "agent-workspace".into(),
                 catalog_generation: catalog_generation.clone(),
                 access_token_ct: sealed.ciphertext,
                 access_token_nonce: sealed.nonce,
@@ -1141,7 +1141,7 @@ async fn seed_dot_workspace(state: &RamaState, origin: &str) -> anyhow::Result<(
         )
         .await?
         .context(
-            "the seeded Dot Workspace connector changed while connecting its fixture account",
+            "the seeded agent Workspace connector changed while connecting its fixture account",
         )?;
     }
     Ok(())
@@ -1463,9 +1463,9 @@ fn completion_with_usage(
     ResponseTemplate::new(200).set_body_json(response)
 }
 
-async fn mount_dot_delegation_model(chat_mock: &MockServer) {
-    const ROOT: &str = "Dot delegation approval probe ";
-    const CHILD: &str = "Dot delegated memory approval probe";
+async fn mount_agent_delegation_model(chat_mock: &MockServer) {
+    const ROOT: &str = "Agent delegation approval probe ";
+    const CHILD: &str = "Agent delegated memory approval probe";
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .and(|request: &wiremock::Request| {
@@ -1485,12 +1485,12 @@ async fn mount_dot_delegation_model(chat_mock: &MockServer) {
                 .find_map(|content| content.strip_prefix(ROOT));
             let (id, tool, arguments, answer) = match receiver {
                 Some(receiver) => (
-                    "dot-delegation", "forward_request",
-                    serde_json::json!({"receiver_dot_id": receiver, "message": CHILD}),
-                    "The receiving Dot completed the explicit task.",
+                    "agent-delegation", "forward_request",
+                    serde_json::json!({"receiver_agent_id": receiver, "message": CHILD}),
+                    "The receiving agent completed the explicit task.",
                 ),
                 None => (
-                    "dot-delegated-memory", "remember",
+                    "agent-delegated-memory", "remember",
                     serde_json::json!({"content": "Approved delegated lesson.", "kind": "fact"}),
                     "The approved delegated lesson was recorded.",
                 ),
@@ -1963,7 +1963,7 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
                 tools_enabled: true,
                 reuse_conversation: reuse,
                 reuse_rounds: 5,
-                dot_id: None,
+                personal_agent_id: None,
                 linked_session_id: None,
                 next_run_at: Some(next.parse()?),
             },
@@ -2075,7 +2075,7 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
                 synchronous,
                 reuse_conversation: reuse,
                 reuse_rounds: 5,
-                dot_id: None,
+                personal_agent_id: None,
                 linked_session_id: None,
                 // A hash of nothing anyone can fire: the fixture demonstrates
                 // the UI, and a guessable trigger secret would be a bad habit

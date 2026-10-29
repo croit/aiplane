@@ -17,13 +17,13 @@ use crate::server::tools::{
     GrantedToolSource, Tool, ToolContext, ToolError, ToolFuture, ToolSource, catalog,
 };
 
-pub(super) struct LivePersonalDotTool {
+pub(super) struct LivePersonalAgentTool {
     pub state: Arc<AppState>,
     pub initial: Arc<dyn Tool>,
     pub initial_bindings: std::collections::BTreeMap<String, crate::agents::bind::BindSource>,
 }
 
-impl Tool for LivePersonalDotTool {
+impl Tool for LivePersonalAgentTool {
     fn execution_facts(&self) -> Option<Value> {
         binding_facts(&self.initial_bindings, self.initial.execution_facts())
     }
@@ -115,7 +115,7 @@ impl Tool for LivePersonalDotTool {
                 }
             }
             let identity = ctx
-                .personal_dot
+                .personal_agent
                 .as_ref()
                 .ok_or_else(|| self.unavailable())?;
             if !matches!(&ctx.principal, Principal::User { id, .. } if id == &identity.owner_user_id)
@@ -138,12 +138,12 @@ impl Tool for LivePersonalDotTool {
                 .await
                 .map_err(Self::load_error)?
                 .ok_or_else(|| self.unavailable())?;
-            let dot = agents::get_personal_dot(&self.state.db, &owner.id, &identity.dot_id)
+            let owned_agent = agents::get_personal_agent(&self.state.db, &owner.id, &identity.agent_id)
                 .await
                 .map_err(Self::load_error)?
-                .filter(|dot| dot.active && dot.agent.principal.disabled_at.is_none())
+                .filter(|owned_agent| owned_agent.active && owned_agent.agent.principal.disabled_at.is_none())
                 .ok_or_else(|| self.unavailable())?;
-            let value = serde_json::from_str(&dot.agent.draft_spec)
+            let value = serde_json::from_str(&owned_agent.agent.draft_spec)
                 .map_err(|error| ToolError::Failed(format!("Could not read the personal agent's tool rules: {error}. Correct its access settings before retrying.")))?;
             let spec = AgentSpec::from_value(&value)
                 .map_err(|error| ToolError::Failed(format!("Could not read the personal agent's tool rules: {error}. Correct its access settings before retrying.")))?;
@@ -154,7 +154,7 @@ impl Tool for LivePersonalDotTool {
                 id: owner.id.clone(),
                 roles: owner.roles,
             };
-            let layer = self.state.mcp_layer_for_dot(&principal, Some(identity), AskContext::Chat).await;
+            let layer = self.state.mcp_layer_for_agent(&principal, Some(identity), AskContext::Chat).await;
             let mut granted = self.state.granted_tool_ids(&principal, &layer).await;
             let disabled = user_tool_prefs::disabled_for_user(&self.state.db, &owner.id)
                 .await
@@ -179,7 +179,7 @@ impl Tool for LivePersonalDotTool {
             let current = GrantedToolSource::new(&source, granted.iter().cloned());
             let tool = current.get(self.id()).ok_or_else(|| self.unavailable())?;
             let access =
-                super::personal_dot::current_pool_access(&self.state, &principal, &ctx.pool_access);
+                super::personal_agent::current_pool_access(&self.state, &principal, &ctx.pool_access);
             ctx.principal = principal;
             ctx.pool_access = access;
             ctx.granted_tools = Some(Arc::new(granted.into_iter().collect()));
@@ -195,7 +195,7 @@ impl Tool for LivePersonalDotTool {
             let facts=binding_facts(&bindings,original_facts.clone());
             crate::server::tools::ask_first::validate_execution_facts(&ctx,self.id(),&facts)?;
             if let Some(pending)=ctx.pending_execution_facts.as_mut() { pending.execution_facts=original_facts; }
-            let gated=Permissions::from_spec(&spec).gate_dot(tool);
+            let gated=Permissions::from_spec(&spec).gate_agent(tool);
             let result=if bindings.is_empty() {
                 gated.run(ctx,args).await
             } else {
@@ -251,10 +251,10 @@ fn binding_facts(
             .expect("binding descriptors serialize")
             .as_bytes(),
     );
-    Some(serde_json::json!({"personal_dot_bindings":fingerprint,"tool":facts}))
+    Some(serde_json::json!({"personal_agent_bindings":fingerprint,"tool":facts}))
 }
 
-impl LivePersonalDotTool {
+impl LivePersonalAgentTool {
     fn unavailable(&self) -> ToolError {
         ToolError::Failed(format!(
             "`{}` is unavailable to this personal agent under its current access settings. Review the agent's active state, selected tools and the owner's permissions before retrying.",
@@ -430,13 +430,13 @@ mod tests {
     #[tokio::test]
     async fn live_personal_tools_enforce_the_current_saved_constant_binding() {
         let (tool, ctx) = fixture_with_echo(true).await;
-        let identity = ctx.personal_dot.as_ref().unwrap();
+        let identity = ctx.personal_agent.as_ref().unwrap();
         let mut value = spec("always_allow");
         value["main"]["tool_resources"]["company_echo"]["bind"] =
             serde_json::json!({"message":{"const":"Current reviewed collection"}});
         sqlx::query("UPDATE agents SET draft_spec=? WHERE principal_id=?")
             .bind(value.to_string())
-            .bind(&identity.dot_id)
+            .bind(&identity.agent_id)
             .execute(&ctx.db)
             .await
             .unwrap();
@@ -461,7 +461,7 @@ mod tests {
         );
         let events = aiplane_agents::db::agent_audit::for_principal(
             &ctx.db,
-            &ctx.personal_dot.as_ref().unwrap().owner_user_id,
+            &ctx.personal_agent.as_ref().unwrap().owner_user_id,
         )
         .await
         .unwrap();
@@ -480,7 +480,7 @@ mod tests {
         assert!(tool.run(ctx.clone(), json!({})).await.is_ok());
         let events = aiplane_agents::db::agent_audit::for_principal(
             &ctx.db,
-            &ctx.personal_dot.as_ref().unwrap().owner_user_id,
+            &ctx.personal_agent.as_ref().unwrap().owner_user_id,
         )
         .await
         .unwrap();
@@ -500,7 +500,7 @@ mod tests {
         assert!(tool.run(ctx.clone(), json!({})).await.is_err());
         let events = aiplane_agents::db::agent_audit::for_principal(
             &ctx.db,
-            &ctx.personal_dot.as_ref().unwrap().owner_user_id,
+            &ctx.personal_agent.as_ref().unwrap().owner_user_id,
         )
         .await
         .unwrap();
@@ -775,7 +775,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn live_personal_dot_wrapper_preserves_the_tools_phase() {
+    async fn live_personal_agent_wrapper_preserves_the_tools_phase() {
         let (mut tool, _) = fixture().await;
         tool.initial = Arc::new(crate::server::tools::tests::PhasedEcho);
         assert_eq!(tool.phase(), crate::server::tools::ToolPhase::ActsOnState);
@@ -785,7 +785,7 @@ mod tests {
         );
     }
     use super::*;
-    use crate::agent_run::PersonalDotIdentity;
+    use crate::agent_run::PersonalAgentIdentity;
     use crate::server::tools::{ToolRegistry, echo::Echo};
     use crate::suspend::{Suspend, extract_suspend};
     use aiplane_agents::db::system_principals::NewPrincipal;
@@ -831,11 +831,11 @@ mod tests {
         }}})
     }
 
-    async fn fixture() -> (LivePersonalDotTool, ToolContext) {
+    async fn fixture() -> (LivePersonalAgentTool, ToolContext) {
         fixture_with_echo(false).await
     }
 
-    async fn fixture_with_echo(echo: bool) -> (LivePersonalDotTool, ToolContext) {
+    async fn fixture_with_echo(echo: bool) -> (LivePersonalAgentTool, ToolContext) {
         let probe: Arc<dyn Tool> = if echo {
             Arc::new(crate::server::tools::echo::Echo)
         } else {
@@ -844,7 +844,7 @@ mod tests {
         fixture_with_probe(probe).await
     }
 
-    async fn fixture_with_probe(probe: Arc<dyn Tool>) -> (LivePersonalDotTool, ToolContext) {
+    async fn fixture_with_probe(probe: Arc<dyn Tool>) -> (LivePersonalAgentTool, ToolContext) {
         let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
             .await
             .unwrap();
@@ -864,7 +864,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let (_, dot) = agents::create_personal_dot(
+        let (_, owned_agent) = agents::create_personal_agent(
             &db,
             &NewPrincipal {
                 name: "Harald",
@@ -906,16 +906,16 @@ mod tests {
                 id: "owner".into(),
                 roles: vec!["old-role".into()],
             },
-            personal_dot: Some(PersonalDotIdentity {
+            personal_agent: Some(PersonalAgentIdentity {
                 owner_user_id: "owner".into(),
-                dot_id: dot.unwrap().principal.id,
+                agent_id: owned_agent.unwrap().principal.id,
             }),
             granted_tools: Some(Arc::new(["company_echo".into()].into_iter().collect())),
             suspend: Suspend::Available,
             ..ToolContext::for_test(db)
         };
         (
-            LivePersonalDotTool {
+            LivePersonalAgentTool {
                 state,
                 initial: probe,
                 initial_bindings: Default::default(),
@@ -924,10 +924,10 @@ mod tests {
         )
     }
 
-    async fn save(tool: &LivePersonalDotTool, ctx: &ToolContext, spec: Value) {
+    async fn save(tool: &LivePersonalAgentTool, ctx: &ToolContext, spec: Value) {
         agents::update_draft(
             &tool.state.db,
-            &ctx.personal_dot.as_ref().unwrap().dot_id,
+            &ctx.personal_agent.as_ref().unwrap().agent_id,
             &spec.to_string(),
             "owner",
             Default::default(),
@@ -938,12 +938,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn disabled_personal_dot_cannot_execute_a_cached_builtin_tool() {
+    async fn disabled_personal_agent_cannot_execute_a_cached_builtin_tool() {
         let (tool, ctx) = fixture().await;
         assert!(tool.run(ctx.clone(), json!({})).await.is_ok());
         sqlx::query("UPDATE system_principals SET disabled_at=? WHERE id=?")
             .bind(jiff::Timestamp::now().to_string())
-            .bind(&ctx.personal_dot.as_ref().unwrap().dot_id)
+            .bind(&ctx.personal_agent.as_ref().unwrap().agent_id)
             .execute(&tool.state.db)
             .await
             .unwrap();
@@ -951,7 +951,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn live_dot_dispatch_refreshes_identity_and_permission_for_each_call() {
+    async fn live_agent_dispatch_refreshes_identity_and_permission_for_each_call() {
         let (tool, ctx) = fixture().await;
         let result = tool.run(ctx.clone(), json!({})).await.unwrap();
         assert_eq!(result, json!({"user": "owner", "roles": ["current-role"]}));
@@ -962,7 +962,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn live_dot_dispatch_refuses_removed_disabled_inactive_and_other_owner() {
+    async fn live_agent_dispatch_refuses_removed_disabled_inactive_and_other_owner() {
         let (tool, ctx) = fixture().await;
         let mut other = ctx.clone();
         other.principal = ToolContext::test_user("other");
@@ -977,9 +977,9 @@ mod tests {
         user_tool_prefs::set(&tool.state.db, "owner", "company_echo", true)
             .await
             .unwrap();
-        agents::set_personal_dot_active(
+        agents::set_personal_agent_active(
             &tool.state.db,
-            &ctx.personal_dot.as_ref().unwrap().dot_id,
+            &ctx.personal_agent.as_ref().unwrap().agent_id,
             "owner",
             false,
             4,
@@ -990,7 +990,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn live_dot_actions_reload_current_rule_and_preserve_grant_ceiling() {
+    async fn live_agent_actions_reload_current_rule_and_preserve_grant_ceiling() {
         let (tool, ctx) = fixture().await;
         for (rule, expected) in [("allow", 0), ("ask", 1), ("deny", 2)] {
             save(&tool,&ctx,json!({"main":{"tools":["company_echo"],"tool_resources":{"company_echo":{"actions":{"read":rule}}}}})).await;
@@ -1012,14 +1012,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn live_dot_dispatch_does_not_gain_a_midturn_grant() {
+    async fn live_agent_dispatch_does_not_gain_a_midturn_grant() {
         let (tool, mut ctx) = fixture().await;
         ctx.granted_tools = Some(Arc::new(Default::default()));
         assert!(tool.run(ctx, json!({})).await.is_err());
     }
 
     #[tokio::test]
-    async fn live_dot_dispatch_refuses_an_owner_role_revoked_midturn() {
+    async fn live_agent_dispatch_refuses_an_owner_role_revoked_midturn() {
         let (tool, ctx) = fixture().await;
         assert!(tool.run(ctx.clone(), json!({})).await.is_ok());
         let mut user = users::find_by_id(&tool.state.db, "owner")
@@ -1031,16 +1031,16 @@ mod tests {
         assert!(tool.run(ctx, json!({})).await.is_err());
     }
     #[tokio::test]
-    async fn personal_dot_live_tool_rechecks_background_trigger_ceiling_and_binding() {
+    async fn personal_agent_live_tool_rechecks_background_trigger_ceiling_and_binding() {
         let (tool, mut ctx) = fixture().await;
-        let identity = ctx.personal_dot.clone().unwrap();
+        let identity = ctx.personal_agent.clone().unwrap();
         let session = session_core::db::create_session(&tool.state.db, "owner")
             .await
             .unwrap();
-        aiplane_agents::db::dot_sessions::link(
+        aiplane_agents::db::agent_sessions::link(
             &tool.state.db,
             "owner",
-            &identity.dot_id,
+            &identity.agent_id,
             &session.id,
         )
         .await
@@ -1054,7 +1054,7 @@ mod tests {
         .await
         .unwrap();
         let now = jiff::Timestamp::now().to_string();
-        sqlx::query("INSERT INTO scheduled_actions(id,user_id,dot_id,name,prompt,model,cron,timezone,tools_enabled,created_at,updated_at) VALUES('action','owner',?,'job','prompt','model','* * * * *','UTC',1,?,?)").bind(&identity.dot_id).bind(&now).bind(&now).execute(&tool.state.db).await.unwrap();
+        sqlx::query("INSERT INTO scheduled_actions(id,user_id,personal_agent_id,name,prompt,model,cron,timezone,tools_enabled,created_at,updated_at) VALUES('action','owner',?,'job','prompt','model','* * * * *','UTC',1,?,?)").bind(&identity.agent_id).bind(&now).bind(&now).execute(&tool.state.db).await.unwrap();
         sqlx::query("INSERT INTO scheduled_runs(id,action_id,fired_at,session_id,assistant_turn_id,tools_enabled,configuration_generation,agent_version,created_at) SELECT 'run',id,?,?,'live-turn',tools_enabled,configuration_generation,agent_version,? FROM scheduled_actions WHERE id='action'").bind(&now).bind(&session.id).bind(&now).execute(&tool.state.db).await.unwrap();
         ctx.assistant_turn_id = Some("live-turn".into());
         ctx.session_id = Some(session.id);
@@ -1067,7 +1067,7 @@ mod tests {
             .await
             .unwrap();
         assert!(tool.run(ctx.clone(), json!({})).await.is_err());
-        sqlx::query("UPDATE scheduled_actions SET tools_enabled=1,dot_id=NULL")
+        sqlx::query("UPDATE scheduled_actions SET tools_enabled=1,personal_agent_id=NULL")
             .execute(&tool.state.db)
             .await
             .unwrap();

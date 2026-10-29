@@ -878,11 +878,11 @@ async fn the_operators_voice_directive_rides_in_a_voice_turns_system_message() {
 }
 
 #[tokio::test]
-async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
+async fn a_personal_agent_chat_offers_only_the_users_granted_memory_tools() {
     let upstream = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
-        .respond_with(RemembersDotMemory {
+        .respond_with(RemembersAgentMemory {
             rounds: std::sync::atomic::AtomicUsize::new(0),
         })
         .mount(&upstream)
@@ -924,10 +924,10 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
             .all(|id| allowed.contains(&id.to_string())),
         "memory grants and the user setting should allow these tools: {allowed:?}"
     );
-    let (_, dot) = aiplane_agents::db::agents::create_personal_dot(
+    let (_, owned_agent) = aiplane_agents::db::agents::create_personal_agent(
         &state.db,
         &aiplane_agents::db::system_principals::NewPrincipal {
-            name: "memory-dot",
+            name: "memory-agent",
             display: "Memory agent",
             description: "",
         },
@@ -937,12 +937,17 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
     )
     .await
     .unwrap();
-    let dot = dot.unwrap();
+    let owned_agent = owned_agent.unwrap();
     let session = chat::create_session(&state.db, "alice").await.unwrap();
     assert!(
-        aiplane_agents::db::dot_sessions::link(&state.db, "alice", &dot.principal.id, &session.id,)
-            .await
-            .unwrap()
+        aiplane_agents::db::agent_sessions::link(
+            &state.db,
+            "alice",
+            &owned_agent.principal.id,
+            &session.id,
+        )
+        .await
+        .unwrap()
     );
     let state = Arc::new(state);
     let app = router(state.clone());
@@ -1023,11 +1028,11 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
         system.contains("prefers concise replies"),
         "the agent receives the user's shared preference: {system}"
     );
-    let memories = aiplane_agents::db::dot_memories::list(
+    let memories = aiplane_agents::db::agent_memories::list(
         &state.db,
-        aiplane_agents::db::dot_memories::MemoryScope::Dot {
-            owner: &aiplane_agents::db::agents::DotOwner::User("alice".into()),
-            dot_id: &dot.principal.id,
+        aiplane_agents::db::agent_memories::MemoryScope::Agent {
+            owner: &aiplane_agents::db::agents::AgentOwner::User("alice".into()),
+            agent_id: &owned_agent.principal.id,
         },
         10,
     )
@@ -1047,7 +1052,7 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
     let activity_response = app
         .serve(json_req(
             Method::GET,
-            format!("/api/v0/dots/{}/activity", dot.principal.id),
+            format!("/api/v0/agents/{}/activity", owned_agent.principal.id),
             &cookie,
             None,
         ))
@@ -1062,13 +1067,13 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
         .expect("the personal agent activity feed includes the tool decision");
     assert_eq!(call["principal_id"], "alice");
     assert_eq!(call["actor_id"], "alice");
-    assert_eq!(call["agent_id"], dot.principal.id);
+    assert_eq!(call["agent_id"], owned_agent.principal.id);
     assert_eq!(call["detail"]["decision"], "allowed");
     let result = activity_events
         .iter()
         .find(|event| event["kind"] == "tool_result" && event["detail"]["tool"] == "remember")
         .expect("the personal agent activity feed includes the tool outcome");
-    assert_eq!(result["agent_id"], dot.principal.id);
+    assert_eq!(result["agent_id"], owned_agent.principal.id);
     assert_eq!(result["detail"]["status"], "completed");
     assert!(
         !result["detail"]
@@ -1078,10 +1083,10 @@ async fn a_personal_dot_chat_offers_only_the_users_granted_memory_tools() {
 
     let next_session = chat::create_session(&state.db, "alice").await.unwrap();
     assert!(
-        aiplane_agents::db::dot_sessions::link(
+        aiplane_agents::db::agent_sessions::link(
             &state.db,
             "alice",
-            &dot.principal.id,
+            &owned_agent.principal.id,
             &next_session.id,
         )
         .await
@@ -4046,11 +4051,11 @@ struct CallsByName {
     rounds: std::sync::atomic::AtomicUsize,
 }
 
-struct RemembersDotMemory {
+struct RemembersAgentMemory {
     rounds: std::sync::atomic::AtomicUsize,
 }
 
-impl wiremock::Respond for RemembersDotMemory {
+impl wiremock::Respond for RemembersAgentMemory {
     fn respond(&self, req: &wiremock::Request) -> ResponseTemplate {
         let body: Value = serde_json::from_slice(&req.body).unwrap();
         if body["stream"] != true {
@@ -4302,7 +4307,7 @@ async fn an_agent_run_is_in_no_persons_chats() {
             prompt: "where is my zebra invoice",
             model: "model-a",
             existing_session: None,
-            dot_id: None,
+            personal_agent_id: None,
         },
     )
     .await
@@ -4787,16 +4792,16 @@ async fn delegated_child_history_is_private_and_has_no_independent_mutations() {
 #[tokio::test]
 async fn delegated_child_history_reports_verified_root_search_and_shared_viewer_rights() {
     use aiplane_agents::db::{
+        agent_delegation::{self, ConsentDirection, ConsentEdit, ConsentSaved},
+        agent_sessions::{self, NewPersonalChild},
         agents,
-        dot_delegation::{self, ConsentDirection, ConsentEdit, ConsentSaved},
-        dot_sessions::{self, NewPersonalChild},
         system_principals::NewPrincipal,
     };
     let (state, cookie) = setup("http://unused.invalid").await;
     let bob = common::seed_session(&state, "bob", "bob@example.com").await;
     let mut ids = Vec::new();
     for name in ["sender", "receiver"] {
-        let (_, dot) = agents::create_personal_dot(
+        let (_, owned_agent) = agents::create_personal_agent(
             &state.db,
             &NewPrincipal {
                 name,
@@ -4809,15 +4814,15 @@ async fn delegated_child_history_reports_verified_root_search_and_shared_viewer_
         )
         .await
         .unwrap();
-        ids.push(dot.unwrap().principal.id);
+        ids.push(owned_agent.unwrap().principal.id);
     }
     let caller = &ids[0];
     let receiver = &ids[1];
-    let ConsentSaved::Saved(first) = dot_delegation::set_consent(
+    let ConsentSaved::Saved(first) = agent_delegation::set_consent(
         &state.db,
         ConsentEdit {
             owner_user_id: "alice",
-            dot_id: caller,
+            agent_id: caller,
             peer_id: receiver,
             direction: ConsentDirection::Outbound,
             enabled: true,
@@ -4828,11 +4833,11 @@ async fn delegated_child_history_reports_verified_root_search_and_shared_viewer_
     .unwrap() else {
         panic!("caller consent failed");
     };
-    let ConsentSaved::Saved(edge) = dot_delegation::set_consent(
+    let ConsentSaved::Saved(edge) = agent_delegation::set_consent(
         &state.db,
         ConsentEdit {
             owner_user_id: "alice",
-            dot_id: receiver,
+            agent_id: receiver,
             peer_id: caller,
             direction: ConsentDirection::Inbound,
             enabled: true,
@@ -4845,7 +4850,7 @@ async fn delegated_child_history_reports_verified_root_search_and_shared_viewer_
     };
     let root = chat::create_session(&state.db, "alice").await.unwrap();
     assert!(
-        dot_sessions::link(&state.db, "alice", caller, &root.id)
+        agent_sessions::link(&state.db, "alice", caller, &root.id)
             .await
             .unwrap()
     );
@@ -4855,12 +4860,12 @@ async fn delegated_child_history_reports_verified_root_search_and_shared_viewer_
     chat::insert_running_tool_call(&state.db, "parent", "forward", "forward_request", "{}")
         .await
         .unwrap();
-    let child = dot_sessions::open_child(
+    let child = agent_sessions::open_child(
         &state.db,
         NewPersonalChild {
             owner_user_id: "alice",
-            caller_dot_id: caller,
-            receiver_dot_id: receiver,
+            caller_agent_id: caller,
+            receiver_agent_id: receiver,
             parent_turn_id: "parent",
             parent_tool_call_id: "forward",
             edge_generation: &edge.generation,
@@ -4946,15 +4951,15 @@ async fn delegated_child_history_reports_verified_root_search_and_shared_viewer_
 #[tokio::test]
 async fn delegated_child_lifecycle_changes_cancel_the_exact_original_chain() {
     use aiplane_agents::db::{
+        agent_delegation::{self, ConsentDirection, ConsentEdit, ConsentSaved},
+        agent_sessions::{self, NewPersonalChild},
         agents,
-        dot_delegation::{self, ConsentDirection, ConsentEdit, ConsentSaved},
-        dot_sessions::{self, NewPersonalChild},
         system_principals::NewPrincipal,
     };
     for action in [
         "revoke",
         "deactivate",
-        "delete_dot",
+        "delete_agent",
         "delete_root",
         "cancel_root",
     ] {
@@ -4983,7 +4988,7 @@ async fn delegated_child_lifecycle_changes_cancel_the_exact_original_chain() {
         let state = Arc::new(state);
         let mut ids = Vec::new();
         for name in ["sender", "receiver"] {
-            let (_, dot) = agents::create_personal_dot(
+            let (_, owned_agent) = agents::create_personal_agent(
                 &state.db,
                 &NewPrincipal {
                     name,
@@ -4996,15 +5001,15 @@ async fn delegated_child_lifecycle_changes_cancel_the_exact_original_chain() {
             )
             .await
             .unwrap();
-            ids.push(dot.unwrap().principal.id);
+            ids.push(owned_agent.unwrap().principal.id);
         }
         let caller = &ids[0];
         let receiver = &ids[1];
-        let ConsentSaved::Saved(first) = dot_delegation::set_consent(
+        let ConsentSaved::Saved(first) = agent_delegation::set_consent(
             &state.db,
             ConsentEdit {
                 owner_user_id: "alice",
-                dot_id: caller,
+                agent_id: caller,
                 peer_id: receiver,
                 direction: ConsentDirection::Outbound,
                 enabled: true,
@@ -5015,11 +5020,11 @@ async fn delegated_child_lifecycle_changes_cancel_the_exact_original_chain() {
         .unwrap() else {
             panic!("caller consent failed");
         };
-        let ConsentSaved::Saved(edge) = dot_delegation::set_consent(
+        let ConsentSaved::Saved(edge) = agent_delegation::set_consent(
             &state.db,
             ConsentEdit {
                 owner_user_id: "alice",
-                dot_id: receiver,
+                agent_id: receiver,
                 peer_id: caller,
                 direction: ConsentDirection::Inbound,
                 enabled: true,
@@ -5032,7 +5037,7 @@ async fn delegated_child_lifecycle_changes_cancel_the_exact_original_chain() {
         };
         let root = chat::create_session(&state.db, "alice").await.unwrap();
         assert!(
-            dot_sessions::link(&state.db, "alice", caller, &root.id)
+            agent_sessions::link(&state.db, "alice", caller, &root.id)
                 .await
                 .unwrap()
         );
@@ -5048,12 +5053,12 @@ async fn delegated_child_lifecycle_changes_cancel_the_exact_original_chain() {
         )
         .await
         .unwrap();
-        let child = dot_sessions::open_child(
+        let child = agent_sessions::open_child(
             &state.db,
             NewPersonalChild {
                 owner_user_id: "alice",
-                caller_dot_id: caller,
-                receiver_dot_id: receiver,
+                caller_agent_id: caller,
+                receiver_agent_id: receiver,
                 parent_turn_id: "original-parent",
                 parent_tool_call_id: "forward",
                 edge_generation: &edge.generation,
@@ -5068,7 +5073,7 @@ async fn delegated_child_lifecycle_changes_cancel_the_exact_original_chain() {
         let router = router(state.clone());
         let (method, path, body) = match action {
             "revoke" => {
-                let path = format!("/api/v0/dots/{caller}/communication");
+                let path = format!("/api/v0/agents/{caller}/communication");
                 let resp = router.serve(json_req(Method::PUT, path.clone(), &cookie, Some(serde_json::json!({"peer_id":receiver,"direction":"outbound","enabled":true,"expected_generation":edge.generation}).to_string()))).await.unwrap();
                 assert_eq!(resp.status(), StatusCode::OK);
                 assert_eq!(
@@ -5087,10 +5092,10 @@ async fn delegated_child_lifecycle_changes_cancel_the_exact_original_chain() {
             }
             "deactivate" => (
                 Method::PUT,
-                format!("/api/v0/dots/{receiver}/active"),
+                format!("/api/v0/agents/{receiver}/active"),
                 Some(r#"{"active":false}"#.into()),
             ),
-            "delete_dot" => (Method::DELETE, format!("/api/v0/agents/{receiver}"), None),
+            "delete_agent" => (Method::DELETE, format!("/api/v0/agents/{receiver}"), None),
             "delete_root" => (
                 Method::DELETE,
                 format!("/api/v0/chat/sessions/{}", root.id),
@@ -5133,7 +5138,7 @@ async fn delegated_child_lifecycle_changes_cancel_the_exact_original_chain() {
             }
             _ => unreachable!(),
         };
-        if matches!(action, "revoke" | "deactivate" | "delete_dot") {
+        if matches!(action, "revoke" | "deactivate" | "delete_agent") {
             sqlx::query("UPDATE chat_turns SET status = 'completed' WHERE id = 'original-parent'")
                 .execute(&state.db)
                 .await
@@ -5165,7 +5170,7 @@ async fn delegated_child_lifecycle_changes_cancel_the_exact_original_chain() {
         .unwrap()
         .unwrap();
         assert_eq!(child_turn.status, chat::TurnStatus::Cancelled, "{action}");
-        if matches!(action, "revoke" | "deactivate" | "delete_dot") {
+        if matches!(action, "revoke" | "deactivate" | "delete_agent") {
             assert_eq!(
                 chat::get_turn(&state.db, &root.id, "unrelated-new-turn")
                     .await
@@ -5179,12 +5184,12 @@ async fn delegated_child_lifecycle_changes_cancel_the_exact_original_chain() {
     }
 }
 async fn assert_personal_forward_capability(
-    dot_spec: Option<&str>,
+    owned_agent_spec: Option<&str>,
     active: bool,
     granted: bool,
     expected: bool,
 ) {
-    use aiplane_agents::db::{agents, dot_sessions, system_principals::NewPrincipal};
+    use aiplane_agents::db::{agent_sessions, agents, system_principals::NewPrincipal};
     let tools = Arc::new(
         ToolRegistry::new()
             .with(CurrentTimestamp)
@@ -5212,11 +5217,11 @@ async fn assert_personal_forward_capability(
     let state = state_with_chat_access("http://unused.invalid", tools, rbac).await;
     let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
     let session = chat::create_session(&state.db, "alice").await.unwrap();
-    if let Some(spec) = dot_spec {
-        let (_, dot) = agents::create_personal_dot(
+    if let Some(spec) = owned_agent_spec {
+        let (_, owned_agent) = agents::create_personal_agent(
             &state.db,
             &NewPrincipal {
-                name: "capability-dot",
+                name: "capability-agent",
                 display: "Capability agent",
                 description: "",
             },
@@ -5226,17 +5231,23 @@ async fn assert_personal_forward_capability(
         )
         .await
         .unwrap();
-        let dot = dot.unwrap();
+        let owned_agent = owned_agent.unwrap();
         assert!(
-            dot_sessions::link(&state.db, "alice", &dot.principal.id, &session.id)
+            agent_sessions::link(&state.db, "alice", &owned_agent.principal.id, &session.id)
                 .await
                 .unwrap()
         );
         if !active {
             assert!(
-                agents::set_personal_dot_active(&state.db, &dot.principal.id, "alice", false, 4)
-                    .await
-                    .unwrap()
+                agents::set_personal_agent_active(
+                    &state.db,
+                    &owned_agent.principal.id,
+                    "alice",
+                    false,
+                    4
+                )
+                .await
+                .unwrap()
             );
         }
     }
@@ -5306,7 +5317,7 @@ async fn ordinary_chat_capabilities_exclude_personal_forward_requests() {
 }
 
 #[tokio::test]
-async fn selected_active_dot_chat_capabilities_allow_personal_forward_requests() {
+async fn selected_active_agent_chat_capabilities_allow_personal_forward_requests() {
     assert_personal_forward_capability(
         Some(r#"{"main":{"tools":["forward_request"]}}"#),
         true,
@@ -5317,7 +5328,7 @@ async fn selected_active_dot_chat_capabilities_allow_personal_forward_requests()
 }
 
 #[tokio::test]
-async fn unselected_or_inactive_dot_chat_capabilities_exclude_personal_forward_requests() {
+async fn unselected_or_inactive_agent_chat_capabilities_exclude_personal_forward_requests() {
     assert_personal_forward_capability(Some(r#"{"main":{"tools":[]}}"#), true, true, false).await;
     assert_personal_forward_capability(
         Some(r#"{"main":{"tools":["forward_request"]}}"#),
@@ -5329,7 +5340,7 @@ async fn unselected_or_inactive_dot_chat_capabilities_exclude_personal_forward_r
 }
 
 #[tokio::test]
-async fn dot_chat_capabilities_do_not_expand_personal_forward_request_grants() {
+async fn agent_chat_capabilities_do_not_expand_personal_forward_request_grants() {
     assert_personal_forward_capability(
         Some(r#"{"main":{"tools":["forward_request"]}}"#),
         true,

@@ -2,13 +2,15 @@
 // Copyright (C) 2026 croit GmbH
 
 use super::personal_workspace_scope;
-use crate::persona::personal_dot::{PersonalDotContext, PersonalTurnContext, initialize_for_turn};
+use crate::persona::personal_agent::{
+    PersonalAgentContext, PersonalTurnContext, initialize_for_turn,
+};
 use crate::server::tools::ToolContext;
-use aiplane_agents::db::{agents, dot_sessions, system_principals::NewPrincipal};
+use aiplane_agents::db::{agent_sessions, agents, system_principals::NewPrincipal};
 use aiplane_core::server::db::users::{self, User};
 use aiplane_core::server::principal::Principal;
 use session_core::db::{self as chat, TurnStatus};
-use shared::sandbox::{DotWorkspace, DotWorkspaceScope, WorkspacePurpose};
+use shared::sandbox::{AgentWorkspaceScope, OwnedAgentWorkspace, WorkspacePurpose};
 
 async fn running_context() -> ToolContext {
     let state = crate::server::headless::tests::state_for("http://127.0.0.1:1").await;
@@ -24,7 +26,7 @@ async fn running_context() -> ToolContext {
         speech_voice: None,
     };
     users::upsert(&state.db, &user).await.unwrap();
-    let (_, dot) = agents::create_personal_dot(
+    let (_, owned_agent) = agents::create_personal_agent(
         &state.db,
         &NewPrincipal {
             name: "Harald",
@@ -37,10 +39,10 @@ async fn running_context() -> ToolContext {
     )
     .await
     .unwrap();
-    let dot = dot.unwrap();
+    let owned_agent = owned_agent.unwrap();
     let session = chat::create_session(&state.db, &user.id).await.unwrap();
     assert!(
-        dot_sessions::link(&state.db, &user.id, &dot.principal.id, &session.id)
+        agent_sessions::link(&state.db, &user.id, &owned_agent.principal.id, &session.id)
             .await
             .unwrap()
     );
@@ -52,7 +54,7 @@ async fn running_context() -> ToolContext {
     )
     .await
     .unwrap();
-    let Some(PersonalDotContext::Active { actor, .. }) = initialize_for_turn(
+    let Some(PersonalAgentContext::Active { actor, .. }) = initialize_for_turn(
         &state,
         &user,
         true,
@@ -71,7 +73,7 @@ async fn running_context() -> ToolContext {
     };
     ToolContext {
         principal: actor.principal(),
-        personal_dot: actor.personal_dot_identity().cloned(),
+        personal_agent: actor.personal_agent_identity().cloned(),
         personal_execution: actor.personal_execution().cloned(),
         session_id: Some(session.id),
         assistant_turn_id: Some(turn.id),
@@ -80,16 +82,16 @@ async fn running_context() -> ToolContext {
 }
 
 #[tokio::test]
-async fn workspace_scope_uses_the_verified_owner_dot_turn_and_requested_purpose() {
+async fn workspace_scope_uses_the_verified_owner_agent_turn_and_requested_purpose() {
     let context = running_context().await;
-    let identity = context.personal_dot.as_ref().unwrap();
+    let identity = context.personal_agent.as_ref().unwrap();
     for purpose in [WorkspacePurpose::Workspace, WorkspacePurpose::Browser] {
         assert_eq!(
             personal_workspace_scope(&context, purpose).await.unwrap(),
-            Some(DotWorkspaceScope {
-                workspace: DotWorkspace {
+            Some(AgentWorkspaceScope {
+                workspace: OwnedAgentWorkspace {
                     owner_user_id: identity.owner_user_id.clone(),
-                    dot_id: identity.dot_id.clone(),
+                    agent_id: identity.agent_id.clone(),
                 },
                 turn_id: context.assistant_turn_id.clone().unwrap(),
                 purpose,
@@ -113,14 +115,14 @@ async fn workspace_scope_rejects_mismatched_context_identity_session_and_turn() 
     );
     context.principal = original_principal;
 
-    let original_identity = context.personal_dot.clone();
-    context.personal_dot.as_mut().unwrap().dot_id = "another-dot".into();
+    let original_identity = context.personal_agent.clone();
+    context.personal_agent.as_mut().unwrap().agent_id = "another-agent".into();
     assert!(
         personal_workspace_scope(&context, WorkspacePurpose::Workspace)
             .await
             .is_err()
     );
-    context.personal_dot = original_identity;
+    context.personal_agent = original_identity;
 
     let original_session = context.session_id.clone();
     let other_session = chat::create_session(&context.db, "workspace-owner")
@@ -151,13 +153,13 @@ async fn workspace_scope_rejects_mismatched_context_identity_session_and_turn() 
 }
 
 #[tokio::test]
-async fn workspace_scope_rechecks_current_dot_activation() {
+async fn workspace_scope_rechecks_current_agent_activation() {
     let context = running_context().await;
-    let identity = context.personal_dot.as_ref().unwrap();
+    let identity = context.personal_agent.as_ref().unwrap();
     assert!(
-        agents::set_personal_dot_active(
+        agents::set_personal_agent_active(
             &context.db,
-            &identity.dot_id,
+            &identity.agent_id,
             &identity.owner_user_id,
             false,
             4,

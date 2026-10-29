@@ -5,7 +5,7 @@ use crate::server::{
     AppState,
     tools::{ToolContext, ToolError},
 };
-use aiplane_agents::db::dot_connections;
+use aiplane_agents::db::agent_connections;
 use aiplane_core::server::db::{
     DbError, WriteTx,
     mcp_catalog::{self, AuthKind},
@@ -99,11 +99,11 @@ pub async fn connection_owner_admitted_in(
             if subject != Some(id.as_str()) {
                 return Ok(false);
             }
-            match agents::dot_owner_in(tx, id).await? {
-                Some(agents::DotOwner::User(user_id)) => {
-                    Ok(user_id == initiator && policy.can_manage_dots(&groups))
+            match agents::agent_owner_in(tx, id).await? {
+                Some(agents::AgentOwner::User(user_id)) => {
+                    Ok(user_id == initiator && policy.can_manage_personal_agents(&groups))
                 }
-                Some(agents::DotOwner::Organization(_)) => Ok(
+                Some(agents::AgentOwner::Organization(_)) => Ok(
                     crate::agents::access::organization_access_in(state, tx, id, initiator).await?
                         == Some(agents::Access::Write),
                 ),
@@ -131,11 +131,11 @@ pub async fn authorization_admitted_in(
 
 pub async fn selected_principal_identity_in(
     tx: &mut WriteTx,
-    owner: &aiplane_agents::db::agents::DotOwner,
-    dot: &str,
+    owner: &aiplane_agents::db::agents::AgentOwner,
+    owned_agent: &str,
     key: &str,
 ) -> Result<Option<StoredMcpIdentity>, DbError> {
-    if !dot_connections::owned_dot_in(tx, owner, dot, false).await? {
+    if !agent_connections::owned_agent_in(tx, owner, owned_agent, false).await? {
         return Ok(None);
     }
     let Some(connector) = mcp_catalog::get_in(tx, key).await? else {
@@ -144,15 +144,18 @@ pub async fn selected_principal_identity_in(
     if !connector.enabled || !connector.is_per_user() || connector.auth != AuthKind::OAuth2 {
         return Ok(None);
     }
-    let Some(binding) = dot_connections::get_in(tx, owner, dot, key).await? else {
+    let Some(binding) = agent_connections::get_in(tx, owner, owned_agent, key).await? else {
         return Ok(None);
     };
-    if binding.identity_mode != dot_connections::IdentityMode::Principal {
+    if binding.identity_mode != agent_connections::IdentityMode::Principal {
         return Ok(None);
     }
-    let Some(connection) =
-        mcp_connections::get_connection_in(tx, &ConnectionOwner::Principal(dot.to_owned()), key)
-            .await?
+    let Some(connection) = mcp_connections::get_connection_in(
+        tx,
+        &ConnectionOwner::Principal(owned_agent.to_owned()),
+        key,
+    )
+    .await?
     else {
         return Ok(None);
     };
@@ -174,12 +177,12 @@ pub async fn selected_principal_identity_in(
 pub async fn selected_personal_connection(
     state: &AppState,
     owner: &User,
-    dot: &str,
+    owned_agent: &str,
     key: &str,
     require_active: bool,
 ) -> Result<Option<StoredMcpIdentity>, ToolError> {
     let mut tx = WriteTx::begin(&state.db).await.map_err(load_error)?;
-    let selected = selected_in(state, &mut tx, &owner.id, dot, key, require_active)
+    let selected = selected_in(state, &mut tx, &owner.id, owned_agent, key, require_active)
         .await
         .map_err(load_error)?;
     tx.commit().await.map_err(load_error)?;
@@ -190,15 +193,15 @@ async fn selected_in(
     state: &AppState,
     tx: &mut WriteTx,
     user_id: &str,
-    dot: &str,
+    owned_agent: &str,
     key: &str,
     require_active: bool,
 ) -> Result<Option<StoredMcpIdentity>, DbError> {
     let Some(user) = users::find_by_id_in(tx, user_id).await? else {
         return Ok(None);
     };
-    let owner = aiplane_agents::db::agents::DotOwner::User(user_id.to_owned());
-    if !dot_connections::owned_dot_in(tx, &owner, dot, require_active).await? {
+    let owner = aiplane_agents::db::agents::AgentOwner::User(user_id.to_owned());
+    if !agent_connections::owned_agent_in(tx, &owner, owned_agent, require_active).await? {
         return Ok(None);
     }
     let Some(connector) = mcp_catalog::get_in(tx, key).await? else {
@@ -211,12 +214,12 @@ async fn selected_in(
     {
         return Ok(None);
     }
-    let binding = dot_connections::get_in(tx, &owner, dot, key).await?;
+    let binding = agent_connections::get_in(tx, &owner, owned_agent, key).await?;
     if binding
         .as_ref()
-        .is_some_and(|binding| binding.identity_mode == dot_connections::IdentityMode::Principal)
+        .is_some_and(|binding| binding.identity_mode == agent_connections::IdentityMode::Principal)
     {
-        return selected_principal_identity_in(tx, &owner, dot, key).await;
+        return selected_principal_identity_in(tx, &owner, owned_agent, key).await;
     }
     let owner = ConnectionOwner::User(user_id.to_owned());
     let Some(connection) = mcp_connections::get_connection_in(tx, &owner, key).await? else {
@@ -256,7 +259,7 @@ async fn organization_selection_in(
     let context = run.organization().ok_or_else(|| unavailable(key))?;
     selected_principal_identity_in(
         tx,
-        &aiplane_agents::db::agents::DotOwner::Organization(context.organization_id.clone()),
+        &aiplane_agents::db::agents::AgentOwner::Organization(context.organization_id.clone()),
         &principal.id,
         key,
     )
@@ -294,7 +297,8 @@ pub async fn layer_for_organization_run(
     let context = run
         .organization()
         .ok_or_else(|| unavailable(&principal.id))?;
-    let owner = aiplane_agents::db::agents::DotOwner::Organization(context.organization_id.clone());
+    let owner =
+        aiplane_agents::db::agents::AgentOwner::Organization(context.organization_id.clone());
     let mut selected = Vec::new();
     for connector in mcp_catalog::list_enabled_in(&mut tx)
         .await
@@ -368,7 +372,7 @@ pub(crate) async fn validate_dispatch(
     super::super::ask_first::validate_execution_facts(ctx, id, &facts)?;
     if let Some(execution) = ctx.personal_execution.as_ref() {
         crate::agents::router::local::validate_execution(execution).await?;
-        if ctx.personal_dot.as_ref() != Some(execution.identity()) {
+        if ctx.personal_agent.as_ref() != Some(execution.identity()) {
             return Err(unavailable(id));
         }
     }
@@ -413,12 +417,12 @@ pub(crate) async fn validate_dispatch(
             }
         }
         aiplane_core::server::principal::Principal::System(initial) => {
-            let owner = aiplane_agents::db::agents::dot_owner_in(&mut tx, &initial.id)
+            let owner = aiplane_agents::db::agents::agent_owner_in(&mut tx, &initial.id)
                 .await
                 .map_err(load_error)?;
             if matches!(
                 owner,
-                Some(aiplane_agents::db::agents::DotOwner::Organization(_))
+                Some(aiplane_agents::db::agents::AgentOwner::Organization(_))
             ) || ctx
                 .agent
                 .as_ref()
@@ -475,7 +479,7 @@ pub(crate) async fn validate_dispatch(
     {
         return Err(unavailable(id));
     }
-    if let Some(dot) = &ctx.personal_dot {
+    if let Some(owned_agent) = &ctx.personal_agent {
         let execution = ctx
             .personal_execution
             .as_ref()
@@ -483,8 +487,8 @@ pub(crate) async fn validate_dispatch(
         let selected = selected_in(
             &execution.state,
             &mut tx,
-            &dot.owner_user_id,
-            &dot.dot_id,
+            &owned_agent.owner_user_id,
+            &owned_agent.agent_id,
             &identity.connection.connector_key,
             true,
         )
@@ -512,10 +516,10 @@ fn load_error(error: DbError) -> ToolError {
     ))
 }
 
-pub async fn layer_for_personal_dot(
+pub async fn layer_for_personal_agent(
     state: &AppState,
     owner: &User,
-    dot: &str,
+    owned_agent: &str,
     ask: super::manager::AskContext<'_>,
     require_active: bool,
 ) -> super::manager::UserMcpLayer {
@@ -523,10 +527,10 @@ pub async fn layer_for_personal_dot(
     let Ok(mut tx) = WriteTx::begin(&state.db).await else {
         return layer;
     };
-    let Ok(true) = dot_connections::owned_dot_in(
+    let Ok(true) = agent_connections::owned_agent_in(
         &mut tx,
-        &aiplane_agents::db::agents::DotOwner::User(owner.id.clone()),
-        dot,
+        &aiplane_agents::db::agents::AgentOwner::User(owner.id.clone()),
+        owned_agent,
         require_active,
     )
     .await
@@ -548,9 +552,14 @@ pub async fn layer_for_personal_dot(
             continue;
         }
         let tools = if connector.is_per_user() {
-            let Ok(Some(selected)) =
-                selected_personal_connection(state, &current, dot, &connector.key, require_active)
-                    .await
+            let Ok(Some(selected)) = selected_personal_connection(
+                state,
+                &current,
+                owned_agent,
+                &connector.key,
+                require_active,
+            )
+            .await
             else {
                 continue;
             };
@@ -606,35 +615,39 @@ pub async fn save_selection_in(
     state: &AppState,
     tx: &mut WriteTx,
     initiator: &str,
-    selection: dot_connections::Selection<'_>,
-) -> Result<Option<dot_connections::SaveOutcome>, DbError> {
-    use aiplane_agents::db::agents::{self, DotOwner};
-    if agents::dot_owner_in(tx, selection.dot_id).await?.as_ref() != Some(selection.owner) {
+    selection: agent_connections::Selection<'_>,
+) -> Result<Option<agent_connections::SaveOutcome>, DbError> {
+    use aiplane_agents::db::agents::{self, AgentOwner};
+    if agents::agent_owner_in(tx, selection.agent_id)
+        .await?
+        .as_ref()
+        != Some(selection.owner)
+    {
         return Ok(None);
     }
-    let principal_owner = ConnectionOwner::Principal(selection.dot_id.to_owned());
+    let principal_owner = ConnectionOwner::Principal(selection.agent_id.to_owned());
     if !connection_owner_admitted_in(
         state,
         tx,
         initiator,
         &principal_owner,
-        Some(selection.dot_id),
+        Some(selection.agent_id),
     )
     .await?
     {
         return Ok(None);
     }
     let Some(connector) = mcp_catalog::get_in(tx, selection.connector_key).await? else {
-        return Ok(Some(dot_connections::SaveOutcome::Missing));
+        return Ok(Some(agent_connections::SaveOutcome::Missing));
     };
     let selected_owner = match (selection.owner, selection.identity_mode) {
-        (DotOwner::User(user), dot_connections::IdentityMode::User) => {
+        (AgentOwner::User(user), agent_connections::IdentityMode::User) => {
             ConnectionOwner::User(user.clone())
         }
         _ => principal_owner,
     };
     let subject =
-        matches!(selected_owner, ConnectionOwner::Principal(_)).then_some(selection.dot_id);
+        matches!(selected_owner, ConnectionOwner::Principal(_)).then_some(selection.agent_id);
     if !connection_admitted_in(
         state,
         tx,
@@ -647,19 +660,19 @@ pub async fn save_selection_in(
     {
         return Ok(None);
     }
-    if matches!(selection.owner, DotOwner::Organization(_))
-        && selection.identity_mode == dot_connections::IdentityMode::User
+    if matches!(selection.owner, AgentOwner::Organization(_))
+        && selection.identity_mode == agent_connections::IdentityMode::User
     {
-        return Ok(Some(dot_connections::save_in(tx, selection).await?));
+        return Ok(Some(agent_connections::save_in(tx, selection).await?));
     }
     let current =
         mcp_connections::get_connection_in(tx, &selected_owner, selection.connector_key).await?;
     if !current.is_some_and(|connection| {
         connection.catalog_generation.as_deref() == Some(connector.dispatch_generation.as_str())
     }) {
-        return Ok(Some(dot_connections::SaveOutcome::Unavailable));
+        return Ok(Some(agent_connections::SaveOutcome::Unavailable));
     }
-    Ok(Some(dot_connections::save_in(tx, selection).await?))
+    Ok(Some(agent_connections::save_in(tx, selection).await?))
 }
 
 #[cfg(test)]
@@ -708,11 +721,11 @@ mod tests {
         .await
         .unwrap();
         sqlx::query("INSERT INTO mcp_catalog_connectors(key,name,url,auth,scope,allowed_groups,enabled,created_at,updated_at,dispatch_generation) VALUES('fixture','Fixture','https://provider.test/mcp','oauth2','per_user','[\"member\"]',1,?,?,?)").bind(now.to_string()).bind(now.to_string()).bind(uuid::Uuid::new_v4().to_string()).execute(&db).await.unwrap();
-        let (_, dot) = agents::create_personal_dot(
+        let (_, owned_agent) = agents::create_personal_agent(
             &db,
             &NewPrincipal {
-                name: "IdentityDot",
-                display: "IdentityDot",
+                name: "IdentityAgent",
+                display: "IdentityAgent",
                 description: "",
             },
             "{\"main\":{\"tools\":[\"mcp__fixture__lookup\"]}}",
@@ -721,7 +734,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let dot = dot.unwrap().principal.id;
+        let owned_agent = owned_agent.unwrap().principal.id;
         let state = AppState::new(
             Default::default(),
             db.clone(),
@@ -777,33 +790,36 @@ mod tests {
         .unwrap();
         let own = mcp_connections::upsert_connection(
             &db,
-            credential(ConnectionOwner::Principal(dot.clone()), "dot-token"),
+            credential(
+                ConnectionOwner::Principal(owned_agent.clone()),
+                "agent-token",
+            ),
         )
         .await
         .unwrap();
-        (state, user, dot, personal.unwrap(), own.unwrap())
+        (state, user, owned_agent, personal.unwrap(), own.unwrap())
     }
 
     #[tokio::test]
     async fn personal_selection_preserves_implicit_user_and_keeps_inactive_configuration_separate()
     {
-        let (state, user, dot, personal, own) = fixture().await;
-        let implicit = selected_personal_connection(&state, &user, &dot, "fixture", true)
+        let (state, user, owned_agent, personal, own) = fixture().await;
+        let implicit = selected_personal_connection(&state, &user, &owned_agent, "fixture", true)
             .await
             .unwrap()
             .unwrap();
         assert_eq!(implicit.connection, personal.clone());
         assert_eq!(implicit.binding_generation, None);
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
-        let Some(dot_connections::SaveOutcome::Saved(Some(binding))) = save_selection_in(
+        let Some(agent_connections::SaveOutcome::Saved(Some(binding))) = save_selection_in(
             &state,
             &mut tx,
             &user.id,
-            dot_connections::Selection {
-                owner: &agents::DotOwner::User(user.id.clone()),
-                dot_id: &dot,
+            agent_connections::Selection {
+                owner: &agents::AgentOwner::User(user.id.clone()),
+                agent_id: &owned_agent,
                 connector_key: "fixture",
-                identity_mode: dot_connections::IdentityMode::Principal,
+                identity_mode: agent_connections::IdentityMode::Principal,
                 connection_generation: &own.generation,
                 expected_binding_generation: None,
             },
@@ -813,7 +829,7 @@ mod tests {
             panic!("owned identity selection is saved");
         };
         tx.commit().await.unwrap();
-        let selected = selected_personal_connection(&state, &user, &dot, "fixture", true)
+        let selected = selected_personal_connection(&state, &user, &owned_agent, "fixture", true)
             .await
             .unwrap()
             .unwrap();
@@ -822,42 +838,42 @@ mod tests {
             selected.binding_generation,
             Some(binding.binding_generation)
         );
-        sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
-            .bind(&dot)
+        sqlx::query("UPDATE agent_owners SET active=0 WHERE principal_id=?")
+            .bind(&owned_agent)
             .execute(&state.db)
             .await
             .unwrap();
         assert!(
-            selected_personal_connection(&state, &user, &dot, "fixture", true)
+            selected_personal_connection(&state, &user, &owned_agent, "fixture", true)
                 .await
                 .unwrap()
                 .is_none()
         );
         assert_eq!(
-            selected_personal_connection(&state, &user, &dot, "fixture", false)
+            selected_personal_connection(&state, &user, &owned_agent, "fixture", false)
                 .await
                 .unwrap(),
             Some(selected)
         );
-        sqlx::query("UPDATE dots SET active=1 WHERE principal_id=?")
-            .bind(&dot)
+        sqlx::query("UPDATE agent_owners SET active=1 WHERE principal_id=?")
+            .bind(&owned_agent)
             .execute(&state.db)
             .await
             .unwrap();
         sqlx::query("UPDATE system_principals SET disabled_at=? WHERE id=?")
             .bind(jiff::Timestamp::now().to_string())
-            .bind(&dot)
+            .bind(&owned_agent)
             .execute(&state.db)
             .await
             .unwrap();
         assert!(
-            selected_personal_connection(&state, &user, &dot, "fixture", true)
+            selected_personal_connection(&state, &user, &owned_agent, "fixture", true)
                 .await
                 .unwrap()
                 .is_none()
         );
         assert!(
-            selected_personal_connection(&state, &user, &dot, "fixture", false)
+            selected_personal_connection(&state, &user, &owned_agent, "fixture", false)
                 .await
                 .unwrap()
                 .is_some()
@@ -866,7 +882,7 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            selected_personal_connection(&state, &user, &dot, "fixture", false)
+            selected_personal_connection(&state, &user, &owned_agent, "fixture", false)
                 .await
                 .unwrap()
                 .is_none()
@@ -878,10 +894,10 @@ mod tests {
                 .is_some()
         );
         assert_eq!(
-            dot_connections::list_for_dot(
+            agent_connections::list_for_agent(
                 &state.db,
-                &agents::DotOwner::User(user.id.clone()),
-                &dot
+                &agents::AgentOwner::User(user.id.clone()),
+                &owned_agent
             )
             .await
             .unwrap()
@@ -892,13 +908,20 @@ mod tests {
 
     #[tokio::test]
     async fn oauth_admission_rechecks_current_owner_permissions_catalogue_and_exact_subject() {
-        let (state, user, dot, _, _) = fixture().await;
-        let owner = ConnectionOwner::Principal(dot.clone());
+        let (state, user, owned_agent, _, _) = fixture().await;
+        let owner = ConnectionOwner::Principal(owned_agent.clone());
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
         assert!(
-            authorization_admitted_in(&state, &mut tx, &user.id, &owner, "fixture", Some(&dot))
-                .await
-                .unwrap()
+            authorization_admitted_in(
+                &state,
+                &mut tx,
+                &user.id,
+                &owner,
+                "fixture",
+                Some(&owned_agent)
+            )
+            .await
+            .unwrap()
         );
         assert!(
             !authorization_admitted_in(&state, &mut tx, &user.id, &owner, "fixture", None)
@@ -906,9 +929,16 @@ mod tests {
                 .unwrap()
         );
         assert!(
-            !authorization_admitted_in(&state, &mut tx, "other", &owner, "fixture", Some(&dot))
-                .await
-                .unwrap()
+            !authorization_admitted_in(
+                &state,
+                &mut tx,
+                "other",
+                &owner,
+                "fixture",
+                Some(&owned_agent)
+            )
+            .await
+            .unwrap()
         );
         assert!(
             authorization_admitted_in(
@@ -929,29 +959,43 @@ mod tests {
                 &user.id,
                 &ConnectionOwner::User(user.id.clone()),
                 "fixture",
-                Some(&dot)
+                Some(&owned_agent)
             )
             .await
             .unwrap()
         );
-        sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
-            .bind(&dot)
+        sqlx::query("UPDATE agent_owners SET active=0 WHERE principal_id=?")
+            .bind(&owned_agent)
             .execute(&mut *tx)
             .await
             .unwrap();
         assert!(
-            authorization_admitted_in(&state, &mut tx, &user.id, &owner, "fixture", Some(&dot))
-                .await
-                .unwrap()
+            authorization_admitted_in(
+                &state,
+                &mut tx,
+                &user.id,
+                &owner,
+                "fixture",
+                Some(&owned_agent)
+            )
+            .await
+            .unwrap()
         );
         sqlx::query("UPDATE mcp_catalog_connectors SET scope='global' WHERE key='fixture'")
             .execute(&mut *tx)
             .await
             .unwrap();
         assert!(
-            !authorization_admitted_in(&state, &mut tx, &user.id, &owner, "fixture", Some(&dot))
-                .await
-                .unwrap()
+            !authorization_admitted_in(
+                &state,
+                &mut tx,
+                &user.id,
+                &owner,
+                "fixture",
+                Some(&owned_agent)
+            )
+            .await
+            .unwrap()
         );
         sqlx::query(
             "UPDATE mcp_catalog_connectors SET scope='per_user',enabled=0 WHERE key='fixture'",
@@ -960,9 +1004,16 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            !authorization_admitted_in(&state, &mut tx, &user.id, &owner, "fixture", Some(&dot))
-                .await
-                .unwrap()
+            !authorization_admitted_in(
+                &state,
+                &mut tx,
+                &user.id,
+                &owner,
+                "fixture",
+                Some(&owned_agent)
+            )
+            .await
+            .unwrap()
         );
         sqlx::query("UPDATE mcp_catalog_connectors SET enabled=1 WHERE key='fixture'")
             .execute(&mut *tx)
@@ -973,20 +1024,27 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            !authorization_admitted_in(&state, &mut tx, &user.id, &owner, "fixture", Some(&dot))
-                .await
-                .unwrap()
+            !authorization_admitted_in(
+                &state,
+                &mut tx,
+                &user.id,
+                &owner,
+                "fixture",
+                Some(&owned_agent)
+            )
+            .await
+            .unwrap()
         );
         assert!(
             save_selection_in(
                 &state,
                 &mut tx,
                 &user.id,
-                dot_connections::Selection {
-                    owner: &agents::DotOwner::User(user.id.clone()),
-                    dot_id: &dot,
+                agent_connections::Selection {
+                    owner: &agents::AgentOwner::User(user.id.clone()),
+                    agent_id: &owned_agent,
                     connector_key: "fixture",
-                    identity_mode: dot_connections::IdentityMode::User,
+                    identity_mode: agent_connections::IdentityMode::User,
                     connection_generation: "stale",
                     expected_binding_generation: None
                 }
@@ -997,7 +1055,7 @@ mod tests {
         );
         tx.commit().await.unwrap();
         assert!(
-            selected_personal_connection(&state, &user, &dot, "fixture", false)
+            selected_personal_connection(&state, &user, &owned_agent, "fixture", false)
                 .await
                 .unwrap()
                 .is_none()
@@ -1023,30 +1081,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn personal_layer_requires_owned_active_dot_even_for_global_connectors() {
+    async fn personal_layer_requires_owned_active_agent_even_for_global_connectors() {
         use super::super::manager::AskContext;
-        let (state, user, dot, _, _) = fixture().await;
+        let (state, user, owned_agent, _, _) = fixture().await;
         let server = mcp_server().await;
         sqlx::query("UPDATE mcp_catalog_connectors SET scope='global',auth='none',url=? WHERE key='fixture'").bind(server.uri()).execute(&state.db).await.unwrap();
-        sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
-            .bind(&dot)
+        sqlx::query("UPDATE agent_owners SET active=0 WHERE principal_id=?")
+            .bind(&owned_agent)
             .execute(&state.db)
             .await
             .unwrap();
         assert!(
-            layer_for_personal_dot(&state, &user, &dot, AskContext::Chat, true)
+            layer_for_personal_agent(&state, &user, &owned_agent, AskContext::Chat, true)
                 .await
                 .tool_ids()
                 .is_empty()
         );
         assert!(
-            layer_for_personal_dot(&state, &user, "missing-dot", AskContext::Chat, false)
+            layer_for_personal_agent(&state, &user, "missing-agent", AskContext::Chat, false)
                 .await
                 .tool_ids()
                 .is_empty()
         );
         assert_eq!(
-            layer_for_personal_dot(&state, &user, &dot, AskContext::Chat, false)
+            layer_for_personal_agent(&state, &user, &owned_agent, AskContext::Chat, false)
                 .await
                 .tool_ids()
                 .len(),
@@ -1057,12 +1115,12 @@ mod tests {
     #[tokio::test]
     async fn personal_call_audit_uses_the_current_selected_mcp_identity_and_keeps_resume_original()
     {
-        use crate::persona::personal_dot::{
-            PersonalDotContext, PersonalTurnContext, initialize_for_turn,
+        use crate::persona::personal_agent::{
+            PersonalAgentContext, PersonalTurnContext, initialize_for_turn,
         };
         use crate::server::tools::{ToolContext, ToolSource, injection::InjectionScan, runner};
         use serde_json::{Value, json};
-        let (base, user, dot, personal, own) = fixture().await;
+        let (base, user, owned_agent, personal, own) = fixture().await;
         let server = mcp_server().await;
         sqlx::query("UPDATE mcp_catalog_connectors SET url=? WHERE key='fixture'")
             .bind(server.uri())
@@ -1100,9 +1158,14 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            aiplane_agents::db::dot_sessions::link(&state.db, &user.id, &dot, &session.id)
-                .await
-                .unwrap()
+            aiplane_agents::db::agent_sessions::link(
+                &state.db,
+                &user.id,
+                &owned_agent,
+                &session.id
+            )
+            .await
+            .unwrap()
         );
         session_core::db::create_turn_pair_if_idle(
             &state.db,
@@ -1116,7 +1179,7 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
-        let Some(PersonalDotContext::Active { actor, persona }) = initialize_for_turn(
+        let Some(PersonalAgentContext::Active { actor, persona }) = initialize_for_turn(
             &state,
             &user,
             true,
@@ -1136,7 +1199,7 @@ mod tests {
         let execution = actor.personal_execution().unwrap().clone();
         let mut ctx = ToolContext {
             principal: actor.principal(),
-            personal_dot: Some(execution.identity().clone()),
+            personal_agent: Some(execution.identity().clone()),
             personal_execution: Some(execution),
             session_id: Some(session.id.clone()),
             assistant_turn_id: Some("assistant-turn".into()),
@@ -1146,10 +1209,10 @@ mod tests {
             )),
             ..ToolContext::for_test(state.db.clone())
         };
-        let initial_layer = layer_for_personal_dot(
+        let initial_layer = layer_for_personal_agent(
             &state,
             &user,
-            &dot,
+            &owned_agent,
             super::super::manager::AskContext::Chat,
             true,
         )
@@ -1175,15 +1238,15 @@ mod tests {
             })))
         );
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
-        let Some(dot_connections::SaveOutcome::Saved(Some(binding))) = save_selection_in(
+        let Some(agent_connections::SaveOutcome::Saved(Some(binding))) = save_selection_in(
             &state,
             &mut tx,
             &user.id,
-            dot_connections::Selection {
-                owner: &agents::DotOwner::User(user.id.clone()),
-                dot_id: &dot,
+            agent_connections::Selection {
+                owner: &agents::AgentOwner::User(user.id.clone()),
+                agent_id: &owned_agent,
                 connector_key: "fixture",
-                identity_mode: dot_connections::IdentityMode::Principal,
+                identity_mode: agent_connections::IdentityMode::Principal,
                 connection_generation: &own.generation,
                 expected_binding_generation: None,
             },
@@ -1218,15 +1281,15 @@ mod tests {
             json!({"owner":own.owner,"connector_key":"fixture","connection_id":own.connection_id,"generation":own.generation,"binding_generation":binding.binding_generation,"catalog_generation":mcp_catalog::get(&state.db,"fixture").await.unwrap().unwrap().dispatch_generation})
         );
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
-        let Some(dot_connections::SaveOutcome::Saved(Some(user_binding))) = save_selection_in(
+        let Some(agent_connections::SaveOutcome::Saved(Some(user_binding))) = save_selection_in(
             &state,
             &mut tx,
             &user.id,
-            dot_connections::Selection {
-                owner: &agents::DotOwner::User(user.id.clone()),
-                dot_id: &dot,
+            agent_connections::Selection {
+                owner: &agents::AgentOwner::User(user.id.clone()),
+                agent_id: &owned_agent,
                 connector_key: "fixture",
-                identity_mode: dot_connections::IdentityMode::User,
+                identity_mode: agent_connections::IdentityMode::User,
                 connection_generation: &personal.generation,
                 expected_binding_generation: Some(&binding.binding_generation),
             },
@@ -1299,7 +1362,7 @@ mod tests {
             events
                 .iter()
                 .all(|event| !event.detail.to_string().contains("user-token")
-                    && !event.detail.to_string().contains("dot-token"))
+                    && !event.detail.to_string().contains("agent-token"))
         );
         assert_eq!(
             server
@@ -1412,7 +1475,7 @@ mod tests {
 
     async fn organization_oauth_fixture() -> (crate::rama_server::state::RamaState, String, String)
     {
-        let (state, organization, dot) = crate::agents::access::tests::fixture().await;
+        let (state, organization, owned_agent) = crate::agents::access::tests::fixture().await;
         mcp_catalog::create(
             &state.db,
             mcp_catalog::ConnectorInput {
@@ -1441,20 +1504,20 @@ mod tests {
         mcp_catalog::set_enabled(&state.db, "organization-oauth", true)
             .await
             .unwrap();
-        (state, organization, dot)
+        (state, organization, owned_agent)
     }
 
     #[tokio::test]
-    async fn organization_oauth_requires_member_write_without_personal_dot_management() {
-        let (state, _, dot) = organization_oauth_fixture().await;
+    async fn organization_oauth_requires_member_write_without_personal_agent_management() {
+        let (state, _, owned_agent) = organization_oauth_fixture().await;
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
         let (user, policy) =
             crate::agents::access::current_user_policy_in(&state, &mut tx, "creator")
                 .await
                 .unwrap()
                 .unwrap();
-        assert!(!policy.can_manage_dots(&policy.role_ids_for(&user.roles)));
-        let owner = ConnectionOwner::Principal(dot.clone());
+        assert!(!policy.can_manage_personal_agents(&policy.role_ids_for(&user.roles)));
+        let owner = ConnectionOwner::Principal(owned_agent.clone());
         assert!(
             authorization_admitted_in(
                 &state,
@@ -1462,7 +1525,7 @@ mod tests {
                 "creator",
                 &owner,
                 "organization-oauth",
-                Some(&dot)
+                Some(&owned_agent)
             )
             .await
             .unwrap()
@@ -1474,7 +1537,7 @@ mod tests {
                 "responder",
                 &owner,
                 "organization-oauth",
-                Some(&dot)
+                Some(&owned_agent)
             )
             .await
             .unwrap()
@@ -1486,7 +1549,7 @@ mod tests {
                 "outsider",
                 &owner,
                 "organization-oauth",
-                Some(&dot)
+                Some(&owned_agent)
             )
             .await
             .unwrap()
@@ -1498,13 +1561,13 @@ mod tests {
                 "admin",
                 &owner,
                 "organization-oauth",
-                Some(&dot)
+                Some(&owned_agent)
             )
             .await
             .unwrap()
         );
-        sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
-            .bind(&dot)
+        sqlx::query("UPDATE agent_owners SET active=0 WHERE principal_id=?")
+            .bind(&owned_agent)
             .execute(&mut *tx)
             .await
             .unwrap();
@@ -1515,7 +1578,7 @@ mod tests {
                 "creator",
                 &owner,
                 "organization-oauth",
-                Some(&dot)
+                Some(&owned_agent)
             )
             .await
             .unwrap()
@@ -1551,7 +1614,7 @@ mod tests {
                 "creator",
                 &ConnectionOwner::User("creator".into()),
                 "organization-oauth",
-                Some(&dot)
+                Some(&owned_agent)
             )
             .await
             .unwrap()
@@ -1561,11 +1624,11 @@ mod tests {
     #[tokio::test]
     async fn organization_local_connection_authority_survives_catalogue_restriction_but_not_membership_loss()
      {
-        let (state, organization, dot) = organization_oauth_fixture().await;
-        let owner = ConnectionOwner::Principal(dot.clone());
+        let (state, organization, owned_agent) = organization_oauth_fixture().await;
+        let owner = ConnectionOwner::Principal(owned_agent.clone());
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
         assert!(
-            connection_owner_admitted_in(&state, &mut tx, "creator", &owner, Some(&dot))
+            connection_owner_admitted_in(&state, &mut tx, "creator", &owner, Some(&owned_agent))
                 .await
                 .unwrap()
         );
@@ -1574,7 +1637,7 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            connection_owner_admitted_in(&state, &mut tx, "creator", &owner, Some(&dot))
+            connection_owner_admitted_in(&state, &mut tx, "creator", &owner, Some(&owned_agent))
                 .await
                 .unwrap()
         );
@@ -1585,13 +1648,13 @@ mod tests {
                 "creator",
                 &owner,
                 "organization-oauth",
-                Some(&dot)
+                Some(&owned_agent)
             )
             .await
             .unwrap()
         );
         assert!(
-            !connection_owner_admitted_in(&state, &mut tx, "admin", &owner, Some(&dot))
+            !connection_owner_admitted_in(&state, &mut tx, "admin", &owner, Some(&owned_agent))
                 .await
                 .unwrap()
         );
@@ -1630,7 +1693,7 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            !connection_owner_admitted_in(&state, &mut tx, "creator", &owner, Some(&dot))
+            !connection_owner_admitted_in(&state, &mut tx, "creator", &owner, Some(&owned_agent))
                 .await
                 .unwrap()
         );
@@ -1639,8 +1702,8 @@ mod tests {
     #[tokio::test]
     async fn organization_selection_requires_exact_owner_current_write_and_current_credential_provenance()
      {
-        let (state, organization, dot) = organization_oauth_fixture().await;
-        let owner = agents::DotOwner::Organization(organization.clone());
+        let (state, organization, owned_agent) = organization_oauth_fixture().await;
+        let owner = agents::AgentOwner::Organization(organization.clone());
         let connector = mcp_catalog::get(&state.db, "organization-oauth")
             .await
             .unwrap()
@@ -1649,7 +1712,7 @@ mod tests {
         let credential = mcp_connections::upsert_connection(
             &state.db,
             mcp_connections::NewConnection {
-                owner: ConnectionOwner::Principal(dot.clone()),
+                owner: ConnectionOwner::Principal(owned_agent.clone()),
                 connector_key: connector.key.clone(),
                 catalog_generation: connector.dispatch_generation,
                 access_token_ct: sealed.ciphertext,
@@ -1668,11 +1731,11 @@ mod tests {
         .unwrap()
         .unwrap();
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
-        let selection = dot_connections::Selection {
+        let selection = agent_connections::Selection {
             owner: &owner,
-            dot_id: &dot,
+            agent_id: &owned_agent,
             connector_key: "organization-oauth",
-            identity_mode: dot_connections::IdentityMode::Principal,
+            identity_mode: agent_connections::IdentityMode::Principal,
             connection_generation: &credential.generation,
             expected_binding_generation: None,
         };
@@ -1688,13 +1751,13 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        let wrong_owner = agents::DotOwner::User(organization.clone());
+        let wrong_owner = agents::AgentOwner::User(organization.clone());
         assert!(
             save_selection_in(
                 &state,
                 &mut tx,
                 "creator",
-                dot_connections::Selection {
+                agent_connections::Selection {
                     owner: &wrong_owner,
                     ..selection
                 }
@@ -1708,43 +1771,43 @@ mod tests {
                 &state,
                 &mut tx,
                 "creator",
-                dot_connections::Selection {
-                    identity_mode: dot_connections::IdentityMode::User,
+                agent_connections::Selection {
+                    identity_mode: agent_connections::IdentityMode::User,
                     ..selection
                 }
             )
             .await
             .unwrap(),
-            Some(dot_connections::SaveOutcome::Unavailable)
+            Some(agent_connections::SaveOutcome::Unavailable)
         );
-        let Some(dot_connections::SaveOutcome::Saved(Some(binding))) =
+        let Some(agent_connections::SaveOutcome::Saved(Some(binding))) =
             save_selection_in(&state, &mut tx, "creator", selection)
                 .await
                 .unwrap()
         else {
             panic!("explicit own credential must be selected");
         };
-        let selection = dot_connections::Selection {
+        let selection = agent_connections::Selection {
             expected_binding_generation: Some(&binding.binding_generation),
             ..selection
         };
-        sqlx::query("UPDATE agent_shares SET access='respond' WHERE principal_id=? AND subject_kind='user' AND subject_id='creator'").bind(&dot).execute(&mut *tx).await.unwrap();
+        sqlx::query("UPDATE agent_shares SET access='respond' WHERE principal_id=? AND subject_kind='user' AND subject_id='creator'").bind(&owned_agent).execute(&mut *tx).await.unwrap();
         assert!(
             save_selection_in(&state, &mut tx, "creator", selection)
                 .await
                 .unwrap()
                 .is_none()
         );
-        sqlx::query("UPDATE agent_shares SET access='write' WHERE principal_id=? AND subject_kind='user' AND subject_id='creator'").bind(&dot).execute(&mut *tx).await.unwrap();
+        sqlx::query("UPDATE agent_shares SET access='write' WHERE principal_id=? AND subject_kind='user' AND subject_id='creator'").bind(&owned_agent).execute(&mut *tx).await.unwrap();
         sqlx::query("UPDATE mcp_catalog_connectors SET dispatch_generation=? WHERE key='organization-oauth'").bind(uuid::Uuid::new_v4().to_string()).execute(&mut *tx).await.unwrap();
         assert_eq!(
             save_selection_in(&state, &mut tx, "creator", selection)
                 .await
                 .unwrap(),
-            Some(dot_connections::SaveOutcome::Unavailable)
+            Some(agent_connections::SaveOutcome::Unavailable)
         );
         assert_eq!(
-            dot_connections::get_in(&mut tx, &owner, &dot, "organization-oauth")
+            agent_connections::get_in(&mut tx, &owner, &owned_agent, "organization-oauth")
                 .await
                 .unwrap(),
             Some(binding)
@@ -1753,8 +1816,8 @@ mod tests {
 
     #[tokio::test]
     async fn organization_oauth_revocation_is_current_inside_the_authorization_transaction() {
-        let (state, organization, dot) = organization_oauth_fixture().await;
-        let owner = ConnectionOwner::Principal(dot.clone());
+        let (state, organization, owned_agent) = organization_oauth_fixture().await;
+        let owner = ConnectionOwner::Principal(owned_agent.clone());
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
         assert!(
             authorization_admitted_in(
@@ -1763,7 +1826,7 @@ mod tests {
                 "creator",
                 &owner,
                 "organization-oauth",
-                Some(&dot)
+                Some(&owned_agent)
             )
             .await
             .unwrap()
@@ -1779,7 +1842,7 @@ mod tests {
                 "creator",
                 &owner,
                 "organization-oauth",
-                Some(&dot)
+                Some(&owned_agent)
             )
             .await
             .unwrap()
@@ -1799,7 +1862,7 @@ mod tests {
                 "creator",
                 &owner,
                 "organization-oauth",
-                Some(&dot)
+                Some(&owned_agent)
             )
             .await
             .unwrap()
@@ -1819,7 +1882,7 @@ mod tests {
                 "creator",
                 &owner,
                 "organization-oauth",
-                Some(&dot)
+                Some(&owned_agent)
             )
             .await
             .unwrap()
@@ -1831,7 +1894,7 @@ mod tests {
         .execute(&mut *tx)
         .await
         .unwrap();
-        sqlx::query("UPDATE agent_shares SET access='respond' WHERE principal_id=? AND subject_kind='user' AND subject_id='creator'").bind(&dot).execute(&mut *tx).await.unwrap();
+        sqlx::query("UPDATE agent_shares SET access='respond' WHERE principal_id=? AND subject_kind='user' AND subject_id='creator'").bind(&owned_agent).execute(&mut *tx).await.unwrap();
         assert!(
             !authorization_admitted_in(
                 &state,
@@ -1839,12 +1902,12 @@ mod tests {
                 "creator",
                 &owner,
                 "organization-oauth",
-                Some(&dot)
+                Some(&owned_agent)
             )
             .await
             .unwrap()
         );
-        sqlx::query("UPDATE agent_shares SET access='write' WHERE principal_id=? AND subject_kind='user' AND subject_id='creator'").bind(&dot).execute(&mut *tx).await.unwrap();
+        sqlx::query("UPDATE agent_shares SET access='write' WHERE principal_id=? AND subject_kind='user' AND subject_id='creator'").bind(&owned_agent).execute(&mut *tx).await.unwrap();
         assert!(
             authorization_admitted_in(
                 &state,
@@ -1852,7 +1915,7 @@ mod tests {
                 "creator",
                 &owner,
                 "organization-oauth",
-                Some(&dot)
+                Some(&owned_agent)
             )
             .await
             .unwrap()
@@ -1866,7 +1929,7 @@ mod tests {
                 "creator",
                 &owner,
                 "organization-oauth",
-                Some(&dot)
+                Some(&owned_agent)
             )
             .await
             .unwrap()
@@ -1875,10 +1938,10 @@ mod tests {
 
     #[tokio::test]
     async fn organization_oauth_rejects_admin_recovery_even_with_catalogue_access() {
-        let (state, _, dot) = organization_oauth_fixture().await;
+        let (state, _, owned_agent) = organization_oauth_fixture().await;
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
         assert_eq!(
-            crate::agents::access::effective_access_in(&state, &mut tx, &dot, "admin")
+            crate::agents::access::effective_access_in(&state, &mut tx, &owned_agent, "admin")
                 .await
                 .unwrap(),
             Some(agents::Access::Write)
@@ -1894,9 +1957,9 @@ mod tests {
                 &state,
                 &mut tx,
                 "admin",
-                &ConnectionOwner::Principal(dot.clone()),
+                &ConnectionOwner::Principal(owned_agent.clone()),
                 "organization-oauth",
-                Some(&dot)
+                Some(&owned_agent)
             )
             .await
             .unwrap()
@@ -1905,7 +1968,7 @@ mod tests {
 
     #[tokio::test]
     async fn organization_oauth_keeps_equal_textual_user_and_organization_ids_distinct() {
-        let (state, organization, org_dot) = organization_oauth_fixture().await;
+        let (state, organization, org_agent) = organization_oauth_fixture().await;
         let now = jiff::Timestamp::now();
         users::upsert(
             &state.db,
@@ -1922,10 +1985,12 @@ mod tests {
         )
         .await
         .unwrap();
-        aiplane_core::server::db::gateway_groups::set_can_manage_dots(&state.db, "members", true)
-            .await
-            .unwrap();
-        let (_, personal) = agents::create_personal_dot(
+        aiplane_core::server::db::gateway_groups::set_can_manage_personal_agents(
+            &state.db, "members", true,
+        )
+        .await
+        .unwrap();
+        let (_, personal) = agents::create_personal_agent(
             &state.db,
             &NewPrincipal {
                 name: "Actual personal assistant",
@@ -1957,9 +2022,9 @@ mod tests {
                 &state,
                 &mut tx,
                 &organization,
-                &ConnectionOwner::Principal(org_dot.clone()),
+                &ConnectionOwner::Principal(org_agent.clone()),
                 "organization-oauth",
-                Some(&org_dot)
+                Some(&org_agent)
             )
             .await
             .unwrap()
@@ -1976,7 +2041,7 @@ mod tests {
             .await
             .unwrap()
         );
-        sqlx::query("UPDATE gateway_groups SET can_manage_dots=0 WHERE name='members'")
+        sqlx::query("UPDATE gateway_groups SET can_manage_personal_agents=0 WHERE name='members'")
             .execute(&mut *tx)
             .await
             .unwrap();
@@ -1997,9 +2062,9 @@ mod tests {
                 &state,
                 &mut tx,
                 "creator",
-                &ConnectionOwner::Principal(org_dot.clone()),
+                &ConnectionOwner::Principal(org_agent.clone()),
                 "organization-oauth",
-                Some(&org_dot)
+                Some(&org_agent)
             )
             .await
             .unwrap()
@@ -2042,28 +2107,28 @@ mod tests {
     #[tokio::test]
     async fn selected_principal_identity_requires_explicit_binding_without_connector_grant_or_activity()
      {
-        let (state, organization, dot) = organization_oauth_fixture().await;
-        let owner = agents::DotOwner::Organization(organization);
+        let (state, organization, owned_agent) = organization_oauth_fixture().await;
+        let owner = agents::AgentOwner::Organization(organization);
         let credential = stored_selection_credential(
             &state,
-            ConnectionOwner::Principal(dot.clone()),
+            ConnectionOwner::Principal(owned_agent.clone()),
             "organization-oauth",
         )
         .await;
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
         assert!(
-            selected_principal_identity_in(&mut tx, &owner, &dot, "organization-oauth")
+            selected_principal_identity_in(&mut tx, &owner, &owned_agent, "organization-oauth")
                 .await
                 .unwrap()
                 .is_none()
         );
-        let dot_connections::SaveOutcome::Saved(Some(binding)) = dot_connections::save_in(
+        let agent_connections::SaveOutcome::Saved(Some(binding)) = agent_connections::save_in(
             &mut tx,
-            dot_connections::Selection {
+            agent_connections::Selection {
                 owner: &owner,
-                dot_id: &dot,
+                agent_id: &owned_agent,
                 connector_key: "organization-oauth",
-                identity_mode: dot_connections::IdentityMode::Principal,
+                identity_mode: agent_connections::IdentityMode::Principal,
                 connection_generation: &credential.generation,
                 expected_binding_generation: None,
             },
@@ -2072,36 +2137,38 @@ mod tests {
         .unwrap() else {
             panic!("explicit selection expected");
         };
-        let principal = aiplane_agents::db::system_principals::load_active_in(&mut tx, &dot)
-            .await
-            .unwrap()
-            .unwrap();
+        let principal =
+            aiplane_agents::db::system_principals::load_active_in(&mut tx, &owned_agent)
+                .await
+                .unwrap()
+                .unwrap();
         assert!(!principal.grants.has(
             aiplane_core::server::principal::GrantKind::Connector,
             "organization-oauth"
         ));
-        let selected = selected_principal_identity_in(&mut tx, &owner, &dot, "organization-oauth")
-            .await
-            .unwrap()
-            .unwrap();
+        let selected =
+            selected_principal_identity_in(&mut tx, &owner, &owned_agent, "organization-oauth")
+                .await
+                .unwrap()
+                .unwrap();
         assert_eq!(selected.connection, credential);
         assert_eq!(
             selected.binding_generation,
             Some(binding.binding_generation)
         );
-        sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
-            .bind(&dot)
+        sqlx::query("UPDATE agent_owners SET active=0 WHERE principal_id=?")
+            .bind(&owned_agent)
             .execute(&mut *tx)
             .await
             .unwrap();
         sqlx::query("UPDATE system_principals SET disabled_at=? WHERE id=?")
             .bind(jiff::Timestamp::now().to_string())
-            .bind(&dot)
+            .bind(&owned_agent)
             .execute(&mut *tx)
             .await
             .unwrap();
         assert_eq!(
-            selected_principal_identity_in(&mut tx, &owner, &dot, "organization-oauth")
+            selected_principal_identity_in(&mut tx, &owner, &owned_agent, "organization-oauth")
                 .await
                 .unwrap(),
             Some(selected)
@@ -2110,16 +2177,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn selected_principal_identity_never_uses_user_or_other_dot_credentials_or_wrong_owner() {
-        let (state, organization, dot) = organization_oauth_fixture().await;
-        let owner = agents::DotOwner::Organization(organization.clone());
+    async fn selected_principal_identity_never_uses_user_or_other_agent_credentials_or_wrong_owner()
+    {
+        let (state, organization, owned_agent) = organization_oauth_fixture().await;
+        let owner = agents::AgentOwner::Organization(organization.clone());
         stored_selection_credential(
             &state,
             ConnectionOwner::User("creator".into()),
             "organization-oauth",
         )
         .await;
-        let (_, other) = agents::create_personal_dot(
+        let (_, other) = agents::create_personal_agent(
             &state.db,
             &NewPrincipal {
                 name: "Other account",
@@ -2141,16 +2209,16 @@ mod tests {
         .await;
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
         assert!(
-            selected_principal_identity_in(&mut tx, &owner, &dot, "organization-oauth")
+            selected_principal_identity_in(&mut tx, &owner, &owned_agent, "organization-oauth")
                 .await
                 .unwrap()
                 .is_none()
         );
-        sqlx::query("INSERT INTO dot_connector_bindings(dot_id,connector_key,identity_mode,connection_generation,binding_generation,updated_at) VALUES(?,'organization-oauth','principal',?,'actual-test-binding',?)")
-            .bind(&dot).bind(&other_credential.generation).bind(jiff::Timestamp::now().to_string())
+        sqlx::query("INSERT INTO agent_connector_bindings(agent_id,connector_key,identity_mode,connection_generation,binding_generation,updated_at) VALUES(?,'organization-oauth','principal',?,'actual-test-binding',?)")
+            .bind(&owned_agent).bind(&other_credential.generation).bind(jiff::Timestamp::now().to_string())
             .execute(&mut *tx).await.unwrap();
         assert!(
-            selected_principal_identity_in(&mut tx, &owner, &dot, "organization-oauth")
+            selected_principal_identity_in(&mut tx, &owner, &owned_agent, "organization-oauth")
                 .await
                 .unwrap()
                 .is_none()
@@ -2158,21 +2226,21 @@ mod tests {
         assert!(
             selected_principal_identity_in(
                 &mut tx,
-                &agents::DotOwner::User(organization),
-                &dot,
+                &agents::AgentOwner::User(organization),
+                &owned_agent,
                 "organization-oauth"
             )
             .await
             .unwrap()
             .is_none()
         );
-        sqlx::query("UPDATE dot_connector_bindings SET identity_mode='user' WHERE dot_id=?")
-            .bind(&dot)
+        sqlx::query("UPDATE agent_connector_bindings SET identity_mode='user' WHERE agent_id=?")
+            .bind(&owned_agent)
             .execute(&mut *tx)
             .await
             .unwrap();
         assert!(
-            selected_principal_identity_in(&mut tx, &owner, &dot, "organization-oauth")
+            selected_principal_identity_in(&mut tx, &owner, &owned_agent, "organization-oauth")
                 .await
                 .unwrap()
                 .is_none()
@@ -2183,35 +2251,36 @@ mod tests {
     #[tokio::test]
     async fn selected_principal_identity_rechecks_current_resource_status_and_epochs_inside_transaction()
      {
-        let (state, organization, dot) = organization_oauth_fixture().await;
-        let owner = agents::DotOwner::Organization(organization);
+        let (state, organization, owned_agent) = organization_oauth_fixture().await;
+        let owner = agents::AgentOwner::Organization(organization);
         let credential = stored_selection_credential(
             &state,
-            ConnectionOwner::Principal(dot.clone()),
+            ConnectionOwner::Principal(owned_agent.clone()),
             "organization-oauth",
         )
         .await;
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
         assert!(matches!(
-            dot_connections::save_in(
+            agent_connections::save_in(
                 &mut tx,
-                dot_connections::Selection {
+                agent_connections::Selection {
                     owner: &owner,
-                    dot_id: &dot,
+                    agent_id: &owned_agent,
                     connector_key: "organization-oauth",
-                    identity_mode: dot_connections::IdentityMode::Principal,
+                    identity_mode: agent_connections::IdentityMode::Principal,
                     connection_generation: &credential.generation,
                     expected_binding_generation: None,
                 }
             )
             .await
             .unwrap(),
-            dot_connections::SaveOutcome::Saved(Some(_))
+            agent_connections::SaveOutcome::Saved(Some(_))
         ));
-        let original = selected_principal_identity_in(&mut tx, &owner, &dot, "organization-oauth")
-            .await
-            .unwrap()
-            .unwrap();
+        let original =
+            selected_principal_identity_in(&mut tx, &owner, &owned_agent, "organization-oauth")
+                .await
+                .unwrap()
+                .unwrap();
         for (mutation, restore) in [
             (
                 "UPDATE mcp_catalog_connectors SET enabled=0 WHERE key='organization-oauth'",
@@ -2232,7 +2301,7 @@ mod tests {
         ] {
             sqlx::query(mutation).execute(&mut *tx).await.unwrap();
             assert!(
-                selected_principal_identity_in(&mut tx, &owner, &dot, "organization-oauth")
+                selected_principal_identity_in(&mut tx, &owner, &owned_agent, "organization-oauth")
                     .await
                     .unwrap()
                     .is_none(),
@@ -2240,35 +2309,35 @@ mod tests {
             );
             sqlx::query(restore).execute(&mut *tx).await.unwrap();
             assert_eq!(
-                selected_principal_identity_in(&mut tx, &owner, &dot, "organization-oauth")
+                selected_principal_identity_in(&mut tx, &owner, &owned_agent, "organization-oauth")
                     .await
                     .unwrap(),
                 Some(original.clone())
             );
         }
         sqlx::query(
-            "UPDATE dot_connector_bindings SET connection_generation='stale' WHERE dot_id=?",
+            "UPDATE agent_connector_bindings SET connection_generation='stale' WHERE agent_id=?",
         )
-        .bind(&dot)
+        .bind(&owned_agent)
         .execute(&mut *tx)
         .await
         .unwrap();
         assert!(
-            selected_principal_identity_in(&mut tx, &owner, &dot, "organization-oauth")
+            selected_principal_identity_in(&mut tx, &owner, &owned_agent, "organization-oauth")
                 .await
                 .unwrap()
                 .is_none()
         );
-        sqlx::query("UPDATE dot_connector_bindings SET connection_generation=? WHERE dot_id=?")
+        sqlx::query("UPDATE agent_connector_bindings SET connection_generation=? WHERE agent_id=?")
             .bind(&credential.generation)
-            .bind(&dot)
+            .bind(&owned_agent)
             .execute(&mut *tx)
             .await
             .unwrap();
         sqlx::query("UPDATE mcp_catalog_connectors SET dispatch_generation='actual-new-resource' WHERE key='organization-oauth'")
             .execute(&mut *tx).await.unwrap();
         assert!(
-            selected_principal_identity_in(&mut tx, &owner, &dot, "organization-oauth")
+            selected_principal_identity_in(&mut tx, &owner, &owned_agent, "organization-oauth")
                 .await
                 .unwrap()
                 .is_none()
@@ -2279,17 +2348,17 @@ mod tests {
     #[tokio::test]
     async fn selected_principal_identity_matches_personal_explicit_own_without_changing_implicit_user()
      {
-        let (state, user, dot, personal, own) = fixture().await;
-        let owner = agents::DotOwner::User(user.id.clone());
+        let (state, user, owned_agent, personal, own) = fixture().await;
+        let owner = agents::AgentOwner::User(user.id.clone());
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
         assert!(
-            selected_principal_identity_in(&mut tx, &owner, &dot, "fixture")
+            selected_principal_identity_in(&mut tx, &owner, &owned_agent, "fixture")
                 .await
                 .unwrap()
                 .is_none()
         );
         assert_eq!(
-            selected_in(&state, &mut tx, &user.id, &dot, "fixture", false)
+            selected_in(&state, &mut tx, &user.id, &owned_agent, "fixture", false)
                 .await
                 .unwrap()
                 .unwrap()
@@ -2297,28 +2366,28 @@ mod tests {
             personal
         );
         assert!(matches!(
-            dot_connections::save_in(
+            agent_connections::save_in(
                 &mut tx,
-                dot_connections::Selection {
+                agent_connections::Selection {
                     owner: &owner,
-                    dot_id: &dot,
+                    agent_id: &owned_agent,
                     connector_key: "fixture",
-                    identity_mode: dot_connections::IdentityMode::Principal,
+                    identity_mode: agent_connections::IdentityMode::Principal,
                     connection_generation: &own.generation,
                     expected_binding_generation: None,
                 }
             )
             .await
             .unwrap(),
-            dot_connections::SaveOutcome::Saved(Some(_))
+            agent_connections::SaveOutcome::Saved(Some(_))
         ));
-        let shared = selected_principal_identity_in(&mut tx, &owner, &dot, "fixture")
+        let shared = selected_principal_identity_in(&mut tx, &owner, &owned_agent, "fixture")
             .await
             .unwrap()
             .unwrap();
         assert_eq!(shared.connection, own);
         assert_eq!(
-            selected_in(&state, &mut tx, &user.id, &dot, "fixture", false)
+            selected_in(&state, &mut tx, &user.id, &owned_agent, "fixture", false)
                 .await
                 .unwrap(),
             Some(shared)
@@ -2334,7 +2403,7 @@ mod tests {
         ToolContext,
         StoredMcpIdentity,
     ) {
-        let (base, organization, dot) = organization_oauth_fixture().await;
+        let (base, organization, owned_agent) = organization_oauth_fixture().await;
         sqlx::query("UPDATE mcp_catalog_connectors SET url=? WHERE key='organization-oauth'")
             .bind(server.uri())
             .execute(&base.db)
@@ -2368,32 +2437,33 @@ mod tests {
         ));
         let credential = stored_selection_credential(
             &state,
-            ConnectionOwner::Principal(dot.clone()),
+            ConnectionOwner::Principal(owned_agent.clone()),
             "organization-oauth",
         )
         .await;
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
-        let owner = agents::DotOwner::Organization(organization);
+        let owner = agents::AgentOwner::Organization(organization);
         assert!(matches!(
-            dot_connections::save_in(
+            agent_connections::save_in(
                 &mut tx,
-                dot_connections::Selection {
+                agent_connections::Selection {
                     owner: &owner,
-                    dot_id: &dot,
+                    agent_id: &owned_agent,
                     connector_key: "organization-oauth",
-                    identity_mode: dot_connections::IdentityMode::Principal,
+                    identity_mode: agent_connections::IdentityMode::Principal,
                     connection_generation: &credential.generation,
                     expected_binding_generation: None,
                 }
             )
             .await
             .unwrap(),
-            dot_connections::SaveOutcome::Saved(Some(_))
+            agent_connections::SaveOutcome::Saved(Some(_))
         ));
-        let selected = selected_principal_identity_in(&mut tx, &owner, &dot, "organization-oauth")
-            .await
-            .unwrap()
-            .unwrap();
+        let selected =
+            selected_principal_identity_in(&mut tx, &owner, &owned_agent, "organization-oauth")
+                .await
+                .unwrap()
+                .unwrap();
         tx.commit().await.unwrap();
         for (kind, reference) in [
             (
@@ -2406,14 +2476,18 @@ mod tests {
             ),
         ] {
             aiplane_agents::db::system_principals::add_grant(
-                &state.db, &dot, kind, reference, "creator",
+                &state.db,
+                &owned_agent,
+                kind,
+                reference,
+                "creator",
             )
             .await
             .unwrap();
         }
         let profile = crate::agents::profile::RunProfile::load_from(
             &state,
-            &dot,
+            &owned_agent,
             crate::agents::profile::SpecSource::Draft(
                 serde_json::json!({"main":{"model":"selected"}}),
             ),
@@ -2426,7 +2500,7 @@ mod tests {
             &state.db,
             crate::server::headless::OpenParams {
                 owner: crate::server::headless::Owner::Run {
-                    principal_id: &dot,
+                    principal_id: &owned_agent,
                     parent_turn_id: None,
                     agent_version: Some(agents::DRAFT_VERSION),
                 },
@@ -2434,7 +2508,7 @@ mod tests {
                 prompt: "Actual task",
                 model: "selected",
                 existing_session: None,
-                dot_id: None,
+                personal_agent_id: None,
             },
         )
         .await
@@ -2489,7 +2563,7 @@ mod tests {
         };
         held.run(resumed.clone(), json!({})).await.unwrap();
         let mut tx = WriteTx::begin(&state.db).await.unwrap();
-        sqlx::query("UPDATE dot_connector_bindings SET binding_generation='actual-reselection' WHERE dot_id=?")
+        sqlx::query("UPDATE agent_connector_bindings SET binding_generation='actual-reselection' WHERE agent_id=?")
             .bind(&run.system_principal().id).execute(&mut *tx).await.unwrap();
         assert!(
             validate_organization_identity_in(&mut tx, &resumed, &selected)
@@ -2582,7 +2656,7 @@ mod tests {
         let crate::agent_run::Actor::Agent(run) = params.actor else {
             panic!("principal actor expected");
         };
-        sqlx::query("DELETE FROM dot_connector_bindings WHERE dot_id=?")
+        sqlx::query("DELETE FROM agent_connector_bindings WHERE agent_id=?")
             .bind(&run.system_principal().id)
             .execute(&state.db)
             .await
@@ -2593,7 +2667,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn organization_selected_mcp_held_reference_observes_current_connector_grant_and_dot_activation()
+    async fn organization_selected_mcp_held_reference_observes_current_connector_grant_and_agent_activation()
      {
         use crate::server::tools::ToolSource;
         let server = mcp_server().await;
@@ -2620,7 +2694,7 @@ mod tests {
         )
         .await
         .unwrap();
-        sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
+        sqlx::query("UPDATE agent_owners SET active=0 WHERE principal_id=?")
             .bind(&run.system_principal().id)
             .execute(&state.db)
             .await

@@ -72,7 +72,7 @@ pub struct OpenParams<'a> {
     /// fresh one — so prior runs become conversation history. `None` mints a
     /// fresh session titled `title`.
     pub existing_session: Option<String>,
-    pub dot_id: Option<&'a str>,
+    pub personal_agent_id: Option<&'a str>,
 }
 
 /// Open the run's session and append the prompt + an in-progress assistant
@@ -110,21 +110,28 @@ pub async fn open_session(db: &Pool, p: OpenParams<'_>) -> Result<(String, Strin
         }
         Owner::User(owner) => owner,
     };
-    // A background run's Dot is optional: when it is unavailable — inactive or
+    // A background run's agent is optional: when it is unavailable — inactive or
     // its principal disabled — the session opens unbound and the run proceeds
-    // as the person, the pre-Dots behavior.
-    let dot_id = match p.dot_id {
-        Some(dot_id) => {
-            let dot = aiplane_agents::db::agents::get_personal_dot(db, owner, dot_id).await?;
-            dot.is_some_and(|dot| dot.active && dot.agent.principal.disabled_at.is_none())
-                .then_some(dot_id)
+    // as the person, the pre-agents behavior.
+    let agent_id = match p.personal_agent_id {
+        Some(agent_id) => {
+            let owned_agent =
+                aiplane_agents::db::agents::get_personal_agent(db, owner, agent_id).await?;
+            owned_agent
+                .is_some_and(|owned_agent| {
+                    owned_agent.active && owned_agent.agent.principal.disabled_at.is_none()
+                })
+                .then_some(agent_id)
         }
         None => None,
     };
     if let Some(session_id) = p.existing_session.as_deref() {
         let mut conn = db.acquire().await.map_err(DbError::from)?;
-        if !aiplane_agents::db::dot_sessions::session_matches(
-            &mut conn, owner, session_id, p.dot_id,
+        if !aiplane_agents::db::agent_sessions::session_matches(
+            &mut conn,
+            owner,
+            session_id,
+            p.personal_agent_id,
         )
         .await?
         {
@@ -139,8 +146,8 @@ pub async fn open_session(db: &Pool, p: OpenParams<'_>) -> Result<(String, Strin
             session.id
         }
     };
-    if let Some(dot_id) = dot_id
-        && !aiplane_agents::db::dot_sessions::link(db, owner, dot_id, &session_id).await?
+    if let Some(agent_id) = agent_id
+        && !aiplane_agents::db::agent_sessions::link(db, owner, agent_id, &session_id).await?
     {
         return Err(OpenError::Unavailable);
     }
@@ -176,7 +183,7 @@ pub async fn open_principal_session_in(
     else {
         return Err(OpenError::Unavailable);
     };
-    if p.dot_id.is_some() {
+    if p.personal_agent_id.is_some() {
         return Err(OpenError::Unavailable);
     }
     let session_id = match p.existing_session {
@@ -234,7 +241,7 @@ pub async fn open_principal_session_in(
 /// Inputs to [`drive`].
 pub struct DriveParams {
     /// Who the run acts as. User background runs refresh the owner's roles
-    /// and apply their persisted run's tool ceiling and Dot binding. An
+    /// and apply their persisted run's tool ceiling and agent binding. An
     /// agent run is offered exactly its principal's grants, and none of any
     /// person's memory, connectors or skills; every tool call is audited with
     /// its chain, and its contract, budget and injection scan apply.
@@ -294,8 +301,8 @@ async fn person_context(
     clock: Clock,
     resume_checkpoint: Option<&session_core::db::suspensions::TreeBudgetCheckpoint>,
 ) -> Result<Option<Arc<crate::persona::ChatPersona>>, DbError> {
-    use crate::persona::personal_dot::{
-        PersonalDotContext, PersonalTurnContext, initialize_for_turn,
+    use crate::persona::personal_agent::{
+        PersonalAgentContext, PersonalTurnContext, initialize_for_turn,
     };
     let child_execution = p.actor.personal_execution().cloned();
     let fail = |message: &str| DbError::Decode {
@@ -377,15 +384,15 @@ async fn person_context(
     )
     .await?
     {
-        Some(PersonalDotContext::Active { actor, persona }) => {
+        Some(PersonalAgentContext::Active { actor, persona }) => {
             p.actor = actor;
             Ok(Some(persona))
         }
-        // A background run's Dot is optional: when its principal is gone the
-        // run proceeds as the person (set above), the pre-Dots behavior, so a
-        // scheduled run never stalls on a disabled Dot.
-        Some(PersonalDotContext::Unavailable) if is_background_run => Ok(None),
-        Some(PersonalDotContext::Unavailable) => Err(fail(
+        // A background run's agent is optional: when its principal is gone the
+        // run proceeds as the person (set above), the pre-agents behavior, so a
+        // scheduled run never stalls on a disabled agent.
+        Some(PersonalAgentContext::Unavailable) if is_background_run => Ok(None),
+        Some(PersonalAgentContext::Unavailable) => Err(fail(
             "The personal agent is unavailable. Activate it or restore its owned binding before continuing.",
         )),
         None if !tools_enabled => Ok(Some(Arc::new(
@@ -465,9 +472,9 @@ async fn drive_inner(
     let resumed = resume.is_some();
     if let Some(run) = agent.as_ref() {
         let admission =
-            aiplane_agents::db::agents::dot_owner(&state.db, &run.system_principal().id).await;
+            aiplane_agents::db::agents::agent_owner(&state.db, &run.system_principal().id).await;
         let error = match admission {
-            Ok(Some(aiplane_agents::db::agents::DotOwner::Organization(_))) => {
+            Ok(Some(aiplane_agents::db::agents::AgentOwner::Organization(_))) => {
                 let context_valid = run.organization().is_some_and(|context| {
                     context.session_id == p.session_id
                         && context.assistant_turn_id == p.assistant_turn_id
@@ -1037,7 +1044,7 @@ pub(crate) mod tests {
                 prompt: "triage the ticket",
                 model: MODEL,
                 existing_session: None,
-                dot_id: None,
+                personal_agent_id: None,
             },
         )
         .await
@@ -1198,7 +1205,7 @@ pub(crate) mod tests {
         let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
             .await
             .unwrap();
-        let (_, dot) = agents::create_organization_dot_in(
+        let (_, owned_agent) = agents::create_organization_agent_in(
             &mut tx,
             &organization.organization.id,
             &system_principals::NewPrincipal {
@@ -1212,18 +1219,18 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-        let dot = dot.unwrap().principal.id;
+        let owned_agent = owned_agent.unwrap().principal.id;
         tx.commit().await.unwrap();
         system_principals::add_grant(
             &state.db,
-            &dot,
+            &owned_agent,
             aiplane_core::server::principal::GrantKind::Model,
             MODEL,
             "creator",
         )
         .await
         .unwrap();
-        let principal = system_principals::load_active(&state.db, &dot)
+        let principal = system_principals::load_active(&state.db, &owned_agent)
             .await
             .unwrap()
             .unwrap();
@@ -1231,7 +1238,7 @@ pub(crate) mod tests {
             &state.db,
             OpenParams {
                 owner: Owner::Run {
-                    principal_id: &dot,
+                    principal_id: &owned_agent,
                     parent_turn_id: None,
                     agent_version: None,
                 },
@@ -1239,7 +1246,7 @@ pub(crate) mod tests {
                 prompt: "Actual request",
                 model: MODEL,
                 existing_session: None,
-                dot_id: None,
+                personal_agent_id: None,
             },
         )
         .await
@@ -1260,11 +1267,11 @@ pub(crate) mod tests {
                 .status,
             session_core::db::TurnStatus::Errored
         );
-        let persisted = run_sessions::get_principal_session(&state.db, &dot, &session)
+        let persisted = run_sessions::get_principal_session(&state.db, &owned_agent, &session)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(persisted.principal_id, dot);
+        assert_eq!(persisted.principal_id, owned_agent);
     }
 
     #[tokio::test]
@@ -1803,7 +1810,7 @@ pub(crate) mod tests {
                 prompt: "find invoice 17",
                 model: MODEL,
                 existing_session: None,
-                dot_id: None,
+                personal_agent_id: None,
             },
         )
         .await
@@ -2038,7 +2045,7 @@ pub(crate) mod tests {
         tools_enabled: bool,
     ) -> String {
         use crate::server::scheduled::{self, NewAction};
-        let (_, dot) = aiplane_agents::db::agents::create_personal_dot(
+        let (_, owned_agent) = aiplane_agents::db::agents::create_personal_agent(
             &state.db,
             &aiplane_agents::db::system_principals::NewPrincipal {
                 name: "Harald",
@@ -2051,17 +2058,17 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-        let dot = dot.unwrap().principal.id;
+        let owned_agent = owned_agent.unwrap().principal.id;
         assert!(
-            aiplane_agents::db::dot_sessions::link(&state.db, "u1", &dot, session)
+            aiplane_agents::db::agent_sessions::link(&state.db, "u1", &owned_agent, session)
                 .await
                 .unwrap()
         );
-        aiplane_agents::db::dot_memories::insert(
+        aiplane_agents::db::agent_memories::insert(
             &state.db,
-            aiplane_agents::db::dot_memories::MemoryScope::Dot {
-                owner: &aiplane_agents::db::agents::DotOwner::User("u1".into()),
-                dot_id: &dot,
+            aiplane_agents::db::agent_memories::MemoryScope::Agent {
+                owner: &aiplane_agents::db::agents::AgentOwner::User("u1".into()),
+                agent_id: &owned_agent,
             },
             aiplane_core::server::db::user_memories::MemoryKind::Fact,
             "Keep project notes",
@@ -2083,7 +2090,7 @@ pub(crate) mod tests {
                 reuse_conversation: true,
                 reuse_rounds: 3,
                 next_run_at: None,
-                dot_id: Some(dot),
+                personal_agent_id: Some(owned_agent),
                 linked_session_id: None,
             },
         )
@@ -2137,11 +2144,11 @@ pub(crate) mod tests {
         state.chats.clear("u1", &newer);
     }
 
-    /// A scheduled run bound to a Dot whose principal gets disabled must still
-    /// complete — it degrades to the person, the pre-Dots behavior — instead of
-    /// stalling on `The personal Dot is unavailable`.
+    /// A scheduled run bound to an agent whose principal gets disabled must still
+    /// complete — it degrades to the person, the pre-agents behavior — instead of
+    /// stalling on `The personal agent is unavailable`.
     #[tokio::test]
-    async fn background_run_degrades_to_person_when_its_dot_principal_is_disabled() {
+    async fn background_run_degrades_to_person_when_its_agent_principal_is_disabled() {
         use wiremock::{
             Mock, MockServer, ResponseTemplate,
             matchers::{method, path},
@@ -2155,12 +2162,13 @@ pub(crate) mod tests {
         let state = state_for(&upstream.uri()).await;
         let (session, turn) = open(&state, "medium").await;
         personal_background(&state, &session, &turn, false).await;
-        let dot = aiplane_agents::db::dot_sessions::for_session(&state.db, "u1", &session)
-            .await
-            .unwrap()
-            .unwrap()
-            .dot_id;
-        aiplane_agents::db::system_principals::disable(&state.db, &dot, "u1")
+        let owned_agent =
+            aiplane_agents::db::agent_sessions::for_session(&state.db, "u1", &session)
+                .await
+                .unwrap()
+                .unwrap()
+                .agent_id;
+        aiplane_agents::db::system_principals::disable(&state.db, &owned_agent, "u1")
             .await
             .unwrap();
         drive(
@@ -2187,11 +2195,11 @@ pub(crate) mod tests {
         );
     }
 
-    /// Opening a background run session for a Dot whose principal is disabled
-    /// opens an unbound (person) session instead of failing — the Dot is
+    /// Opening a background run session for an agent whose principal is disabled
+    /// opens an unbound (person) session instead of failing — the agent is
     /// optional at fire time.
     #[tokio::test]
-    async fn open_session_falls_back_to_unbound_when_the_dot_is_unavailable() {
+    async fn open_session_falls_back_to_unbound_when_the_agent_is_unavailable() {
         let state = state_for(&MockServer::start().await.uri()).await;
         let now = jiff::Timestamp::now();
         aiplane_core::server::db::users::upsert(
@@ -2209,7 +2217,7 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-        let (_, dot) = aiplane_agents::db::agents::create_personal_dot(
+        let (_, owned_agent) = aiplane_agents::db::agents::create_personal_agent(
             &state.db,
             &aiplane_agents::db::system_principals::NewPrincipal {
                 name: "Harald",
@@ -2222,8 +2230,8 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-        let dot = dot.unwrap().principal.id;
-        aiplane_agents::db::system_principals::disable(&state.db, &dot, "u1")
+        let owned_agent = owned_agent.unwrap().principal.id;
+        aiplane_agents::db::system_principals::disable(&state.db, &owned_agent, "u1")
             .await
             .unwrap();
         let (session, _turn) = open_session(
@@ -2234,13 +2242,13 @@ pub(crate) mod tests {
                 prompt: "prompt",
                 model: MODEL,
                 existing_session: None,
-                dot_id: Some(&dot),
+                personal_agent_id: Some(&owned_agent),
             },
         )
         .await
         .unwrap();
         assert!(
-            aiplane_agents::db::dot_sessions::for_session(&state.db, "u1", &session)
+            aiplane_agents::db::agent_sessions::for_session(&state.db, "u1", &session)
                 .await
                 .unwrap()
                 .is_none(),
@@ -2248,20 +2256,21 @@ pub(crate) mod tests {
         );
     }
 
-    /// Cancelling a Dot's personal runs stops every in-flight turn it owns and
+    /// Cancelling an agent's personal runs stops every in-flight turn it owns and
     /// settles the scheduled run to an error — the mechanism a disabled
     /// principal's runs go through.
     #[tokio::test]
-    async fn cancel_personal_runs_for_dot_stops_its_in_flight_run() {
+    async fn cancel_personal_runs_for_agent_stops_its_in_flight_run() {
         let state = state_for(&MockServer::start().await.uri()).await;
         let (session, turn) = open(&state, "medium").await;
         let run = personal_background(&state, &session, &turn, false).await;
-        let dot = aiplane_agents::db::dot_sessions::for_session(&state.db, "u1", &session)
-            .await
-            .unwrap()
-            .unwrap()
-            .dot_id;
-        crate::agents::resume::cancel_personal_runs_for_dot(&state, "u1", &dot)
+        let owned_agent =
+            aiplane_agents::db::agent_sessions::for_session(&state.db, "u1", &session)
+                .await
+                .unwrap()
+                .unwrap()
+                .agent_id;
+        crate::agents::resume::cancel_personal_runs_for_agent(&state, "u1", &owned_agent)
             .await
             .unwrap();
         assert_eq!(
@@ -2282,7 +2291,7 @@ pub(crate) mod tests {
 
     async fn personal_forward_setup() -> (MockServer, Arc<RamaState>, String, String, Vec<String>) {
         use aiplane_agents::db::{
-            agents, dot_delegation, dot_sessions, system_principals::NewPrincipal,
+            agent_delegation, agent_sessions, agents, system_principals::NewPrincipal,
         };
         use aiplane_core::server::rbac::{RbacConfig, Resolver, RoleConfig};
         let upstream = MockServer::start().await;
@@ -2291,11 +2300,11 @@ pub(crate) mod tests {
             .with(crate::agents::router::ForwardRequest::personal());
         let rbac = Resolver::build(
             RbacConfig {
-                default_role: Some("dot".into()),
+                default_role: Some("agent".into()),
                 mappings: Vec::new(),
             },
             vec![RoleConfig {
-                id: "dot".into(),
+                id: "agent".into(),
                 admin: false,
                 tools: vec!["company_echo".into(), "forward_request".into()],
                 skills: Vec::new(),
@@ -2315,7 +2324,7 @@ pub(crate) mod tests {
                 r#"{"main":{"tools":["company_echo"],"tool_resources":{"company_echo":{"permission":"always_ask"}}}}"#,
             ),
         ] {
-            let (_, dot) = agents::create_personal_dot(
+            let (_, owned_agent) = agents::create_personal_agent(
                 &state.db,
                 &NewPrincipal {
                     name,
@@ -2328,44 +2337,44 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
-            ids.push(dot.unwrap().principal.id);
+            ids.push(owned_agent.unwrap().principal.id);
         }
         assert!(
-            dot_sessions::link(&state.db, "u1", &ids[0], &session)
+            agent_sessions::link(&state.db, "u1", &ids[0], &session)
                 .await
                 .unwrap()
         );
-        let first = dot_delegation::set_consent(
+        let first = agent_delegation::set_consent(
             &state.db,
-            dot_delegation::ConsentEdit {
+            agent_delegation::ConsentEdit {
                 owner_user_id: "u1",
-                dot_id: &ids[0],
+                agent_id: &ids[0],
                 peer_id: &ids[1],
-                direction: dot_delegation::ConsentDirection::Outbound,
+                direction: agent_delegation::ConsentDirection::Outbound,
                 enabled: true,
                 expected_generation: None,
             },
         )
         .await
         .unwrap();
-        let dot_delegation::ConsentSaved::Saved(first) = first else {
+        let agent_delegation::ConsentSaved::Saved(first) = first else {
             panic!("saved outbound consent");
         };
         assert!(matches!(
-            dot_delegation::set_consent(
+            agent_delegation::set_consent(
                 &state.db,
-                dot_delegation::ConsentEdit {
+                agent_delegation::ConsentEdit {
                     owner_user_id: "u1",
-                    dot_id: &ids[1],
+                    agent_id: &ids[1],
                     peer_id: &ids[0],
-                    direction: dot_delegation::ConsentDirection::Inbound,
+                    direction: agent_delegation::ConsentDirection::Inbound,
                     enabled: true,
                     expected_generation: Some(&first.generation)
                 }
             )
             .await
             .unwrap(),
-            dot_delegation::ConsentSaved::Saved(_)
+            agent_delegation::ConsentSaved::Saved(_)
         ));
         let input = chat::list_turns(&state.db, &session)
             .await
@@ -2399,7 +2408,7 @@ pub(crate) mod tests {
     async fn paused_personal_forward() -> PersonalForwardPause {
         let (upstream, state, session, turn, ids) = personal_forward_setup().await;
         Mock::given(method("POST")).and(path("/chat/completions")).respond_with(Scripted {
-            deltas: vec![json!({"tool_calls":[{"index":0,"id":"delegate","type":"function","function":{"name":"forward_request","arguments":json!({"receiver_dot_id":ids[1],"message":"Explicit child task"}).to_string()}}]}), json!({"tool_calls":[{"index":0,"id":"receiver-echo","type":"function","function":{"name":"company_echo","arguments":"{\"message\":\"child write\"}"}}]})],
+            deltas: vec![json!({"tool_calls":[{"index":0,"id":"delegate","type":"function","function":{"name":"forward_request","arguments":json!({"receiver_agent_id":ids[1],"message":"Explicit child task"}).to_string()}}]}), json!({"tool_calls":[{"index":0,"id":"receiver-echo","type":"function","function":{"name":"company_echo","arguments":"{\"message\":\"child write\"}"}}]})],
             served: AtomicUsize::new(0), tokens_per_round: Some(5),
         }).mount(&upstream).await;
         drive(&state, params(&session, &turn, person())).await;
@@ -2420,7 +2429,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn personal_model_acquisition_intersects_current_roles_with_the_initial_pool_ceiling() {
         use crate::server::tools::{Tool, ToolContext, ToolFuture};
-        use aiplane_agents::db::{agents, dot_sessions, system_principals::NewPrincipal};
+        use aiplane_agents::db::{agent_sessions, agents, system_principals::NewPrincipal};
         use aiplane_core::server::rbac::{RbacConfig, Resolver, RoleConfig, RoleMapping};
         struct RevokePoolRole;
         impl Tool for RevokePoolRole {
@@ -2539,11 +2548,16 @@ pub(crate) mod tests {
         aiplane_core::server::db::users::upsert(&state.db, &user)
             .await
             .unwrap();
-        let (_, dot) = agents::create_personal_dot(&state.db, &NewPrincipal { name:"Caller", display:"Caller", description:"" }, r#"{"main":{"tools":["company_echo"],"tool_resources":{"company_echo":{"permission":"always_allow"}}}}"#, "u1", 4).await.unwrap();
+        let (_, owned_agent) = agents::create_personal_agent(&state.db, &NewPrincipal { name:"Caller", display:"Caller", description:"" }, r#"{"main":{"tools":["company_echo"],"tool_resources":{"company_echo":{"permission":"always_allow"}}}}"#, "u1", 4).await.unwrap();
         assert!(
-            dot_sessions::link(&state.db, "u1", &dot.unwrap().principal.id, &session)
-                .await
-                .unwrap()
+            agent_sessions::link(
+                &state.db,
+                "u1",
+                &owned_agent.unwrap().principal.id,
+                &session
+            )
+            .await
+            .unwrap()
         );
         drive(
             &state,
@@ -2591,7 +2605,7 @@ pub(crate) mod tests {
         let (upstream, state, session, turn, ids) = personal_forward_setup().await;
         agents::update_draft(&state.db, &ids[1], r#"{"main":{"budget":{"tokens":100},"tools":["company_echo"],"tool_resources":{"company_echo":{"permission":"always_ask"}}}}"#, "u1", agents::DraftChange::default()).await.unwrap().unwrap();
         Mock::given(method("POST")).and(path("/chat/completions")).respond_with(Scripted {
-            deltas: vec![json!({"tool_calls":[{"index":0,"id":"delegate","type":"function","function":{"name":"forward_request","arguments":json!({"receiver_dot_id":ids[1],"message":"Explicit finite task"}).to_string()}}]}), text("Root result")],
+            deltas: vec![json!({"tool_calls":[{"index":0,"id":"delegate","type":"function","function":{"name":"forward_request","arguments":json!({"receiver_agent_id":ids[1],"message":"Explicit finite task"}).to_string()}}]}), text("Root result")],
             served: AtomicUsize::new(0), tokens_per_round: None,
         }).mount(&upstream).await;
         drive(&state, params(&session, &turn, person())).await;
@@ -2616,7 +2630,7 @@ pub(crate) mod tests {
         use aiplane_agents::db::agents;
         let (upstream, state, session, turn, ids) = personal_forward_setup().await;
         Mock::given(method("POST")).and(path("/chat/completions")).respond_with(Scripted {
-            deltas: vec![json!({"tool_calls":[{"index":0,"id":"delegate","type":"function","function":{"name":"forward_request","arguments":json!({"receiver_dot_id":ids[1],"message":"Explicit child task"}).to_string()}}]}), json!({"tool_calls":[{"index":0,"id":"receiver-echo","type":"function","function":{"name":"company_echo","arguments":"{\"message\":\"child write\"}"}}]}), text("Receiver final")],
+            deltas: vec![json!({"tool_calls":[{"index":0,"id":"delegate","type":"function","function":{"name":"forward_request","arguments":json!({"receiver_agent_id":ids[1],"message":"Explicit child task"}).to_string()}}]}), json!({"tool_calls":[{"index":0,"id":"receiver-echo","type":"function","function":{"name":"company_echo","arguments":"{\"message\":\"child write\"}"}}]}), text("Receiver final")],
             served: AtomicUsize::new(0), tokens_per_round: None,
         }).mount(&upstream).await;
         drive(&state, params(&session, &turn, person())).await;
@@ -2673,13 +2687,13 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn personal_receiver_metadata_uses_consent_and_current_forward_access_without_peer_memory()
      {
-        use crate::persona::personal_dot::{PersonalDotContext, context_for};
+        use crate::persona::personal_agent::{PersonalAgentContext, context_for};
         let (_upstream, state, session, _turn, ids) = personal_forward_setup().await;
-        aiplane_agents::db::dot_memories::insert(
+        aiplane_agents::db::agent_memories::insert(
             &state.db,
-            aiplane_agents::db::dot_memories::MemoryScope::Dot {
-                owner: &aiplane_agents::db::agents::DotOwner::User("u1".into()),
-                dot_id: &ids[1],
+            aiplane_agents::db::agent_memories::MemoryScope::Agent {
+                owner: &aiplane_agents::db::agents::AgentOwner::User("u1".into()),
+                agent_id: &ids[1],
             },
             aiplane_core::server::db::user_memories::MemoryKind::Fact,
             "Receiver private project note",
@@ -2691,7 +2705,7 @@ pub(crate) mod tests {
             .await
             .unwrap()
             .unwrap();
-        let Some(PersonalDotContext::Active { persona, .. }) =
+        let Some(PersonalAgentContext::Active { persona, .. }) =
             context_for(&state, &user, &session, true).await.unwrap()
         else {
             panic!("active caller");
@@ -2706,7 +2720,7 @@ pub(crate) mod tests {
         aiplane_core::server::db::user_tool_prefs::set(&state.db, "u1", "forward_request", false)
             .await
             .unwrap();
-        let Some(PersonalDotContext::Active { persona, .. }) =
+        let Some(PersonalAgentContext::Active { persona, .. }) =
             context_for(&state, &user, &session, true).await.unwrap()
         else {
             panic!("active caller");
@@ -2717,20 +2731,20 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn personal_chain_claim_refuses_current_consent_withdrawal_without_consuming_any_pause() {
-        use aiplane_agents::db::dot_delegation;
+        use aiplane_agents::db::agent_delegation;
         let paused = paused_personal_forward().await;
-        let edge = dot_delegation::list_for_dot(&paused.state.db, "u1", &paused.ids[0])
+        let edge = agent_delegation::list_for_agent(&paused.state.db, "u1", &paused.ids[0])
             .await
             .unwrap()
             .pop()
             .unwrap();
-        dot_delegation::set_consent(
+        agent_delegation::set_consent(
             &paused.state.db,
-            dot_delegation::ConsentEdit {
+            agent_delegation::ConsentEdit {
                 owner_user_id: "u1",
-                dot_id: &paused.ids[0],
+                agent_id: &paused.ids[0],
                 peer_id: &paused.ids[1],
-                direction: dot_delegation::ConsentDirection::Outbound,
+                direction: agent_delegation::ConsentDirection::Outbound,
                 enabled: false,
                 expected_generation: Some(&edge.generation),
             },
@@ -2827,7 +2841,7 @@ pub(crate) mod tests {
         .unwrap();
         assert!(state.tools().contains("forward_request"));
         Mock::given(method("POST")).and(path("/chat/completions")).respond_with(Scripted {
-            deltas: vec![json!({"tool_calls":[{"index":0,"id":"guessed-forward","type":"function","function":{"name":"forward_request","arguments":json!({"receiver_dot_id":ids[1],"message":"ordinary caller"}).to_string()}}]}), text("No delegation")],
+            deltas: vec![json!({"tool_calls":[{"index":0,"id":"guessed-forward","type":"function","function":{"name":"forward_request","arguments":json!({"receiver_agent_id":ids[1],"message":"ordinary caller"}).to_string()}}]}), text("No delegation")],
             served: AtomicUsize::new(0), tokens_per_round: Some(5),
         }).mount(&upstream).await;
         drive(&state, params(&session, &turn, person())).await;
@@ -2854,7 +2868,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn personal_forward_child_approval_pauses_the_root_without_copying_history() {
         let (upstream, state, session, turn, ids) = personal_forward_setup().await;
-        Mock::given(method("POST")).and(path("/chat/completions")).respond_with(Scripted { deltas: vec![json!({"tool_calls":[{"index":0,"id":"delegate","type":"function","function":{"name":"forward_request","arguments":json!({"receiver_dot_id":ids[1],"message":"Research the explicit task"}).to_string()}}]}), json!({"tool_calls":[{"index":0,"id":"receiver-echo","type":"function","function":{"name":"company_echo","arguments":"{\"message\":\"child write\"}"}}]}), text("Receiver result"), text("Root result")], served:AtomicUsize::new(0), tokens_per_round:Some(5) }).mount(&upstream).await;
+        Mock::given(method("POST")).and(path("/chat/completions")).respond_with(Scripted { deltas: vec![json!({"tool_calls":[{"index":0,"id":"delegate","type":"function","function":{"name":"forward_request","arguments":json!({"receiver_agent_id":ids[1],"message":"Research the explicit task"}).to_string()}}]}), json!({"tool_calls":[{"index":0,"id":"receiver-echo","type":"function","function":{"name":"company_echo","arguments":"{\"message\":\"child write\"}"}}]}), text("Receiver result"), text("Root result")], served:AtomicUsize::new(0), tokens_per_round:Some(5) }).mount(&upstream).await;
         drive(&state, params(&session, &turn, person())).await;
         let top = chat::get_suspension(&state.db, &turn)
             .await
@@ -2876,7 +2890,7 @@ pub(crate) mod tests {
         else {
             panic!("actual private personal child");
         };
-        assert_eq!(child.session.dot_id, ids[1]);
+        assert_eq!(child.session.agent_id, ids[1]);
         assert_eq!(child.link.parent_tool_call_id, "delegate");
         let leaf = chat::get_suspension(&state.db, child_turn)
             .await
@@ -3245,8 +3259,8 @@ pub(crate) mod tests {
         );
     }
 
-    /// An inactive personal Dot no longer refuses its background run: the run
-    /// degrades to the person, the pre-Dots behavior, and reconciles to `ok`.
+    /// An inactive personal agent no longer refuses its background run: the run
+    /// degrades to the person, the pre-agents behavior, and reconciles to `ok`.
     #[tokio::test]
     async fn inactive_personal_background_degrades_to_person_and_reconciles_ok() {
         use wiremock::{
@@ -3262,7 +3276,7 @@ pub(crate) mod tests {
         let state = state_for(&upstream.uri()).await;
         let (session, turn) = open(&state, "medium").await;
         let run = personal_background(&state, &session, &turn, true).await;
-        sqlx::query("UPDATE dots SET active=0")
+        sqlx::query("UPDATE agent_owners SET active=0")
             .execute(&state.db)
             .await
             .unwrap();
@@ -3320,7 +3334,7 @@ pub(crate) mod tests {
                 prompt: "new background prompt",
                 model: MODEL,
                 existing_session: Some(session.clone()),
-                dot_id: None,
+                personal_agent_id: None,
             },
         )
         .await;
@@ -3378,7 +3392,7 @@ pub(crate) mod tests {
                 prompt: "Bounded transaction prompt",
                 model: &profile.model,
                 existing_session: None,
-                dot_id: None,
+                personal_agent_id: None,
             },
         )
         .await
@@ -3411,7 +3425,7 @@ pub(crate) mod tests {
                     prompt: "Must not overlap",
                     model: &profile.model,
                     existing_session: Some(session.clone()),
-                    dot_id: None,
+                    personal_agent_id: None,
                 }
             )
             .await,
@@ -3547,7 +3561,7 @@ pub(crate) mod tests {
         let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
             .await
             .unwrap();
-        let (_, dot) = agents::create_organization_dot_in(
+        let (_, owned_agent) = agents::create_organization_agent_in(
             &mut tx,
             &organization.organization.id,
             &system_principals::NewPrincipal {
@@ -3561,7 +3575,7 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-        let dot = dot.unwrap().principal.id;
+        let owned_agent = owned_agent.unwrap().principal.id;
         tx.commit().await.unwrap();
         for (kind, reference) in [
             (aiplane_core::server::principal::GrantKind::Model, MODEL),
@@ -3570,13 +3584,13 @@ pub(crate) mod tests {
                 "company_echo",
             ),
         ] {
-            system_principals::add_grant(&state.db, &dot, kind, reference, "creator")
+            system_principals::add_grant(&state.db, &owned_agent, kind, reference, "creator")
                 .await
                 .unwrap();
         }
         let profile = crate::agents::profile::RunProfile::load_from(
             state,
-            &dot,
+            &owned_agent,
             crate::agents::profile::SpecSource::Draft(json!({"main": {
                 "model": MODEL, "tools": ["company_echo"],
                 "tool_resources": {"company_echo": {"permission": "always_allow"}}
@@ -3590,7 +3604,7 @@ pub(crate) mod tests {
             &state.db,
             OpenParams {
                 owner: Owner::Run {
-                    principal_id: &dot,
+                    principal_id: &owned_agent,
                     parent_turn_id: None,
                     agent_version: Some(agents::DRAFT_VERSION),
                 },
@@ -3598,7 +3612,7 @@ pub(crate) mod tests {
                 prompt: "Actual request",
                 model: MODEL,
                 existing_session: None,
-                dot_id: None,
+                personal_agent_id: None,
             },
         )
         .await
@@ -3887,7 +3901,7 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn organization_draft_context_rejects_inactive_dot_inside_transaction() {
+    async fn organization_draft_context_rejects_inactive_agent_inside_transaction() {
         let upstream = MockServer::start().await;
         let state = state_for(&upstream.uri()).await;
         let (profile, params) = organization_draft_fixture(&state).await;
@@ -3897,7 +3911,7 @@ pub(crate) mod tests {
         let mut tx = aiplane_core::server::db::WriteTx::begin(&state.db)
             .await
             .unwrap();
-        sqlx::query("UPDATE dots SET active=0 WHERE principal_id=?")
+        sqlx::query("UPDATE agent_owners SET active=0 WHERE principal_id=?")
             .bind(&profile.principal.id)
             .execute(&mut *tx)
             .await
