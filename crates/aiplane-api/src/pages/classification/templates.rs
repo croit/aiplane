@@ -79,6 +79,10 @@ fn classes(at: &ClassLevels) -> Vec<ClassBody> {
         rule_threshold: threshold,
         action: action.into(),
     };
+    // The rule questions are short and plain on purpose: measured against the
+    // TypeSafe System One model, the long legal wording (GDPR article texts)
+    // scored a named person's sick note at 0.36 and a payment reminder as a
+    // trade secret at 0.65; these separate both at 0.6.
     vec![
         class(
             "personal_data",
@@ -86,14 +90,9 @@ fn classes(at: &ClassLevels) -> Vec<ClassBody> {
             "Information relating to an identified or identifiable natural person (GDPR Art. 4).",
             at.personal,
             &["email"],
-            "Does the text contain personal data in the sense of GDPR Article 4(1), that is any \
-             information relating to an identified or identifiable natural person, such as a name \
-             together with an address, a telephone number, a date of birth, an employee or \
-             customer number, or a record about a named person?",
-            "A customer list with names and e-mail addresses. An employee's contract with name and \
-             salary. A support ticket from a named person with their home address.",
-            "A product description. A press release. Source code without user data. A person's \
-             name in a published byline.",
+            "Is a specific, identifiable person described in this text?",
+            "A customer list with names and e-mail addresses.",
+            "A product description.",
             0.6,
             "raise",
         ),
@@ -104,15 +103,10 @@ fn classes(at: &ClassLevels) -> Vec<ClassBody> {
              ethnic-origin data about a person (GDPR Art. 9).",
             at.special,
             &[],
-            "Does the text contain special categories of personal data in the sense of GDPR \
-             Article 9 about an identifiable person: health data (diagnoses, sick leave, \
-             medication, disability), genetic or biometric data, racial or ethnic origin, \
-             political opinions, religious or philosophical beliefs, trade-union membership, or \
-             sex life or sexual orientation?",
-            "A sick note naming the employee and the diagnosis. A works-council membership list. \
-             A medical report for a named patient.",
-            "A general article about a disease. Statistics without any individual. A policy about \
-             sick-leave procedure.",
+            "Does the text mention the health, illness or diagnosis of a specific person, or \
+             their religion, ethnicity, sexuality or political views?",
+            "A sick note naming the employee and the diagnosis.",
+            "A general article about a disease.",
             0.6,
             "raise",
         ),
@@ -122,14 +116,9 @@ fn classes(at: &ClassLevels) -> Vec<ClassBody> {
             "Information the company protects as a secret or has agreed to keep confidential.",
             at.secrets,
             &[],
-            "Does the text contain trade secrets or information covered by a non-disclosure \
-             agreement, such as unreleased product plans, source code of proprietary products, \
-             pricing and margin calculations, customer contract terms, merger plans or research \
-             results that are not public?",
-            "An NDA with a partner and the technical details shared under it. A price calculation \
-             with margins. An unreleased roadmap.",
-            "A published datasheet. Public documentation of an open-source project. A \
-             marketing brochure.",
+            "Is this text sharing a company secret or NDA-protected information?",
+            "The formula of an unreleased product shared under an NDA.",
+            "A published datasheet.",
             0.6,
             "confirm",
         ),
@@ -139,12 +128,10 @@ fn classes(at: &ClassLevels) -> Vec<ClassBody> {
             "Bank account and payment card numbers.",
             at.payment,
             &["iban", "payment_card"],
-            "Does the text contain payment data: a bank account number (IBAN), a payment card \
-             number with its expiry date or security code, or account credentials for a payment \
-             service?",
-            "An invoice with the customer's IBAN. A card number pasted into a support request.",
-            "The text of a payment policy that names no account. A price list.",
-            0.7,
+            "Does this text contain an IBAN, a credit card number or payment login data?",
+            "An invoice with the customer's IBAN.",
+            "A price list.",
+            0.6,
             "raise",
         ),
         class(
