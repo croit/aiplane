@@ -75,9 +75,10 @@ A fork copies the text and the **level** of its source (audited with the cause `
 An installation that used the earlier GDPR and NDA pool flags, the content guard or confidential conversations is converted by the migration:
 
 - Levels `internal`, `confidential` and `strictly_confidential` are created above `public`.
-- A pool declared GDPR and NDA covered is assigned `strictly_confidential`, a GDPR-only pool `internal`; every other pool, including one declared NDA-only, is `public`.
+- A pool declared GDPR and NDA covered is assigned `strictly_confidential`. A pool that met the old `chat.confidential.requires` (`both` unless set; `gdpr` or `nda` for one flag) served confidential conversations and is assigned `confidential`. Any other GDPR-covered pool is `internal`; every remaining pool is `public`.
 - The content guard's two questions become the data classes `personal_data` (level `internal`) and `nda` (level `confidential`), kept only while the guard was enabled. A guard action of allow becomes a class action of `raise` without a rule, so nothing is asked; confirm becomes `confirm`; deny becomes `block`.
 - Confidential conversations are moved to `confidential` with an event of cause `migration`.
+- `classification.link_share_max_level` is set to `confidential`, so conversations shared by link keep working: nothing was above confidential before.
 - `chat.confidential.default` becomes `classification.default_level = confidential`; the guard's model and mode become `classification.system_one_model` and `classification.mode`.
 - The old settings, the pool flag columns and `chat_session_settings.confidential` are removed.
 

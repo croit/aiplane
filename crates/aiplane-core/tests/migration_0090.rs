@@ -220,6 +220,13 @@ async fn an_installation_that_used_the_old_mechanism_is_mapped_into_the_iso_sche
             .as_deref(),
         Some("confidential")
     );
+    assert_eq!(
+        setting(&pool, "classification.link_share_max_level")
+            .await
+            .as_deref(),
+        Some("confidential"),
+        "links that worked before keep working: nothing was above confidential"
+    );
     let leftover: Vec<String> = sqlx::query_scalar(
         "SELECT key FROM app_settings WHERE key LIKE 'settings.content_guard.%' OR key LIKE 'settings.chat.confidential.%'",
     )
@@ -237,6 +244,72 @@ async fn an_installation_that_used_the_old_mechanism_is_mapped_into_the_iso_sche
         .await
         .unwrap();
     assert!(violations.is_empty());
+}
+
+#[tokio::test]
+async fn a_pool_that_met_the_confidential_requirement_becomes_confidential() {
+    for (requires, expected) in [
+        (
+            Some("nda"),
+            [
+                ("both", "strictly_confidential"),
+                ("gdpr-only", "internal"),
+                ("nda-only", "confidential"),
+                ("none", "public"),
+            ],
+        ),
+        (
+            Some("gdpr"),
+            [
+                ("both", "strictly_confidential"),
+                ("gdpr-only", "confidential"),
+                ("nda-only", "public"),
+                ("none", "public"),
+            ],
+        ),
+        (
+            None,
+            [
+                ("both", "strictly_confidential"),
+                ("gdpr-only", "internal"),
+                ("nda-only", "public"),
+                ("none", "public"),
+            ],
+        ),
+    ] {
+        let requires_row = requires.map_or_else(String::new, |value| {
+            format!(
+                "INSERT INTO app_settings (key, value, updated_at)
+                 VALUES ('settings.chat.confidential.requires', '{value}', '2026-01-01');"
+            )
+        });
+        let pool = upgraded_from_0089(&format!(
+            "{} {} {} {} {requires_row}
+             INSERT INTO app_settings (key, value, updated_at)
+             VALUES ('settings.content_guard.enabled', 'true', '2026-01-01');",
+            pool_row("both", 1, 1),
+            pool_row("gdpr-only", 1, 0),
+            pool_row("nda-only", 0, 1),
+            pool_row("none", 0, 0),
+        ))
+        .await;
+        let got = assignments(&pool).await;
+        let mut expected: Vec<(String, String)> = expected
+            .iter()
+            .map(|(name, level)| ((*name).to_owned(), (*level).to_owned()))
+            .collect();
+        expected.sort();
+        assert_eq!(got, expected, "requires = {requires:?}");
+    }
+}
+
+#[tokio::test]
+async fn an_untouched_installation_keeps_no_link_ceiling() {
+    let pool = upgraded_from_0089("").await;
+    assert_eq!(
+        setting(&pool, "classification.link_share_max_level").await,
+        None
+    );
 }
 
 #[tokio::test]

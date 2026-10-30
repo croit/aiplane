@@ -152,12 +152,25 @@ FROM (
 ), classification_legacy
 WHERE used = 1;
 
+-- A pool that met `settings.chat.confidential.requires` (default `both`) served
+-- confidential conversations: it is cleared for `confidential`. Both flags
+-- clear it for everything; GDPR alone keeps `internal`.
 INSERT INTO classification_assignments (kind, id, level_id)
 SELECT 'pool', name,
        CASE WHEN compliance_gdpr = 1 AND compliance_nda = 1 THEN 'strictly_confidential'
+            WHEN (requires = 'gdpr' AND compliance_gdpr = 1)
+              OR (requires = 'nda' AND compliance_nda = 1) THEN 'confidential'
             WHEN compliance_gdpr = 1 THEN 'internal'
             ELSE 'public' END
-FROM pools, classification_legacy
+FROM pools, classification_legacy,
+     (SELECT COALESCE((SELECT trim(value) FROM app_settings
+                        WHERE key = 'settings.chat.confidential.requires'), 'both') AS requires)
+WHERE used = 1;
+
+-- Nothing was above confidential before, so a link that worked keeps working.
+INSERT INTO app_settings (key, value, updated_at)
+SELECT 'settings.classification.link_share_max_level', 'confidential', strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+FROM classification_legacy
 WHERE used = 1;
 
 UPDATE chat_session_settings SET level_id = 'confidential'
