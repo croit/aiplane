@@ -408,13 +408,59 @@ fn request_text(request: &Value) -> String {
     text
 }
 
+/// Which part of a chat request carries content to classify.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    /// A person's turn: what they wrote since the last answer. The operator's
+    /// system prompt is not theirs, and earlier messages were checked when
+    /// they were sent (the level only rises).
+    NewInput,
+    /// An API request: everything the client sent except the model's answers.
+    ClientSent,
+}
+
+fn checked_request(request: &Value, scope: Scope) -> Value {
+    let messages = request
+        .get("messages")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    fn role(message: &Value) -> &str {
+        message.get("role").and_then(Value::as_str).unwrap_or("")
+    }
+    let checked: Vec<Value> = match scope {
+        Scope::NewInput => {
+            let start = messages
+                .iter()
+                .rposition(|message| role(message) == "assistant")
+                .map_or(0, |last| last + 1);
+            messages[start..]
+                .iter()
+                .filter(|message| role(message) == "user")
+                .cloned()
+                .collect()
+        }
+        Scope::ClientSent => messages
+            .iter()
+            .filter(|message| role(message) != "assistant")
+            .cloned()
+            .collect(),
+    };
+    json!({ "messages": checked })
+}
+
 /// Everything a request shows about its level for the classes above
 /// `target_rank`: patterns and word lists first, then the System One model.
 async fn request_findings(
     state: &AppState,
     request: &Value,
+    scope: Scope,
     target_rank: u32,
 ) -> Result<Vec<Finding>, String> {
+    let request = &checked_request(request, scope);
+    if request["messages"].as_array().is_none_or(Vec::is_empty) {
+        return Ok(Vec::new());
+    }
     let mode = state.config().classification.mode;
     let mut findings = static_findings(
         &state.scheme(),
@@ -440,7 +486,7 @@ pub async fn evaluate_for_model(
         return Ok(Decision::Allow);
     };
     let mode = state.config().classification.mode;
-    let findings = request_findings(state, request, rank).await?;
+    let findings = request_findings(state, request, Scope::ClientSent, rank).await?;
     Ok(if mode == ClassificationMode::Enforce {
         stateless_decision(&findings)
     } else {
@@ -498,7 +544,12 @@ pub(crate) async fn evaluate_for_turn(
         .await?;
     }
     let mode = state.config().classification.mode;
-    let findings = request_findings(state, request, rank).await?;
+    let scope = if person_session.is_some() {
+        Scope::NewInput
+    } else {
+        Scope::ClientSent
+    };
+    let findings = request_findings(state, request, scope, rank).await?;
     if mode == ClassificationMode::Monitor || findings.is_empty() {
         if !findings.is_empty() {
             tracing::info!(
@@ -559,6 +610,50 @@ pub(crate) async fn apply_findings(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn conversation() -> Value {
+        json!({"messages": [
+            {"role": "system", "content": "You talk to alice@example.com."},
+            {"role": "user", "content": "pay DE89 3704 0044 0532 0130 00"},
+            {"role": "assistant", "content": "Done."},
+            {"role": "user", "content": [{"type": "text", "text": "what time is it"}]},
+        ]})
+    }
+
+    #[test]
+    fn a_turn_checks_only_what_the_person_wrote_since_the_last_answer() {
+        assert_eq!(
+            checked_request(&conversation(), Scope::NewInput),
+            json!({"messages": [
+                {"role": "user", "content": [{"type": "text", "text": "what time is it"}]},
+            ]})
+        );
+    }
+
+    #[test]
+    fn a_later_round_of_a_turn_has_nothing_new_to_check() {
+        let mut request = conversation();
+        request["messages"].as_array_mut().unwrap().extend([
+            json!({"role": "assistant", "content": null}),
+            json!({"role": "tool", "content": "12:00"}),
+        ]);
+        assert_eq!(
+            checked_request(&request, Scope::NewInput),
+            json!({"messages": []})
+        );
+    }
+
+    #[test]
+    fn an_api_request_checks_everything_its_client_sent_but_the_answers() {
+        let checked = checked_request(&conversation(), Scope::ClientSent);
+        let roles: Vec<&str> = checked["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["role"].as_str().unwrap())
+            .collect();
+        assert_eq!(roles, ["system", "user", "user"]);
+    }
 
     #[tokio::test]
     async fn organization_turns_keep_the_operator_model_and_refuse_revoked_scope_in_monitor() {
@@ -656,7 +751,7 @@ mod tests {
         assert_eq!(
             evaluate_for_turn(
                 &state,
-                &json!({"messages":[]}),
+                &json!({"messages":[{"role":"user","content":"hello"}]}),
                 &params.model,
                 &access,
                 &context
@@ -674,7 +769,7 @@ mod tests {
         assert!(
             evaluate_for_turn(
                 &state,
-                &json!({"messages":[]}),
+                &json!({"messages":[{"role":"user","content":"hello"}]}),
                 &params.model,
                 &access,
                 &context

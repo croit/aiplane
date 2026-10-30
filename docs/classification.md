@@ -174,7 +174,7 @@ Monitor mode (`classification.mode = monitor`) logs what enforce mode would do a
 
 ### Typed text
 
-Before a message goes to a model, the text of the request is checked for the classes above that model's level, by the same code as an upload's text: the built-in patterns and word lists of those classes first, then the System One model. A match raises the conversation (`pattern:<class id>`, `terms:<class id>`, `system_one:<class id>`) and the class's action applies. On `/v1/chat/completions` and in agent runs nothing is stored and a match refuses the request (`confirm` asks where a person can answer).
+Before a message goes to a model, what the person wrote since the last answer is checked for the classes above the conversation's level, by the same code as an upload's text: the built-in patterns and word lists of those classes first, then the System One model. The operator's system prompt and earlier messages are not checked again (they were checked when sent, and the level only rises). The check runs whatever the selected model is cleared for, because the level outlives the turn: it decides the tools, sharing and the next model. A match raises the conversation (`pattern:<class id>`, `terms:<class id>`, `system_one:<class id>`) and the class's action applies. On `/v1/chat/completions` and in agent runs nothing is stored: everything the client sent except the model's earlier answers is checked for the classes above the target model's level, and a match refuses the request (`confirm` asks where a person can answer).
 
 ### Uploads
 
