@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { ACTIONS, blankClass, PATTERN_IDS, togglePattern, type ClassificationState, type Draft } from '#lib/classification.js';
+	import { ACTIONS, blankClass, detectorsOf, PATTERN_IDS, togglePattern, type ClassificationState, type Draft } from '#lib/classification.js';
+	import LevelBadge from './LevelBadge.svelte';
 	import LevelSelect from './LevelSelect.svelte';
 	import TermsUpload from './TermsUpload.svelte';
 	import ClassTester from './ClassTester.svelte';
@@ -7,13 +8,41 @@
 
 	let { draft = $bindable(), saved }: { draft: Draft; saved: ClassificationState } = $props();
 	const isSaved = (id: string) => saved.classes.some((c) => c.id === id);
+	const hasModel = $derived(draft.policy.system_one_model !== '');
+	let expanded = $state<Record<string, boolean>>({});
+	const levelOf = (id: string) => draft.levels.find((l) => l.id === id);
+
+	function addClass() {
+		const cls = blankClass(draft);
+		expanded[cls.id] = true;
+		draft.classes = [...draft.classes, cls];
+	}
 </script>
 
 <div class="space-y-4">
 	<p class="text-sm text-base-content/70">{t('cls-classes-lead')}</p>
 	{#each draft.classes as cls, index (cls.id)}
-		<div class="card card-border bg-base-100">
-			<div class="card-body gap-3 p-4">
+		{@const level = levelOf(cls.level_id)}
+		<div class="collapse collapse-arrow border border-base-300 bg-base-100">
+			<input type="checkbox" aria-label={cls.name || t('cls-level-unnamed')} bind:checked={expanded[cls.id]} />
+			<div class="collapse-title flex flex-wrap items-center gap-x-3 gap-y-1 pe-10">
+				<span class="font-medium">{cls.name || t('cls-level-unnamed')}</span>
+				{#if level}<LevelBadge name={level.name} color={level.color} />{/if}
+				<span class="text-xs text-base-content/60">{t(`cls-action-${cls.action}`)}</span>
+				<span class="flex flex-wrap gap-1">
+					{#each detectorsOf(cls, hasModel) as detector, i (i)}
+						{#if detector.kind === 'pattern'}
+							<span class="badge badge-sm badge-outline">{t(`cls-pattern-${detector.id}`)}</span>
+						{:else if detector.kind === 'rule'}
+							<span class={['badge badge-sm', detector.active ? 'badge-outline' : 'badge-ghost text-base-content/50']} title={detector.active ? undefined : t('cls-class-rule-inactive')}>{t('cls-detector-rule')}</span>
+						{:else}
+							<span class="badge badge-sm badge-outline">{t('cls-detector-terms', { count: detector.count })}</span>
+						{/if}
+					{/each}
+				</span>
+			</div>
+			<div class="collapse-content">
+			<div class="flex flex-col gap-3 pt-2">
 				<div class="flex flex-wrap items-end gap-2">
 					<label class="flex min-w-0 flex-1 flex-col gap-1">
 						<span class="text-xs">{t('cls-class-name')}</span>
@@ -49,7 +78,7 @@
 				<div class="space-y-2 rounded-box border border-base-300 p-3">
 					<div class="flex flex-wrap items-center gap-2">
 						<h5 class="m-0 text-sm font-semibold">{t('cls-class-rule')}</h5>
-						{#if draft.policy.system_one_model === ''}<span class="badge badge-warning badge-sm">{t('cls-class-rule-inactive')}</span>{/if}
+						{#if !hasModel && cls.rule_question.trim() !== ''}<span class="badge badge-warning badge-sm">{t('cls-class-rule-inactive')}</span>{/if}
 					</div>
 					<p class="m-0 text-xs text-base-content/60">{t('cls-class-rule-help')}</p>
 					<label class="flex flex-col gap-1">
@@ -81,10 +110,11 @@
 					{/if}
 				</div>
 			</div>
+			</div>
 		</div>
 	{:else}
 		<p class="text-sm text-base-content/60">{t('cls-classes-empty')}</p>
 	{/each}
-	<button class="btn btn-sm" type="button" onclick={() => (draft.classes = [...draft.classes, blankClass(draft)])}>{t('cls-class-add')}</button>
+	<button class="btn btn-sm" type="button" onclick={addClass}>{t('cls-class-add')}</button>
 	<ClassTester levels={saved.levels} />
 </div>

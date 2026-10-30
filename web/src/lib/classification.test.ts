@@ -7,6 +7,7 @@ import {
 	causeMessage,
 	csvColumns,
 	diffSummary,
+	detectorsOf,
 	draftFrom,
 	egressSummary,
 	finalizeDraft,
@@ -29,6 +30,7 @@ import {
 	type ClassificationState,
 	type Destination,
 	type Level,
+	type PatternId,
 	type Policy,
 	type Template
 } from './classification.ts';
@@ -284,4 +286,16 @@ test('activation is blocked for a model whose pool is not at the highest level',
 test('egress destinations outside pools are counted with their first names', () => {
 	assert.deepEqual(egressSummary(modelStep().destinations), { count: 2, names: ['search_web', 'github'] });
 	assert.deepEqual(egressSummary(modelStep().destinations, 1), { count: 2, names: ['search_web'] });
+});
+
+test('a class lists its patterns, its rule question and its word list as detectors', () => {
+	const cls = { ...draftFrom(modelStep()).classes[0]!, patterns: ['iban', 'email'] as PatternId[], rule_question: 'Is it personal?', terms: { count: 3, uploaded_by: null, uploaded_at: null } };
+	assert.deepEqual(detectorsOf(cls, true), [
+		{ kind: 'pattern', id: 'email' },
+		{ kind: 'pattern', id: 'iban' },
+		{ kind: 'rule', active: true },
+		{ kind: 'terms', count: 3 }
+	]);
+	assert.deepEqual(detectorsOf(cls, false)[2], { kind: 'rule', active: false });
+	assert.deepEqual(detectorsOf({ ...cls, patterns: [], rule_question: '  ', terms: { count: 0, uploaded_by: null, uploaded_at: null } }, true), []);
 });

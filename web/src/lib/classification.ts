@@ -382,6 +382,16 @@ export function applyTemplate(current: Draft, template: Template): Draft {
 	});
 }
 
+export type Detector = { kind: 'pattern'; id: PatternId } | { kind: 'rule'; active: boolean } | { kind: 'terms'; count: number };
+
+/** What detects a class, in the order the card shows it: its patterns, its rule question (inactive without a System One model), its word list. */
+export function detectorsOf(cls: DataClass, hasModel: boolean): Detector[] {
+	const detectors: Detector[] = PATTERN_IDS.filter((id) => cls.patterns.includes(id)).map((id) => ({ kind: 'pattern', id }));
+	if (cls.rule_question.trim() !== '') detectors.push({ kind: 'rule', active: hasModel });
+	if (cls.terms.count > 0) detectors.push({ kind: 'terms', count: cls.terms.count });
+	return detectors;
+}
+
 export function blankClass(draft: Draft): DataClass {
 	const names = draft.classes.map((c) => c.id);
 	return {
