@@ -178,6 +178,8 @@ Before a message goes to a model, what the person wrote since the last answer is
 
 In a person's chat, an approved `confirm` also lets the turn go to a model that is not cleared for the conversation's level while `classification.user_override` is `true` (the default; a missing row reads as `true`). With `false` the approval confirms the content only: the model-clearance check runs as for any turn, and a model that is not cleared refuses the turn with the usual message, so the person has to pick a cleared model. Later rounds of the turn are checked as for a turn without an approval.
 
+A note the person types while a turn runs is new input too: before the round that carries it is sent, the same check runs on the note, a raise applies in that round, and the model-clearance check follows.
+
 ### Uploads
 
 When a turn starts, before any model reads the attachments (OCR is a model too), the files attached to the latest message are inspected. Each file gives findings; the conversation rises to the highest one, with a content-free cause.

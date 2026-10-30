@@ -1415,7 +1415,7 @@ async fn run_one_turn(
     // picker filtered the list. The check runs on the resolved model so an
     // automatic route is judged by the target it actually picked. A user who
     // just approved this turn's content for the model has overridden it.
-    let approved_rank = if approved_by_user && d.state.config().classification.user_override {
+    let mut approved_rank = if approved_by_user && d.state.config().classification.user_override {
         Some(conversation_rank(d, &ctx.session_id).await)
     } else {
         ensure_model_cleared(d, &ctx.session_id, &real_model, &access).await?;
@@ -1617,7 +1617,35 @@ async fn run_one_turn(
         // Notes from a round that never reached a backend stay in this vec and
         // are settled by whichever later round does, so a retryable failure
         // does not cost the user their interjection.
-        unsettled_steers.extend(fold_in_steers(&ctx, &mut messages));
+        let folded = fold_in_steers(&ctx, &mut messages);
+        let notes_checked = person_chat && !folded.is_empty() && live_state.scheme().is_active();
+        if notes_checked {
+            // A note is new input like the message that started the turn: what
+            // it reveals raises the conversation before this round is sent.
+            let notes = serde_json::json!({
+                "messages": folded
+                    .iter()
+                    .map(|note| serde_json::json!({"role": "user", "content": note.text}))
+                    .collect::<Vec<_>>(),
+            });
+            let approved = settle_classification_decision(
+                d,
+                crate::classification_detector::evaluate_for_turn(
+                    &d.state,
+                    &notes,
+                    routing_model,
+                    &access,
+                    &tool_ctx,
+                )
+                .await
+                .map_err(upstream_err)?,
+            )
+            .await?;
+            if approved && d.state.config().classification.user_override {
+                approved_rank = Some(conversation_rank(d, &ctx.session_id).await);
+            }
+        }
+        unsettled_steers.extend(folded);
 
         // State set last round must show in this round's system message, or
         // the model would ask for it again. So must state the resumed call
@@ -1668,7 +1696,7 @@ async fn run_one_turn(
                 limit_hit = Some(limit);
             }
         }
-        if round > start_round {
+        if round > start_round || notes_checked {
             match approved_rank {
                 None => ensure_model_cleared(d, &ctx.session_id, &real_model, &access).await?,
                 Some(approved) if conversation_rank(d, &ctx.session_id).await > approved => {

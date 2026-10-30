@@ -1345,8 +1345,22 @@ impl aiplane_runtime::server::tools::Tool for Retrieval {
     }
 }
 
-/// Round one asks for `rag_search`; every later round answers.
-struct ToolThenAnswer(std::sync::atomic::AtomicUsize);
+/// Round one asks for `tool`, after `delay`; every later round answers.
+struct ToolThenAnswer {
+    calls: std::sync::atomic::AtomicUsize,
+    tool: &'static str,
+    delay: Duration,
+}
+
+impl ToolThenAnswer {
+    fn new(tool: &'static str, delay: Duration) -> Self {
+        Self {
+            calls: Default::default(),
+            tool,
+            delay,
+        }
+    }
+}
 
 impl wiremock::Respond for ToolThenAnswer {
     fn respond(&self, request: &wiremock::Request) -> ResponseTemplate {
@@ -1355,10 +1369,10 @@ impl wiremock::Respond for ToolThenAnswer {
                 "choices": [{"message": {"role": "assistant", "content": "Title"}}]
             }));
         }
-        let round = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let round = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let frames = if round == 0 {
             vec![
-                serde_json::json!({"choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [{"index": 0, "id": "call-0", "type": "function", "function": {"name": "rag_search", "arguments": "{}"}}]}, "finish_reason": null}]}),
+                serde_json::json!({"choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [{"index": 0, "id": "call-0", "type": "function", "function": {"name": self.tool, "arguments": "{}"}}]}, "finish_reason": null}]}),
                 serde_json::json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}),
             ]
         } else {
@@ -1371,7 +1385,13 @@ impl wiremock::Respond for ToolThenAnswer {
             body.push_str(&format!("data: {frame}\n\n"));
         }
         body.push_str("data: [DONE]\n\n");
-        ResponseTemplate::new(200).set_body_raw(body, "text/event-stream")
+        ResponseTemplate::new(200)
+            .set_body_raw(body, "text/event-stream")
+            .set_delay(if round == 0 {
+                self.delay
+            } else {
+                Duration::ZERO
+            })
     }
 }
 
@@ -1381,6 +1401,13 @@ const TOOLS_SQL: &str = "
 
 /// A person with granted tools, all enabled for the conversation.
 async fn chat_with_tools(upstream: &MockServer) -> (Arc<RamaState>, String, String) {
+    chat_with_tools_sql(upstream, TOOLS_SQL).await
+}
+
+async fn chat_with_tools_sql(
+    upstream: &MockServer,
+    extra_sql: &str,
+) -> (Arc<RamaState>, String, String) {
     use aiplane_core::server::rbac::Resolver;
     use aiplane_core::server::rbac::config::{RbacConfig, RoleConfig, RoleMapping};
     use aiplane_runtime::server::tools::{ToolRegistry, time::CurrentTimestamp};
@@ -1413,7 +1440,7 @@ async fn chat_with_tools(upstream: &MockServer) -> (Arc<RamaState>, String, Stri
         &upstream.uri(),
         &s3.uri(),
         true,
-        TOOLS_SQL,
+        extra_sql,
         |_| {},
         Arc::new(tools),
         Arc::new(rbac),
@@ -1523,7 +1550,7 @@ async fn a_level_raised_by_a_retrieval_ends_the_turn_before_the_next_round_reach
     let upstream = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
-        .respond_with(ToolThenAnswer(Default::default()))
+        .respond_with(ToolThenAnswer::new("rag_search", Duration::ZERO))
         .mount(&upstream)
         .await;
     let (state, cookie, session) = chat_with_tools(&upstream).await;
@@ -1636,5 +1663,64 @@ async fn every_model_is_cleared_for_a_conversation_at_the_lowest_level() {
         !state
             .model_cleared_for_session(&session.id, "not-listed-model", &access)
             .await
+    );
+}
+
+#[tokio::test]
+async fn a_note_typed_during_a_tool_round_raises_the_conversation_before_the_next_round() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ToolThenAnswer::new(
+            "get_current_timestamp",
+            Duration::from_millis(800),
+        ))
+        .mount(&upstream)
+        .await;
+    let (state, cookie, session) = chat_with_tools_sql(&upstream, &iban_class("raise")).await;
+    let app = router(state.clone());
+    let resp = app
+        .serve(submit(&session, &cookie, "low-model", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    for _ in 0..100 {
+        if !turn_requests(&upstream).await.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let note = app
+        .serve(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/v0/chat/sessions/{session}/steer"))
+                .header(header::COOKIE, format!("id={cookie}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({"message": format!("my account is {IBAN}")}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(note.status(), StatusCode::ACCEPTED);
+    wait_settled(&state, &session).await;
+
+    let (status, error) = last_turn_status(&state, &session).await;
+    assert_eq!(status, chat::TurnStatus::Errored, "{error}");
+    assert!(error.contains("Confidential"), "{error}");
+    assert_eq!(
+        turn_requests(&upstream).await.len(),
+        1,
+        "round two never left"
+    );
+    assert_eq!(
+        events(&state, &session)
+            .await
+            .last()
+            .map(|event| event.2.clone()),
+        Some("pattern:iban".to_owned())
     );
 }
