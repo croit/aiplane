@@ -607,7 +607,7 @@ pub(crate) async fn apply_findings(
     {
         let actor = context.principal.subject_id();
         for finding in findings {
-            if let Err(error) = classification::raise(
+            match classification::raise(
                 &state.db,
                 scheme,
                 session_id,
@@ -617,12 +617,13 @@ pub(crate) async fn apply_findings(
             )
             .await
             {
-                tracing::warn!(
+                Ok(transition) => announce_raise(context, transition.as_ref()),
+                Err(error) => tracing::warn!(
                     session_id,
                     cause = %finding.cause,
                     error = %error,
                     "could not raise the conversation after a classification match"
-                );
+                ),
             }
         }
         return match strongest(findings) {
@@ -632,6 +633,19 @@ pub(crate) async fn apply_findings(
         };
     }
     stateless_decision(findings)
+}
+
+/// A raised level changes the badge, the model list and the share options of
+/// the open chat, so the live stream tells the page to reload them.
+pub(crate) fn announce_raise(
+    context: &crate::server::tools::ToolContext,
+    transition: Option<&classification::Transition>,
+) {
+    if let (Some(_), Some(feedback)) = (transition, context.chat_feedback.as_ref()) {
+        let _ = feedback
+            .broadcast
+            .send(session_core::workers::TurnUpdate::SidebarChanged);
+    }
 }
 
 #[cfg(test)]

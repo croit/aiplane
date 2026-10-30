@@ -856,6 +856,26 @@ async fn reading_a_classified_collection_raises_the_conversation_with_the_retrie
 }
 
 #[tokio::test]
+async fn a_raise_tells_the_live_chat_to_reload_and_an_unchanged_level_does_not() {
+    use aiplane_runtime::classification_retrieval::raise_for_collection;
+    use aiplane_runtime::server::tools::ChatFeedback;
+    use session_core::workers::TurnUpdate;
+    let guard = system_one(Some(0.0)).await;
+    let gate = gate(&guard, "internal", |_| {}).await;
+    let (broadcast, mut updates) = tokio::sync::broadcast::channel(8);
+    let context = ToolContext {
+        chat_feedback: Some(ChatFeedback::for_test(broadcast)),
+        ..gate.context.clone()
+    };
+
+    raise_for_collection(&context, 7).await.unwrap();
+    assert!(matches!(updates.try_recv(), Ok(TurnUpdate::SidebarChanged)));
+
+    raise_for_collection(&context, 7).await.unwrap();
+    assert!(updates.try_recv().is_err(), "already at that level");
+}
+
+#[tokio::test]
 async fn an_unrated_collection_and_monitor_mode_leave_the_level_alone() {
     use aiplane_core::server::classification::ClassificationMode;
     use aiplane_runtime::classification_retrieval::raise_for_collection;

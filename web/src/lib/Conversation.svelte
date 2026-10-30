@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { api, ApiError, EFFORTS } from '#lib/api.js';
+	import { api, ApiError, EFFORTS, refusalSentence, responseError } from '#lib/api.js';
 	import type { CanvasDocument, ChatAsset, ChatCapability, ChatModelChoice, Effort } from '#lib/api.js';
 	import { createConversationController } from '#lib/chat.svelte.js';
 	import { extensionStatus, onExtensionState, requestActivation } from '#lib/browser-bridge.js';
@@ -391,7 +391,10 @@
 		let mounted = true;
 		const c = createConversationController(id, api.chatEventsUrl(id), () => canWrite);
 		c.onSidebarChanged = () => {
-			void refreshConversationMeta();
+			// A raised classification level arrives as this cue too.
+			void refreshConversationMeta().then(() => {
+				if (classification?.active) void levelChanged();
+			});
 			// A turn that wrote to the canvas bumps the sidebar too, so this is
 			// also the cue to re-read the document list.
 			void loadDocuments();
@@ -694,7 +697,7 @@
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify(body)
 		});
-		if (!res.ok) throw new Error((await res.text()).slice(0, 200) || res.statusText);
+		if (!res.ok) throw await responseError(res);
 	}
 
 	async function retry(turnId: string) {
@@ -765,7 +768,12 @@
 		const saved = postJson(`/api/v0/chat/sessions/${id}/share`, { shared }).then(
 			() => true,
 			(err) => {
-				notice = String(err);
+				if (err instanceof ApiError && err.code === 'link_sharing_above_limit') {
+					notice = t('share-dialog-link-not-allowed');
+					void loadShares();
+				} else {
+					notice = err instanceof ApiError ? refusalSentence(err, t) : String(err);
+				}
 				return false;
 			}
 		);

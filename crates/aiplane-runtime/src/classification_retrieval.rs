@@ -42,7 +42,9 @@ pub async fn raise_for_collection(ctx: &ToolContext, collection_id: i64) -> Resu
         ctx.principal.subject_id(),
     )
     .await
-    .map(|_| ())
+    .map(|transition| {
+        crate::classification_detector::announce_raise(ctx, transition.as_ref());
+    })
     .map_err(|error| {
         format!(
             "could not record the conversation level after reading a classified collection: {error}. \
