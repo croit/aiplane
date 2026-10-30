@@ -151,9 +151,14 @@ fn template_body(current: &Value, template_id: &str) -> Value {
     for (key, value) in template["policy"].as_object().unwrap() {
         policy[key] = value.clone();
     }
+    // No System One pool exists here, and a class with a question needs a model.
+    let mut classes = template["classes"].clone();
+    for class in classes.as_array_mut().unwrap() {
+        class["rule_question"] = json!("");
+    }
     json!({
         "levels": template["levels"],
-        "classes": template["classes"],
+        "classes": classes,
         "markings": template["markings"],
         "assignments": [],
         "policy": policy,

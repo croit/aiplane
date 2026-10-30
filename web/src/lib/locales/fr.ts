@@ -1589,6 +1589,7 @@ export const fr: Catalog = {
  "cls-destinations-lead": "Tous les endroits où des données peuvent aller : pools de modèles, outils, serveurs MCP, connecteurs et collections de connaissances. Attribuez à chacun le niveau le plus élevé pour lequel il convient. C'est votre déclaration sur la destination des données.",
  "cls-destinations-progress": "{rated} sur {total} évaluées",
  "cls-destinations-unrated": "{count} destinations ne sont pas évaluées ; elles reçoivent le niveau le plus bas.",
+ "cls-detector-not-configured": "Le message n'a pas été envoyé : la classification des données la soumet à un modèle System One, mais aucun n'est configuré. Demandez à un administrateur d'en choisir un sous Administration > Classification des données.",
  "cls-detector-unavailable": "Le message n'a pas été envoyé : le modèle qui vérifie son contenu classifié était injoignable, et rien ne part vers un modèle sans vérification. Réessayez plus tard ou demandez à un administrateur de vérifier le modèle System One.",
  "cls-diff-classes-added": "Classes de données ajoutées : {names}",
  "cls-diff-classes-changed": "Classes de données modifiées : {names}",

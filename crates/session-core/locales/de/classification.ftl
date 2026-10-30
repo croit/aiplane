@@ -226,6 +226,7 @@ cls-tool-hidden = { $tool } ist in dieser Unterhaltung nicht verfügbar: Sie ist
 cls-gate-blocked = { $tool } wurde nicht aufgerufen: Die Argumente enthalten Daten der Klasse { $classes }, für die das Werkzeug nicht freigegeben ist. Entferne diese Daten aus den Argumenten oder nutze ein anderes Werkzeug.
 cls-gate-unavailable = { $tool } wurde nicht aufgerufen: Das Modell, das die Argumente prüft, war nicht erreichbar, daher verlässt nichts ungeprüft die Unterhaltung. Versuche es später erneut oder bitte eine Administratorin, das System-One-Modell zu prüfen.
 cls-detector-unavailable = Die Nachricht wurde nicht gesendet: Das Modell, das sie auf klassifizierte Inhalte prüft, war nicht erreichbar, und ungeprüft geht nichts an ein Modell. Versuche es später erneut oder bitte einen Administrator, das System-One-Modell zu prüfen.
+cls-detector-not-configured = Die Nachricht wurde nicht gesendet: Die Datenklassifizierung befragt ein System-One-Modell dazu, aber es ist keines eingerichtet. Bitte einen Administrator, unter Administration > Datenklassifizierung eines auszuwählen.
 
 # Template texts: the administrator's language; applied, they become the scheme's own data.
 cls-tpl-iso-name = ISO/IEC 27001 (vier Stufen)

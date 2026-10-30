@@ -1139,6 +1139,40 @@ async fn a_class_at_the_level_a_files_label_already_sets_neither_asks_nor_is_ask
 }
 
 #[tokio::test]
+async fn rules_without_a_configured_system_one_model_refuse_the_turn_and_say_none_is_configured() {
+    let upstream = chat_upstream().await;
+    let s3 = object_store().await;
+    let state = state_with(
+        &upstream.uri(),
+        &s3.uri(),
+        true,
+        &iban_and_rule_classes(),
+        |config| config.classification.system_one_model = String::new(),
+    )
+    .await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let state = Arc::new(state);
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let resp = router(state.clone())
+        .serve(submit_message(
+            &session.id,
+            &cookie,
+            "high-model",
+            "hello there",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    wait_settled(&state, &session.id).await;
+    let (status, error) = last_turn_status(&state, &session.id).await;
+    assert_eq!(status, chat::TurnStatus::Errored);
+    assert!(error.contains("none is configured"), "{error}");
+    assert!(!error.contains("could not be reached"), "{error}");
+    assert_eq!(chat_requests(&upstream).await, 0);
+}
+
+#[tokio::test]
 async fn an_unreachable_system_one_model_still_raises_what_a_pattern_found_and_refuses_the_turn() {
     use aiplane_core::server::classification::ClassificationMode::Enforce;
     let (upstream, state, session, (status, error)) = send_with(

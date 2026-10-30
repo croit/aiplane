@@ -226,6 +226,7 @@ cls-tool-hidden = { $tool } is not available in this conversation, which is clas
 cls-gate-blocked = { $tool } was not called: its arguments contain data of class { $classes }, which the tool is not cleared for. Remove that data from the arguments or use another tool.
 cls-gate-unavailable = { $tool } was not called: the model that checks its arguments could not be reached, so nothing leaves the conversation unchecked. Retry later or ask an administrator to check the System One model.
 cls-detector-unavailable = The message was not sent: the model that checks it for classified content could not be reached, so nothing goes to a model unchecked. Retry later or ask an administrator to check the System One model.
+cls-detector-not-configured = The message was not sent: data classification asks a System One model about it, but none is configured. Ask an administrator to choose one under Administration > Data classification.
 
 # Template texts: the administrator's language; applied, they become the scheme's own data.
 cls-tpl-iso-name = ISO/IEC 27001 (four levels)

@@ -1574,6 +1574,7 @@ export const zh: Catalog = {
  "cls-destinations-lead": "数据可能流向的所有位置：模型池、工具、MCP 服务器、连接器和知识库。为每一项指定其适用的最高级别。这是您对数据去向的声明。",
  "cls-destinations-progress": "已评级 {rated}/{total}",
  "cls-destinations-unrated": "有 {count} 个目的地未评级；它们将获得最低级别。",
+ "cls-detector-not-configured": "消息未发送：数据分类需要通过 System One 模型检查该消息，但尚未配置模型。请联系管理员在“管理 > 数据分类”中选择一个模型。",
  "cls-detector-unavailable": "消息未发送：用于检查其分类内容的模型无法访问，未经检查的内容不会发送给任何模型。请稍后重试，或请管理员检查 System One 模型。",
  "cls-diff-classes-added": "新增数据类别：{names}",
  "cls-diff-classes-changed": "修改的数据类别：{names}",

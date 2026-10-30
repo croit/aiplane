@@ -226,6 +226,7 @@ cls-tool-hidden = { $tool } no está disponible en esta conversación, clasifica
 cls-gate-blocked = { $tool } no se llamó: sus argumentos contienen datos de la clase { $classes }, para la que la herramienta no está autorizada. Quita esos datos de los argumentos o usa otra herramienta.
 cls-gate-unavailable = { $tool } no se llamó: no se pudo contactar con el modelo que comprueba sus argumentos, así que nada sale de la conversación sin comprobar. Inténtalo más tarde o pide a un administrador que revise el modelo System One.
 cls-detector-unavailable = El mensaje no se envió: no se pudo contactar con el modelo que comprueba su contenido clasificado, y nada llega a un modelo sin comprobar. Inténtalo más tarde o pide a un administrador que revise el modelo System One.
+cls-detector-not-configured = El mensaje no se envió: la clasificación de datos lo consulta a un modelo System One, pero no hay ninguno configurado. Pide a un administrador que elija uno en Administración > Clasificación de datos.
 
 # Template texts: the administrator's language; applied, they become the scheme's own data.
 cls-tpl-iso-name = ISO/IEC 27001 (cuatro niveles)

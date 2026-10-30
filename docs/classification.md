@@ -45,7 +45,7 @@ All endpoints need administrator rights and live under `/api/v0/admin/classifica
 - class ids are unique slugs, patterns are built-in pattern ids, thresholds lie between 0 and 1;
 - a `mip` marking value or a level's Purview label must be a GUID (stored lowercase without braces);
 - an assignment must name an existing destination; `gate` is accepted only for destinations that carry data out of the conversation; non-egress destinations are always `hide`;
-- the System One model must be served by a System One pool and be cleared for the highest level when a class has a question or any destination is set to `gate`; it may be empty only when neither is the case.
+- the System One model must be served by a System One pool and be cleared for the highest level when a class has a question or any destination is set to `gate`; it may be empty only when neither is the case. A save with a question on a class and no model is refused on `policy.system_one_model`, naming the classes.
 
 Removing a level moves its conversations as described under [Data classification](admin/settings.md#data-classification) and writes one `scheme_change` event per conversation. The policy is stored in the `settings.classification.*` rows of `app_settings`, so the runtime reads it through the settings mechanism.
 
@@ -196,7 +196,7 @@ When a turn starts, before any model reads the attachments (OCR is a model too),
 
 The markings are weighed first: a class at or below the level a marking sets is neither asked about nor acted on, just as typed text in a conversation already at that level is not checked for it.
 
-A class's action applies exactly as for typed text: `raise` raises, `confirm` asks the person before the content goes to the model, `block` refuses the turn. A marking always raises. In monitor mode only the System One question is asked and logged. A failure of the System One model refuses the turn in enforce mode; what the markings, patterns and word lists found still raises the conversation first, for an upload as for typed text. The person sees that the checking model could not be reached; the cause is logged.
+A class's action applies exactly as for typed text: `raise` raises, `confirm` asks the person before the content goes to the model, `block` refuses the turn. A marking always raises. In monitor mode only the System One question is asked and logged. A failure of the System One model refuses the turn in enforce mode; what the markings, patterns and word lists found still raises the conversation first, for an upload as for typed text. The person sees that the checking model could not be reached; the cause is logged. When rules apply but no System One model is configured (only possible for a scheme that predates the save rule), the turn is refused the same way and the message says that none is configured and an administrator must choose one.
 
 After the raise the model check runs as before: a model whose level is below the conversation's is refused unless the person just approved the content for it. The check is repeated at the start of every later round, so a level that rises during a turn (a retrieval) ends the turn at the next round instead of sending the new content to an uncleared model. An approval covers the level the conversation had when it was given.
 

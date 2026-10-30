@@ -1589,6 +1589,7 @@ export const en: Catalog = {
  "cls-destinations-lead": "Every place data can go: model pools, tools, MCP servers, connectors and knowledge collections. Rate each one with the highest level of data it is fit for. This is your declaration about where the data ends up.",
  "cls-destinations-progress": "{rated} of {total} rated",
  "cls-destinations-unrated": "{count} destinations are unrated; they get the lowest level.",
+ "cls-detector-not-configured": "The message was not sent: data classification asks a System One model about it, but none is configured. Ask an administrator to choose one under Administration > Data classification.",
  "cls-detector-unavailable": "The message was not sent: the model that checks it for classified content could not be reached, so nothing goes to a model unchecked. Retry later or ask an administrator to check the System One model.",
  "cls-diff-classes-added": "Data classes added: {names}",
  "cls-diff-classes-changed": "Data classes changed: {names}",

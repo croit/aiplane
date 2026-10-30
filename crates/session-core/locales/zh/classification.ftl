@@ -226,6 +226,7 @@ cls-tool-hidden = { $tool } 在此对话中不可用：对话的密级为 { $lev
 cls-gate-blocked = { $tool } 未被调用：其参数包含类别为 { $classes } 的数据，而该工具未获准处理此类数据。请从参数中移除这些数据，或改用其他工具。
 cls-gate-unavailable = { $tool } 未被调用：负责检查其参数的模型无法连接，因此不会有未经检查的内容离开对话。请稍后重试，或请管理员检查 System One 模型。
 cls-detector-unavailable = 消息未发送：用于检查其分类内容的模型无法访问，未经检查的内容不会发送给任何模型。请稍后重试，或请管理员检查 System One 模型。
+cls-detector-not-configured = 消息未发送：数据分类需要通过 System One 模型检查该消息，但尚未配置模型。请联系管理员在“管理 > 数据分类”中选择一个模型。
 
 # Template texts: the administrator's language; applied, they become the scheme's own data.
 cls-tpl-iso-name = ISO/IEC 27001（四级）
