@@ -44,7 +44,7 @@ All endpoints need administrator rights and live under `/api/v0/admin/classifica
 - levels need unique slug ids and contiguous ranks from 0; every level id used by a class, marking, assignment or policy field must exist;
 - class ids are unique slugs, patterns are built-in pattern ids, thresholds lie between 0 and 1;
 - a `mip` marking value or a level's Purview label must be a GUID (stored lowercase without braces);
-- an assignment must name an existing destination; `gate` is accepted only for destinations that send data out of AIplane; non-egress destinations are always `hide`;
+- an assignment must name an existing destination; `gate` is accepted only for destinations that carry data out of the conversation; non-egress destinations are always `hide`;
 - the System One model must be served by a System One pool and be cleared for the highest level when a class has a question or any destination is set to `gate`; it may be empty only when neither is the case.
 
 Removing a level moves its conversations as described under [Data classification](admin/settings.md#data-classification) and writes one `scheme_change` event per conversation. The policy is stored in the `settings.classification.*` rows of `app_settings`, so the runtime reads it through the settings mechanism.
@@ -205,7 +205,7 @@ After the raise the model check runs as before: a model whose level is below the
 
 ### Tools
 
-Only a tool that can send data out of AIplane (`Tool::egress`, the **Egress** column of [tools-inventory.md](tools-inventory.md)) is a destination with a maximum level (see `classification_assignments`). A tool whose arguments and results stay inside the plane (attachments, canvas documents, memory, scheduling, own knowledge collections, QR codes, typst templates, `enable_tools`) is never filtered or gated. MCP tools, ComfyUI workflows and the sandbox tools always count as egress, and so does any tool that does not say otherwise. Re-evaluated at the start of every round:
+Only a tool that carries data out of the conversation (`Tool::egress`, the **Egress** column of [tools-inventory.md](tools-inventory.md): out of AIplane, or into memory and scheduled runs that other conversations read) is a destination with a maximum level (see `classification_assignments`). A tool whose arguments and results stay in the conversation (attachments, canvas documents, reading and deleting memory and scheduled actions, own knowledge collections, QR codes, typst templates, `enable_tools`) is never filtered or gated. MCP tools, ComfyUI workflows and the sandbox tools always count as egress, and so does any tool that does not say otherwise. Re-evaluated at the start of every round:
 
 - `over = hide`: above its level the tool is not offered, and a call to it is refused with a message naming the conversation's level.
 - `over = gate`: the tool stays offered. Before each call above its level the arguments are checked for the classes above the tool's level: the patterns and word lists of those classes, then the System One model. No match: the call runs. A match: with `classification.gate_on_match = ask` the call pauses on the ordinary approval prompt, which names the matched classes; with `block` it is refused with a message naming them. If the System One model cannot be reached the call is refused and the message says so. A call approved on the prompt runs without a second check. Nothing is raised: the arguments leave, the conversation does not change.

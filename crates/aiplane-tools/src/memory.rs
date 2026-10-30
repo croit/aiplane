@@ -144,7 +144,7 @@ impl Tool for Remember {
     }
 
     fn egress(&self) -> bool {
-        false
+        true
     }
 
     fn schema(&self) -> ToolDef {
@@ -382,7 +382,7 @@ impl Tool for UpdateMemory {
     }
 
     fn egress(&self) -> bool {
-        false
+        true
     }
 
     fn schema(&self) -> ToolDef {

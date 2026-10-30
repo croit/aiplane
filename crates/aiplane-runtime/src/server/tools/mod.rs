@@ -584,11 +584,12 @@ pub trait Tool: Send + Sync + 'static {
     /// that is not read-only); everything else is `false` because nothing
     /// is known about it. An agent asks for approval before such a call
     /// unless its spec sets the tool's `permission` (`docs/agent-hil.md` → "Per-tool approval").
-    /// Whether this tool's arguments or results can leave AIplane: an
-    /// external URL or API, an MCP server, a model backend the tool names.
-    /// Data classification filters and gates only tools that do, so the
+    /// Whether data leaves this conversation through the tool: out of
+    /// AIplane (an external URL or API, an MCP server, a model backend the
+    /// tool names) or into memory and scheduled runs that other conversations
+    /// read. Data classification filters and gates only tools that do, so the
     /// default is the safe answer; a tool overrides it only when nothing it
-    /// receives or returns leaves the plane.
+    /// receives or returns leaves the conversation.
     fn egress(&self) -> bool {
         true
     }

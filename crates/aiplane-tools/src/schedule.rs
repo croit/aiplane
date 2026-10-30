@@ -156,7 +156,7 @@ impl Tool for ScheduleAction {
     }
 
     fn egress(&self) -> bool {
-        false
+        true
     }
 
     fn schema(&self) -> ToolDef {

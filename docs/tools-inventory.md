@@ -13,7 +13,8 @@ browser workflow.
   tool appears.
 - **Chat-only** — the tool needs an AIplane conversation and is unavailable to
   direct model API requests.
-- **Egress** — whether the tool's arguments or results can leave AIplane
+- **Egress** — whether data leaves the conversation through the tool: out of
+  AIplane, or into memory and scheduled runs that other conversations read
   (`Tool::egress`). MCP tools, ComfyUI workflows and the sandbox tools are
   always `yes`; the `typst_<template>` family is `no`.
 - **Toggle key** — the switch an administrator can grant and a person can
@@ -25,12 +26,12 @@ link to the relevant setup page. Tools that need storage, knowledge indexing,
 or notification setup also show when that prerequisite is missing.
 
 With [data classification](classification.md#tools) active, every tool that
-can send data out of AIplane (**Egress** `yes`) also has a maximum level per
+can carry data out of the conversation (**Egress** `yes`) also has a maximum level per
 assignment, hidden or gated above it in a conversation. An unrated egress tool
 is at the lowest level and hidden above it. A tool marked `no` receives and
-returns data that stays inside AIplane and is never filtered or gated. `yes` is
+returns data that stays in the conversation and is never filtered or gated. `yes` is
 the default: a tool is marked `no` only when nothing it is given or returns
-reaches an external URL, API, MCP server or model backend it names.
+reaches an external URL, API, MCP server or model backend it names, or is stored where other conversations read it.
 
 ## Always registered
 
@@ -74,7 +75,7 @@ message rather than being absent.
 | `restore_document_version` | yes | no | `document` | Roll a canvas document back to an earlier version. |
 | `delete_document` | yes | no | `document` | Soft-delete a canvas document: hidden from the canvas and from `list_documents`, version history kept, reversible. |
 | `undelete_document` | yes | no | `document` | Undo a `delete_document`. Deliberately *not* named `restore_document` — that would sit one suffix away from `restore_document_version`, which does something else entirely. |
-| `schedule_action` | yes | no | `schedule` | Create a recurring prompt (5-field cron + IANA timezone, defaulting to `users.timezone`). Validates with `Cron::parse` and returns `describe()` + the next 3 run times, so a wrong-but-valid expression is caught before the first run. Inherits the turn's model from `ToolContext.model`; **always** creates the action with tools off. |
+| `schedule_action` | yes | yes | `schedule` | Create a recurring prompt (5-field cron + IANA timezone, defaulting to `users.timezone`). Validates with `Cron::parse` and returns `describe()` + the next 3 run times, so a wrong-but-valid expression is caught before the first run. Inherits the turn's model from `ToolContext.model`; **always** creates the action with tools off. |
 | `list_scheduled_actions` | — | no | `schedule` | The caller's own scheduled actions, each with the same human schedule preview. Read-only, so it works off-chat. |
 | `delete_scheduled_action` | yes | no | `schedule` | Delete one of the caller's actions. Another user's id is reported as missing, not forbidden (no existence leak). |
 | `rag_search` | — | no | `rag_search` | Hybrid search (dense kNN fused with FTS5/BM25) over an indexed collection. Returns chunks with path, line range, score. Optional `path_glob` scopes it to part of the corpus — filtered inside the query on the lexical side, and after kNN candidate generation on the dense side (which is why the candidate pool widens when it is set). |
@@ -83,9 +84,9 @@ message rather than being absent.
 | `rag_query_documents` | — | no | `rag_query_documents` | Filter, sort and total the documents of a collection by the fields its extraction profile pulled out (vendor, date, amount, project). The answer to any question about a *set* of documents — the latest, the largest, how many, how much — which top-k passage retrieval structurally cannot give: it returns five similar chunks and no way to know whether that was all of them. Always reports `total_matches` alongside the returned page, and surfaces the distinct values a text filter matched so `ACME` hitting both `ACME GmbH` and `ACME Deutschland AG` is visible rather than silently resolved. |
 | `rag_list_documents` | — | no | `rag_query_documents` | Folder-scoped document listing with the **stored** per-document summaries written at index time. Turns "find everything about project X and summarise it" into one call over ~200 tokens per document rather than re-reading every file. |
 | `rag_fetch_document` | — | no | `rag_query_documents` | Full extracted text of one indexed document by `document_id`. The drill-down after a hit; truncates long documents with a note rather than flooding the context. |
-| `remember` | — | no | `memory` | Persist a durable fact for the user or acting agent. Personal and organization agent writes remain in that agent's own scope; new content is bounded to 2,000 UTF-8 bytes. |
+| `remember` | — | yes | `memory` | Persist a durable fact for the user or acting agent. Personal and organization agent writes remain in that agent's own scope; new content is bounded to 2,000 UTF-8 bytes. |
 | `recall` | — | no | `memory` | Read at most 200 recent notes with explicit scopes. A personal agent reads own and user notes; an organization agent reads own and shared organization notes, without employee profiles. |
-| `update_memory` | — | no | `memory` | Correct an authorized fact by its returned ID and scope, within 2,000 UTF-8 bytes. Agents can change only their own notes. |
+| `update_memory` | — | yes | `memory` | Correct an authorized fact by its returned ID and scope, within 2,000 UTF-8 bytes. Agents can change only their own notes. |
 | `forget` | — | no | `memory` | Delete an authorized fact by ID and scope. Agents cannot delete user or shared organization notes. |
 
 The canvas tools, the four memory tools and the three scheduling tools
