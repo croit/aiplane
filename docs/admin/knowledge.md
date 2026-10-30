@@ -1,6 +1,6 @@
 # Build and maintain knowledge collections
 
-Knowledge collections make indexed source material available to retrieval tools such as `rag_search`. The collection manager (`/rag`), editors and extraction profiles require the `admin` role. A user or agent searching a collection needs the relevant retrieval tool and access to that collection.
+Knowledge collections make indexed source material available to retrieval tools such as `rag_search`. The collection manager (`/rag`), editors and extraction profiles require [administrator rights](access.md). A user or agent searching a collection needs the relevant retrieval tool and access to that collection.
 
 Before creating a collection, enable RAG with a persistent data directory in [system settings](settings.md), and configure an embeddings pool in [Models and routing](models.md). Source credentials must be able to read the material being indexed.
 
@@ -79,7 +79,7 @@ The profile list shows version and built-in status. Editing reports the collecti
 
 | Symptom | Check |
 |---|---|
-| Knowledge page is forbidden | `admin` role; collection management is administration |
+| Knowledge page is forbidden | Administrator rights; collection management is administration |
 | No embedding models | Embeddings pool, backend health and advertised models |
 | Cloning or source access fails | Actual URL/ref, provider account and credentials |
 | Source test asks for credentials again | Changed settings with write-only stored secrets |

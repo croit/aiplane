@@ -1,6 +1,6 @@
 # System settings field reference
 
-This reference covers every field declared by the system settings registry. Open `/admin/settings` with the `admin` role to see the effective values for your installation. Follow [Configure system features](settings.md) for save, secret and restart behavior.
+This reference covers every field declared by the system settings registry. Open `/admin/settings` with [administrator rights](access.md) to see the effective values for your installation. Follow [Configure system features](settings.md) for save, secret and restart behavior.
 
 Model fields use the catalog for the pool kind named in the table. Paths refer to the AIplane process filesystem. Restart is required for marked fields; other fields reload on save. The effective value shown by the application includes stored configuration; it is not necessarily a clean-install default.
 

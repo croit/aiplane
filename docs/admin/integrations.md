@@ -1,6 +1,6 @@
 # Manage connectors, skills and image workflows
 
-These administration screens require the `admin` role. Configuration makes resources available; group permissions and agent grants determine who may use them.
+These administration screens require [administrator rights](access.md). Configuration makes resources available; group permissions and agent grants determine who may use them.
 
 ## Add an MCP connector
 

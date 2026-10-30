@@ -53,6 +53,7 @@ export interface TokenManagementDetails {
 		user_id: string;
 		oidc_roles: string[];
 		rbac_roles: string[];
+		is_admin: boolean;
 	};
 }
 

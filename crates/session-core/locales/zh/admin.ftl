@@ -59,7 +59,7 @@ admin-search-saved = 网页搜索设置已保存
 # ─── SvelteKit 管理端 SPA ─────────────────────────────────────────────────────
 # 管理外壳的角色校验、/admin/comfyui 工作流目录，以及旧页面没有的模型编辑器部分。
 
-admin-needs-admin-role = 这些页面需要管理员角色。
+admin-needs-admin-role = 这些页面需要管理员权限。
 admin-overwrite-existing = 覆盖已有条目
 admin-comfyui-reload = 重新加载目录
 admin-comfyui-reloaded = 目录已重新加载 — 已加载 { $count } 个工作流。

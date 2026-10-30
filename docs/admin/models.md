@@ -2,7 +2,7 @@
 
 An **upstream backend** is a model server or provider endpoint. A **pool** groups backends for a purpose such as chat, embeddings, reranking, transcription or OCR. The **model catalog** is the set of models and aliases exposed by that topology. Configure these before selecting models for chat, agents or optional features.
 
-You need a signed-in account with the `admin` role. Open **Administration → Models and routing** (`/admin/models`). Its tabs are **Upstreams**, **Catalog**, **Defaults** and **Automatic routing**. `/admin/upstreams` also opens the upstream manager.
+You need a signed-in account with [administrator rights](access.md). Open **Administration → Models and routing** (`/admin/models`). Its tabs are **Upstreams**, **Catalog**, **Defaults** and **Automatic routing**. `/admin/upstreams` also opens the upstream manager.
 
 ## Add a backend and pool
 

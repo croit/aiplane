@@ -35,7 +35,9 @@ guess — what the provider calls its groups claim and what values it contains.
 There is no way to reach screen 2 without a login that worked.
 
 Finishing stores the provider, creates an `admins` group (`is_admin`) mapped to
-the chosen value plus a default `users` group, and calls
+the chosen value plus a default `users` group (the name carries no meaning;
+only the `is_admin` flag grants admin rights, on the server and in the SPA,
+which reads `is_admin` from `GET /api/v0/me`), and calls
 `AppState::set_runtime` — so the live OIDC client and public URL are swapped in
 without a restart.
 

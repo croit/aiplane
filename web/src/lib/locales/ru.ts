@@ -141,7 +141,7 @@ export const ru: Catalog = {
  "admin-models-tab-defaults": "Модели по умолчанию",
  "admin-models-tab-routing": "Автоматическая маршрутизация",
  "admin-models-tab-upstreams": "Апстримы",
- "admin-needs-admin-role": "Для этих страниц нужна роль администратора.",
+ "admin-needs-admin-role": "Для этих страниц нужны права администратора.",
  "admin-no-models": "Пока нет доступных моделей. Как только появится доступный вышестоящий бэкенд, он отобразится здесь.",
  "admin-no-models-match": "Ни одна модель не соответствует текущему фильтру.",
  "admin-not-configured": "не настроено",

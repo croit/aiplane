@@ -113,6 +113,7 @@ pub(crate) async fn me_response(state: &RamaState, user_id: &str) -> Response {
         email: user.email,
         name: user.name,
         roles: user.roles,
+        is_admin: state.rbac.is_admin(&role_ids),
         can_manage_agents: state.rbac.can_manage_agents(&role_ids),
         can_manage_personal_agents: state.rbac.can_manage_personal_agents(&role_ids),
         role_ids,

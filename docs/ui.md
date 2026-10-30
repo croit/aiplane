@@ -171,6 +171,15 @@ see unregistered image, GeoIP, and sandbox tools as read-only rows linking to
 the matching operator setup page. These placeholder rows are not offered to
 the model or persisted as user tool preferences.
 
+The admin sidebar group appears, and `/admin/*` pages render without the
+"needs administrator rights" warning, only when `GET /api/v0/me` reports `is_admin`:
+the server's verdict over the resolved groups' `is_admin` flags. The SPA never compares group names — the
+setup wizard's group is `admins`, operators name theirs freely and the
+break-glass group is `__bootstrap_admin__`. `admin-gate.test.ts` fails on a
+`role_ids`/`rbac_roles` name check. The account details of
+`GET /api/v0/tokens/details` carry the same flag for the notifications tab's
+operator-settings link.
+
 The admin sidebar has one **Access & limits** entry. Its path-backed tabs
 open `/admin/users`, `/admin/tokens`, `/admin/groups`, `/admin/organizations`
 and `/admin/limits`, with their own forms and APIs. The Limits tab follows

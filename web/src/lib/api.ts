@@ -61,6 +61,8 @@ export interface Me {
 	 * an older gateway, which `featureEnabled` reads as "not gating".
 	 */
 	features?: string[];
+	/** One of `role_ids` is flagged `is_admin`; the group's name says nothing. */
+	is_admin?: boolean;
 	/** May build agents; the Agents section is shown only when true. */
 	can_manage_agents?: boolean;
 	can_manage_personal_agents: boolean;

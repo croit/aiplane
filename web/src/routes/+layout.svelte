@@ -215,7 +215,7 @@
 		me.loaded && me.value !== null && routeFeature !== null && !featureEnabled(features, routeFeature)
 	);
 
-	const isAdmin = $derived(me.value?.role_ids?.includes('admin') ?? false);
+	const isAdmin = $derived(me.value?.is_admin ?? false);
 	const publicRoute = $derived(page.url.pathname.startsWith('/setup') || page.url.pathname.endsWith('/login'));
 	const pageTitle = $derived(pageTitleDescriptor(page.url.pathname));
 	const resolvedPageTitle = $derived(

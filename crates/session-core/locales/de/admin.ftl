@@ -69,7 +69,7 @@ admin-search-saved = Websuche-Einstellungen gespeichert
 # Die Rollenprüfung der Admin-Hülle, der Workflow-Katalog unter /admin/comfyui
 # und die Teile des Modell-Editors, die es auf der alten Seite nicht gab.
 
-admin-needs-admin-role = Diese Seiten erfordern die Administratorrolle.
+admin-needs-admin-role = Diese Seiten erfordern Administratorrechte.
 admin-overwrite-existing = vorhandenen Eintrag überschreiben
 admin-comfyui-reload = Katalog neu laden
 admin-comfyui-reloaded = Katalog neu geladen — { $count } Workflow(s) geladen.
