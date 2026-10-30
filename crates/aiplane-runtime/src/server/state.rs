@@ -784,11 +784,9 @@ impl AppState {
         if !scheme.is_active() {
             return true;
         }
-        let stored = aiplane_core::server::classification::level_id(&self.db, session_id)
-            .await
-            .ok()
-            .flatten();
-        let conversation = scheme.level_or_lowest(stored.as_deref());
+        let conversation =
+            aiplane_core::server::classification::level_or_highest(&self.db, &scheme, session_id)
+                .await;
         if conversation.rank == scheme.lowest().rank {
             return true;
         }

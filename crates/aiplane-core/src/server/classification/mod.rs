@@ -15,7 +15,8 @@ mod scheme;
 mod store;
 
 pub use conversation::{
-    ClassificationError, Transition, level_id, lower, raise, record_event, set_level,
+    ClassificationError, Transition, level_id, level_or_highest, lower, raise, record_event,
+    set_level,
 };
 pub use policy::{ClassificationConfig, ClassificationMode, GateOnMatch, Lowering, OutputMarking};
 pub use scheme::{

@@ -602,10 +602,9 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
                     .await
                     .unwrap_or(false) =>
         {
-            let stored = aiplane_core::server::classification::level_id(&state.db, session_id)
+            aiplane_core::server::classification::level_or_highest(&state.db, &scheme, session_id)
                 .await
-                .unwrap_or(None);
-            scheme.level_or_lowest(stored.as_deref()).rank
+                .rank
         }
         _ => 0,
     };

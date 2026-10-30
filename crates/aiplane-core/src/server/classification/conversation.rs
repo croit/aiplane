@@ -10,7 +10,7 @@ use jiff::Timestamp;
 use thiserror::Error;
 
 use super::policy::Lowering;
-use super::scheme::Scheme;
+use super::scheme::{Level, Scheme};
 use crate::server::db::{DbError, Pool, WriteTx};
 
 #[derive(Debug, Error)]
@@ -58,6 +58,19 @@ pub async fn level_id(db: &Pool, session_id: &str) -> Result<Option<String>, DbE
             .await?
             .flatten(),
     )
+}
+
+/// The conversation's level for a decision that lets something through. A
+/// level that cannot be read counts as the scheme's highest: nothing is opened
+/// up by a database error.
+pub async fn level_or_highest<'a>(db: &Pool, scheme: &'a Scheme, session_id: &str) -> &'a Level {
+    match level_id(db, session_id).await {
+        Ok(stored) => scheme.level_or_lowest(stored.as_deref()),
+        Err(error) => {
+            tracing::warn!(session_id, error = %error, "could not read the conversation level; treating it as the highest");
+            scheme.highest()
+        }
+    }
 }
 
 /// Store a conversation's level. Not audited and not checked against the
@@ -276,6 +289,17 @@ mod tests {
         let (db, scheme) = conversation().await;
         assert_eq!(level_id(&db, "s1").await.unwrap(), None);
         assert_eq!(scheme.level_or_lowest(None).id, "public");
+    }
+
+    #[tokio::test]
+    async fn a_level_that_cannot_be_read_counts_as_the_highest() {
+        let (db, scheme) = conversation().await;
+        assert_eq!(level_or_highest(&db, &scheme, "s1").await.id, "public");
+        set_level(&db, "s1", "internal").await.unwrap();
+        assert_eq!(level_or_highest(&db, &scheme, "s1").await.id, "internal");
+
+        db.close().await;
+        assert_eq!(level_or_highest(&db, &scheme, "s1").await.id, "secret");
     }
 
     #[tokio::test]

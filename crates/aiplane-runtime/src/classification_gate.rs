@@ -55,18 +55,6 @@ pub fn clearance(scheme: &Scheme, tool_id: &str) -> ToolClearance {
     }
 }
 
-/// The conversation's rank. A level that cannot be read counts as the
-/// highest: a tool is never opened up by a database error.
-pub async fn conversation_rank(ctx: &ToolContext, scheme: &Scheme, session_id: &str) -> u32 {
-    match classification::level_id(&ctx.db, session_id).await {
-        Ok(stored) => scheme.level_or_lowest(stored.as_deref()).rank,
-        Err(error) => {
-            tracing::warn!(session_id, error = %error, "could not read the conversation level; treating it as the highest");
-            scheme.highest().rank
-        }
-    }
-}
-
 /// Drop the tools a conversation at `rank` may not see: tools that can send
 /// data out of AIplane, above their clearance and set to be hidden. Gated
 /// tools stay, and so does every tool whose data stays inside the plane.
@@ -233,7 +221,9 @@ impl Tool for ClassifiedTool {
             let Some(session_id) = ctx.session_id.clone() else {
                 return self.inner.run(ctx, args).await;
             };
-            let rank = conversation_rank(&ctx, &self.scheme, &session_id).await;
+            let rank = classification::level_or_highest(&ctx.db, &self.scheme, &session_id)
+                .await
+                .rank;
             if rank <= self.clearance.rank {
                 return self.inner.run(ctx, args).await;
             }

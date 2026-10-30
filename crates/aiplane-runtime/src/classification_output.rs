@@ -56,11 +56,7 @@ pub async fn upload_stamped(
     ) else {
         return chat_attachments::upload(s3, turn_id, filename, mime, bytes).await;
     };
-    let stored = classification::level_id(&ctx.db, session_id)
-        .await
-        .ok()
-        .flatten();
-    let level = policy.scheme.level_or_lowest(stored.as_deref());
+    let level = classification::level_or_highest(&ctx.db, &policy.scheme, session_id).await;
     let options = policy.options();
     let stamped = match stamp_output(filename, mime, &bytes, level, &policy.scheme, &options) {
         Ok(stamped) => stamped,

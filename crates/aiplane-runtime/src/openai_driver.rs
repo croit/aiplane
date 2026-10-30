@@ -1743,12 +1743,7 @@ async fn run_one_turn(
         // surfaces the newly-enabled schemas on the next one.
         let mut allowed_tools = policy.offer(d, &ctx.session_id, &user_mcp, &granted).await;
         if person_chat && live_state.scheme().is_active() {
-            let rank = crate::classification_gate::conversation_rank(
-                &tool_ctx,
-                &live_state.scheme(),
-                &ctx.session_id,
-            )
-            .await;
+            let rank = conversation_rank(d, &ctx.session_id).await;
             crate::classification_gate::retain_visible(
                 &live_state.scheme(),
                 rank,
@@ -3644,12 +3639,13 @@ fn inject_ocr_blocks(messages: &mut [serde_json::Value], blocks: &[String]) -> b
 }
 
 async fn conversation_rank(d: &OpenAiDriver, session_id: &str) -> u32 {
-    let scheme = d.state.scheme();
-    let stored = aiplane_core::server::classification::level_id(&d.state.db, session_id)
-        .await
-        .ok()
-        .flatten();
-    scheme.level_or_lowest(stored.as_deref()).rank
+    aiplane_core::server::classification::level_or_highest(
+        &d.state.db,
+        &d.state.scheme(),
+        session_id,
+    )
+    .await
+    .rank
 }
 
 /// Refuse the turn when the conversation's level has outgrown the model: the
@@ -3668,13 +3664,9 @@ async fn ensure_model_cleared(
         return Ok(());
     }
     let scheme = d.state.scheme();
-    let conversation = scheme.level_or_lowest(
-        aiplane_core::server::classification::level_id(&d.state.db, session_id)
-            .await
-            .ok()
-            .flatten()
-            .as_deref(),
-    );
+    let conversation =
+        aiplane_core::server::classification::level_or_highest(&d.state.db, &scheme, session_id)
+            .await;
     Err(TurnError::Upstream {
         message: t_args(
             Lang::En,
