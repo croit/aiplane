@@ -1689,7 +1689,7 @@ export const de: Catalog = {
  "cls-policy-model-not-cleared": "{model} (nicht für die höchste Stufe freigegeben)",
  "cls-policy-model-uncleared-picked": "Dieses Modell ist nicht für die höchste Stufe freigegeben; das Speichern wird abgelehnt.",
  "cls-policy-override": "Personen dürfen an ein nicht freigegebenes Modell senden",
- "cls-policy-override-help": "Bestätigt jemand mit „Trotzdem senden“ Inhalte, nach denen eine Datenklasse fragt, darf er sie an das gewählte Modell schicken, auch wenn dieses für die Stufe der Unterhaltung nicht freigegeben ist. Aus: Es muss ein freigegebenes Modell gewählt werden.",
+ "cls-policy-override-help": "Bestätigt jemand mit „Trotzdem senden“ Inhalte, nach denen eine Datenklasse fragt, dürfen diese an das gewählte Modell gehen, auch wenn es für die Stufe der Unterhaltung nicht freigegeben ist. Aus: Es muss ein freigegebenes Modell gewählt werden.",
  "cls-policy-unknown": "Stufe eines unbekannten Labels",
  "cls-policy-unknown-help": "Eine Datei trägt eine Markierung, die Sie nicht zugeordnet haben.",
  "cls-policy-unreadable": "Stufe einer nicht lesbaren Datei",

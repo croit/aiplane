@@ -1689,7 +1689,7 @@ export const fr: Catalog = {
  "cls-policy-model-not-cleared": "{model} (non habilité pour le niveau le plus élevé)",
  "cls-policy-model-uncleared-picked": "Ce modèle n'est pas habilité pour le niveau le plus élevé ; l'enregistrement sera refusé.",
  "cls-policy-override": "Les personnes peuvent envoyer à un modèle non autorisé",
- "cls-policy-override-help": "Quand quelqu'un confirme un contenu sur lequel une classe de données pose la question, il peut quand même l'envoyer au modèle choisi, même si celui-ci n'est pas autorisé pour le niveau de la conversation. Désactivé : il doit choisir un modèle autorisé.",
+ "cls-policy-override-help": "Quand un contenu sur lequel une classe de données pose la question est confirmé, il peut quand même être envoyé au modèle choisi, même si celui-ci n'est pas autorisé pour le niveau de la conversation. Désactivé : un modèle autorisé doit être choisi.",
  "cls-policy-unknown": "Niveau d'une étiquette inconnue",
  "cls-policy-unknown-help": "Un fichier porte un marquage que vous n'avez pas associé.",
  "cls-policy-unreadable": "Niveau d'un fichier illisible",
