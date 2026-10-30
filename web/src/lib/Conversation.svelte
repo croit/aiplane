@@ -10,6 +10,7 @@
 	import { refreshSidebar, sidebar } from '#lib/sidebar.svelte.js';
 	import { conversationAccess, parseUserContent, replaceUserText } from '#lib/chat-protocol.js';
 	import { endScrollTop, nextFollow } from '#lib/chat-autoscroll.js';
+	import { lastUsedModel, openingModel } from '#lib/conversation-model.js';
 	import type { ChatSession, ConversationPermissions } from '#lib/chat-protocol.js';
 	import { canonicalAttachments } from '#lib/conversation-assets.js';
 	import { renderPromptMarkdown, sanitizeSvgPreview } from '#lib/markdown.js';
@@ -40,6 +41,7 @@
 	let controller = $state<ReturnType<typeof createConversationController> | null>(null);
 	let session = $state<ChatSession | null>(null);
 	let model = $state('');
+	let lastModel: string | null = null;
 	let models = $state<ChatModelChoice[]>([]);
 	let modelCurrency = $state('');
 	let transcriptionModels = $state<string[]>([]);
@@ -266,19 +268,7 @@
 			welcome = snap.welcome;
 			assets = snap.assets;
 			if (snap.assets.length > 0 && window.innerWidth >= 768) canvasOpen = true;
-			// Prefill the model picker from the conversation's last assistant
-			// turn — the "keep talking to what you were talking to" default.
-			const lastModel = [...snap.turns]
-				.reverse()
-				.find((e) => e.turn.role === 'assistant' && e.turn.model)?.turn.model;
-			// A conversation with no assistant turn to learn from falls back to
-			// the first offered model, or the composer would open with an empty
-			// picker and refuse to send. A confidential conversation may have
-			// filtered the remembered model out of the list.
-			if (!model) {
-				const remembered = models.find((candidate) => candidate.id === lastModel);
-				model = remembered?.id ?? models[0]?.id ?? '';
-			}
+			lastModel = lastUsedModel(snap.turns.map((entry) => entry.turn));
 			return true;
 		} catch (err) {
 			if (request !== metaRequest) return false;
@@ -306,9 +296,24 @@
 			const list = await api.listChatModels(id);
 			models = list.models;
 			modelCurrency = list.currency;
-			if (!model && models.length > 0) model = models[0].id;
 		} catch {
 			// Picker stays free-text; submitting still works.
+		}
+	}
+
+	/**
+	 * Open the conversation on the model it was last sent to, once the first
+	 * snapshot and the model list have both settled — deciding on either alone
+	 * lets whichever lands first pick `models[0]`. The picker only renders
+	 * with the snapshot, so nothing the user picked can be overwritten here.
+	 */
+	function chooseOpeningModel() {
+		const opening = openingModel(lastModel, models);
+		model = opening.model;
+		// A reader of a shared conversation has no picker, and the owner's
+		// model is none of their business.
+		if (opening.unavailable && canWrite) {
+			notice = t('chat-render-last-model-unavailable', { model: opening.unavailable });
 		}
 	}
 
@@ -386,9 +391,6 @@
 	}
 
 	onMount(() => {
-		// `loadModels` was defined and never called, which left `models` empty
-		// and the picker permanently in its free-text fallback.
-		void loadModels();
 		void loadTools();
 		void loadVoiceConfig();
 		let mounted = true;
@@ -407,7 +409,9 @@
 			void loadDocuments();
 		};
 		controller = c;
-		void loadMeta().then((loaded) => { if (mounted && loaded) c.attach(); });
+		const meta = loadMeta();
+		void meta.then((loaded) => { if (mounted && loaded) c.attach(); });
+		void Promise.all([meta, loadModels()]).then(() => { if (mounted) chooseOpeningModel(); });
 		void loadDocuments();
 		// Follow the end as the transcript grows. A ResizeObserver rather than
 		// a reaction to the turn state: the height also changes for things no
@@ -753,16 +757,52 @@
 		}
 	}
 
+	let shareLinkCopied = $state(false);
+	let shareLinkCopiedTimer: number | undefined;
+
 	async function toggleShare() {
 		if (!canWrite) return;
+		window.clearTimeout(shareLinkCopiedTimer);
+		shareLinkCopied = false;
 		const shared = !(session?.shared ?? false);
-		try {
-			await postJson(`/api/v0/chat/sessions/${id}/share`, { shared });
-		} catch (err) {
-			notice = String(err);
-			return;
-		}
+		const saved = postJson(`/api/v0/chat/sessions/${id}/share`, { shared }).then(
+			() => true,
+			(err) => {
+				notice = String(err);
+				return false;
+			}
+		);
+		const copied = shared ? copyLinkOnceShared(saved) : Promise.resolve(false);
+		if (!(await saved)) return;
 		await loadMeta();
+		if (await copied) {
+			shareLinkCopied = true;
+			shareLinkCopiedTimer = window.setTimeout(() => (shareLinkCopied = false), 1500);
+		}
+	}
+
+	/**
+	 * The clipboard write starts inside the click — the browser allows it only
+	 * with the click's user activation, which an awaited round trip can
+	 * outlive — but its content waits for the server: a refused share leaves
+	 * the clipboard as it was rather than holding a link nobody can open.
+	 */
+	async function copyLinkOnceShared(saved: Promise<boolean>): Promise<boolean> {
+		const link = window.location.href;
+		try {
+			if (typeof ClipboardItem === 'undefined') {
+				if (!(await saved)) return false;
+				await navigator.clipboard.writeText(link);
+			} else {
+				const text = saved.then((ok) =>
+					ok ? new Blob([link], { type: 'text/plain' }) : Promise.reject(new Error('the conversation was not shared'))
+				);
+				await navigator.clipboard.write([new ClipboardItem({ 'text/plain': text })]);
+			}
+			return true;
+		} catch {
+			return false;
+		}
 	}
 
 	let answering = $state<string | null>(null);
@@ -947,6 +987,7 @@
 		{canWrite}
 		{canFork}
 		shared={session?.shared ?? false}
+		linkCopied={shareLinkCopied}
 		{models}
 		currency={modelCurrency}
 		bind:model

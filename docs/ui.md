@@ -114,6 +114,13 @@ voice selectors at every width: inline beside the actions from `sm` up, on a
 full-width row of their own beneath them below it. It is one set of controls,
 not a mobile copy, so the options and the selected model are the same on both.
 
+The chat model opens on the conversation's last used model: the newest turn's
+`model` in the snapshot (`conversation-model.ts`). The snapshot and the model
+list load in parallel, so the choice waits for both and is made once per mount;
+the picker renders only with the snapshot, so it cannot overwrite a user's pick.
+A last used model the list does not offer falls back to the first offered one
+with a notice; without a list the free-text picker keeps the last used id.
+
 An empty conversation shows the operator's welcome text (`chat.welcome.text`)
 on a card centred in the space between header and composer, its content
 left-aligned so a list marker stays with the line it belongs to; it is

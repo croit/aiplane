@@ -11,6 +11,7 @@
 		canWrite,
 		canFork,
 		shared,
+		linkCopied,
 		models,
 		currency,
 		model = $bindable(),
@@ -31,6 +32,7 @@
 		canWrite: boolean;
 		canFork: boolean;
 		shared: boolean;
+		linkCopied: boolean;
 		models: ChatModelOption[];
 		currency: string;
 		model: string;
@@ -103,7 +105,7 @@
 		{#if isOwner && hasCanvas}<button class="btn btn-ghost btn-sm" onclick={oncanvas} aria-label={t('chat-render-canvas-toggle-title')} title={t('chat-render-canvas-toggle-title')}><span aria-hidden="true">▣</span><span class="hidden sm:inline">{t('chat-render-canvas-toggle-label')}</span></button>{/if}
 		{#if canWrite}
 			<button class="btn btn-ghost btn-sm" onclick={onshare} title={t('chat-render-share-tooltip')}>
-				{shared ? t('chat-render-share-label-on') : t('chat-render-share-label-off')}
+				{linkCopied ? t('chat-render-share-link-copied') : shared ? t('chat-render-share-label-on') : t('chat-render-share-label-off')}
 			</button>
 		{:else if canFork}
 			<button class="btn btn-ghost btn-sm" onclick={onfork} title={t('chat-render-fork-tooltip')}>{t('chat-render-fork-label')}</button>

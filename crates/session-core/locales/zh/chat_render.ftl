@@ -59,6 +59,7 @@ chat-render-tools-done = 完成
 chat-render-close = 关闭
 
 chat-render-share-label-on = 已共享 ✓
+chat-render-share-link-copied = 链接已复制 ✓
 chat-render-share-label-off = 共享
 chat-render-share-tooltip = 已共享的对话，任何持有链接的已登录用户都可以阅读
 
@@ -98,3 +99,4 @@ chat-render-confidential-requires-gdpr = GDPR 合规
 chat-render-confidential-requires-nda = NDA 合规
 chat-render-confidential-no-model = 没有模型获准处理机密数据。请联系管理员授权一个。
 chat-render-confidential-model-switched = 此对话现已设为机密；所选模型未获准用于它。
+chat-render-last-model-unavailable = 此对话上次使用的模型 { $model } 在此不可用；已改为选择第一个可用模型。
