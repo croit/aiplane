@@ -69,7 +69,7 @@ fn voice_pool(kind: PoolKind, upstream: &str, voices: &[(&str, &str)]) -> Upstre
         offer_voices: Vec::new(),
         allowed_groups: Vec::new(),
         fallback_offline: None,
-        compliance: Default::default(),
+        level_rank: 0,
         enforce_limits: true,
         kind,
         strategy: PickerStrategy::RoundRobin,

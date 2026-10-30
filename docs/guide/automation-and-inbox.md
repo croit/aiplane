@@ -14,7 +14,7 @@ Schedules run a prompt at configured times. Webhooks run a prompt when another s
 6. Decide whether runs should reuse a conversation. If enabled, choose the history window, from 1 to 50 rounds, and optionally select an existing conversation through the linked-chat picker.
 7. Save, then inspect the schedule card's next-run time and active status.
 
-The form accepts names up to 128 characters and prompts up to 8,000 characters. It displays configured GDPR and NDA metadata warnings for the selected model. Choose a model appropriate to the actual data in the prompt.
+The form accepts names up to 128 characters and prompts up to 8,000 characters. Choose a model appropriate to the actual data in the prompt.
 
 Fresh conversations keep runs independent; reusing a conversation carries the configured recent history into subsequent runs. The schedule card links to the resulting chat or run history, depending on what exists. It displays the selected agent when bound, the latest success, waiting or failure status, and any recorded error.
 

@@ -653,7 +653,7 @@ mod tests {
                     strategy: Default::default(),
                     fallback_offline: None,
                     models: Vec::new(),
-                    compliance: Default::default(),
+                    level_rank: 0,
                     enforce_limits: true,
                     voices: Default::default(),
                     offer_voices: Vec::new(),

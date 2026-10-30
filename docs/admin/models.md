@@ -6,9 +6,9 @@ You need a signed-in account with [administrator rights](access.md). Open **Admi
 
 ## Add a backend and pool
 
-![An upstream pool card shows its kind, compliance declarations, healthy backend and served models.](../img/guide/upstream-pool.png)
+![An upstream pool card shows its kind, healthy backend and served models.](../img/guide/upstream-pool.png)
 
-1. In **Upstreams**, add a pool. Choose its name, kind and selection strategy. Set allowed groups and the GDPR/NDA declarations to match the actual provider arrangement.
+1. In **Upstreams**, add a pool. Choose its name, kind and selection strategy. Set allowed groups to match the actual provider arrangement.
 2. Add a backend. Enter a unique name and its API base URL. Select the pool. Configure a stored API key or an environment-variable key source if required.
 3. Use the backend's connection test. Read which credential source was used, the HTTP result and the discovered models. A connection test does not save or apply the backend.
 4. Set the health path, request weight and maximum in-flight requests. Configure explicit models when the upstream cannot advertise them, and aliases when clients need stable model names.
@@ -34,7 +34,7 @@ The connection test distinguishes authentication failure, timeout, unreachable s
 
 ### Pool fields
 
-Choose the pool's purpose from the kinds offered by the server. The editor also configures backend membership, explicit pool models, allowed groups, offline fallback, separate GDPR and NDA coverage declarations, and whether usage limits apply. Speech pools have language-to-voice mappings and an offered-voices list.
+Choose the pool's purpose from the kinds offered by the server. The editor also configures backend membership, explicit pool models, allowed groups, offline fallback, and whether usage limits apply. A pool's classification level is an assignment in the database, see [data classification](settings.md#data-classification). Speech pools have language-to-voice mappings and an offered-voices list.
 
 | Selection strategy | Behavior |
 |---|---|
@@ -42,13 +42,13 @@ Choose the pool's purpose from the kinds offered by the server. The editor also 
 | `round_robin` | Distributes requests in rotation |
 | `prefix_affinity` | Keeps matching request prefixes on the same replica where practical, while avoiding overloaded replicas; requests with no usable prefix fall back to least-in-flight selection |
 
-The **System One** pool kind serves models for TypeSafe System One requests, including content checks and automatic-route selection. It is separate from the chat pool that receives the user's request; review both destinations' GDPR and NDA declarations when configuring those features.
+The **System One** pool kind serves models for TypeSafe System One requests, including data classification checks and automatic-route selection. It is separate from the chat pool that receives the user's request; review both destinations' provider arrangements when configuring those features.
 
 The **rerank** pool kind serves cross-encoder models that score passages against a query. Knowledge search uses it, when one is configured, to reorder the candidates it found ([knowledge collections](knowledge.md)). API clients call the same models through `POST /v1/rerank`, and `/v1/models` lists them. A rerank pool's allowed groups restrict which people's tokens may call or list its models; a pool without allowed groups is open to every token with default pool access. Knowledge search ignores those groups, because it calls the reranker as the gateway itself. `POST /v1/rerank` relays the request in the backend's own format; see the [HTTP API reference](../reference/api.md#reranking).
 
 Prefix affinity is useful for self-hosted replicas with separate prompt-prefix caches. It is separate from an automatic route's session affinity: one chooses a backend replica, the other retains a selected model target.
 
-The **GDPR** and **NDA** flags describe separate properties of the provider arrangement. Set each one only when the applicable provider and service are covered for the data sent to that pool. These are operator declarations: AIplane does not inspect contracts, verify data residency, or certify compliance. The declarations are used by the [content guard](settings.md#access-and-content-guard) to decide which checks are needed before a request reaches a chat model. They do not grant access; allowed groups govern pool access, together with [group permissions](access.md). Review an offline fallback's availability, coverage and user access before relying on it.
+A pool's **classification level** is the most sensitive data its models are cleared for; it is an operator declaration, and AIplane does not inspect contracts, verify data residency or certify compliance. A pool without a level is at the lowest level. Levels do not grant access; allowed groups govern pool access, together with [group permissions](access.md). Review an offline fallback's availability, level and user access before relying on it.
 
 Backend and pool names can be changed through their editors. Deletion removes the configured resource; inspect and apply the resulting topology change. Do not overwrite another resource's name without reviewing the editor's explicit overwrite warning.
 

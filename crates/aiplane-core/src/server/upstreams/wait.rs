@@ -158,7 +158,7 @@ mod tests {
                 strategy: PickerStrategy::LeastInflight,
                 fallback_offline: None,
                 models: Vec::new(),
-                compliance: Default::default(),
+                level_rank: 0,
                 enforce_limits: true,
                 voices: HashMap::new(),
                 offer_voices: Vec::new(),

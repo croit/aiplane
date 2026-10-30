@@ -24,18 +24,16 @@ pub struct UpstreamPoolConfig {
     /// declares none of its own. Setting them turns discovery off for those
     /// backends — see [`BackendConfig::models`] for the precedence.
     pub models: Vec<String>,
-    /// Data-handling/compliance attributes for every model this pool serves.
-    /// Absent block ⇒ [`Compliance::default`] (all-clear): no UI warning. Set
-    /// a flag to `false` to surface a per-conversation warning banner in the
-    /// chat UI — purely advisory signalling, no request-blocking. Lives at the
-    /// pool level because residency/coverage is a property of the upstream
-    /// endpoint, not the individual model id.
-    pub compliance: Compliance,
+    /// Rank of the classification level this pool is cleared for, from its
+    /// `classification_assignments` row; 0 (the lowest level) when it has
+    /// none. Lives at the pool level because residency and the data-processing
+    /// agreement are properties of the upstream endpoint, not of a model id.
+    pub level_rank: u32,
     /// Whether calls served by this pool count toward users' rate limits and
     /// quotas. Default `true`. Set `false` for pools whose usage should be
     /// recorded (it still shows on `/usage`) but never consume a budget —
     /// typically your own self-hosted GPU pools, which are free, while cloud
-    /// pools stay enforced. Like [`compliance`](Self::compliance), it lives at
+    /// pools stay enforced. Like [`level_rank`](Self::level_rank), it lives at
     /// the pool level because "is this endpoint billable" is a property of the
     /// upstream, not the individual model id. See `server::limits`.
     pub enforce_limits: bool,
@@ -70,7 +68,7 @@ impl UpstreamPoolConfig {
             strategy: PickerStrategy::default(),
             fallback_offline: None,
             models: Vec::new(),
-            compliance: Compliance::default(),
+            level_rank: 0,
             enforce_limits: true,
             voices: HashMap::new(),
             offer_voices: Vec::new(),
@@ -87,36 +85,6 @@ impl UpstreamPoolConfig {
             .get(language)
             .or_else(|| self.voices.get(""))
             .map(String::as_str)
-    }
-}
-
-/// Per-pool data-handling attributes, surfaced to the user as chat-UI warnings
-/// when a flag is `false`. Both default to `true` (compliant), so a pool with
-/// no compliance flags set shows no warning — you opt **in** to a warning by
-/// declaring `false`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Compliance {
-    /// `false` ⇒ data sent here leaves the EU / has no GDPR safeguards. Warns
-    /// the user not to enter personal data.
-    pub gdpr: bool,
-    /// `false` ⇒ the endpoint is not covered by a confidentiality agreement.
-    /// Warns the user not to send NDA-protected / proprietary material.
-    pub nda: bool,
-}
-
-impl Default for Compliance {
-    fn default() -> Self {
-        Self {
-            gdpr: true,
-            nda: true,
-        }
-    }
-}
-
-impl Compliance {
-    /// True when every flag is clear — the common case, drawn with no warning.
-    pub fn is_all_clear(&self) -> bool {
-        self.gdpr && self.nda
     }
 }
 
@@ -573,20 +541,7 @@ mod tests {
         assert!(p.models.is_empty());
         assert!(p.fallback_offline.is_none());
         assert!(p.enforce_limits);
-        assert_eq!(p.compliance, Compliance::default());
-        assert!(p.compliance.is_all_clear());
-        assert!(p.compliance.gdpr && p.compliance.nda);
-    }
-
-    #[test]
-    fn a_compliance_flag_set_false_leaves_the_other_true() {
-        let c = Compliance {
-            gdpr: false,
-            ..Compliance::default()
-        };
-        assert!(!c.gdpr);
-        assert!(c.nda);
-        assert!(!c.is_all_clear());
+        assert_eq!(p.level_rank, 0);
     }
 
     #[test]

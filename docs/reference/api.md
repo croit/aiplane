@@ -691,7 +691,7 @@ Debug fixture routes exist only in development builds.
 | `POST /api/v0/chat/sessions/{session}/turns/{turn}/browser-handover/{request}/abort` |
 | `GET /api/v0/chat/sessions/{id}/capabilities` |
 | `POST /api/v0/chat/sessions/{id}/capabilities` |
-| `POST /api/v0/chat/sessions/{id}/confidential` |
+| `POST /api/v0/chat/sessions/{id}/classification` |
 | `GET /api/v0/chat/sessions/{id}/documents` |
 | `GET /api/v0/chat/sessions/{id}/documents/{doc_id}` |
 | `PUT /api/v0/chat/sessions/{id}/documents/{doc_id}` |

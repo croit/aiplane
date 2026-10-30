@@ -41,7 +41,7 @@ use aiplane_core::server::upstreams::{PoolAccess, PoolKind, config};
 use aiplane_core::server::usage::UsageHandle;
 use aiplane_features::server::speech::{self, SpokenMarkers};
 use aiplane_features::server::vad;
-use aiplane_runtime::content_guard::{self, Action as ContentGuardAction};
+use aiplane_runtime::classification_detector::{self, Decision};
 use aiplane_runtime::rama_server::auth::require_bearer;
 use aiplane_runtime::rama_server::state::RamaState;
 use aiplane_runtime::server::tools::ToolContext;
@@ -1014,14 +1014,14 @@ pub async fn enforce_content_guard(
     model: &str,
     access: &PoolAccess,
 ) -> Option<Response> {
-    match content_guard::evaluate_for_model(state, request, model, access).await {
-        Ok(ContentGuardAction::Allow) => None,
-        Ok(ContentGuardAction::Confirm) => Some(error_response(
+    match classification_detector::evaluate_for_model(state, request, model, access).await {
+        Ok(Decision::Allow) => None,
+        Ok(Decision::Confirm) => Some(error_response(
             StatusCode::CONFLICT,
             "content_confirmation_required",
             "Content requires user confirmation before it can be sent to this model.",
         )),
-        Ok(ContentGuardAction::Deny) => Some(error_response(
+        Ok(Decision::Deny) => Some(error_response(
             StatusCode::FORBIDDEN,
             "content_policy_denied",
             "Content policy prevents sending this request to the selected model.",

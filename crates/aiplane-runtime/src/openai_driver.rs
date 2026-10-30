@@ -1367,7 +1367,8 @@ async fn run_one_turn(
     let target = target.map_err(upstream_err)?;
     let (routing_model, access, automatic_decision) =
         (target.model.as_str(), target.access, target.decision);
-    match crate::content_guard::evaluate_for_turn(
+    let mut approved_by_user = false;
+    match crate::classification_detector::evaluate_for_turn(
         &d.state,
         &routing_state,
         routing_model,
@@ -1377,9 +1378,9 @@ async fn run_one_turn(
     .await
     .map_err(upstream_err)?
     {
-        crate::content_guard::Action::Allow => {}
-        crate::content_guard::Action::Confirm => {
-            if !crate::content_guard::confirm_in_chat(
+        crate::classification_detector::Decision::Allow => {}
+        crate::classification_detector::Decision::Confirm => {
+            if !crate::classification_detector::confirm_in_chat(
                 d.tool_ctx.chat_feedback.as_ref(),
                 d.tool_ctx.assistant_turn_id.as_deref(),
             )
@@ -1389,8 +1390,9 @@ async fn run_one_turn(
                     message: "Content was not approved for sending to the selected model.".into(),
                 });
             }
+            approved_by_user = true;
         }
-        crate::content_guard::Action::Deny => {
+        crate::classification_detector::Decision::Deny => {
             return Err(TurnError::Upstream {
                 message: "Content policy prevents sending this request to the selected model."
                     .into(),
@@ -1407,34 +1409,32 @@ async fn run_one_turn(
         )
         .unwrap_or_else(|| routing_model.to_string());
 
-    // A confidential conversation never reaches a model the operator did not
-    // clear for it — even when the client asked for one directly, and even
-    // after the picker filtered the list. The check runs on the resolved model
-    // so an automatic route is judged by the target it actually picked.
-    if aiplane_core::server::db::chat_session_settings::get_confidential(
-        &d.state.db,
-        &ctx.session_id,
-    )
-    .await
-    .unwrap_or(false)
-    {
-        let requires = d.state.config().chat.confidential.requires;
-        let compliance = d
+    // A conversation never reaches a model the operator did not clear for its
+    // level — even when the client asked for one directly, and even after the
+    // picker filtered the list. The check runs on the resolved model so an
+    // automatic route is judged by the target it actually picked. A user who
+    // just approved this turn's content for the model has overridden it.
+    if !approved_by_user
+        && !d
             .state
-            .upstreams
-            .models_with_compliance_for_kind_for(
-                aiplane_core::server::upstreams::PoolKind::Chat,
-                &access,
-            )
-            .into_iter()
-            .find_map(|(id, compliance)| (id == real_model).then_some(compliance));
-        if !compliance.is_some_and(|compliance| requires.satisfied_by(compliance)) {
-            return Err(TurnError::Upstream {
-                message: "This conversation is confidential; the selected model is not cleared \
-                          for it. Choose a model without a GDPR or NDA warning."
-                    .into(),
-            });
-        }
+            .model_cleared_for_session(&ctx.session_id, &real_model, &access)
+            .await
+    {
+        let scheme = d.state.scheme();
+        let conversation = scheme.level_or_lowest(
+            aiplane_core::server::classification::level_id(&d.state.db, &ctx.session_id)
+                .await
+                .ok()
+                .flatten()
+                .as_deref(),
+        );
+        return Err(TurnError::Upstream {
+            message: format!(
+                "This conversation is classified {}; the selected model is not cleared for \
+                 it. Choose a model that is cleared for that level.",
+                conversation.name
+            ),
+        });
     }
 
     let effort = Effort::from_db(

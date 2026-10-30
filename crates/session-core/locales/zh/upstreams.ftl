@@ -19,7 +19,5 @@ upstreams-empty = 尚未配置任何池或后端。添加一个池或后端即�
 upstreams-delete-confirm = 确定删除？
 upstreams-cancel = 取消
 upstreams-edit-backend = 编辑后端
-upstreams-comp-gdpr = GDPR
-upstreams-comp-nda = NDA
 upstreams-comp-limits = 限额
 upstreams-edit-pool = 编辑池

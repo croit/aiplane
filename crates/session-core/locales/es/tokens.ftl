@@ -130,27 +130,13 @@ tokens-expires-soon = { $days ->
 }
 tokens-models-tile-all = Los { $count } modelos — sigue tu acceso
 tokens-models-tile-some = { $count } de { $total } modelos
-tokens-models-tile-compliant = Todos conformes con RGPD y cubiertos por NDA
-tokens-models-tile-noncompliant = { $count ->
-    [one] { $count } modelo sin cobertura RGPD o NDA
-   *[other] { $count } modelos sin cobertura RGPD o NDA
-}
 tokens-models-tile-admin = Un operador permite { $count } de ellos
 tokens-models-max-price = hasta { $price } por millón de tokens de salida
-tokens-models-noncompliant-warning = { $count ->
-    [one] { $count } modelo aquí no cumple el RGPD o no está cubierto por NDA. No envíes datos personales ni material confidencial con este token.
-   *[other] { $count } modelos aquí no cumplen el RGPD o no están cubiertos por NDA. No envíes datos personales ni material confidencial con este token.
-}
 tokens-models-search = Buscar modelos
-tokens-models-filter-gdpr = Conforme RGPD
-tokens-models-filter-nda = Cubierto por NDA
 tokens-models-filter-free = Sin coste
-tokens-models-select-compliant = Seleccionar todos RGPD + NDA
 tokens-models-select-none = Borrar selección
 tokens-models-empty = Ningún modelo coincide.
 tokens-models-alias = alias de { $target }
-tokens-models-gdpr-ok = Conforme RGPD: los datos personales siguen protegidos.
-tokens-models-nda-ok = Cubierto por un acuerdo de confidencialidad.
 tokens-models-price-free = sin coste
 tokens-models-price-tokens = { $input } / { $output } { $symbol }
 tokens-models-price-per-images = { $price } por imagen

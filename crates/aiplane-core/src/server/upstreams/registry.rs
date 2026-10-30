@@ -28,9 +28,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering}
 use arc_swap::ArcSwap;
 use thiserror::Error;
 
-use super::config::{
-    BackendConfig, Compliance, FallbackConfig, PickerStrategy, PoolKind, UpstreamPoolConfig,
-};
+use super::config::{BackendConfig, FallbackConfig, PickerStrategy, PoolKind, UpstreamPoolConfig};
 use super::profile::{BackendProfile, Detected};
 use crate::server::principal::GrantKind;
 
@@ -41,7 +39,8 @@ use crate::server::principal::GrantKind;
 pub struct CatalogModel {
     pub id: String,
     pub kind: PoolKind,
-    pub compliance: Compliance,
+    /// The lowest classification level rank among the pools serving it.
+    pub level_rank: u32,
     pub alias_of: Option<String>,
 }
 
@@ -609,9 +608,10 @@ pub struct Pool {
     pub kind: PoolKind,
     pub strategy: PickerStrategy,
     pub backends: Vec<Arc<Backend>>,
-    /// Data-handling attributes for every model this pool serves (default
-    /// all-clear). Drives advisory chat-UI warnings; never affects routing.
-    pub compliance: Compliance,
+    /// Rank of the classification level this pool is cleared for (0 = the
+    /// lowest level, also for a pool with no assignment). Never affects
+    /// routing; the model filter and the turn check read it.
+    pub level_rank: u32,
     /// Whether calls served by this pool count toward rate limits / quotas
     /// (default `true`; self-hosted pools set `false`). See
     /// [`UpstreamPoolConfig::enforce_limits`] and [`UpstreamRegistry::enforce_limits_for_model`].
@@ -964,7 +964,7 @@ impl Pool {
             kind: cfg.kind,
             strategy: cfg.strategy,
             backends,
-            compliance: cfg.compliance,
+            level_rank: cfg.level_rank,
             enforce_limits: cfg.enforce_limits,
             voices: Arc::new(cfg.voices.clone()),
             offer_voices: cfg.offer_voices.clone(),
@@ -2071,8 +2071,8 @@ impl UpstreamRegistry {
     }
 
     /// Every model [`Self::all_models_for`] lists, each with its kind, its
-    /// compliance flags (merged most-restrictively, as in
-    /// [`Self::models_with_compliance_for_kind_for`]) and, for an alias, the
+    /// classification level rank (merged to the lowest, as in
+    /// [`Self::models_with_level_for_kind_for`]) and, for an alias, the
     /// real id it resolves to (a real id wins over an alias of the same
     /// spelling, as in [`Self::models_with_alias_target`]). An id served by
     /// pools of several kinds takes the first kind in [`PoolKind::ALL`].
@@ -2096,11 +2096,10 @@ impl UpstreamRegistry {
                         let entry = catalog.entry(id.clone()).or_insert_with(|| CatalogModel {
                             id: id.clone(),
                             kind,
-                            compliance: Compliance::default(),
+                            level_rank: pool.level_rank,
                             alias_of: None,
                         });
-                        entry.compliance.gdpr &= pool.compliance.gdpr;
-                        entry.compliance.nda &= pool.compliance.nda;
+                        entry.level_rank = entry.level_rank.min(pool.level_rank);
                         if real.contains(&id) {
                             real_ids.insert(id);
                         } else if entry.alias_of.is_none() {
@@ -2120,45 +2119,43 @@ impl UpstreamRegistry {
         out
     }
 
-    /// Sorted list of `(model_id, merged_compliance)` for every model served
-    /// by a pool of `kind`. When the same id is served by multiple pools the
-    /// flags are merged **most-restrictively** (a flag is clear only if it's
-    /// clear on *every* serving pool) — so a model that's GDPR-safe on one
-    /// upstream but not another is treated as not-safe. Backs the chat-UI
-    /// model dropdown labels and the per-conversation warning banner.
-    pub fn models_with_compliance_for_kind(&self, kind: PoolKind) -> Vec<(String, Compliance)> {
-        self.models_with_compliance_for_kind_for(kind, &PoolAccess::all())
+    /// Sorted list of `(model_id, level_rank)` for every model served by a
+    /// pool of `kind`. When several pools serve the same id the rank is the
+    /// **lowest** of them: a conversation may only use a model every serving
+    /// pool is cleared for. Backs the chat model picker and the turn check.
+    pub fn models_with_level_for_kind(&self, kind: PoolKind) -> Vec<(String, u32)> {
+        self.models_with_level_for_kind_for(kind, &PoolAccess::all())
     }
 
-    /// Like [`Self::models_with_compliance_for_kind`], but only over pools
-    /// `access` permits — the per-user chat model dropdown.
-    pub fn models_with_compliance_for_kind_for(
+    /// Like [`Self::models_with_level_for_kind`], but only over pools
+    /// `access` permits.
+    pub fn models_with_level_for_kind_for(
         &self,
         kind: PoolKind,
         access: &PoolAccess,
-    ) -> Vec<(String, Compliance)> {
+    ) -> Vec<(String, u32)> {
         let d = self.data();
-        let mut merged: HashMap<String, Compliance> = HashMap::new();
+        let mut merged: HashMap<String, u32> = HashMap::new();
         for pool in d
             .pools
             .values()
             .filter(|p| p.kind == kind && access.allows(p))
         {
             for backend in &pool.backends {
-                // Alias names inherit the pool's compliance flags, same as the
-                // real ids — clients pick either, so both must carry the warning.
+                // Alias names carry the pool's level like the real ids: clients
+                // pick either.
                 for id in backend.listed_models() {
                     if !access.reaches(pool, &id) {
                         continue;
                     }
-                    let entry = merged.entry(id).or_default();
-                    // AND the flags: clear only where every serving pool is clear.
-                    entry.gdpr &= pool.compliance.gdpr;
-                    entry.nda &= pool.compliance.nda;
+                    merged
+                        .entry(id)
+                        .and_modify(|rank| *rank = (*rank).min(pool.level_rank))
+                        .or_insert(pool.level_rank);
                 }
             }
         }
-        let mut out: Vec<(String, Compliance)> = merged.into_iter().collect();
+        let mut out: Vec<(String, u32)> = merged.into_iter().collect();
         out.sort_by(|a, b| a.0.cmp(&b.0));
         out
     }
@@ -3625,17 +3622,17 @@ mod tests {
         }
     }
 
-    /// Pool carrying explicit compliance flags.
-    fn pool_config_with_compliance(
+    /// Pool cleared for the level of rank `level_rank`.
+    fn pool_config_with_level(
         kind: PoolKind,
-        compliance: Compliance,
+        level_rank: u32,
         backends: Vec<BackendConfig>,
     ) -> UpstreamPoolConfig {
         UpstreamPoolConfig {
             voices: Default::default(),
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
-            compliance,
+            level_rank,
             kind,
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
@@ -3655,7 +3652,7 @@ mod tests {
             voices: Default::default(),
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
-            compliance: Default::default(),
+            level_rank: 0,
             enforce_limits: true,
             kind,
             strategy: PickerStrategy::RoundRobin,
@@ -4595,18 +4592,11 @@ mod tests {
     }
 
     #[test]
-    fn compliance_flags_attach_per_model_and_default_clear() {
+    fn a_pool_level_attaches_to_its_models_and_defaults_to_the_lowest() {
         let reg = build(vec![
             (
                 "zai",
-                pool_config_with_compliance(
-                    PoolKind::Chat,
-                    Compliance {
-                        gdpr: false,
-                        nda: false,
-                    },
-                    vec![backend("zai", 16)],
-                ),
+                pool_config_with_level(PoolKind::Chat, 2, vec![backend("zai", 16)]),
             ),
             (
                 "qwen",
@@ -4620,33 +4610,25 @@ mod tests {
         seed_models(&reg, "zai", 0, &["glm-4.6"]);
         seed_models(&reg, "qwen", 0, &["qwen-3"]);
 
-        let map: std::collections::HashMap<String, Compliance> = reg
-            .models_with_compliance_for_kind(PoolKind::Chat)
+        let map: std::collections::HashMap<String, u32> = reg
+            .models_with_level_for_kind(PoolKind::Chat)
             .into_iter()
             .collect();
-        // Flagged pool propagates to its model…
+        assert_eq!(map["glm-4.6"], 2);
         assert_eq!(
-            map["glm-4.6"],
-            Compliance {
-                gdpr: false,
-                nda: false
-            }
+            map["qwen-3"], 0,
+            "a pool with no assignment is at the lowest level"
         );
-        // …and a pool with no compliance block stays all-clear.
-        assert!(map["qwen-3"].is_all_clear());
     }
 
     #[test]
-    fn the_model_catalog_names_kind_compliance_and_alias_target_of_every_usable_model() {
+    fn the_model_catalog_names_kind_level_and_alias_target_of_every_usable_model() {
         let reg = build(vec![
             (
                 "cloud",
-                pool_config_with_compliance(
+                pool_config_with_level(
                     PoolKind::Chat,
-                    Compliance {
-                        gdpr: false,
-                        nda: true,
-                    },
+                    2,
                     vec![backend_alias("cloud", targets(&[("smart", "kimi")]))],
                 ),
             ),
@@ -4682,35 +4664,31 @@ mod tests {
 
         let catalog = reg.model_catalog_for(&PoolAccess::all());
 
-        let cloud_flags = Compliance {
-            gdpr: false,
-            nda: true,
-        };
         assert_eq!(
             catalog,
             vec![
                 CatalogModel {
                     id: "bge".into(),
                     kind: PoolKind::Embedding,
-                    compliance: Compliance::default(),
+                    level_rank: 0,
                     alias_of: None,
                 },
                 CatalogModel {
                     id: "bge-reranker".into(),
                     kind: PoolKind::Rerank,
-                    compliance: Compliance::default(),
+                    level_rank: 0,
                     alias_of: None,
                 },
                 CatalogModel {
                     id: "kimi".into(),
                     kind: PoolKind::Chat,
-                    compliance: cloud_flags,
+                    level_rank: 2,
                     alias_of: None,
                 },
                 CatalogModel {
                     id: "smart".into(),
                     kind: PoolKind::Chat,
-                    compliance: cloud_flags,
+                    level_rank: 2,
                     alias_of: Some("kimi".into()),
                 },
             ],
@@ -4749,44 +4727,27 @@ mod tests {
     }
 
     #[test]
-    fn compliance_merges_most_restrictively_across_pools() {
-        // Same model id served by two pools: one GDPR-safe, one not. The
-        // merge must take the restrictive view (not safe).
+    fn level_merges_to_the_lowest_across_pools() {
         let reg = build(vec![
             (
-                "safe",
-                pool_config(
-                    PoolKind::Chat,
-                    PickerStrategy::RoundRobin,
-                    vec![backend("safe", 16)],
-                ),
+                "high",
+                pool_config_with_level(PoolKind::Chat, 3, vec![backend("high", 16)]),
             ),
             (
-                "unsafe",
-                pool_config_with_compliance(
-                    PoolKind::Chat,
-                    Compliance {
-                        gdpr: false,
-                        nda: true,
-                    },
-                    vec![backend("unsafe", 16)],
-                ),
+                "low",
+                pool_config_with_level(PoolKind::Chat, 1, vec![backend("low", 16)]),
             ),
         ]);
-        seed_models(&reg, "safe", 0, &["shared"]);
-        seed_models(&reg, "unsafe", 0, &["shared"]);
+        seed_models(&reg, "high", 0, &["shared"]);
+        seed_models(&reg, "low", 0, &["shared"]);
 
-        let map: std::collections::HashMap<String, Compliance> = reg
-            .models_with_compliance_for_kind(PoolKind::Chat)
+        let map: std::collections::HashMap<String, u32> = reg
+            .models_with_level_for_kind(PoolKind::Chat)
             .into_iter()
             .collect();
-        // gdpr false on one pool wins; nda clear on both stays clear.
         assert_eq!(
-            map["shared"],
-            Compliance {
-                gdpr: false,
-                nda: true
-            }
+            map["shared"], 1,
+            "a model is only as cleared as its lowest pool"
         );
     }
 
@@ -5111,7 +5072,7 @@ mod tests {
             voices: Default::default(),
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
-            compliance: Default::default(),
+            level_rank: 0,
             enforce_limits: true,
             kind,
             strategy: PickerStrategy::RoundRobin,
@@ -5508,8 +5469,6 @@ mod tests {
                 kind: "chat".into(),
                 strategy: "least_inflight".into(),
                 fallback_offline: None,
-                compliance_gdpr: true,
-                compliance_nda: true,
                 enforce_limits: true,
                 sort_order: 0,
                 allowed_groups: Vec::new(),
@@ -5525,8 +5484,6 @@ mod tests {
                 kind: "system_one".into(),
                 strategy: "least_inflight".into(),
                 fallback_offline: None,
-                compliance_gdpr: true,
-                compliance_nda: true,
                 enforce_limits: true,
                 sort_order: 1,
                 allowed_groups: Vec::new(),

@@ -675,7 +675,7 @@ mod tests {
                 voices: Default::default(),
                 offer_voices: Vec::new(),
                 allowed_groups: Vec::new(),
-                compliance: Default::default(),
+                level_rank: 0,
                 enforce_limits: true,
                 kind: PoolKind::Embedding,
                 strategy: PickerStrategy::RoundRobin,

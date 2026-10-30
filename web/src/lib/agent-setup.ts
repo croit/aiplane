@@ -168,10 +168,10 @@ export function modelPickerOptions(
 	named: string,
 	held: string[],
 	resources: AgentResources | null | undefined,
-	labels: { empty: string | null; gdpr: string; nda: string }
+	labels: { empty: string | null }
 ): SearchOption[] {
 	const options: SearchOption[] = labels.empty === null ? [] : [{ value: '', label: labels.empty }];
-	options.push(...modelSelectOptions(resources?.models?.[kind] ?? [], labels));
+	options.push(...modelSelectOptions(resources?.models?.[kind] ?? []));
 	const listedAnywhere = (id: string) => Object.values(resources?.models ?? {}).some((list) => list.some((m) => m.id === id));
 	for (const id of [...held.filter((h) => !listedAnywhere(h)), named]) {
 		if (id && !options.some((o) => o.value === id)) options.push({ value: id, label: id });

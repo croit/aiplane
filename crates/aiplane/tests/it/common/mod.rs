@@ -154,7 +154,7 @@ pub async fn state_with_chat_pool_and_user_skills(
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
             fallback_offline: None,
-            compliance: Default::default(),
+            level_rank: 0,
             enforce_limits: true,
             kind: PoolKind::Chat,
             strategy: PickerStrategy::RoundRobin,
@@ -205,7 +205,7 @@ pub async fn state_with_pool_enforcing(
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
             fallback_offline: None,
-            compliance: Default::default(),
+            level_rank: 0,
             enforce_limits,
             kind,
             strategy: PickerStrategy::RoundRobin,
@@ -239,7 +239,7 @@ pub async fn state_with_automatic_route_pools_enforcing(
                 offer_voices: Vec::new(),
                 allowed_groups: Vec::new(),
                 fallback_offline: None,
-                compliance: Default::default(),
+                level_rank: 0,
                 enforce_limits: if kind == PoolKind::Chat {
                     chat_enforces
                 } else {
@@ -261,17 +261,20 @@ pub async fn state_with_automatic_route_pools_enforcing(
     state_from_registry(db_pool, registry)
 }
 
-pub async fn state_with_content_guard_pools(upstream_url: &str) -> RamaState {
-    state_with_content_guard_pools_in_mode(
+/// Three levels (public < internal < confidential), the classes `personal_data`
+/// (internal, blocks) and `nda` (confidential, blocks), a `guard-model` System
+/// One pool and a `chat` pool left at the lowest level.
+pub async fn state_with_classification_pools(upstream_url: &str) -> RamaState {
+    state_with_classification_pools_in_mode(
         upstream_url,
-        aiplane_core::server::config::ContentGuardMode::Enforce,
+        aiplane_core::server::classification::ClassificationMode::Enforce,
     )
     .await
 }
 
-pub async fn state_with_content_guard_pools_in_mode(
+pub async fn state_with_classification_pools_in_mode(
     upstream_url: &str,
-    mode: aiplane_core::server::config::ContentGuardMode,
+    mode: aiplane_core::server::classification::ClassificationMode,
 ) -> RamaState {
     let db_pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
     let mut pools = HashMap::new();
@@ -282,10 +285,7 @@ pub async fn state_with_content_guard_pools_in_mode(
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
             fallback_offline: None,
-            compliance: upstreams::Compliance {
-                gdpr: false,
-                nda: false,
-            },
+            level_rank: 0,
             enforce_limits: true,
             kind: PoolKind::Chat,
             strategy: PickerStrategy::RoundRobin,
@@ -300,7 +300,7 @@ pub async fn state_with_content_guard_pools_in_mode(
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
             fallback_offline: None,
-            compliance: Default::default(),
+            level_rank: 0,
             enforce_limits: true,
             kind: PoolKind::SystemOne,
             strategy: PickerStrategy::RoundRobin,
@@ -311,10 +311,29 @@ pub async fn state_with_content_guard_pools_in_mode(
     let registry = upstreams::UpstreamRegistry::new(&pools).unwrap();
     seed_pool_models(&registry, "chat", 0, &["model-a"]);
     let mut config = test_config();
-    config.content_guard.enabled = true;
-    config.content_guard.model = "guard-model".into();
-    config.content_guard.mode = mode;
-    state_from_registry_with_config(db_pool, registry, config)
+    config.classification.system_one_model = "guard-model".into();
+    config.classification.mode = mode;
+    seed_classification_scheme(&db_pool).await;
+    let state = state_from_registry_with_config(db_pool, registry, config);
+    state.reload_scheme().await;
+    state
+}
+
+/// public(0) < internal(1) < confidential(2) with a blocking class on each of
+/// the upper two.
+pub async fn seed_classification_scheme(db: &db::Pool) {
+    sqlx::raw_sql(
+        "INSERT INTO classification_levels (id, rank, name, color) VALUES
+             ('internal', 1, 'Internal', 'info'),
+             ('confidential', 2, 'Confidential', 'warning');
+         INSERT INTO classification_data_classes
+             (id, name, level_id, rule_question, action) VALUES
+             ('personal_data', 'Personal data', 'internal', 'Does this contain personal data?', 'block'),
+             ('nda', 'NDA material', 'confidential', 'Does this contain NDA-protected material?', 'block');",
+    )
+    .execute(db)
+    .await
+    .unwrap();
 }
 
 /// A chat pool with **two** backends serving the same model, for tests about
@@ -329,7 +348,7 @@ pub async fn state_with_two_chat_backends(first_url: &str, second_url: &str) -> 
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
             fallback_offline: None,
-            compliance: Default::default(),
+            level_rank: 0,
             enforce_limits: true,
             kind: PoolKind::Chat,
             strategy: PickerStrategy::RoundRobin,
@@ -371,7 +390,7 @@ pub async fn state_with_alias_for_kind(
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
             fallback_offline: None,
-            compliance: Default::default(),
+            level_rank: 0,
             enforce_limits: true,
             kind,
             strategy: PickerStrategy::RoundRobin,
@@ -406,7 +425,7 @@ pub async fn state_with_speech_voices(
             offer_voices: offer.iter().map(|v| (*v).to_string()).collect(),
             allowed_groups: Vec::new(),
             fallback_offline: None,
-            compliance: Default::default(),
+            level_rank: 0,
             enforce_limits: true,
             kind: PoolKind::Speech,
             strategy: PickerStrategy::RoundRobin,
@@ -472,7 +491,7 @@ pub async fn state_with_chat_and_config_transcription(
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
             fallback_offline: None,
-            compliance: Default::default(),
+            level_rank: 0,
             enforce_limits: true,
             kind: PoolKind::Chat,
             strategy: PickerStrategy::RoundRobin,
@@ -490,7 +509,7 @@ pub async fn state_with_chat_and_config_transcription(
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
             fallback_offline: None,
-            compliance: Default::default(),
+            level_rank: 0,
             enforce_limits: true,
             kind: PoolKind::Transcription,
             strategy: PickerStrategy::RoundRobin,
@@ -521,7 +540,7 @@ pub async fn state_with_chat_and_embed(chat_model: &str, embed_model: &str) -> R
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
             fallback_offline: None,
-            compliance: Default::default(),
+            level_rank: 0,
             enforce_limits: true,
             kind: PoolKind::Chat,
             strategy: PickerStrategy::RoundRobin,
@@ -536,7 +555,7 @@ pub async fn state_with_chat_and_embed(chat_model: &str, embed_model: &str) -> R
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
             fallback_offline: None,
-            compliance: Default::default(),
+            level_rank: 0,
             enforce_limits: true,
             kind: PoolKind::Embedding,
             strategy: PickerStrategy::RoundRobin,
@@ -575,7 +594,7 @@ pub async fn state_with_admin_rbac_and_comfyui(upstream_url: &str) -> RamaState 
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
             fallback_offline: None,
-            compliance: Default::default(),
+            level_rank: 0,
             enforce_limits: true,
             kind: PoolKind::Chat,
             strategy: PickerStrategy::RoundRobin,
@@ -661,7 +680,7 @@ async fn state_with_admin_rbac_cfg(upstream_url: &str, allow_impersonation: bool
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
             fallback_offline: None,
-            compliance: Default::default(),
+            level_rank: 0,
             enforce_limits: true,
             kind: PoolKind::Chat,
             strategy: PickerStrategy::RoundRobin,

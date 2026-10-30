@@ -813,7 +813,7 @@ mod tests {
                 }],
                 models: vec![],
                 fallback_offline: None,
-                compliance: Default::default(),
+                level_rank: 0,
                 enforce_limits: true,
                 allowed_groups: Vec::new(),
                 voices: HashMap::new(),

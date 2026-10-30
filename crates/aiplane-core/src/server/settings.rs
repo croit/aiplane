@@ -43,13 +43,15 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+use crate::server::classification::{
+    ClassificationConfig, ClassificationMode, GateOnMatch, Lowering, OutputMarking,
+};
 use crate::server::config::AllowedIps;
 use crate::server::config::{
-    AgentsConfig, ChatConfig, ComfyuiConfig, CompactionConfig, ConfidentialConfig,
-    ConfidentialRequirement, Config, ContentGuardConfig, ContentGuardMode, ContentGuardPolicy,
-    FeedbackConfig, GatewayConfig, GeoipConfig, LimitsConfig, LoopsConfig, MetricsConfig,
-    OcrConfig, PromptConfig, PushConfig, RagConfig, S3Config, SandboxConfig, SkillsConfig,
-    TurnsConfig, TypstConfig, UsageConfig, VoiceConfig,
+    AgentsConfig, ChatConfig, ComfyuiConfig, CompactionConfig, Config, FeedbackConfig,
+    GatewayConfig, GeoipConfig, LimitsConfig, LoopsConfig, MetricsConfig, OcrConfig, PromptConfig,
+    PushConfig, RagConfig, S3Config, SandboxConfig, SkillsConfig, TurnsConfig, TypstConfig,
+    UsageConfig, VoiceConfig,
 };
 use crate::server::crypto::Crypto;
 use crate::server::db::{DbError, Pool, app_settings};
@@ -489,33 +491,30 @@ pub static SECTIONS: &[SectionSpec] = &[
         )],
     },
     SectionSpec {
-        name: "content_guard",
-        category: Category::Access,
-        user_feature: true,
-        fields: &[
-            f("content_guard.enabled", Kind::Bool),
-            f("content_guard.model", Kind::Model(PoolKind::SystemOne)),
-            f("content_guard.mode", Kind::Choice(&["monitor", "enforce"])),
-            f(
-                "content_guard.gdpr_action",
-                Kind::Choice(&["allow", "confirm", "deny"]),
-            ),
-            f(
-                "content_guard.nda_action",
-                Kind::Choice(&["allow", "confirm", "deny"]),
-            ),
-        ],
-    },
-    SectionSpec {
-        name: "chat.confidential",
+        name: "classification",
         category: Category::Access,
         user_feature: false,
         fields: &[
-            f("chat.confidential.default", Kind::Bool),
+            f("classification.default_level", Kind::Text),
             f(
-                "chat.confidential.requires",
-                Kind::Choice(&["both", "gdpr", "nda"]),
+                "classification.lowering",
+                Kind::Choice(&["never", "with_reason"]),
             ),
+            f(
+                "classification.gate_on_match",
+                Kind::Choice(&["ask", "block"]),
+            ),
+            f("classification.link_share_max_level", Kind::Text),
+            f("classification.unknown_label_level", Kind::Text),
+            f("classification.unreadable_level", Kind::Text),
+            f(
+                "classification.system_one_model",
+                Kind::Model(PoolKind::SystemOne),
+            ),
+            f("classification.mode", Kind::Choice(&["monitor", "enforce"])),
+            f("classification.output.visible", Kind::Bool),
+            f("classification.output.metadata", Kind::Bool),
+            f("classification.output.filename", Kind::Bool),
         ],
     },
     SectionSpec {
@@ -832,7 +831,6 @@ pub fn section_is_enabled(config: &Config, section: &SectionSpec) -> Option<bool
         "geoip" => config.geoip.is_some(),
         "usage" => config.usage.enabled,
         "limits" => config.limits.enabled,
-        "content_guard" => config.content_guard.enabled,
         "feedback" => config.feedback.is_some(),
         "push" => config.push.enabled,
         "metrics" => config.metrics.enabled,
@@ -1013,12 +1011,6 @@ pub fn apply(settings: &Settings, config: &mut Config) {
     config.chat = ChatConfig {
         prompt: prompt(settings),
         welcome: welcome(settings),
-        confidential: ConfidentialConfig {
-            default: settings.bool("chat.confidential.default", false),
-            requires: ConfidentialRequirement::parse(
-                &settings.text_or("chat.confidential.requires", "both"),
-            ),
-        },
         voice: voice(settings),
         ocr: ocr(settings),
         compaction: compaction(settings),
@@ -1052,16 +1044,20 @@ pub fn apply(settings: &Settings, config: &mut Config) {
         max_active_per_user: settings.int("agents.max_active_per_user", 4),
         max_active_per_organization: settings.int("agents.max_active_per_organization", 4),
     };
-    config.content_guard = ContentGuardConfig {
-        enabled: settings.bool("content_guard.enabled", false),
-        model: settings.text_or("content_guard.model", ""),
-        mode: ContentGuardMode::parse(&settings.text_or("content_guard.mode", "monitor")),
-        gdpr_action: ContentGuardPolicy::parse(
-            &settings.text_or("content_guard.gdpr_action", "deny"),
-        ),
-        nda_action: ContentGuardPolicy::parse(
-            &settings.text_or("content_guard.nda_action", "deny"),
-        ),
+    config.classification = ClassificationConfig {
+        default_level: settings.text_or("classification.default_level", ""),
+        lowering: Lowering::parse(&settings.text_or("classification.lowering", "never")),
+        gate_on_match: GateOnMatch::parse(&settings.text_or("classification.gate_on_match", "ask")),
+        link_share_max_level: settings.text_or("classification.link_share_max_level", ""),
+        unknown_label_level: settings.text_or("classification.unknown_label_level", ""),
+        unreadable_level: settings.text_or("classification.unreadable_level", ""),
+        system_one_model: settings.text_or("classification.system_one_model", ""),
+        mode: ClassificationMode::parse(&settings.text_or("classification.mode", "enforce")),
+        output: OutputMarking {
+            visible: settings.bool("classification.output.visible", false),
+            metadata: settings.bool("classification.output.metadata", false),
+            filename: settings.bool("classification.output.filename", false),
+        },
     };
     config.feedback = settings
         .bool("feedback.enabled", false)
@@ -1404,14 +1400,6 @@ pub fn snapshot(c: &Config) -> Vec<(String, String)> {
     put("chat.prompt.enabled", c.chat.prompt.enabled.to_string());
     put("chat.prompt.text", c.chat.prompt.text.clone());
     put("chat.welcome.text", c.chat.welcome.clone());
-    put(
-        "chat.confidential.default",
-        c.chat.confidential.default.to_string(),
-    );
-    put(
-        "chat.confidential.requires",
-        c.chat.confidential.requires.as_str().to_string(),
-    );
     put("chat.voice.directive", c.chat.voice.directive.clone());
 
     put("chat.ocr.enabled", ocr.enabled.to_string());
@@ -1561,19 +1549,41 @@ pub fn snapshot(c: &Config) -> Vec<(String, String)> {
         c.agents.max_active_per_organization.to_string(),
     );
 
-    put("content_guard.enabled", c.content_guard.enabled.to_string());
-    put("content_guard.model", c.content_guard.model.clone());
+    let cl = &c.classification;
+    put("classification.default_level", cl.default_level.clone());
+    put("classification.lowering", cl.lowering.as_str().to_string());
     put(
-        "content_guard.mode",
-        c.content_guard.mode.as_str().to_string(),
+        "classification.gate_on_match",
+        cl.gate_on_match.as_str().to_string(),
     );
     put(
-        "content_guard.gdpr_action",
-        c.content_guard.gdpr_action.as_str().to_string(),
+        "classification.link_share_max_level",
+        cl.link_share_max_level.clone(),
     );
     put(
-        "content_guard.nda_action",
-        c.content_guard.nda_action.as_str().to_string(),
+        "classification.unknown_label_level",
+        cl.unknown_label_level.clone(),
+    );
+    put(
+        "classification.unreadable_level",
+        cl.unreadable_level.clone(),
+    );
+    put(
+        "classification.system_one_model",
+        cl.system_one_model.clone(),
+    );
+    put("classification.mode", cl.mode.as_str().to_string());
+    put(
+        "classification.output.visible",
+        cl.output.visible.to_string(),
+    );
+    put(
+        "classification.output.metadata",
+        cl.output.metadata.to_string(),
+    );
+    put(
+        "classification.output.filename",
+        cl.output.filename.to_string(),
     );
 
     put("feedback.enabled", fb.is_some().to_string());
@@ -1741,14 +1751,9 @@ mod tests {
     }
 
     #[test]
-    fn welcome_and_confidential_settings_round_trip() {
+    fn welcome_settings_round_trip() {
         let mut config = Config::default();
         assert!(config.chat.welcome.is_empty());
-        assert!(!config.chat.confidential.default);
-        assert_eq!(
-            config.chat.confidential.requires,
-            ConfidentialRequirement::Both
-        );
 
         // No stored row: the built-in welcome ships with the gateway.
         let mut unset = Config::default();
@@ -1760,34 +1765,19 @@ mod tests {
         );
 
         apply(
-            &settings_of(&[
-                ("chat.welcome.text", "Willkommen bei uns."),
-                ("chat.confidential.default", "true"),
-                ("chat.confidential.requires", "gdpr"),
-            ]),
+            &settings_of(&[("chat.welcome.text", "Willkommen bei uns.")]),
             &mut config,
         );
         assert_eq!(config.chat.welcome, "Willkommen bei uns.");
-        assert!(config.chat.confidential.default);
-        assert_eq!(
-            config.chat.confidential.requires,
-            ConfidentialRequirement::Gdpr
-        );
 
-        for (key, expected) in [
-            ("chat.welcome.text", "Willkommen bei uns."),
-            ("chat.confidential.default", "true"),
-            ("chat.confidential.requires", "gdpr"),
-        ] {
-            assert_eq!(
-                snapshot(&config)
-                    .into_iter()
-                    .find(|(k, _)| k == key)
-                    .map(|(_, v)| v)
-                    .as_deref(),
-                Some(expected)
-            );
-        }
+        assert_eq!(
+            snapshot(&config)
+                .into_iter()
+                .find(|(k, _)| k == "chat.welcome.text")
+                .map(|(_, v)| v)
+                .as_deref(),
+            Some("Willkommen bei uns.")
+        );
 
         let mut cleared = Config::default();
         apply(&settings_of(&[("chat.welcome.text", "   ")]), &mut cleared);
@@ -1798,27 +1788,46 @@ mod tests {
     }
 
     #[test]
-    fn a_confidential_requirement_matches_the_flagged_pools() {
-        use crate::server::upstreams::config::Compliance;
-        let clear = Compliance {
-            gdpr: true,
-            nda: true,
-        };
-        let gdpr_only = Compliance {
-            gdpr: true,
-            nda: false,
-        };
-        let nda_only = Compliance {
-            gdpr: false,
-            nda: true,
-        };
-        assert!(ConfidentialRequirement::Both.satisfied_by(clear));
-        assert!(!ConfidentialRequirement::Both.satisfied_by(gdpr_only));
-        assert!(!ConfidentialRequirement::Both.satisfied_by(nda_only));
-        assert!(ConfidentialRequirement::Gdpr.satisfied_by(gdpr_only));
-        assert!(!ConfidentialRequirement::Gdpr.satisfied_by(nda_only));
-        assert!(ConfidentialRequirement::Nda.satisfied_by(nda_only));
-        assert!(!ConfidentialRequirement::Nda.satisfied_by(gdpr_only));
+    fn classification_settings_round_trip_and_default_to_the_safe_choice() {
+        let mut unset = Config::default();
+        apply(&settings_of(&[]), &mut unset);
+        assert_eq!(unset.classification.lowering, Lowering::Never);
+        assert_eq!(unset.classification.gate_on_match, GateOnMatch::Ask);
+        assert_eq!(unset.classification.mode, ClassificationMode::Enforce);
+        assert!(unset.classification.default_level.is_empty());
+
+        let mut config = Config::default();
+        apply(
+            &settings_of(&[
+                ("classification.default_level", "internal"),
+                ("classification.lowering", "with_reason"),
+                ("classification.gate_on_match", "block"),
+                ("classification.system_one_model", "guard"),
+                ("classification.mode", "monitor"),
+                ("classification.output.filename", "true"),
+            ]),
+            &mut config,
+        );
+        assert_eq!(config.classification.lowering, Lowering::WithReason);
+        assert_eq!(config.classification.mode, ClassificationMode::Monitor);
+        assert!(config.classification.output.filename);
+        for (key, expected) in [
+            ("classification.default_level", "internal"),
+            ("classification.lowering", "with_reason"),
+            ("classification.gate_on_match", "block"),
+            ("classification.system_one_model", "guard"),
+            ("classification.mode", "monitor"),
+            ("classification.output.filename", "true"),
+        ] {
+            assert_eq!(
+                snapshot(&config)
+                    .into_iter()
+                    .find(|(k, _)| k == key)
+                    .map(|(_, v)| v)
+                    .as_deref(),
+                Some(expected)
+            );
+        }
     }
 
     #[test]

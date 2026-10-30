@@ -21,8 +21,6 @@ webhooks-sync-toggle-label = 等待响应（将模型输出返回给调用方）
 webhooks-tools-toggle-label = 允许工具（使用你的工具运行，例如网页搜索、RAG、连接器）
 webhooks-tools-warning = 任何拥有触发 URL 的人都可以发送内容，让模型以你的身份使用你的工具进行处理。仅对可信的调用方启用此项。
 
-webhooks-gdpr-warning = 此模型在欧盟境外运行。请勿通过此 Webhook 发送个人数据。
-webhooks-nda-warning = 此模型未获准处理受 NDA 限制的内容。请勿通过此 Webhook 发送机密数据。
 
 webhooks-reveal-heading = 你的触发 URL
 webhooks-reveal-note = 立即复制——它只显示一次。任何拥有此 URL 的人都可以触发该 Webhook。丢失了？轮换以获取新的 URL。

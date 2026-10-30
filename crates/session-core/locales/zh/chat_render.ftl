@@ -14,8 +14,6 @@ chat-render-tts-voice-aria = 朗读语音
 chat-render-tts-voice-default = 默认语音
 chat-render-new-conversation-fallback = 新对话
 
-chat-render-gdpr-banner = 您正在向不符合 GDPR 的模型发送数据。请勿输入个人信息（姓名、电子邮件、地址、客户或员工数据）。
-chat-render-nda-banner = 此模型不受保密协议保护。请勿发送受 NDA 保护或专有的资料。
 chat-render-shared-readonly-banner = 共享对话——只读。只有创建者可以回复。
 
 chat-render-composer-placeholder = 给模型发消息…
@@ -92,11 +90,4 @@ chat-render-delegated-readonly-banner = 委派的对话 — 只读历史记录�
 chat-render-delegated-root-link = 打开主对话
 chat-render-delegated-root-unavailable = 主对话不可用。此历史记录仍为只读。
 
-chat-render-confidential = 机密
-chat-render-confidential-title = 将此对话标记为机密。只有具备{ $requires }的模型仍可选，且此操作不可撤销。
-chat-render-confidential-requires-both = GDPR 和 NDA 合规
-chat-render-confidential-requires-gdpr = GDPR 合规
-chat-render-confidential-requires-nda = NDA 合规
-chat-render-confidential-no-model = 没有模型获准处理机密数据。请联系管理员授权一个。
-chat-render-confidential-model-switched = 此对话现已设为机密；所选模型未获准用于它。
 chat-render-last-model-unavailable = 此对话上次使用的模型 { $model } 在此不可用；已改为选择第一个可用模型。

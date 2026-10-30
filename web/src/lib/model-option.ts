@@ -4,8 +4,6 @@ export interface ChatModelOption {
 	id: string;
 	/** The operator's picker description, when one is configured. */
 	description?: string;
-	gdpr: boolean;
-	nda: boolean;
 	/** A speech model's voices (`GET /api/v0/agent-resources`). */
 	voices?: string[];
 	/**
@@ -18,10 +16,8 @@ export interface ChatModelOption {
 
 export function modelSelectOptions(
 	models: ChatModelOption[],
-	labels: { gdpr: string; nda: string },
 	/**
-	 * Optional price line, shown as a neutral badge ahead of the GDPR/NDA
-	 * badges. Supplied only by pickers whose source carries prices (the chat
+	 * Optional price line, shown as a neutral badge. Supplied only by pickers whose source carries prices (the chat
 	 * picker); it returns `null` to omit the line (a route has no price).
 	 */
 	formatPrice?: (price: ChatModelOption['price']) => string | null
@@ -30,10 +26,6 @@ export function modelSelectOptions(
 		const badges: SearchOptionBadge[] = [];
 		const price = formatPrice?.(model.price);
 		if (price) badges.push({ label: price, tone: 'neutral', mono: true });
-		badges.push(
-			{ label: labels.gdpr, tone: model.gdpr ? 'success' : 'error' },
-			{ label: labels.nda, tone: model.nda ? 'success' : 'error' }
-		);
 		return {
 			value: model.id,
 			label: model.id,

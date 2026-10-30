@@ -26,8 +26,6 @@
 	let models = $state(untrack(() => pool?.models.join(', ') ?? ''));
 	let allowedGroups = $state(untrack(() => normalizeSelection(pool?.allowed_groups ?? [])));
 	let assigned = $state(untrack(() => pool?.backends.slice() ?? []));
-	let complianceGdpr = $state(untrack(() => pool?.compliance_gdpr ?? true));
-	let complianceNda = $state(untrack(() => pool?.compliance_nda ?? true));
 	let enforceLimits = $state(untrack(() => pool?.enforce_limits ?? true));
 	let voices = $state(untrack(() => pool?.voices.map(({ lang, voice }) => `${lang}=${voice}`).join('\n') ?? ''));
 	let offerVoices = $state(untrack(() => pool?.offer_voices.join('\n') ?? ''));
@@ -59,8 +57,6 @@
 				kind,
 				strategy,
 				fallback_offline: fallbackOffline.trim() || null,
-				compliance_gdpr: complianceGdpr,
-				compliance_nda: complianceNda,
 				enforce_limits: enforceLimits,
 				sort_order: pool?.sort_order ?? sortOrder,
 				allowed_groups: allowedGroups,
@@ -152,8 +148,6 @@
 		{/if}
 	</fieldset>
 	<div class="flex flex-wrap gap-4">
-		<label class="label gap-2"><input class="checkbox checkbox-sm" type="checkbox" bind:checked={complianceGdpr} /><span>{t('pools-field-gdpr')}</span></label>
-		<label class="label gap-2"><input class="checkbox checkbox-sm" type="checkbox" bind:checked={complianceNda} /><span>{t('pools-field-nda')}</span></label>
 		<label class="label gap-2"><input class="checkbox checkbox-sm" type="checkbox" bind:checked={enforceLimits} /><span>{t('pools-field-enforce-limits')}</span></label>
 	</div>
 	<div class="flex justify-end gap-2">

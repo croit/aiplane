@@ -352,10 +352,6 @@ pub struct GrantableModels {
 #[derive(Serialize, schemars::JsonSchema)]
 pub struct GrantableModel {
     pub id: String,
-    /// Every pool serving it has GDPR safeguards.
-    pub gdpr: bool,
-    /// Every pool serving it is covered by a confidentiality agreement.
-    pub nda: bool,
     /// A speech model's voices; absent on other kinds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub voices: Option<Vec<String>>,
@@ -378,8 +374,6 @@ fn model_views(state: &AppState, kind: PoolKind, choices: Vec<ModelChoice>) -> V
         .map(|c| GrantableModel {
             voices: (kind == PoolKind::Speech).then(|| state.upstreams.speech_voices_of(&c.id)),
             id: c.id,
-            gdpr: c.compliance.gdpr,
-            nda: c.compliance.nda,
         })
         .collect()
 }

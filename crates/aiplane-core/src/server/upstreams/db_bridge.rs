@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use crate::server::crypto::Crypto;
 use crate::server::db::upstreams_config::{BackendRow, UpstreamConfigSnapshot};
 use crate::server::upstreams::config::{
-    BackendConfig, Compliance, FallbackConfig, PickerStrategy, PoolKind, UpstreamPoolConfig,
+    BackendConfig, FallbackConfig, PickerStrategy, PoolKind, UpstreamPoolConfig,
 };
 
 /// Convert a DB snapshot into the `(pool_configs, fallback)` pair the registry
@@ -61,10 +61,7 @@ pub fn snapshot_to_configs(
                 strategy: parse_strategy(&pool.name, &pool.strategy),
                 fallback_offline: pool.fallback_offline.clone(),
                 models: pool.models.clone(),
-                compliance: Compliance {
-                    gdpr: pool.compliance_gdpr,
-                    nda: pool.compliance_nda,
-                },
+                level_rank: snap.pool_levels.get(&pool.name).copied().unwrap_or(0),
                 enforce_limits: pool.enforce_limits,
                 voices,
                 offer_voices: pool.offer_voices.clone(),
@@ -212,8 +209,6 @@ mod tests {
             kind: "chat".into(),
             strategy: "round_robin".into(),
             fallback_offline: Some("backup".into()),
-            compliance_gdpr: false,
-            compliance_nda: true,
             enforce_limits: true,
             sort_order: 0,
             allowed_groups: Vec::new(),
@@ -228,14 +223,14 @@ mod tests {
             updated_at: ts(),
         });
         snap.fallbacks.insert("chat".into(), "default-chat".into());
+        snap.pool_levels.insert("chat".into(), 2);
 
         let (pools, fallback) = snapshot_to_configs(&snap, &crypto());
         assert_eq!(pools.len(), 1);
         let p = &pools["chat"];
         assert_eq!(p.kind, PoolKind::Chat);
         assert_eq!(p.strategy, PickerStrategy::RoundRobin);
-        assert!(!p.compliance.gdpr);
-        assert!(p.compliance.nda);
+        assert_eq!(p.level_rank, 2);
         assert_eq!(p.backend.len(), 1);
         assert_eq!(p.backend[0].name, "gpu-01");
         assert_eq!(p.backend[0].weight, 2);
@@ -281,8 +276,6 @@ mod tests {
             kind: "chat".into(),
             strategy: "least_inflight".into(),
             fallback_offline: None,
-            compliance_gdpr: true,
-            compliance_nda: true,
             enforce_limits: true,
             sort_order: 0,
             allowed_groups: Vec::new(),
@@ -333,8 +326,6 @@ mod tests {
             kind: kind.into(),
             strategy: "least_inflight".into(),
             fallback_offline: None,
-            compliance_gdpr: true,
-            compliance_nda: true,
             enforce_limits: true,
             sort_order: 0,
             allowed_groups: Vec::new(),

@@ -19,10 +19,7 @@
 	let loadingModels = $state(false);
 	let generating = $state(false);
 	let error = $state<string | null>(null);
-	let modelOptions = $derived(modelSelectOptions(models, {
-		gdpr: t('searchable-select-model-gdpr'),
-		nda: t('searchable-select-model-nda')
-	}));
+	let modelOptions = $derived(modelSelectOptions(models));
 
 	$effect(() => {
 		if (open && models.length === 0 && !loadingModels) void loadModels();

@@ -180,19 +180,34 @@ async fn blank_or_new_session(
     }
 }
 
-/// A newly created conversation inherits the operator's confidential default.
-/// Materialised here, not resolved on read, so turning the default off later
-/// does not reopen conversations that were created while it was on.
-async fn apply_confidential_default(
+/// A newly created conversation starts at the operator's default level.
+/// Materialised here, not resolved on read, so changing the default later
+/// does not move conversations that already exist. A default at the lowest
+/// level is the absence of a stored level.
+async fn apply_default_level(
     state: &RamaState,
     session: &chat::Session,
     created: bool,
 ) -> Result<(), aiplane_core::server::db::DbError> {
-    if created && state.config().chat.confidential.default {
-        aiplane_core::server::db::chat_session_settings::set_confidential(&state.db, &session.id)
-            .await?;
+    use aiplane_core::server::classification;
+    let scheme = state.scheme();
+    if !created || !scheme.is_active() {
+        return Ok(());
     }
-    Ok(())
+    let level = scheme.resolve(&state.config().classification.default_level);
+    if level.rank == 0 {
+        return Ok(());
+    }
+    classification::set_level(&state.db, &session.id, &level.id).await?;
+    classification::record_event(
+        &state.db,
+        &session.id,
+        &scheme.lowest().id,
+        &level.id,
+        "default",
+        &session.user_id,
+    )
+    .await
 }
 
 /// GET /api/v0/chat/landing — the conversation the app opens on: the caller's
@@ -201,7 +216,7 @@ pub async fn session_landing(State(state): State<Arc<RamaState>>, req: Request) 
     let (_session, user) = require_session_json!(state, req);
     match blank_or_new_session(&state, &user.id).await {
         Ok((session, created)) => {
-            if let Err(err) = apply_confidential_default(&state, &session, created).await {
+            if let Err(err) = apply_default_level(&state, &session, created).await {
                 return internal(err);
             }
             ok_json(StatusCode::OK, SessionEnvelope { session })
@@ -216,7 +231,7 @@ pub async fn session_create(State(state): State<Arc<RamaState>>, req: Request) -
     let (_session, user) = require_session_json!(state, req);
     match blank_or_new_session(&state, &user.id).await {
         Ok((session, created)) => {
-            if let Err(err) = apply_confidential_default(&state, &session, created).await {
+            if let Err(err) = apply_default_level(&state, &session, created).await {
                 return internal(err);
             }
             ok_json(
@@ -276,13 +291,8 @@ pub async fn session_get(
             }
             Err(err) => return internal(err),
         };
-    let confidential = match aiplane_core::server::db::chat_session_settings::get_confidential(
-        &state.db,
-        &session_id,
-    )
-    .await
-    {
-        Ok(value) => value,
+    let classification = match classification_view(&state, &session_id).await {
+        Ok(view) => view,
         Err(err) => return internal(err),
     };
     let compacted_up_to_seq =
@@ -321,8 +331,7 @@ pub async fn session_get(
             session,
             turns,
             effort,
-            confidential,
-            confidential_requires: state.config().chat.confidential.requires.as_str(),
+            classification,
             welcome: state.config().chat.welcome.clone(),
             compacted_up_to_seq,
             assets,
@@ -340,12 +349,7 @@ pub struct SessionDetail {
     /// The conversation's effort level — the stored one, or the default
     /// (`low`) when none was chosen.
     pub effort: &'static str,
-    /// The conversation is marked confidential: only models whose pools carry
-    /// [`Self::confidential_requires`] may serve it, and the mark never clears.
-    pub confidential: bool,
-    /// The compliance a model needs for this conversation — `both`, `gdpr` or
-    /// `nda`, from the operator's confidential-chat policy.
-    pub confidential_requires: &'static str,
+    pub classification: ClassificationView,
     /// The operator's welcome text, shown while the conversation has no turns.
     /// Empty means nothing.
     pub welcome: String,
@@ -1768,41 +1772,137 @@ pub async fn session_effort(
     }
 }
 
-/// POST /api/v0/chat/sessions/{id}/confidential — mark the conversation
-/// confidential.
-///
-/// Sticky by design: only `true` is accepted. A conversation that has held
-/// personal or confidential material must not be able to fall back to models
-/// the operator did not clear for it.
-#[derive(serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
-pub struct ConfidentialBody {
-    pub confidential: bool,
+/// A level of the operator's classification scheme.
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct LevelView {
+    pub id: String,
+    pub rank: u32,
+    pub name: String,
+    /// A daisyUI semantic colour: `neutral`, `info`, `success`, `warning` or `error`.
+    pub color: String,
 }
 
-pub async fn session_confidential(
+impl From<&aiplane_core::server::classification::Level> for LevelView {
+    fn from(level: &aiplane_core::server::classification::Level) -> Self {
+        Self {
+            id: level.id.clone(),
+            rank: level.rank,
+            name: level.name.clone(),
+            color: level.color.clone(),
+        }
+    }
+}
+
+/// Where a conversation stands in the classification scheme. With a single
+/// level the scheme is not active: `level` is `null`, `levels` is empty, and
+/// the app shows nothing.
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct ClassificationView {
+    pub active: bool,
+    /// The conversation's current level; `null` while the scheme is not active.
+    pub level: Option<LevelView>,
+    /// Every level in rank order; empty while the scheme is not active.
+    pub levels: Vec<LevelView>,
+}
+
+async fn classification_view(
+    state: &RamaState,
+    session_id: &str,
+) -> Result<ClassificationView, aiplane_core::server::db::DbError> {
+    let scheme = state.scheme();
+    if !scheme.is_active() {
+        return Ok(ClassificationView {
+            active: false,
+            level: None,
+            levels: Vec::new(),
+        });
+    }
+    let stored = aiplane_core::server::classification::level_id(&state.db, session_id).await?;
+    Ok(ClassificationView {
+        active: true,
+        level: Some(scheme.level_or_lowest(stored.as_deref()).into()),
+        levels: scheme.levels().iter().map(LevelView::from).collect(),
+    })
+}
+
+/// POST /api/v0/chat/sessions/{id}/classification — move the conversation to
+/// `level`. A higher level is always accepted. A lower one is accepted only
+/// when the administrator allows lowering with a reason, and `reason` is
+/// given; every change is audited.
+#[derive(serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
+pub struct ClassificationBody {
+    pub level: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+pub async fn session_classification(
     Path(session_id): Path<String>,
     State(state): State<Arc<RamaState>>,
     req: Request,
 ) -> Response {
+    use aiplane_core::server::classification::{self, ClassificationError};
     let (_session, user) = require_session_json!(state, req);
     if !user_can_write(&state, &user.id, &session_id).await {
         return not_found_conversation();
     }
     let (_, body) = req.into_parts();
-    let parsed: ConfidentialBody = match read_json(body, "the confidentiality body").await {
+    let parsed: ClassificationBody = match read_json(body, "the classification body").await {
         Ok(p) => p,
         Err(resp) => return resp,
     };
-    if !parsed.confidential {
-        return bad_request(
-            "a confidential conversation cannot become non-confidential: the mark never clears",
-        );
-    }
-    match aiplane_core::server::db::chat_session_settings::set_confidential(&state.db, &session_id)
+    let scheme = state.scheme();
+    let Some(target) = scheme.level(&parsed.level) else {
+        return bad_request(ClassificationError::UnknownLevel(parsed.level.clone()).to_string());
+    };
+    let stored = match classification::level_id(&state.db, &session_id).await {
+        Ok(stored) => stored,
+        Err(err) => return internal(err),
+    };
+    let current_rank = scheme.level_or_lowest(stored.as_deref()).rank;
+    let changed = if target.rank >= current_rank {
+        classification::raise(
+            &state.db,
+            &scheme,
+            &session_id,
+            &target.id,
+            "user",
+            &user.id,
+        )
         .await
-    {
-        Ok(()) => ok_json(StatusCode::OK, parsed),
-        Err(err) => internal(err),
+        .map(|_| ())
+    } else {
+        classification::lower(
+            &state.db,
+            &scheme,
+            state.config().classification.lowering,
+            &session_id,
+            &target.id,
+            &user.id,
+            parsed.reason.as_deref().unwrap_or(""),
+        )
+        .await
+        .map(|_| ())
+    };
+    match changed {
+        Ok(()) => match classification_view(&state, &session_id).await {
+            Ok(view) => ok_json(StatusCode::OK, view),
+            Err(err) => internal(err),
+        },
+        Err(err @ ClassificationError::LoweringNotAllowed) => json_error(
+            StatusCode::FORBIDDEN,
+            "classification_lowering_not_allowed",
+            &err.to_string(),
+        ),
+        Err(err @ (ClassificationError::ReasonRequired | ClassificationError::UnknownLevel(_))) => {
+            bad_request(err.to_string())
+        }
+        Err(err @ ClassificationError::NotLower(_)) => json_error(
+            StatusCode::CONFLICT,
+            "classification_changed",
+            &err.to_string(),
+        ),
+        Err(ClassificationError::Db(err)) => internal(err),
     }
 }
 

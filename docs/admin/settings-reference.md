@@ -6,30 +6,25 @@ Model fields use the catalog for the pool kind named in the table. Paths refer t
 
 ## Field catalog
 
-### content_guard
+### classification
 
 Category: **Access**.
 
 | Key | Input / choices | Meaning | Restart |
 |---|---|---|---|
-| `content_guard.enabled` | Boolean | Check only the compliance area the selected model pool does not cover. | No |
-| `content_guard.model` | Model (SystemOne pool) | System One model used for GDPR and NDA decisions. | No |
-| `content_guard.mode` | monitor, enforce | Monitor logs decisions; enforce applies the selected action. | No |
-| `content_guard.gdpr_action` | allow, confirm, deny | Independent action when the System One model classifies request content as personal data and the destination pool is not declared GDPR-covered. | No |
-| `content_guard.nda_action` | allow, confirm, deny | Independent action when the System One model classifies request content as confidential or NDA-protected and the destination pool is not declared NDA-covered. | No |
+| `classification.default_level` | Text | Level id a new conversation starts at. Empty starts at the lowest level. | No |
+| `classification.lowering` | never, with_reason | Whether a conversation's level may be lowered after it was raised. `with_reason` needs a non-empty reason and is audited. Ships as never. | No |
+| `classification.gate_on_match` | ask, block | What happens when content matches a class that needs a higher level than the target offers. Ships as ask. | No |
+| `classification.link_share_max_level` | Text | Highest level id a conversation may have and still be shared by link. Empty applies no limit. | No |
+| `classification.unknown_label_level` | Text | Level id for content carrying a label that no marking maps. | No |
+| `classification.unreadable_level` | Text | Level id for files whose classification cannot be read. | No |
+| `classification.system_one_model` | Model (SystemOne pool) | System One model that answers the data class questions. Empty disables detection. | No |
+| `classification.mode` | monitor, enforce | Monitor logs what the detector finds; enforce raises conversations and applies the class action. Ships as enforce. | No |
+| `classification.output.visible` | Boolean | Stamp the level's marking text onto generated documents. Ships off. | No |
+| `classification.output.metadata` | Boolean | Write the level into the metadata of generated documents. Ships off. | No |
+| `classification.output.filename` | Boolean | Add the level's file name tag to generated files. Ships off. | No |
 
-The checks run only for compliance areas not declared covered by the destination chat pool. When both areas are uncovered, both questions are sent to the selected System One model. The model also receives the request messages, so assess its own pool declarations before selecting it. See [content guard setup and behavior](settings.md#access-and-content-guard).
-
-### chat.confidential
-
-Category: **Access**.
-
-| Key | Input / choices | Meaning | Restart |
-|---|---|---|---|
-| `chat.confidential.default` | Boolean | Mark every newly created conversation confidential. Materialised at creation, so turning this off later does not reopen existing conversations. Ships off. | No |
-| `chat.confidential.requires` | both, gdpr, nda | Compliance a model must carry to remain selectable in a confidential conversation. Both requires GDPR and NDA coverage; a cloud model with both stays selectable. Ships as both. | No |
-
-A confidential conversation can only be routed to models whose pools satisfy the requirement, and the mark never clears. The content guard sets it automatically when it matches sensitive content; people can also set it from the chat composer. See [confidential conversations](settings.md#confidential-conversations).
+The level fields name a level id from the `classification_levels` table; an empty or unknown id resolves to the lowest level. The detector sends the request messages to the selected System One model, so assess its own pool before selecting it. See [data classification](settings.md#data-classification).
 
 ### chat.welcome
 

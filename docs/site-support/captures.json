@@ -110,19 +110,6 @@
     "data": "Synthetic dev-ui fixture; actual application components."
   },
   {
-    "file": "docs/img/guide/content-guard.png",
-    "route": "/admin/settings?tab=access",
-    "selector": "[data-testid=\"settings-section-content_guard\"]",
-    "viewport": {
-      "width": 1400,
-      "height": 950
-    },
-    "scale": 2,
-    "width": 1680,
-    "height": 492,
-    "data": "Synthetic dev-ui fixture; actual application components."
-  },
-  {
     "file": "docs/img/guide/agent-checklist.png",
     "route": "/agents/b3ca2989-c32f-43d4-861d-1d936451dcd4",
     "selector": "[data-agent-tab] aside section.card",

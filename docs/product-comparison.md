@@ -334,7 +334,7 @@ AIplane sources link to this repository's user and operator documentation. LiteL
 | A8 | [Access, tokens and limits](admin/access.md) |
 | A9 | [Agent builder](agent-guide/create.md), [agent permissions](agent-guide/permissions.md) |
 | A10 | [Knowledge collections](admin/knowledge.md), [tools and integrations](guide/tools-and-integrations.md), [tool inventory](tools-inventory.md) |
-| A11 | [Model settings](admin/models.md), [content guard settings](admin/settings.md#access-and-content-guard) |
+| A11 | [Model settings](admin/models.md), [data classification settings](admin/settings.md#data-classification) |
 | A12 | [Approvals and handoffs](guide/automation-and-inbox.md), [agent decisions](agent-guide/run-observe.md) |
 | A13 | [Agent runs and activity](agent-guide/run-observe.md) |
 | A14 | [Account, memory and usage](guide/account-and-usage.md) |

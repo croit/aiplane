@@ -81,7 +81,7 @@ fn pool(kind: PoolKind, url: &str, model: &str, name: &str) -> UpstreamPoolConfi
         offer_voices: Vec::new(),
         allowed_groups: Vec::new(),
         fallback_offline: None,
-        compliance: Default::default(),
+        level_rank: 0,
         enforce_limits: true,
         kind,
         strategy: PickerStrategy::RoundRobin,

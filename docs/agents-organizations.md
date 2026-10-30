@@ -428,8 +428,8 @@ and current execution authority checks occur before dispatch.
 The driver refreshes the execution context for personal agents and validates a
 fully initialized organization context before each main-model acquisition and
 the guard, verifier and side-call models. Direct headless dispatch requires
-that same exact private-turn context. Operator content guards retain their
-operator authority while the organization run itself is checked before their
+that same exact private-turn context. The operator's data classification detector retains its
+operator authority while the organization run itself is checked before its
 request. Completed-turn compaction has a distinct admission purpose and
 rechecks current authority in the same transaction that persists its summary.
 

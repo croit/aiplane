@@ -55,6 +55,15 @@ async fn state_with_chat_access(
     tools: Arc<ToolRegistry>,
     rbac: Arc<Resolver>,
 ) -> RamaState {
+    state_with_chat_access_at_level(upstream_uri, tools, rbac, 0).await
+}
+
+async fn state_with_chat_access_at_level(
+    upstream_uri: &str,
+    tools: Arc<ToolRegistry>,
+    rbac: Arc<Resolver>,
+    level_rank: u32,
+) -> RamaState {
     let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
     let mut pools = HashMap::new();
     pools.insert(
@@ -64,7 +73,7 @@ async fn state_with_chat_access(
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
             fallback_offline: None,
-            compliance: Default::default(),
+            level_rank,
             enforce_limits: true,
             kind: PoolKind::Chat,
             strategy: PickerStrategy::RoundRobin,
@@ -109,7 +118,7 @@ async fn state_with_aliased_chat_model(model: &str, alias: &str) -> RamaState {
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
             fallback_offline: None,
-            compliance: Default::default(),
+            level_rank: 0,
             enforce_limits: true,
             kind: PoolKind::Chat,
             strategy: PickerStrategy::RoundRobin,
@@ -2454,8 +2463,8 @@ async fn reconnecting_after_completion_replays_from_the_db() {
     assert_eq!(assistant["turn"]["status"], serde_json::json!("completed"));
 }
 
-/// The models endpoint lists what the user's grant permits, compliance
-/// flags included — the SPA picker's data source.
+/// The models endpoint lists what the user's grant permits — the SPA
+/// picker's data source.
 #[tokio::test]
 async fn the_models_endpoint_lists_offered_chat_models() {
     let upstream = MockServer::start().await;
@@ -2466,7 +2475,7 @@ async fn the_models_endpoint_lists_offered_chat_models() {
         .await;
     let (state, cookie) = setup(&upstream.uri()).await;
     // A configured price must surface on the model it is set for, in the
-    // deployment's currency — the picker shows it beside the compliance flags.
+    // deployment's currency — the picker shows it beside the model.
     // Set before `router` consumes the `Arc`.
     aiplane_core::server::db::model_defaults::set_pricing(
         &state.db,
@@ -2496,8 +2505,6 @@ async fn the_models_endpoint_lists_offered_chat_models() {
         .iter()
         .find(|m| m["id"] == "model-a")
         .unwrap_or_else(|| panic!("the seeded pool's model must be offered: {models:?}"));
-    assert!(model_a["gdpr"].is_boolean());
-    assert!(model_a["nda"].is_boolean());
     assert_eq!(model_a["price"]["input"], 3.0);
     assert_eq!(model_a["price"]["output"], 15.0);
     assert_eq!(model_a["price"]["unit"], "tokens");
@@ -2710,41 +2717,86 @@ async fn a_thinking_budget_reaches_a_strict_sglang_as_custom_params() {
     assert_eq!(sent["chat_template_kwargs"]["reasoning_effort"], "xhigh");
 }
 
-/// The confidential mark is sticky: setting it works, clearing it is refused,
-/// and the session detail reports it.
+/// Seeds the three-level scheme (public < internal < confidential) and makes
+/// `model-a`'s pool the internal one.
+async fn seed_levels(state: &RamaState, lowering: &str) {
+    sqlx::raw_sql(
+        "INSERT INTO classification_levels (id, rank, name, color) VALUES
+             ('internal', 1, 'Internal', 'info'),
+             ('confidential', 2, 'Confidential', 'warning');",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+    aiplane_core::server::db::app_settings::set(
+        &state.db,
+        "settings.classification.lowering",
+        lowering,
+    )
+    .await
+    .unwrap();
+    state.reload_settings().await;
+    state.reload_scheme().await;
+}
+
+async fn post_level<E: std::fmt::Debug>(
+    app: &impl common::Service<Request, Output = rama::http::Response, Error = E>,
+    cookie: &str,
+    session_id: &str,
+    body: &str,
+) -> rama::http::Response {
+    app.serve(json_req(
+        Method::POST,
+        format!("/api/v0/chat/sessions/{session_id}/classification"),
+        cookie,
+        Some(body.into()),
+    ))
+    .await
+    .unwrap()
+}
+
+/// With one level the scheme is inactive: the session reports it and nothing
+/// can be raised.
 #[tokio::test]
-async fn a_confidential_mark_is_sticky_and_reported() {
+async fn a_one_level_install_reports_classification_inactive() {
     let upstream = MockServer::start().await;
     let (state, cookie) = setup(&upstream.uri()).await;
     let session = chat::create_session(&state.db, "alice").await.unwrap();
     let app = router(state.clone());
-    let set = app
+    let detail = app
         .serve(json_req(
-            Method::POST,
-            format!("/api/v0/chat/sessions/{}/confidential", session.id),
+            Method::GET,
+            format!("/api/v0/chat/sessions/{}", session.id),
             &cookie,
-            Some(r#"{"confidential":true}"#.into()),
+            None,
         ))
         .await
         .unwrap();
-    assert_eq!(set.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&body_string(detail).await).unwrap();
+    assert_eq!(body["classification"]["active"], false);
+    assert!(body["classification"]["level"].is_null());
+}
 
-    let clear = app
-        .serve(json_req(
-            Method::POST,
-            format!("/api/v0/chat/sessions/{}/confidential", session.id),
-            &cookie,
-            Some(r#"{"confidential":false}"#.into()),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(clear.status(), StatusCode::BAD_REQUEST);
-    assert!(
-        body_string(clear)
-            .await
-            .contains("cannot become non-confidential"),
-        "the refusal must say why"
-    );
+/// Raising is allowed and audited; lowering is refused under `never` with 403.
+#[tokio::test]
+async fn a_level_can_be_raised_and_never_lowered_under_the_never_policy() {
+    let upstream = MockServer::start().await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    seed_levels(&state, "never").await;
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let app = router(state.clone());
+
+    let raised = post_level(&app, &cookie, &session.id, r#"{"level":"confidential"}"#).await;
+    assert_eq!(raised.status(), StatusCode::OK);
+
+    let lowered = post_level(
+        &app,
+        &cookie,
+        &session.id,
+        r#"{"level":"public","reason":"cleared with the owner"}"#,
+    )
+    .await;
+    assert_eq!(lowered.status(), StatusCode::FORBIDDEN);
 
     let detail = app
         .serve(json_req(
@@ -2755,10 +2807,205 @@ async fn a_confidential_mark_is_sticky_and_reported() {
         ))
         .await
         .unwrap();
-    assert_eq!(detail.status(), StatusCode::OK);
     let body: serde_json::Value = serde_json::from_str(&body_string(detail).await).unwrap();
-    assert_eq!(body["confidential"], true);
-    assert_eq!(body["confidential_requires"], "both");
+    assert_eq!(body["classification"]["active"], true);
+    assert_eq!(body["classification"]["level"]["id"], "confidential");
+    assert_eq!(
+        body["classification"]["levels"].as_array().unwrap().len(),
+        3
+    );
+}
+
+/// Under `with_reason` a lowering needs a reason and lands in the audit trail.
+#[tokio::test]
+async fn lowering_under_with_reason_needs_a_reason_and_is_audited() {
+    let upstream = MockServer::start().await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    seed_levels(&state, "with_reason").await;
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let app = router(state.clone());
+    post_level(&app, &cookie, &session.id, r#"{"level":"confidential"}"#).await;
+
+    let missing = post_level(&app, &cookie, &session.id, r#"{"level":"internal"}"#).await;
+    assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+
+    let ok = post_level(
+        &app,
+        &cookie,
+        &session.id,
+        r#"{"level":"internal","reason":"the figures were public"}"#,
+    )
+    .await;
+    assert_eq!(ok.status(), StatusCode::OK);
+
+    let events: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT from_level, to_level, cause, reason FROM chat_classification_events
+         WHERE session_id = ? ORDER BY rowid",
+    )
+    .bind(&session.id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(events.len(), 2, "{events:?}");
+    assert_eq!(events[1].0, "confidential");
+    assert_eq!(events[1].1, "internal");
+    assert_eq!(events[1].3.as_deref(), Some("the figures were public"));
+}
+
+async fn offered_models<E: std::fmt::Debug>(
+    app: &impl common::Service<Request, Output = rama::http::Response, Error = E>,
+    cookie: &str,
+    session_id: &str,
+) -> Vec<String> {
+    let resp = app
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/models?session={session_id}"),
+            cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_str(&body_string(resp).await).unwrap();
+    body["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// Four levels with `model-a`'s pool at `internal` (rank 1): a conversation
+/// raised to `confidential` (rank 2) no longer lists the model in its picker
+/// and a turn that names it is refused.
+#[tokio::test]
+async fn a_conversation_above_the_pools_level_hides_the_model_and_refuses_the_turn() {
+    let upstream = MockServer::start().await;
+    let state = state_with_chat_access_at_level(
+        &upstream.uri(),
+        Arc::new(ToolRegistry::new()),
+        Arc::new(Resolver::empty()),
+        1,
+    )
+    .await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let state = Arc::new(state);
+    sqlx::raw_sql(
+        "INSERT INTO classification_levels (id, rank, name, color) VALUES
+             ('internal', 1, 'Internal', 'info'),
+             ('confidential', 2, 'Confidential', 'warning'),
+             ('secret', 3, 'Secret', 'error');",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+    state.reload_scheme().await;
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let app = router(state.clone());
+
+    assert_eq!(
+        offered_models(&app, &cookie, &session.id).await,
+        vec!["model-a".to_owned()]
+    );
+
+    let raised = post_level(&app, &cookie, &session.id, r#"{"level":"confidential"}"#).await;
+    assert_eq!(raised.status(), StatusCode::OK);
+    assert!(offered_models(&app, &cookie, &session.id).await.is_empty());
+
+    let resp = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"hi"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    wait_settled(&state, &session.id).await;
+    let turns = chat::list_turns(&state.db, &session.id).await.unwrap();
+    let refused = turns.last().unwrap();
+    assert_eq!(refused.turn.status, chat::TurnStatus::Errored);
+    assert!(
+        refused
+            .turn
+            .error_message
+            .as_deref()
+            .is_some_and(|m| m.contains("Confidential") && m.contains("not cleared")),
+        "{:?}",
+        refused.turn.error_message
+    );
+    assert!(
+        upstream
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .all(|request| request.url.path() != "/chat/completions"),
+        "a refused turn must not reach the pool: {:?}",
+        upstream
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| String::from_utf8_lossy(&r.body)
+                .chars()
+                .take(300)
+                .collect::<String>())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// The System One detector raises the conversation to the matched class's
+/// level before the (blocking) class refuses the turn, and the event names the
+/// class as its cause.
+#[tokio::test]
+async fn the_detector_raises_the_conversation_to_the_matched_class_level() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/systemone"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "answers": {
+                "personal_data": {"type": "noul", "noul": 0.9},
+                "nda": {"type": "noul", "noul": 0.1}
+            }
+        })))
+        .mount(&upstream)
+        .await;
+    let state = common::state_with_classification_pools(&upstream.uri()).await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let state = Arc::new(state);
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let app = router(state.clone());
+    let resp = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"My colleague is Jane Doe"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    wait_settled(&state, &session.id).await;
+
+    let events: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT from_level, to_level, cause FROM chat_classification_events WHERE session_id = ?",
+    )
+    .bind(&session.id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        events,
+        vec![(
+            "public".into(),
+            "internal".into(),
+            "system_one:personal_data".into()
+        )]
+    );
+    let turns = chat::list_turns(&state.db, &session.id).await.unwrap();
+    assert_eq!(turns.last().unwrap().turn.status, chat::TurnStatus::Errored);
 }
 
 /// The old scale's names are refused with the new ones spelled out.

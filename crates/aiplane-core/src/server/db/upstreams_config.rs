@@ -64,8 +64,6 @@ pub struct PoolRow {
     pub kind: String,
     pub strategy: String,
     pub fallback_offline: Option<String>,
-    pub compliance_gdpr: bool,
-    pub compliance_nda: bool,
     pub enforce_limits: bool,
     pub sort_order: i64,
     /// Gateway-group names allowed to see + route to this pool (JSON array in
@@ -97,6 +95,9 @@ pub struct UpstreamConfigSnapshot {
     pub pools: Vec<PoolRow>,
     pub backends: HashMap<String, BackendRow>,
     pub fallbacks: HashMap<String, String>,
+    /// Classification level rank by pool name; a pool absent here is at the
+    /// lowest level.
+    pub pool_levels: HashMap<String, u32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -123,10 +124,12 @@ pub async fn load_snapshot(db: &Pool) -> Result<UpstreamConfigSnapshot, DbError>
     let backends = load_all_backends(db).await?;
     let pools = load_all_pools(db).await?;
     let fallbacks = load_all_fallbacks(db).await?;
+    let pool_levels = crate::server::classification::pool_ranks(db).await?;
     Ok(UpstreamConfigSnapshot {
         pools,
         backends,
         fallbacks,
+        pool_levels,
     })
 }
 
@@ -216,9 +219,8 @@ async fn load_all_backends(db: &Pool) -> Result<HashMap<String, BackendRow>, DbE
 
 async fn load_all_pools(db: &Pool) -> Result<Vec<PoolRow>, DbError> {
     let rows = sqlx::query(
-        r#"SELECT name, kind, strategy, fallback_offline, compliance_gdpr,
-                  compliance_nda, enforce_limits, sort_order, allowed_groups,
-                  created_at, updated_at
+        r#"SELECT name, kind, strategy, fallback_offline, enforce_limits, sort_order,
+                  allowed_groups, created_at, updated_at
              FROM pools ORDER BY sort_order, name"#,
     )
     .fetch_all(db)
@@ -234,8 +236,6 @@ async fn load_all_pools(db: &Pool) -> Result<Vec<PoolRow>, DbError> {
             kind: row.try_get("kind")?,
             strategy: row.try_get("strategy")?,
             fallback_offline: row.try_get("fallback_offline")?,
-            compliance_gdpr: row.try_get::<i64, _>("compliance_gdpr")? != 0,
-            compliance_nda: row.try_get::<i64, _>("compliance_nda")? != 0,
             enforce_limits: row.try_get::<i64, _>("enforce_limits")? != 0,
             sort_order: row.try_get("sort_order")?,
             allowed_groups,
@@ -830,16 +830,13 @@ pub async fn upsert_pool(db: &Pool, row: &PoolRow) -> Result<(), DbError> {
     let now = now_rfc3339();
     sqlx::query(
         r#"INSERT INTO pools
-               (name, kind, strategy, fallback_offline, compliance_gdpr,
-                compliance_nda, enforce_limits, sort_order, allowed_groups,
-                created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               (name, kind, strategy, fallback_offline, enforce_limits, sort_order,
+                allowed_groups, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(name) DO UPDATE SET
                kind             = excluded.kind,
                strategy         = excluded.strategy,
                fallback_offline = excluded.fallback_offline,
-               compliance_gdpr  = excluded.compliance_gdpr,
-               compliance_nda   = excluded.compliance_nda,
                enforce_limits   = excluded.enforce_limits,
                sort_order       = excluded.sort_order,
                allowed_groups   = excluded.allowed_groups,
@@ -849,8 +846,6 @@ pub async fn upsert_pool(db: &Pool, row: &PoolRow) -> Result<(), DbError> {
     .bind(&row.kind)
     .bind(&row.strategy)
     .bind(&row.fallback_offline)
-    .bind(row.compliance_gdpr as i64)
-    .bind(row.compliance_nda as i64)
     .bind(row.enforce_limits as i64)
     .bind(row.sort_order)
     .bind(serde_json::to_string(&row.allowed_groups).unwrap_or_else(|_| "[]".to_string()))
@@ -1406,8 +1401,6 @@ mod tests {
                 kind: "transcription".into(),
                 strategy: "least_inflight".into(),
                 fallback_offline: None,
-                compliance_gdpr: true,
-                compliance_nda: true,
                 enforce_limits: true,
                 sort_order: 0,
                 backends: vec!["voxtral".into()],
@@ -1651,8 +1644,6 @@ mod tests {
             kind: "chat".into(),
             strategy: "round_robin".into(),
             fallback_offline: Some("backup-model".into()),
-            compliance_gdpr: false,
-            compliance_nda: true,
             enforce_limits: true,
             sort_order: 0,
             allowed_groups: Vec::new(),
@@ -1671,8 +1662,6 @@ mod tests {
         assert_eq!(p.name, "chat-pool");
         assert_eq!(p.kind, "chat");
         assert_eq!(p.strategy, "round_robin");
-        assert!(!p.compliance_gdpr);
-        assert!(p.compliance_nda);
         assert_eq!(p.backends, vec!["b1"]);
         assert_eq!(p.models, vec!["pool-fallback-model"]);
         assert!(!load_snapshot(&pool).await.unwrap().pools.is_empty());
@@ -1719,8 +1708,6 @@ mod tests {
             kind: "speech".into(),
             strategy: "least_inflight".into(),
             fallback_offline: None,
-            compliance_gdpr: true,
-            compliance_nda: true,
             enforce_limits: true,
             sort_order: 0,
             allowed_groups: Vec::new(),
@@ -1847,8 +1834,6 @@ mod tests {
                 kind: "chat".into(),
                 strategy: "least_inflight".into(),
                 fallback_offline: None,
-                compliance_gdpr: true,
-                compliance_nda: true,
                 enforce_limits: true,
                 sort_order: 0,
                 allowed_groups: Vec::new(),

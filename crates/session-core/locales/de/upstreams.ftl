@@ -17,7 +17,5 @@ upstreams-empty = Noch keine Pools oder Backends konfiguriert. Füge einen Pool 
 upstreams-delete-confirm = Wirklich löschen?
 upstreams-cancel = Abbrechen
 upstreams-edit-backend = Backend bearbeiten
-upstreams-comp-gdpr = DSGVO
-upstreams-comp-nda = NDA
 upstreams-comp-limits = Limits
 upstreams-edit-pool = Pool bearbeiten

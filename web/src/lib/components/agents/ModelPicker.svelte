@@ -33,9 +33,7 @@
 
 	const options = $derived(
 		modelPickerOptions(kind, value, held, resources, {
-			empty: emptyLabel,
-			gdpr: t('searchable-select-model-gdpr'),
-			nda: t('searchable-select-model-nda')
+			empty: emptyLabel
 		})
 	);
 </script>

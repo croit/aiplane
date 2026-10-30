@@ -91,6 +91,15 @@ pub(super) async fn generate_session_title(
         msg_len = user_msg.len(),
         "title generation: starting"
     );
+    // The title call carries the user's message, so it must not reach a model
+    // the conversation's level does not clear.
+    if !state
+        .model_cleared_for_session(&session_id, &model, &PoolAccess::all())
+        .await
+    {
+        tracing::info!(%session_id, %model, "title generation: model not cleared for the conversation's level");
+        return;
+    }
     let raw = match call_upstream(&state, &payer, &model, &user_msg).await {
         Ok(r) => r,
         Err(err) => {

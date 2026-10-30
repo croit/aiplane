@@ -25,8 +25,6 @@ searchable-select-search-placeholder = Search options…
 searchable-select-search-aria = Search { $field }
 searchable-select-clear-search = Clear search
 searchable-select-no-results = No matching options.
-searchable-select-model-gdpr = GDPR
-searchable-select-model-nda = NDA
 
 # Shown in place of a page whose optional feature the operator has switched
 # off at /admin/settings. The nav entry is gone in that case; this answers

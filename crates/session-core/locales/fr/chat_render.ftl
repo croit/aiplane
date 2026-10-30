@@ -14,8 +14,6 @@ chat-render-tts-voice-aria = Voix des réponses
 chat-render-tts-voice-default = Voix par défaut
 chat-render-new-conversation-fallback = Nouvelle conversation
 
-chat-render-gdpr-banner = Vous envoyez des données à un modèle non conforme au RGPD. Ne saisissez aucune information personnelle (noms, e-mails, adresses, données clients ou employés).
-chat-render-nda-banner = Ce modèle n'est pas couvert par un accord de confidentialité. N'envoyez pas de contenu protégé par un NDA ou de nature confidentielle.
 chat-render-shared-readonly-banner = Chat partagé — lecture seule. Seul le créateur peut répondre.
 
 chat-render-composer-placeholder = Écrire au modèle…
@@ -101,11 +99,4 @@ chat-render-delegated-readonly-banner = Conversation déléguée — historique 
 chat-render-delegated-root-link = Ouvrir la conversation principale
 chat-render-delegated-root-unavailable = La conversation principale est indisponible. Cet historique reste en lecture seule.
 
-chat-render-confidential = Confidentiel
-chat-render-confidential-title = Marque cette conversation comme confidentielle. Seuls les modèles avec { $requires } restent sélectionnables, et cela est irréversible.
-chat-render-confidential-requires-both = couverture GDPR et NDA
-chat-render-confidential-requires-gdpr = couverture GDPR
-chat-render-confidential-requires-nda = couverture NDA
-chat-render-confidential-no-model = Aucun modèle n'est autorisé pour les données confidentielles. Demandez à un administrateur d'en autoriser un.
-chat-render-confidential-model-switched = Cette conversation est désormais confidentielle ; le modèle sélectionné n'y était pas autorisé.
 chat-render-last-model-unavailable = Le modèle utilisé en dernier dans cette conversation, { $model }, n'est pas disponible ici ; le premier modèle disponible est sélectionné à la place.

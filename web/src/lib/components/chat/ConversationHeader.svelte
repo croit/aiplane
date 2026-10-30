@@ -48,10 +48,7 @@
 		onspeechvoice: () => void;
 	} = $props();
 
-	let modelOptions = $derived(modelSelectOptions(models, {
-		gdpr: t('searchable-select-model-gdpr'),
-		nda: t('searchable-select-model-nda')
-	}, (price) => formatModelPrice(price, currency, t, n)));
+	let modelOptions = $derived(modelSelectOptions(models, (price) => formatModelPrice(price, currency, t, n)));
 	let transcriptionOptions = $derived(transcriptionModels.map((id) => ({ value: id, label: id })));
 	let speechOptions = $derived([
 		{ value: '', label: t('chat-render-tts-voice-default') },

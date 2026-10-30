@@ -876,8 +876,8 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
             pages::chat::json_api::session_effort,
         )
         .with_post(
-            "/api/v0/chat/sessions/{id}/confidential",
-            pages::chat::json_api::session_confidential,
+            "/api/v0/chat/sessions/{id}/classification",
+            pages::chat::json_api::session_classification,
         )
         .with_get(
             "/api/v0/chat/sessions/{id}/capabilities",

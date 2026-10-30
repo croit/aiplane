@@ -21,8 +21,6 @@ webhooks-sync-toggle-label = Auf die Antwort warten (Modellausgabe an den Aufruf
 webhooks-tools-toggle-label = Tools erlauben (mit deinen Tools ausführen, z. B. Websuche, RAG, Connectors)
 webhooks-tools-warning = Jeder mit der Trigger-URL kann Inhalte senden, die das Modell mit deinen Tools und in deinem Namen verarbeitet. Aktiviere dies nur für vertrauenswürdige Aufrufer.
 
-webhooks-gdpr-warning = Dieses Modell läuft außerhalb der EU. Sende keine personenbezogenen Daten über diesen Webhook.
-webhooks-nda-warning = Dieses Modell ist nicht für NDA-beschränkte Inhalte freigegeben. Sende keine vertraulichen Daten über diesen Webhook.
 
 webhooks-reveal-heading = Deine Trigger-URL
 webhooks-reveal-note = Kopiere sie jetzt — sie wird nur einmal angezeigt. Jeder mit dieser URL kann den Webhook auslösen. Verloren? Erzeuge über „Rotieren" eine neue.

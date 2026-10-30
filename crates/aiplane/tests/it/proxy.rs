@@ -199,19 +199,19 @@ async fn v1_chat_completions_forwards_a_stored_provider_table_and_client_wins() 
 }
 
 #[tokio::test]
-async fn v1_chat_content_guard_denies_before_dispatching_to_a_noncompliant_pool() {
+async fn v1_chat_classification_blocks_before_dispatching_to_an_uncleared_pool() {
     let upstream = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/systemone"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "answers": {
-                "gdpr": {"type": "noul", "noul": 0.9},
+                "personal_data": {"type": "noul", "noul": 0.9},
                 "nda": {"type": "noul", "noul": 0.9}
             }
         })))
         .mount(&upstream)
         .await;
-    let state = common::state_with_content_guard_pools(&upstream.uri()).await;
+    let state = common::state_with_classification_pools(&upstream.uri()).await;
     let bearer = common::seed_user_with_token(&state, "alice").await;
     let app = common::app(state);
     let req = Request::builder()
@@ -241,7 +241,7 @@ async fn v1_chat_content_guard_denies_before_dispatching_to_a_noncompliant_pool(
 }
 
 #[tokio::test]
-async fn v1_chat_content_guard_monitor_logs_an_unavailable_guard_and_dispatches() {
+async fn v1_chat_classification_monitor_logs_an_unavailable_detector_and_dispatches() {
     let upstream = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
@@ -250,9 +250,9 @@ async fn v1_chat_content_guard_monitor_logs_an_unavailable_guard_and_dispatches(
         })))
         .mount(&upstream)
         .await;
-    let state = common::state_with_content_guard_pools_in_mode(
+    let state = common::state_with_classification_pools_in_mode(
         &upstream.uri(),
-        aiplane_core::server::config::ContentGuardMode::Monitor,
+        aiplane_core::server::classification::ClassificationMode::Monitor,
     )
     .await;
     let bearer = common::seed_user_with_token(&state, "alice").await;
@@ -1356,7 +1356,7 @@ async fn state_with_backend_api_key(
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
             fallback_offline: None,
-            compliance: Default::default(),
+            level_rank: 0,
             enforce_limits: true,
             kind: PoolKind::Chat,
             strategy: PickerStrategy::RoundRobin,
@@ -1419,7 +1419,7 @@ async fn state_with_alias_pool(
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
             fallback_offline: None,
-            compliance: Default::default(),
+            level_rank: 0,
             enforce_limits: true,
             kind,
             strategy: PickerStrategy::RoundRobin,
@@ -2274,7 +2274,7 @@ async fn voice_speech_serves_a_cached_sentence_after_the_budget_is_spent() {
 
 // --- the target's limits come before the content guard -----------------------
 
-/// A content-guard deployment whose guard allows everything and whose chat
+/// A data classification deployment whose detector matches nothing and whose chat
 /// model answers, so the only thing that can stop a request is a limit.
 async fn guarded_upstream() -> MockServer {
     let upstream = MockServer::start().await;
@@ -2282,7 +2282,7 @@ async fn guarded_upstream() -> MockServer {
         .and(path("/systemone"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "answers": {
-                "gdpr": {"type": "noul", "noul": 0.1},
+                "personal_data": {"type": "noul", "noul": 0.1},
                 "nda": {"type": "noul", "noul": 0.1}
             }
         })))
@@ -2360,7 +2360,7 @@ async fn guard_calls(upstream: &MockServer) -> usize {
 #[tokio::test]
 async fn an_over_budget_caller_is_refused_before_the_content_guard_is_asked() {
     let upstream = guarded_upstream().await;
-    let state = common::state_with_content_guard_pools(&upstream.uri()).await;
+    let state = common::state_with_classification_pools(&upstream.uri()).await;
     let bearer = common::seed_user_with_token(&state, "alice").await;
     spend_every_budget(&state).await;
     let app = common::app(state);
@@ -2378,7 +2378,7 @@ async fn an_over_budget_caller_is_refused_before_the_content_guard_is_asked() {
 #[tokio::test]
 async fn a_caller_within_budget_is_still_checked_by_the_content_guard() {
     let upstream = guarded_upstream().await;
-    let state = common::state_with_content_guard_pools(&upstream.uri()).await;
+    let state = common::state_with_classification_pools(&upstream.uri()).await;
     let bearer = common::seed_user_with_token(&state, "alice").await;
     let app = common::app(state);
     for (asked_before, (uri, request)) in guarded_requests(&bearer).into_iter().enumerate() {

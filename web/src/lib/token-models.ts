@@ -3,30 +3,21 @@
 export interface TokenModel {
 	id: string;
 	kind: string;
-	gdpr: boolean;
-	nda: boolean;
 	alias_of: string | null;
 	price: { input: number | null; output: number | null; unit: string } | null;
 }
 
 export interface TokenModelFilter {
 	query: string;
-	gdpr: boolean;
-	nda: boolean;
 	free: boolean;
 }
 
 export interface TokenModelSummary {
 	count: number;
-	nonCompliant: number;
 	maxOutputPerMillion: number | null;
 }
 
 const KIND_ORDER = ['chat', 'transcription', 'speech', 'embedding', 'rerank', 'image', 'system_one'];
-
-export function isCompliant(model: TokenModel): boolean {
-	return model.gdpr && model.nda;
-}
 
 function isFree(model: TokenModel): boolean {
 	return !model.price || (!model.price.input && !model.price.output);
@@ -43,8 +34,6 @@ export function filterTokenModels(models: TokenModel[], filter: TokenModelFilter
 	const query = filter.query.trim().toLowerCase();
 	return models.filter((model) =>
 		(!query || model.id.toLowerCase().includes(query) || (model.alias_of ?? '').toLowerCase().includes(query))
-		&& (!filter.gdpr || model.gdpr)
-		&& (!filter.nda || model.nda)
 		&& (!filter.free || isFree(model)));
 }
 
@@ -56,7 +45,6 @@ export function selectionSummary(models: TokenModel[], selected: string[] | null
 		.map((model) => model.price?.output ?? 0);
 	return {
 		count: chosen.length,
-		nonCompliant: chosen.filter((model) => !isCompliant(model)).length,
 		maxOutputPerMillion: tokenPrices.length ? Math.max(...tokenPrices) : null
 	};
 }

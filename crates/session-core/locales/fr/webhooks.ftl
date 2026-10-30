@@ -21,8 +21,6 @@ webhooks-sync-toggle-label = Attendre la réponse (renvoyer la sortie du modèle
 webhooks-tools-toggle-label = Autoriser les outils (exécuter avec vos outils, p. ex. recherche web, RAG, connecteurs)
 webhooks-tools-warning = Toute personne disposant de l'URL de déclenchement peut envoyer du contenu que le modèle traite avec vos outils, en votre nom. N'activez ceci que pour un appelant de confiance.
 
-webhooks-gdpr-warning = Ce modèle s'exécute hors de l'UE. N'envoyez pas de données personnelles via ce webhook.
-webhooks-nda-warning = Ce modèle n'est pas autorisé pour du contenu sous NDA. N'envoyez pas de données confidentielles via ce webhook.
 
 webhooks-reveal-heading = Votre URL de déclenchement
 webhooks-reveal-note = Copiez-la maintenant — elle n'est affichée qu'une seule fois. Quiconque possède cette URL peut déclencher le webhook. Perdue ? Effectuez une rotation pour en obtenir une nouvelle.

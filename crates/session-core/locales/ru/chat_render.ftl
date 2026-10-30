@@ -14,8 +14,6 @@ chat-render-tts-voice-aria = Голос ответов
 chat-render-tts-voice-default = Голос по умолчанию
 chat-render-new-conversation-fallback = Новая беседа
 
-chat-render-gdpr-banner = Вы отправляете данные модели, не соответствующей GDPR. Не вводите личную информацию (имена, адреса электронной почты, адреса, данные клиентов или сотрудников).
-chat-render-nda-banner = Эта модель не покрывается соглашением о конфиденциальности. Не отправляйте материалы, защищённые NDA, или конфиденциальные данные.
 chat-render-shared-readonly-banner = Общий чат — только для чтения. Отвечать может только создатель.
 
 chat-render-composer-placeholder = Сообщение модели…
@@ -105,11 +103,4 @@ chat-render-delegated-readonly-banner = Делегированный разго�
 chat-render-delegated-root-link = Открыть основной разговор
 chat-render-delegated-root-unavailable = Основной разговор недоступен. Эта история остаётся доступной только для чтения.
 
-chat-render-confidential = Конфиденциально
-chat-render-confidential-title = Помечает разговор как конфиденциальный. Остаются доступны только модели с { $requires }; это нельзя отменить.
-chat-render-confidential-requires-both = соответствием GDPR и NDA
-chat-render-confidential-requires-gdpr = соответствием GDPR
-chat-render-confidential-requires-nda = соответствием NDA
-chat-render-confidential-no-model = Ни одна модель не разрешена для конфиденциальных данных. Попросите администратора разрешить одну.
-chat-render-confidential-model-switched = Разговор теперь конфиденциальный; выбранная модель не была для него разрешена.
 chat-render-last-model-unavailable = Модель, которая последней использовалась в этом разговоре, { $model }, здесь недоступна; вместо неё выбрана первая доступная модель.

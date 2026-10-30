@@ -178,10 +178,10 @@ pub(super) fn operations() -> Vec<Op> {
             .body(json::<chat::EffortBody>())
             .ok(json::<chat::EffortBody>())
             .errors(&[400, 404]),
-        post("/api/v0/chat/sessions/{id}/confidential", Access::Session)
-            .body(json::<chat::ConfidentialBody>())
-            .ok(json::<chat::ConfidentialBody>())
-            .errors(&[400, 404]),
+        post("/api/v0/chat/sessions/{id}/classification", Access::Session)
+            .body(json::<chat::ClassificationBody>())
+            .ok(json::<chat::ClassificationView>())
+            .errors(&[400, 403, 404, 409]),
         get("/api/v0/chat/sessions/{id}/capabilities", Access::Session)
             .ok(json::<chat::Capabilities>())
             .errors(&[404]),

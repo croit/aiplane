@@ -27,8 +27,6 @@ export interface ChatModelChoice {
 	id: string;
 	/** The operator's one-line description, when one is configured. */
 	description?: string;
-	gdpr: boolean;
-	nda: boolean;
 	/** The effort levels this model offers; empty when effort changes nothing. */
 	efforts: Effort[];
 	/**
@@ -299,10 +297,6 @@ export const api = {
 			session: import('./chat-protocol.js').ChatSession;
 			turns: import('./chat-protocol.js').TurnWithTools[];
 			effort: Effort;
-			/** Sticky: a confidential conversation can never become non-confidential. */
-			confidential: boolean;
-			/** `both`, `gdpr` or `nda` — what a model needs in a confidential chat. */
-			confidential_requires: 'both' | 'gdpr' | 'nda';
 			/** Operator welcome text, shown while the conversation has no turns. */
 			welcome: string;
 			compacted_up_to_seq: number | null;
@@ -499,10 +493,10 @@ export const api = {
 			{ method: 'DELETE' }
 		),
 
-	/** GET /api/v0/models — the caller's chat models (compliance flags and
-	 * configured prices included) and the deployment's currency. Passing a
-	 * conversation narrows the list to what a confidential conversation may
-	 * reach; the server decides, the picker renders. */
+	/** GET /api/v0/models — the caller's chat models (configured prices
+	 * included) and the deployment's currency. Passing a conversation narrows
+	 * the list to the models cleared for its classification level; the server
+	 * decides, the picker renders. */
 	listChatModels: (sessionId?: string) =>
 		request<{ models: ChatModelChoice[]; currency: string }>(
 			`/api/v0/models${sessionId ? `?session=${encodeURIComponent(sessionId)}` : ''}`
@@ -570,17 +564,6 @@ export const api = {
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({ effort })
 		}),
-
-	/** POST /api/v0/chat/sessions/{id}/confidential — sticky, only `true`. */
-	setChatConfidential: (id: string) =>
-		request<{ confidential: boolean }>(
-			`/api/v0/chat/sessions/${encodeURIComponent(id)}/confidential`,
-			{
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ confidential: true })
-			}
-		),
 
 	/** GET /api/v0/tools — the caller's tool toggles. */
 	listTools: () =>

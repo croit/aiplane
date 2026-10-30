@@ -50,9 +50,7 @@ GeoIP reads an IP2Location LITE DB11 BIN file. Its optional token supports datab
 
 Moving the RAG data directory does not move existing indexes. Review persistent storage before changing it. A profile, credentials or an embedding model is configured on the collection, not on the global RAG card.
 
-## Access and content guard
-
-![Content guard settings choose a decision model, monitor or enforce mode, and actions for sensitive content.](../img/guide/content-guard.png)
+## Access and data classification
 
 The Usage card enables per-request accounting, retention and display currency. The Limits card enables enforcement of rules from `/admin/limits`. The agents card sets `agents.max_active_per_user`, the maximum number of active personal agents each user may own, including idle agents; the clean-install default is four. The same card sets `agents.max_active_per_organization`, independently defaulting to four active agents per organization, including idle agents. It has no feature master switch. Administrators separately grant **Personal agent manager** in the [group form](access.md); the limit does not grant management rights. Lowering the cap does not deactivate existing agents, but blocks new agents or reactivation until the active count is below the new cap. Gateway settings control token/session lifetimes and impersonation. See [access management](access.md).
 
@@ -66,33 +64,21 @@ The **Prometheus metrics** card controls the `GET /metrics` scrape endpoint. It 
 
 The endpoint answers only when it is switched on and at least one of the token and the IP list is set; otherwise it answers like a path that does not exist (`404`). With both set, a scrape must pass both. A client address outside the list gets `403`; a missing or wrong token gets `401`. Saved changes apply to the next scrape without a restart. Behind a reverse proxy, the IP list works only when `AIPLANE_TRUSTED_PROXIES` names the proxy; otherwise every scrape arrives from the proxy's address. The IP list guards only `/metrics`, not other gateway access. See [monitoring](../operations/monitoring.md) for the scrape configuration and the metrics.
 
-The **content guard** checks request messages for the compliance areas that the destination chat pool does not declare as covered. GDPR and NDA are independent checks. AIplane sends the request messages to the configured **System One** guard model, asking only about the uncovered area or areas:
+### Data classification
 
-| Destination pool declarations | Checks sent to the System One model |
-|---|---|
-| GDPR covered; NDA covered | Neither; the guard does not call its model |
-| GDPR not covered; NDA covered | GDPR only: possible personal data |
-| GDPR covered; NDA not covered | NDA only: possible confidential or NDA-protected information |
-| Neither covered | Both GDPR and NDA |
+**Data classification** ranks how sensitive a conversation is. It is defined by an ordered set of **levels** (lowest rank first), **data classes** that a System One model can recognise, and **assignments** that give a pool its level. See [data classification](../classification.md) for the data model.
 
-The System One model receives the request messages being evaluated. Choose a guard model and pool whose own provider arrangement is suitable for processing that content; its model picker shows the same separate GDPR and NDA coverage indicators. The pool flags are [operator declarations](models.md#pool-fields), not contract inspection or a compliance certification.
+A fresh installation has a single level, `public`. With one level the feature is inactive: every model is offered, no question is asked and the chat shows no level. It becomes active once an operator adds a second level.
 
-1. Configure a reachable System One pool and model, and review the model's GDPR and NDA indicators for the content it will receive.
-2. Enable the guard and begin in **Monitor** mode. It records the checks and decisions but does not change request dispatch. If evaluation fails in monitor mode, the request proceeds and the failure is logged.
-3. Set the GDPR action and NDA action independently: **Allow**, **Confirm** or **Deny**. A matching classification reaches the action for that area; when both match, **Deny** takes precedence over **Confirm**, which takes precedence over **Allow**.
-4. Choose **Enforce** when the observed results and chosen actions are appropriate. In enforce mode, a guard evaluation failure returns an error and the destination model is not called.
+- A **pool's level** is the most sensitive data its models are cleared for. A pool without an assignment is at the lowest level. A model served by several pools is cleared only to the lowest of their levels.
+- A **conversation's level** starts at `classification.default_level` (empty means the lowest level) and only rises while the conversation is used. The model picker lists only models cleared for the conversation's level, and the gateway refuses a turn that targets a model that is not, so a direct API request cannot bypass the picker.
+- **Lowering** a conversation's level follows `classification.lowering`: **Never** refuses it; **With a reason, audited** accepts it with a non-empty reason. Every raise and lowering is recorded with its cause and actor.
+- The **detector** asks the model chosen in `classification.system_one_model` one question per data class whose level is above the target model's level. A class matches at its score threshold (default 0.5). The strongest action of the matched classes decides: **raise** lifts the conversation to the class's level, **confirm** asks the person in the chat, **block** refuses the request. Content is sent to the detector model, so choose a pool whose provider arrangement suits that content. A person's chat raises the conversation on every match; `/v1` requests and agent turns have no conversation to raise and are refused on **raise** and **block**, and need confirmation on **confirm** (API clients receive a `content_confirmation_required` error).
+- **Monitor** mode logs what the detector finds and a failed evaluation, and changes nothing. **Enforce** applies the action, and a detector failure refuses the request. The levels already held by a conversation and the model filter apply in both modes.
 
-The guard is asked after the caller's [limits](access.md#set-request-token-or-cost-limits): a request refused because its user or token is over budget is never sent to the guard model. The classifier returns a score from 0 to 1 for each question; AIplane treats a score of **0.5 or higher** as a match. The guard request has a five-second timeout. A confirmation in browser chat needs a connected prompt receiver and an affirmative answer within three minutes. API requests cannot display that browser prompt and return a `content_confirmation_required` error instead.
+The detector runs after the caller's [limits](access.md#set-request-token-or-cost-limits), so an over-budget request is never sent to it. The detector request has a five-second timeout. A confirmation in browser chat needs a connected prompt receiver and an affirmative answer within three minutes.
 
-These checks use model classification and operator pool declarations. They are not verification of provider contracts or a guarantee that a classifier detects every sensitive passage. The declarations also do not establish legal compliance by themselves; operators remain responsible for evaluating provider terms and their organization's policies.
-
-### Confidential conversations
-
-The content guard classifies each request. A conversation can also carry a **sticky confidential mark**: once set, no request can clear it, and the conversation is only routed to models whose pools meet `chat.confidential.requires`. The guard sets the mark automatically when its classification matches a compliance area the destination lacks; a person can also tick **Confidential** in the chat composer.
-
-`chat.confidential.default` marks every newly created conversation confidential. The mark is written when the conversation is created, so turning the default off later does not reopen existing conversations. Models that do not meet the requirement disappear from that conversation's model picker, and the gateway refuses such a target on the turn itself, so a direct API request cannot bypass the filter. Confirmed API (`/v1`) calls have no conversation and remain covered by the stateless guard only.
-
-The requirement is a policy choice: **both** (GDPR and NDA coverage) is the safe default; **gdpr** or **nda** narrows it where the operator's policy needs only one. A cloud model whose pools carry the required flags stays selectable. The pool declarations are the same [operator declarations](models.md#pool-fields) the guard uses; they are not contract inspection.
+An upgrade converts the previous GDPR and NDA pool flags, the content guard and sticky confidential conversations into levels and classes. The levels, classes and assignments are held in the database; an administration page for them is not part of this release, so they are changed with SQL on the `classification_*` tables followed by a settings save, which reloads them. Classification is a model-based check and an operator declaration: it is not a certification and does not guarantee that every sensitive passage is detected.
 
 ## Notifications and feedback
 
@@ -116,7 +102,7 @@ The Branding category is a single card with one slot per theme: the light logo s
 | Feature enabled but unavailable | Feature prerequisites, process-readable directory and tool grants |
 | Old worker or index path still in use | Restart-pending list and deployment restart |
 | Secret seems blank | Set/unset indicator plus a head/tail fingerprint; write-only values are intentionally not returned in full |
-| Content guard rejects everything | Guard service error, enforce mode and System One availability |
+| Data classification rejects everything | Detector service error, enforce mode and System One availability |
 | Confirm action fails without a prompt | Connected browser chat versus API caller; three-minute deadline |
 | New RAG path has no indexed data | Indexes do not move with a settings change |
 

@@ -34,8 +34,6 @@ pub(crate) async fn model_catalog(
             let price = prices.get(model.alias_of.as_deref().unwrap_or(&model.id));
             CatalogModelView {
                 kind: model.kind.as_str(),
-                gdpr: model.compliance.gdpr,
-                nda: model.compliance.nda,
                 price: price.map(|price| ModelPriceView {
                     input: price.input_price,
                     output: price.output_price,
@@ -52,10 +50,6 @@ pub(crate) async fn model_catalog(
 pub struct CatalogModelView {
     pub id: String,
     pub kind: &'static str,
-    /// Whether the model's backend is flagged GDPR-compliant.
-    pub gdpr: bool,
-    /// Whether the model's backend is flagged as covered by an NDA.
-    pub nda: bool,
     /// The model an alias resolves to; `null` for a real model.
     pub alias_of: Option<String>,
     pub price: Option<ModelPriceView>,

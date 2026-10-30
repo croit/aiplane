@@ -132,13 +132,7 @@ and escaped for Markdown, so a name cannot inject markup. Text wrapped in
 `<prompt>…</prompt>` becomes a chip that sends exactly that text in one click —
 what the person had already typed is put back into the composer afterwards.
 The tag is rendered on this card only, so a model's answer can never grow
-buttons of its own. The composer also carries the
-**Confidential** checkbox once write access is known: ticking it marks the
-conversation sticky-confidential (`POST …/confidential`), refetches the model
-list, and switches away from a model the new mark does not allow. The box then
-stays checked and disabled, because the server refuses to clear the mark. A
-confidential conversation whose policy leaves no model cleared shows a warning
-instead of an unusable picker; the server enforces the same rule on the turn.
+buttons of its own. The model picker lists only the models cleared for the conversation's classification level (`GET /api/v0/models?session=`); the server enforces the same rule on the turn. The session detail carries `classification: {active, level, levels}` for a level control.
 
 ### Bounded viewport
 
@@ -248,14 +242,13 @@ page.
 Within `/settings/tokens`, `?tab=tokens` manages tokens and `?tab=guides`
 contains client setup guides. Each token is a card (`ManagedTokenCard`) with
 four tiles — **Models**, **Tools**, **Budget**, **Priority** — that show the current state
-(GDPR/NDA exposure and the dearest token price; tool use and the MCP ask
+(the model count and the dearest token price; tool use and the MCP ask
 policy; the tightest quota with its spend; the saved priority or inheritance) and open one dialog each. Every
 dialog edits a draft and commits on Save; nothing on the card saves on a
 click. Rotate and Revoke sit in the card's ⋯ menu. The model dialog is
 `TokenModelPicker`, shared with the operator restriction on `/admin/tokens`:
-models grouped by kind, each with its GDPR/NDA badges and price (an alias is
-priced as its target), filters for compliance and price, and a warning when
-the selection reaches a model without GDPR or NDA cover. The data comes from
+models grouped by kind, each with its price (an alias is
+priced as its target) and a filter for price. The data comes from
 `/api/v0/tokens/details`: `models` is the catalog
 (`UpstreamRegistry::model_catalog_for` plus `model_defaults` prices),
 `owner_limits` the owner's own in-force limits, and each token's
@@ -280,17 +273,14 @@ uses the owner's groups and system default. Administrators can choose any class.
 Long or data-driven choices use the shared `SearchableSelect` combobox instead
 of a native select. It searches labels, stored values, descriptions, keywords and
 badges; supports arrow keys, Enter and Escape; and bounds long result lists to
-their own scroll region. Model choices render the model id left-aligned and show
-compact GDPR and NDA status badges right-aligned on every row. Green check badges
-mean the model is cleared; red crossed-out badges mean it is restricted. An
-operator description (`model_defaults.description` for a model or backend
+their own scroll region. Model choices render the model id left-aligned; an operator description (`model_defaults.description` for a model or backend
 alias, `automatic_routes.description` for a route alias) renders as the row's
 subtext and is searchable. The chat
 model picker additionally shows a neutral price badge: the model's configured
 price in the deployment's currency (an alias is priced as the model it resolves
 to), or "free" when unpriced. An automatic route reaches several models and has
 no single price, so it shows no price badge. The price badge is an outline badge
-(no check/cross), distinct from the compliance badges. The
+(no check/cross). The
 trigger looks and focuses like any other field (field border, primary focus
 ring), and keyboard-active options use a subtle surface change. In forms it takes
 the default size like the fields around it; `size="sm"` is for toolbars and filter bars. Small
@@ -1028,7 +1018,7 @@ catalog strings.
   someone else").
 - **Model choice.** One `ModelPicker` (`components/agents/ModelPicker.svelte`):
   the chat picker's `SearchableSelect` with the options `modelSelectOptions`
-  builds (`#lib/model-option`, the GDPR / NDA badges included), led by
+  builds (`#lib/model-option`), led by
   *Default (<model>)* for the gateway's default model of that kind
   (`defaults.<kind>` of `GET /api/v0/agent-resources`, Models & routing →
   Default models). The list is `models.<kind>` — what the manager may use and

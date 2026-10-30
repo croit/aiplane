@@ -133,27 +133,13 @@ tokens-expires-soon = { $days ->
 }
 tokens-models-tile-all = All { $count } models — follows your access
 tokens-models-tile-some = { $count } of { $total } models
-tokens-models-tile-compliant = All GDPR compliant and NDA covered
-tokens-models-tile-noncompliant = { $count ->
-    [one] { $count } model without GDPR or NDA cover
-   *[other] { $count } models without GDPR or NDA cover
-}
 tokens-models-tile-admin = An operator allows { $count } of them
 tokens-models-max-price = up to { $price } per 1M output tokens
-tokens-models-noncompliant-warning = { $count ->
-    [one] { $count } model here is not GDPR compliant or not NDA covered. Don’t send personal data or confidential material through this token.
-   *[other] { $count } models here are not GDPR compliant or not NDA covered. Don’t send personal data or confidential material through this token.
-}
 tokens-models-search = Search models
-tokens-models-filter-gdpr = GDPR compliant
-tokens-models-filter-nda = NDA covered
 tokens-models-filter-free = No charge
-tokens-models-select-compliant = Select all GDPR + NDA
 tokens-models-select-none = Clear selection
 tokens-models-empty = No model matches.
 tokens-models-alias = alias of { $target }
-tokens-models-gdpr-ok = GDPR compliant: personal data stays protected.
-tokens-models-nda-ok = Covered by a confidentiality agreement.
 tokens-models-price-free = no charge
 tokens-models-price-tokens = { $input } / { $output } { $symbol }
 tokens-models-price-per-images = { $price } per image

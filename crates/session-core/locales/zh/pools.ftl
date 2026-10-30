@@ -29,8 +29,6 @@ pools-field-allowed-groups-hint = 允许查看和使用此池模型的 AIplane �
 pools-field-voices = 语音（每行 lang=voice）
 pools-field-offer-voices = 可选语音（每行一个，供用户选择）
 pools-no-backends = 尚未定义任何后端。请先在“后端”页面添加一个。
-pools-field-gdpr = 符合 GDPR
-pools-field-nda = 受 NDA 保护
 pools-field-enforce-limits = 强制执行速率限制与配额
 
 upstreams-problem-no-backends = 未分配后端 —— 该池中没有任何东西可以处理请求。

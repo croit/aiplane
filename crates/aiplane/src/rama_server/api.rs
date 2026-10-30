@@ -565,8 +565,7 @@ pub struct UsageTokenOption {
 }
 
 /// GET /api/v0/models — the caller's selectable chat models, with the
-/// data-handling flags the compliance banner shows and the configured
-/// default promoted. The SPA's model picker; the legacy page builds the
+/// configured default promoted. The SPA's model picker; the legacy page builds the
 /// same list server-side (`pages::chat::list_chat_models`).
 pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let session = match require_session(&state, &req).await {
@@ -586,36 +585,34 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
         &access,
     )
     .await;
-    // A confidential conversation may only reach models the operator cleared
-    // for it. The filter is server-side; the picker merely renders what it is
-    // given. A session the caller does not own is ignored, so the list is
-    // never narrowed by guessing.
+    // A conversation may only reach models the operator cleared for its level.
+    // The filter is server-side; the picker merely renders what it is given. A
+    // session the caller does not own is ignored, so the list is never
+    // narrowed by guessing.
     let requested_session = req.uri().query().and_then(|query| {
         query
             .split('&')
             .find_map(|pair| pair.strip_prefix("session="))
     });
-    let confidential = match requested_session {
+    let scheme = state.scheme();
+    let conversation_rank = match requested_session {
         Some(session_id)
-            if session_core::db::is_root_session_owned(&state.db, &user.id, session_id)
-                .await
-                .unwrap_or(false) =>
+            if scheme.is_active()
+                && session_core::db::is_root_session_owned(&state.db, &user.id, session_id)
+                    .await
+                    .unwrap_or(false) =>
         {
-            aiplane_core::server::db::chat_session_settings::get_confidential(&state.db, session_id)
+            let stored = aiplane_core::server::classification::level_id(&state.db, session_id)
                 .await
-                .unwrap_or(false)
+                .unwrap_or(None);
+            scheme.level_or_lowest(stored.as_deref()).rank
         }
-        _ => false,
+        _ => 0,
     };
-    let models = if confidential {
-        let requires = state.config().chat.confidential.requires;
-        models
-            .into_iter()
-            .filter(|choice| requires.satisfied_by(choice.compliance))
-            .collect()
-    } else {
-        models
-    };
+    let models: Vec<_> = models
+        .into_iter()
+        .filter(|choice| choice.cleared_for(conversation_rank))
+        .collect();
     // Whether the composer's effort control does anything for each model.
     //
     // It is a select that has always been rendered the same for every model,
@@ -730,8 +727,6 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
             });
             ChatModel {
                 id: choice.id,
-                gdpr: choice.compliance.gdpr,
-                nda: choice.compliance.nda,
                 description,
                 efforts: efforts
                     .unwrap_or_default()
@@ -758,10 +753,6 @@ pub struct ChatModels {
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct ChatModel {
     pub id: String,
-    /// Whether the model's backend is flagged GDPR-compliant.
-    pub gdpr: bool,
-    /// Whether the model's backend is flagged as covered by an NDA.
-    pub nda: bool,
     /// The operator's one-line description, shown under the name in the
     /// picker. `null` when none is configured.
     pub description: Option<String>,
