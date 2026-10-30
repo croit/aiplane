@@ -36,6 +36,7 @@ mod body_limit;
 mod branding;
 mod browser_feedback;
 mod chat_json_api;
+mod classification_admin;
 mod classification_runtime;
 mod clients;
 mod comfyui_integration;

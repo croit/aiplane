@@ -46,14 +46,14 @@ fn file_findings(
     scheme: &Scheme,
     mapping: &Mapping<'_>,
     terms: &crate::classification_detector::TermMatchers,
-    attachment: &AttachmentRef,
+    filename: &str,
     mime: &str,
     bytes: &[u8],
     above_rank: u32,
 ) -> (Vec<Finding>, Option<String>) {
     let mut findings = Vec::new();
-    let markings = read_markings(&attachment.filename, mime, bytes);
-    let resolved = resolve(&markings, &attachment.filename, mapping);
+    let markings = read_markings(filename, mime, bytes);
+    let resolved = resolve(&markings, filename, mapping);
     if let Some(level) = resolved.level_id {
         for cause in resolved.causes {
             findings.push(Finding {
@@ -64,7 +64,7 @@ fn file_findings(
             });
         }
     }
-    let text = detection_text(&attachment.filename, mime, bytes, PATTERN_TEXT_BYTES);
+    let text = detection_text(filename, mime, bytes, PATTERN_TEXT_BYTES);
     if let Some(text) = &text {
         for level in stamp_matches(text, mapping.rules) {
             findings.push(Finding {
@@ -135,7 +135,7 @@ async fn inspect(
                 &scheme_owned,
                 &mapping,
                 &terms_owned,
-                &attachment_owned,
+                &attachment_owned.filename,
                 &fetched.mime,
                 &fetched.bytes,
                 above_rank,
@@ -222,4 +222,79 @@ pub(crate) async fn evaluate_attachments(
         return Ok(Decision::Allow);
     }
     Ok(apply_findings(state, &scheme, context, &findings).await)
+}
+
+/// What the saved scheme makes of one file or text, without a conversation.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DryRun {
+    pub level_id: String,
+    pub causes: Vec<String>,
+    pub classes: Vec<String>,
+}
+
+/// The administrator's test: the findings an upload and a typed message would
+/// give for `file` (name, mime, bytes) and `text`, judged against the lowest
+/// level so every class counts. Nothing is stored. The System One model is
+/// asked only when one is configured.
+pub async fn dry_run(
+    state: &AppState,
+    file: Option<(&str, &str, &[u8])>,
+    text: Option<&str>,
+) -> Result<DryRun, String> {
+    let scheme = state.scheme();
+    let config = state.config();
+    let terms = state.term_matchers();
+    let mut findings = Vec::new();
+    let mut texts: Vec<String> = Vec::new();
+    if let Some((filename, mime, bytes)) = file {
+        let rules = marking_rules(&state.db)
+            .await
+            .map_err(|error| format!("reading the classification markings: {error}"))?;
+        let mapping = Mapping {
+            scheme: &scheme,
+            rules: &rules,
+            policy: &config.classification,
+        };
+        let (file_findings, file_text) =
+            file_findings(&scheme, &mapping, &terms, filename, mime, bytes, 0);
+        findings.extend(file_findings);
+        texts.extend(file_text);
+    }
+    if let Some(text) = text.filter(|text| !text.trim().is_empty()) {
+        findings.extend(static_findings(&scheme, &terms, text, 0));
+        texts.push(text.to_owned());
+    }
+    let joined = texts.join("\n\n");
+    if !config.classification.system_one_model.trim().is_empty() && !joined.trim().is_empty() {
+        let bounded: String = joined
+            .char_indices()
+            .take_while(|(at, _)| *at < SYSTEM_ONE_TEXT_BYTES)
+            .map(|(_, ch)| ch)
+            .collect();
+        findings.extend(system_one_findings(state, &bounded, 0).await?);
+    }
+    let level_id = findings
+        .iter()
+        .filter_map(|finding| scheme.level(&finding.level_id))
+        .max_by_key(|level| level.rank)
+        .unwrap_or_else(|| scheme.lowest())
+        .id
+        .clone();
+    let mut causes: Vec<String> = Vec::new();
+    let mut classes: Vec<String> = Vec::new();
+    for finding in &findings {
+        if !causes.contains(&finding.cause) {
+            causes.push(finding.cause.clone());
+        }
+        if let Some(class) = &finding.class_id
+            && !classes.contains(class)
+        {
+            classes.push(class.clone());
+        }
+    }
+    Ok(DryRun {
+        level_id,
+        causes,
+        classes,
+    })
 }

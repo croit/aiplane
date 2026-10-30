@@ -61,7 +61,7 @@ use session_core::i18n::{Lang, args, t, t_args};
 
 /// Prefix for every row this module owns, so the settings namespace cannot
 /// collide with `oidc.*`, `setup.*`, `gateway.public_url` or the seed markers.
-const PREFIX: &str = "settings.";
+pub(crate) const PREFIX: &str = "settings.";
 
 /// What kind of control edits a field, and how its text form is parsed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -491,34 +491,6 @@ pub static SECTIONS: &[SectionSpec] = &[
         )],
     },
     SectionSpec {
-        name: "classification",
-        category: Category::Access,
-        user_feature: false,
-        fields: &[
-            f("classification.default_level", Kind::Text),
-            f(
-                "classification.lowering",
-                Kind::Choice(&["never", "with_reason"]),
-            ),
-            f(
-                "classification.gate_on_match",
-                Kind::Choice(&["ask", "block"]),
-            ),
-            f("classification.link_share_max_level", Kind::Text),
-            f("classification.unknown_label_level", Kind::Text),
-            f("classification.unreadable_level", Kind::Text),
-            f(
-                "classification.system_one_model",
-                Kind::Model(PoolKind::SystemOne),
-            ),
-            f("classification.mode", Kind::Choice(&["monitor", "enforce"])),
-            f("classification.output.visible", Kind::Bool),
-            f("classification.output.metadata", Kind::Bool),
-            f("classification.output.filename", Kind::Bool),
-            f("classification.mip_tenant_id", Kind::Text),
-        ],
-    },
-    SectionSpec {
         name: "chat.voice",
         category: Category::Chat,
         user_feature: false,
@@ -747,9 +719,44 @@ pub static SECTIONS: &[SectionSpec] = &[
     },
 ];
 
+/// Sections whose fields are stored in the settings rows but edited elsewhere,
+/// so `/admin/settings` does not list them: the classification policy is saved
+/// together with the levels it refers to at `/admin/classification`.
+pub static STORED_SECTIONS: &[SectionSpec] = &[SectionSpec {
+    name: "classification",
+    category: Category::Access,
+    user_feature: false,
+    fields: &[
+        f("classification.default_level", Kind::Text),
+        f(
+            "classification.lowering",
+            Kind::Choice(&["never", "with_reason"]),
+        ),
+        f(
+            "classification.gate_on_match",
+            Kind::Choice(&["ask", "block"]),
+        ),
+        f("classification.link_share_max_level", Kind::Text),
+        f("classification.unknown_label_level", Kind::Text),
+        f("classification.unreadable_level", Kind::Text),
+        f(
+            "classification.system_one_model",
+            Kind::Model(PoolKind::SystemOne),
+        ),
+        f("classification.mode", Kind::Choice(&["monitor", "enforce"])),
+        f("classification.output.visible", Kind::Bool),
+        f("classification.output.metadata", Kind::Bool),
+        f("classification.output.filename", Kind::Bool),
+        f("classification.mip_tenant_id", Kind::Text),
+    ],
+}];
+
 /// Every declared field, flattened.
 pub fn all_fields() -> impl Iterator<Item = &'static FieldSpec> {
-    SECTIONS.iter().flat_map(|s| s.fields.iter())
+    SECTIONS
+        .iter()
+        .chain(STORED_SECTIONS)
+        .flat_map(|s| s.fields.iter())
 }
 
 /// Look up one field's spec.

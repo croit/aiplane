@@ -1,6 +1,6 @@
 # Data classification
 
-Data classification ranks conversations and model pools by sensitivity. This page describes the data model, how the gateway resolves levels and how an existing installation is migrated. Administrators configure it through [system settings](admin/settings.md#data-classification).
+Data classification ranks conversations and model pools by sensitivity. This page describes the data model, how the gateway resolves levels and how an existing installation is migrated. Administrators configure it at `/admin/classification`; see [Data classification](admin/settings.md#data-classification).
 
 ## Data model
 
@@ -18,11 +18,35 @@ All tables belong to one migration (`0090_data_classification.sql`).
 
 ## Resolution
 
-- The scheme is loaded into an immutable `Scheme` snapshot held in `AppState` and replaced after boot and after every settings save. A change to the tables takes effect on the next settings save or restart.
+- The scheme is loaded into an immutable `Scheme` snapshot held in `AppState` and replaced after boot and after every settings save. The admin API reloads it after every change; a change made to the tables by other means takes effect on the next settings save or restart.
 - With one level, `Scheme::is_active` is false: no level is shown, no model is hidden and the detector asks nothing.
 - A model's level is the lowest rank of the pools serving it. Pools without an assignment are at rank 0.
 - A new conversation stores `classification.default_level` only when its rank is above the lowest, with the event cause `default`.
 - `raise` runs in an immediate transaction and does nothing unless the target is higher. `lower` needs `classification.lowering = with_reason` and a non-empty reason. Both write an event.
+
+## Administration API
+
+All endpoints need administrator rights and live under `/api/v0/admin/classification`. A refused request answers `400` with the code `invalid_classification` and the offending field (`field`, e.g. `levels[2].id` or `policy.link_share_max_level`).
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/v0/admin/classification` | The whole scheme (`active`, `levels`, `classes` with their word-list state, `markings`, `policy`), the `destinations` that can be rated (every pool, tool with its `egress` flag, connector, knowledge collection), the `system_one_models` with `cleared_for_highest` and the `templates`. |
+| `PUT /api/v0/admin/classification` | Replaces the scheme atomically in one transaction. |
+| `POST /api/v0/admin/classification/classes/{id}/terms` | Multipart `file`: replaces the class's word list and reloads the matchers. Answers the preview counts (`count`, `duplicates`, `too_short`, `sample`). |
+| `DELETE /api/v0/admin/classification/classes/{id}/terms` | Removes the word list. |
+| `POST /api/v0/admin/classification/inspect` | Multipart `file`: the markings the document carries. |
+| `POST /api/v0/admin/classification/test` | Multipart `file` or `text`: the level, causes and classes the saved scheme gives the sample. Writes nothing. |
+| `GET /api/v0/admin/classification/events` | The latest level changes across conversations, newest first. |
+
+`PUT` validates before it writes:
+
+- levels need unique slug ids and contiguous ranks from 0; every level id used by a class, marking, assignment or policy field must exist;
+- class ids are unique slugs, patterns are built-in pattern ids, thresholds lie between 0 and 1;
+- a `mip` marking value or a level's Purview label must be a GUID (stored lowercase without braces);
+- an assignment must name an existing destination; `gate` is accepted only for destinations that send data out of AIplane; non-egress destinations are always `hide`;
+- the System One model must be served by a System One pool and be cleared for the highest level when a class has a question or any destination is set to `gate`; it may be empty only when neither is the case.
+
+Removing a level moves its conversations as described under [Data classification](admin/settings.md#data-classification) and writes one `scheme_change` event per conversation. The policy is stored in the `settings.classification.*` rows of `app_settings`, so the runtime reads it through the settings mechanism.
 
 ## Migration of an existing installation
 

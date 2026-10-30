@@ -6,26 +6,7 @@ Model fields use the catalog for the pool kind named in the table. Paths refer t
 
 ## Field catalog
 
-### classification
-
-Category: **Access**.
-
-| Key | Input / choices | Meaning | Restart |
-|---|---|---|---|
-| `classification.default_level` | Text | Level id a new conversation starts at. Empty starts at the lowest level. | No |
-| `classification.lowering` | never, with_reason | Whether a conversation's level may be lowered after it was raised. `with_reason` needs a non-empty reason and is audited. Ships as never. | No |
-| `classification.gate_on_match` | ask, block | What happens when content matches a class that needs a higher level than the target offers. Ships as ask. | No |
-| `classification.link_share_max_level` | Text | Highest level id a conversation may have and still be shared by link. Empty applies no limit. | No |
-| `classification.unknown_label_level` | Text | Level id for content carrying a label that no marking maps. | No |
-| `classification.unreadable_level` | Text | Level id for files whose classification cannot be read. | No |
-| `classification.system_one_model` | Model (SystemOne pool) | System One model that answers the data class questions. Empty disables detection. | No |
-| `classification.mode` | monitor, enforce | Monitor logs what the detector finds; enforce raises conversations and applies the class action. Ships as enforce. | No |
-| `classification.output.visible` | Boolean | Stamp the level's marking text onto generated documents. Ships off. | No |
-| `classification.output.metadata` | Boolean | Write the level into the metadata of generated documents. Ships off. | No |
-| `classification.output.filename` | Boolean | Add the level's file name tag to generated files. Ships off. | No |
-| `classification.mip_tenant_id` | Text | Microsoft Purview tenant (site) id written into the MIP label properties of generated documents. Empty writes an empty site id. | No |
-
-The level fields name a level id from the `classification_levels` table; an empty or unknown id resolves to the lowest level. The detector sends the request messages to the selected System One model, so assess its own pool before selecting it. See [data classification](settings.md#data-classification).
+The data classification policy is not a settings card: it is edited at `/admin/classification` and described in [data classification](settings.md#data-classification). Its values are stored as `settings.classification.*` rows.
 
 ### chat.welcome
 

@@ -611,7 +611,7 @@ pub struct Pool {
     /// Rank of the classification level this pool is cleared for (0 = the
     /// lowest level, also for a pool with no assignment). Never affects
     /// routing; the model filter and the turn check read it.
-    pub level_rank: u32,
+    level_rank: AtomicU32,
     /// Whether calls served by this pool count toward rate limits / quotas
     /// (default `true`; self-hosted pools set `false`). See
     /// [`UpstreamPoolConfig::enforce_limits`] and [`UpstreamRegistry::enforce_limits_for_model`].
@@ -953,6 +953,11 @@ pub enum AcquireError {
 }
 
 impl Pool {
+    /// Rank of the classification level this pool is cleared for.
+    pub fn level_rank(&self) -> u32 {
+        self.level_rank.load(Ordering::Relaxed)
+    }
+
     fn new(name: String, cfg: &UpstreamPoolConfig) -> Self {
         let backends = cfg
             .backend
@@ -964,7 +969,7 @@ impl Pool {
             kind: cfg.kind,
             strategy: cfg.strategy,
             backends,
-            level_rank: cfg.level_rank,
+            level_rank: AtomicU32::new(cfg.level_rank),
             enforce_limits: cfg.enforce_limits,
             voices: Arc::new(cfg.voices.clone()),
             offer_voices: cfg.offer_voices.clone(),
@@ -1786,6 +1791,18 @@ impl UpstreamRegistry {
             .or_else(|| backends().filter_map(|b| b.context_window(model)).min())
     }
 
+    /// Give every pool the rank of its classification assignment (a pool
+    /// absent from `levels` is at the lowest level) without rebuilding the
+    /// topology, so an edit of the scheme reaches the model filter at once.
+    pub fn apply_pool_levels(&self, levels: &HashMap<String, u32>) {
+        for pool in self.data().pools.values() {
+            pool.level_rank.store(
+                levels.get(&pool.name).copied().unwrap_or(0),
+                Ordering::Relaxed,
+            );
+        }
+    }
+
     pub fn pools(&self) -> Vec<Arc<Pool>> {
         self.data().pools.values().cloned().collect()
     }
@@ -2096,10 +2113,10 @@ impl UpstreamRegistry {
                         let entry = catalog.entry(id.clone()).or_insert_with(|| CatalogModel {
                             id: id.clone(),
                             kind,
-                            level_rank: pool.level_rank,
+                            level_rank: pool.level_rank(),
                             alias_of: None,
                         });
-                        entry.level_rank = entry.level_rank.min(pool.level_rank);
+                        entry.level_rank = entry.level_rank.min(pool.level_rank());
                         if real.contains(&id) {
                             real_ids.insert(id);
                         } else if entry.alias_of.is_none() {
@@ -2150,8 +2167,8 @@ impl UpstreamRegistry {
                     }
                     merged
                         .entry(id)
-                        .and_modify(|rank| *rank = (*rank).min(pool.level_rank))
-                        .or_insert(pool.level_rank);
+                        .and_modify(|rank| *rank = (*rank).min(pool.level_rank()))
+                        .or_insert(pool.level_rank());
                 }
             }
         }

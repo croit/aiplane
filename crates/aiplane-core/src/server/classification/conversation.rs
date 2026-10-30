@@ -79,7 +79,7 @@ pub async fn set_level(db: &Pool, session_id: &str, level_id: &str) -> Result<()
     Ok(())
 }
 
-async fn write_event(
+pub(super) async fn write_event(
     conn: &mut sqlx::SqliteConnection,
     session_id: &str,
     from: &str,
@@ -203,7 +203,7 @@ pub async fn lower(
     })
 }
 
-async fn stored_level(
+pub(super) async fn stored_level(
     conn: &mut sqlx::SqliteConnection,
     session_id: &str,
 ) -> Result<Option<String>, DbError> {
@@ -216,7 +216,7 @@ async fn stored_level(
     )
 }
 
-async fn store(
+pub(super) async fn store(
     conn: &mut sqlx::SqliteConnection,
     session_id: &str,
     level_id: &str,

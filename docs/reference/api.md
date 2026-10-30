@@ -566,6 +566,13 @@ Debug fixture routes exist only in development builds.
 | `GET /api/v0/admin/branding` |
 | `POST /api/v0/admin/branding` |
 | `DELETE /api/v0/admin/branding/{slot}` |
+| `GET /api/v0/admin/classification` |
+| `PUT /api/v0/admin/classification` |
+| `DELETE /api/v0/admin/classification/classes/{id}/terms` |
+| `POST /api/v0/admin/classification/classes/{id}/terms` |
+| `GET /api/v0/admin/classification/events` |
+| `POST /api/v0/admin/classification/inspect` |
+| `POST /api/v0/admin/classification/test` |
 | `GET /api/v0/admin/connectors` |
 | `PUT /api/v0/admin/connectors` |
 | `POST /api/v0/admin/connectors/restore-defaults` |

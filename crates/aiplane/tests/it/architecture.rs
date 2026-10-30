@@ -504,6 +504,13 @@ const REQUEST_BODY_READS: &[(BodyRead, Allowed)] = &[
     (
         BodyRead::Multipart,
         Allowed {
+            path: "aiplane-api/src/pages/classification/mod.rs",
+            why: "the fields of an inbound sample or word-list upload, behind BodyLimitLayer — not a response",
+        },
+    ),
+    (
+        BodyRead::Multipart,
+        Allowed {
             path: "aiplane-api/src/pages/branding.rs",
             why: "the fields of an inbound logo upload, behind BodyLimitLayer — not a response",
         },

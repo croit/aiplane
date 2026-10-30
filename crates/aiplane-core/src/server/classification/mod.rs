@@ -8,6 +8,7 @@
 //! This module holds types and database accessors only. Detecting data
 //! (System One), hiding models and refusing turns live in the layers above.
 
+pub mod admin;
 mod conversation;
 mod policy;
 mod scheme;

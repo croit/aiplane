@@ -146,6 +146,13 @@ pub enum Over {
 }
 
 impl Over {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Hide => "hide",
+            Self::Gate => "gate",
+        }
+    }
+
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "hide" => Some(Self::Hide),
