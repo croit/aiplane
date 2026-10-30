@@ -163,3 +163,78 @@ pub async fn delete_pending_turn(pool: &Pool, turn_id: &str) -> Result<bool, DbE
         .await?;
     Ok(done.rows_affected() > 0)
 }
+
+/// Whether the conversation still has work that will change what it holds: a
+/// turn streaming, a message waiting in the queue, or a user turn no answer has
+/// started for yet (a waiting turn claimed from the queue is in that gap). A
+/// side call that reads the conversation's level waits for this to end, since
+/// every one of those can still raise it.
+pub async fn has_unfinished_work(pool: &Pool, session_id: &str) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        r#"SELECT
+             EXISTS (SELECT 1 FROM chat_turns WHERE session_id = ?1 AND status = 'in_progress')
+             OR EXISTS (SELECT 1 FROM chat_pending_turns WHERE session_id = ?1)
+             OR COALESCE((SELECT role = 'user' FROM chat_turns
+                           WHERE session_id = ?1 ORDER BY seq DESC LIMIT 1), 0)"#,
+    )
+    .bind(session_id)
+    .fetch_one(pool)
+    .await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::tests::pool;
+
+    #[tokio::test]
+    async fn a_conversation_has_unfinished_work_until_every_message_is_answered() {
+        let pool = pool().await;
+        let session = create_session(&pool, "u1").await.unwrap();
+        assert!(!has_unfinished_work(&pool, &session.id).await.unwrap());
+
+        create_user_turn(&pool, &session.id, "q1", "hello")
+            .await
+            .unwrap();
+        assert!(
+            has_unfinished_work(&pool, &session.id).await.unwrap(),
+            "a message no answer has started for"
+        );
+
+        let answer = create_assistant_turn_if_idle(&pool, &session.id, "a1", "model")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            has_unfinished_work(&pool, &session.id).await.unwrap(),
+            "the answer is streaming"
+        );
+        finalize_turn(&pool, &answer.id, TurnStatus::Completed, None)
+            .await
+            .unwrap();
+        assert!(!has_unfinished_work(&pool, &session.id).await.unwrap());
+
+        let queued = create_user_turn(&pool, &session.id, "q2", "later")
+            .await
+            .unwrap();
+        insert_pending_turn(
+            &pool,
+            &PendingTurn {
+                turn_id: queued.id.clone(),
+                session_id: session.id.clone(),
+                user_id: "u1".into(),
+                model: "model".into(),
+                voice: false,
+                client_ip: None,
+                secure: false,
+                created_at: Timestamp::now(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            has_unfinished_work(&pool, &session.id).await.unwrap(),
+            "a message waiting for a slot"
+        );
+    }
+}
