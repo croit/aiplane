@@ -1579,6 +1579,7 @@ export const de: Catalog = {
  "cls-destinations-lead": "Jeder Ort, an den Daten gelangen können: Modell-Pools, Werkzeuge, MCP-Server, Konnektoren und Wissenssammlungen. Bewerten Sie jedes Ziel mit der höchsten Stufe, für die es taugt. Das ist Ihre Erklärung darüber, wo die Daten landen.",
  "cls-destinations-progress": "{rated} von {total} bewertet",
  "cls-destinations-unrated": "{count} Ziele sind nicht bewertet; sie erhalten die niedrigste Stufe.",
+ "cls-detector-unavailable": "Die Nachricht wurde nicht gesendet: Das Modell, das sie auf klassifizierte Inhalte prüft, war nicht erreichbar, und ungeprüft geht nichts an ein Modell. Versuche es später erneut oder bitte einen Administrator, das System-One-Modell zu prüfen.",
  "cls-diff-classes-added": "Datenklassen hinzugefügt: {names}",
  "cls-diff-classes-changed": "Datenklassen geändert: {names}",
  "cls-diff-classes-removed": "Datenklassen entfernt: {names}",

@@ -13,6 +13,7 @@ use aiplane_core::server::classification::{self, Action, ClassificationMode, Sch
 use aiplane_core::server::upstreams::{PoolAccess, PoolKind};
 use aiplane_features::server::classification::{TermMatcher, find_patterns};
 use serde_json::{Value, json};
+use session_core::i18n::{Lang, t};
 
 use crate::server::AppState;
 use crate::server::tools::ChatFeedback;
@@ -338,7 +339,10 @@ fn settle(
             tracing::warn!(error = %error, "data classification could not evaluate the request in monitor mode");
             Ok(None)
         }
-        (ClassificationMode::Enforce, Err(error)) => Err(error),
+        (ClassificationMode::Enforce, Err(error)) => {
+            tracing::warn!(error = %error, "data classification could not evaluate the request; refusing it");
+            Err(t(Lang::En, "cls-detector-unavailable"))
+        }
     }
 }
 
@@ -451,12 +455,19 @@ fn checked_request(request: &Value, scope: Scope) -> Value {
 
 /// Everything a request shows about its level for the classes above
 /// `target_rank`: patterns and word lists first, then the System One model.
+/// A check the System One model could not finish: what the patterns and word
+/// lists found anyway, and why the model failed.
+struct Unchecked {
+    found: Vec<Finding>,
+    error: String,
+}
+
 async fn request_findings(
     state: &AppState,
     request: &Value,
     scope: Scope,
     target_rank: u32,
-) -> Result<Vec<Finding>, String> {
+) -> Result<Vec<Finding>, Unchecked> {
     let request = &checked_request(request, scope);
     if request["messages"].as_array().is_none_or(Vec::is_empty) {
         return Ok(Vec::new());
@@ -468,10 +479,16 @@ async fn request_findings(
         &request_text(request),
         target_rank,
     );
-    if let Some(detection) = settle(mode, detect(state, request, target_rank).await)? {
-        findings.extend(detection.findings());
+    match settle(mode, detect(state, request, target_rank).await) {
+        Ok(detection) => {
+            findings.extend(detection.into_iter().flat_map(|d| d.findings()));
+            Ok(findings)
+        }
+        Err(error) => Err(Unchecked {
+            found: findings,
+            error,
+        }),
     }
-    Ok(findings)
 }
 
 /// The stateless check for `/v1`: nothing is stored, the decision follows the
@@ -486,7 +503,9 @@ pub async fn evaluate_for_model(
         return Ok(Decision::Allow);
     };
     let mode = state.config().classification.mode;
-    let findings = request_findings(state, request, Scope::ClientSent, rank).await?;
+    let findings = request_findings(state, request, Scope::ClientSent, rank)
+        .await
+        .map_err(|unchecked| unchecked.error)?;
     Ok(if mode == ClassificationMode::Enforce {
         stateless_decision(&findings)
     } else {
@@ -549,7 +568,15 @@ pub(crate) async fn evaluate_for_turn(
     } else {
         Scope::ClientSent
     };
-    let findings = request_findings(state, request, scope, rank).await?;
+    let findings = match request_findings(state, request, scope, rank).await {
+        Ok(findings) => findings,
+        Err(Unchecked { found, error }) => {
+            if !found.is_empty() {
+                apply_findings(state, &scheme, context, &found).await;
+            }
+            return Err(error);
+        }
+    };
     if mode == ClassificationMode::Monitor || findings.is_empty() {
         if !findings.is_empty() {
             tracing::info!(

@@ -209,7 +209,15 @@ pub(crate) async fn evaluate_attachments(
     let mut findings = inspected.findings;
     let text = system_one_text(&inspected.texts);
     if !text.trim().is_empty() {
-        findings.extend(system_one_findings(state, &text, rank).await?);
+        match system_one_findings(state, &text, rank).await {
+            Ok(found) => findings.extend(found),
+            Err(error) => {
+                if !findings.is_empty() {
+                    apply_findings(state, &scheme, context, &findings).await;
+                }
+                return Err(error);
+            }
+        }
     }
     tracing::info!(
         session_id,

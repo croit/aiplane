@@ -187,7 +187,7 @@ When a turn starts, before any model reads the attachments (OCR is a model too),
 | A word of a data class's list | `terms:<class id>` |
 | The System One model, asked about the first 32 KiB of text for the classes above the conversation's level | `system_one:<class id>` |
 
-A class's action applies exactly as for typed text: `raise` raises, `confirm` asks the person before the content goes to the model, `block` refuses the turn. A marking always raises. In monitor mode only the System One question is asked and logged. A failure of the System One model refuses the turn in enforce mode.
+A class's action applies exactly as for typed text: `raise` raises, `confirm` asks the person before the content goes to the model, `block` refuses the turn. A marking always raises. In monitor mode only the System One question is asked and logged. A failure of the System One model refuses the turn in enforce mode; what the markings, patterns and word lists found still raises the conversation first, for an upload as for typed text. The person sees that the checking model could not be reached; the cause is logged.
 
 After the raise the model check runs as before: a model whose level is below the conversation's is refused unless the person just approved the content for it. The check is repeated at the start of every later round, so a level that rises during a turn (a retrieval) ends the turn at the next round instead of sending the new content to an uncleared model. An approval covers the level the conversation had when it was given.
 

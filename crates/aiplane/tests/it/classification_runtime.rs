@@ -908,13 +908,28 @@ async fn send_to(
     String,
     (chat::TurnStatus, String),
 ) {
+    send_with(&iban_class(action), mode, model, message, file).await
+}
+
+async fn send_with(
+    classes_sql: &str,
+    mode: aiplane_core::server::classification::ClassificationMode,
+    model: &str,
+    message: &str,
+    file: Option<(&str, &str)>,
+) -> (
+    MockServer,
+    Arc<RamaState>,
+    String,
+    (chat::TurnStatus, String),
+) {
     let upstream = chat_upstream().await;
     let s3 = object_store().await;
     let state = state_with(
         &upstream.uri(),
         &s3.uri(),
         true,
-        &iban_class(action),
+        classes_sql,
         move |config| {
             config.classification.mode = mode;
         },
@@ -931,6 +946,65 @@ async fn send_to(
     wait_settled(&state, &session.id).await;
     let status = last_turn_status(&state, &session.id).await;
     (upstream, state, session.id, status)
+}
+
+/// The chat mock serves no `/systemone`, so the System One model fails.
+fn iban_and_rule_classes() -> String {
+    format!(
+        "{}
+         INSERT INTO classification_data_classes
+             (id, name, level_id, patterns, action, rule_question, rule_threshold)
+         VALUES ('person', 'Personal data', 'internal', '[]', 'raise', 'Is a person described?', 0.6);",
+        iban_class("raise")
+    )
+}
+
+#[tokio::test]
+async fn an_unreachable_system_one_model_still_raises_what_a_pattern_found_and_refuses_the_turn() {
+    use aiplane_core::server::classification::ClassificationMode::Enforce;
+    let (upstream, state, session, (status, error)) = send_with(
+        &iban_and_rule_classes(),
+        Enforce,
+        "high-model",
+        &format!("pay {IBAN}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, chat::TurnStatus::Errored);
+    assert!(error.contains("could not be reached"), "{error}");
+    assert!(!error.contains("http"), "no upstream address: {error}");
+    assert_eq!(
+        events(&state, &session).await,
+        vec![(
+            "public".into(),
+            "confidential".into(),
+            "pattern:iban".into()
+        )]
+    );
+    assert_eq!(chat_requests(&upstream).await, 0);
+}
+
+#[tokio::test]
+async fn an_unreachable_system_one_model_still_raises_what_a_files_label_showed() {
+    use aiplane_core::server::classification::ClassificationMode::Enforce;
+    let (_upstream, state, session, (status, error)) = send_with(
+        &iban_and_rule_classes(),
+        Enforce,
+        "high-model",
+        "please read this",
+        Some(("mip_confidential.docx", "application/octet-stream")),
+    )
+    .await;
+    assert_eq!(status, chat::TurnStatus::Errored);
+    assert!(error.contains("could not be reached"), "{error}");
+    assert_eq!(
+        events(&state, &session).await,
+        vec![(
+            "public".into(),
+            "confidential".into(),
+            format!("marking:mip:{CONFIDENTIAL_GUID}")
+        )]
+    );
 }
 
 #[tokio::test]

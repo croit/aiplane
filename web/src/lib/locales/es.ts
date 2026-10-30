@@ -1579,6 +1579,7 @@ export const es: Catalog = {
  "cls-destinations-lead": "Todos los lugares a los que pueden ir los datos: pools de modelos, herramientas, servidores MCP, conectores y colecciones de conocimiento. Asigne a cada uno el nivel más alto para el que es apto. Es su declaración sobre dónde acaban los datos.",
  "cls-destinations-progress": "{rated} de {total} valorados",
  "cls-destinations-unrated": "{count} destinos no están valorados; reciben el nivel más bajo.",
+ "cls-detector-unavailable": "El mensaje no se envió: no se pudo contactar con el modelo que comprueba su contenido clasificado, y nada llega a un modelo sin comprobar. Inténtalo más tarde o pide a un administrador que revise el modelo System One.",
  "cls-diff-classes-added": "Clases de datos añadidas: {names}",
  "cls-diff-classes-changed": "Clases de datos modificadas: {names}",
  "cls-diff-classes-removed": "Clases de datos eliminadas: {names}",

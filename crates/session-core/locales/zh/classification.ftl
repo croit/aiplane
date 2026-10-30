@@ -222,3 +222,4 @@ cls-turn-model-not-cleared = 此对话的分级为 { $level }；所选模型未�
 cls-tool-hidden = { $tool } 在此对话中不可用：对话的密级为 { $level }，而该工具未获准处理此密级。请改用其他工具，或在新对话中继续。
 cls-gate-blocked = { $tool } 未被调用：其参数包含类别为 { $classes } 的数据，而该工具未获准处理此类数据。请从参数中移除这些数据，或改用其他工具。
 cls-gate-unavailable = { $tool } 未被调用：负责检查其参数的模型无法连接，因此不会有未经检查的内容离开对话。请稍后重试，或请管理员检查 System One 模型。
+cls-detector-unavailable = 消息未发送：用于检查其分类内容的模型无法访问，未经检查的内容不会发送给任何模型。请稍后重试，或请管理员检查 System One 模型。

@@ -222,3 +222,4 @@ cls-turn-model-not-cleared = This conversation is classified { $level }; the sel
 cls-tool-hidden = { $tool } is not available in this conversation, which is classified { $level }; the tool is not cleared for that level. Use another tool, or continue in a new conversation.
 cls-gate-blocked = { $tool } was not called: its arguments contain data of class { $classes }, which the tool is not cleared for. Remove that data from the arguments or use another tool.
 cls-gate-unavailable = { $tool } was not called: the model that checks its arguments could not be reached, so nothing leaves the conversation unchecked. Retry later or ask an administrator to check the System One model.
+cls-detector-unavailable = The message was not sent: the model that checks it for classified content could not be reached, so nothing goes to a model unchecked. Retry later or ask an administrator to check the System One model.
