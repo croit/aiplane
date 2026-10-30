@@ -195,16 +195,18 @@ pub async fn active_roots_for_edge(
     receiver_agent_id: &str,
     edge_generation: &str,
 ) -> Result<Vec<String>, DbError> {
-    Ok(sqlx::query_scalar(
+    Ok(sqlx::query_scalar(concat!(
         "SELECT DISTINCT cb.parent_turn_id
              FROM cross_boundary_delegations cb
              JOIN chat_turns t ON t.id = cb.parent_turn_id
              JOIN chat_sessions s ON s.id = t.session_id
              WHERE t.role = 'assistant' AND t.status IN ('in_progress', 'suspended')
-               AND s.user_id = ? AND s.principal_id IS NULL AND s.shared = 0
+               AND s.user_id = ? AND s.principal_id IS NULL AND ",
+        aiplane_core::unshared_sql!("s"),
+        "
                AND cb.caller_owner_user_id = ? AND cb.caller_agent_id = ?
-               AND cb.receiver_agent_id = ? AND cb.edge_generation = ?",
-    )
+               AND cb.receiver_agent_id = ? AND cb.edge_generation = ?"
+    ))
     .bind(caller_owner_user_id)
     .bind(caller_owner_user_id)
     .bind(caller_agent_id)
@@ -236,18 +238,20 @@ pub async fn validate_child_in(
     {
         return Ok(false);
     }
-    let parent_valid: bool = sqlx::query_scalar(
+    let parent_valid: bool = sqlx::query_scalar(concat!(
         "SELECT EXISTS(
         SELECT 1 FROM chat_turns t
         JOIN chat_sessions s ON s.id = t.session_id
         JOIN personal_agent_sessions d ON d.session_id = s.id
         JOIN chat_tool_calls c ON c.turn_id = t.id AND c.id = ?
         WHERE t.id = ? AND t.role = 'assistant' AND t.status IN ('in_progress', 'suspended')
-          AND s.user_id = ? AND s.principal_id IS NULL AND s.shared = 0
+          AND s.user_id = ? AND s.principal_id IS NULL AND ",
+        aiplane_core::unshared_sql!("s"),
+        "
           AND d.owner_user_id = ? AND d.agent_id = ?
           AND c.name = 'forward_request' AND c.status = 'running'
-    )",
-    )
+    )"
+    ))
     .bind(new.parent_tool_call_id)
     .bind(new.parent_turn_id)
     .bind(new.caller_owner_user_id)

@@ -65,13 +65,13 @@ pub async fn open_child(
     {
         return Ok(None);
     }
-    let valid: bool = sqlx::query_scalar("SELECT EXISTS(
+    let valid: bool = sqlx::query_scalar(concat!("SELECT EXISTS(
         SELECT 1 FROM chat_turns t
         JOIN chat_sessions s ON s.id = t.session_id
         JOIN personal_agent_sessions d ON d.session_id = s.id
         JOIN chat_tool_calls c ON c.turn_id = t.id AND c.id = ?
         WHERE t.id = ? AND t.role = 'assistant' AND t.status = 'in_progress'
-          AND s.user_id = ? AND s.principal_id IS NULL AND s.shared = 0
+          AND s.user_id = ? AND s.principal_id IS NULL AND ", aiplane_core::unshared_sql!("s"), "
           AND d.owner_user_id = ? AND d.agent_id = ?
           AND c.name = 'forward_request' AND c.status = 'running'
           AND NOT EXISTS (SELECT 1 FROM personal_agent_sessions child WHERE child.parent_turn_id = t.id AND child.parent_tool_call_id = c.id)
@@ -81,7 +81,7 @@ pub async fn open_child(
               WHERE child.parent_turn_id = t.id AND busy.role = 'assistant'
                 AND busy.status IN ('in_progress', 'suspended')
           )
-    )")
+    )"))
         .bind(new.parent_tool_call_id).bind(new.parent_turn_id)
         .bind(new.owner_user_id).bind(new.owner_user_id).bind(new.caller_agent_id)
         .fetch_one(&mut *tx).await?;
@@ -252,12 +252,14 @@ pub async fn session_matches(
 ) -> Result<bool, DbError> {
     // An unbound (person) session is a valid home for an agent-configured run —
     // the agent is optional — alongside the session bound to that agent.
-    Ok(sqlx::query_scalar(
+    Ok(sqlx::query_scalar(concat!(
         "SELECT EXISTS(SELECT 1 FROM chat_sessions s
          LEFT JOIN personal_agent_sessions d ON d.session_id = s.id
-         WHERE s.id = ? AND s.user_id = ? AND s.principal_id IS NULL AND s.shared = 0
-           AND (d.session_id IS NULL OR (d.agent_id = ? AND d.owner_user_id = ?)))",
-    )
+         WHERE s.id = ? AND s.user_id = ? AND s.principal_id IS NULL AND ",
+        aiplane_core::unshared_sql!("s"),
+        "
+           AND (d.session_id IS NULL OR (d.agent_id = ? AND d.owner_user_id = ?)))"
+    ))
     .bind(session_id)
     .bind(owner_user_id)
     .bind(agent_id)
@@ -271,12 +273,14 @@ pub async fn scoped_session_ids(
     owner_user_id: &str,
     agent_id: Option<&str>,
 ) -> Result<std::collections::HashSet<String>, DbError> {
-    let ids: Vec<String> = sqlx::query_scalar(
+    let ids: Vec<String> = sqlx::query_scalar(concat!(
         "SELECT s.id FROM chat_sessions s
          LEFT JOIN personal_agent_sessions d ON d.session_id = s.id
-         WHERE s.user_id = ? AND s.principal_id IS NULL AND s.shared = 0
-           AND ((? IS NULL AND d.session_id IS NULL) OR (d.agent_id = ? AND d.owner_user_id = ?))",
-    )
+         WHERE s.user_id = ? AND s.principal_id IS NULL AND ",
+        aiplane_core::unshared_sql!("s"),
+        "
+           AND ((? IS NULL AND d.session_id IS NULL) OR (d.agent_id = ? AND d.owner_user_id = ?))"
+    ))
     .bind(owner_user_id)
     .bind(agent_id)
     .bind(agent_id)
@@ -952,6 +956,22 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn a_parent_shared_with_a_person_without_the_link_is_no_home_for_a_personal_child() {
+        let fx = child_fixture().await;
+        sqlx::query("INSERT INTO chat_session_shares (session_id, subject_kind, subject_id) VALUES (?, 'user', 'bob')")
+            .bind(&fx.parent_session)
+            .execute(&fx.pool)
+            .await
+            .unwrap();
+        assert!(
+            open_child(&fx.pool, fx.input("parent", "forward"))
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]

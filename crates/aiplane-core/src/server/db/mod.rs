@@ -21,6 +21,7 @@ pub mod chat_compactions;
 pub mod chat_session_settings;
 pub mod chat_session_skills;
 pub mod chat_session_tools;
+pub mod chat_shares;
 pub mod documents;
 pub mod gateway_groups;
 pub mod limits;

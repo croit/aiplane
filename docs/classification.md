@@ -59,6 +59,8 @@ A conversation is read by its owner and by:
 
 `runtime::chat_sharing::can_read` is the one function that decides, and every read goes through it: the conversation, its live event stream, exports, documents and canvas, attachments and the fork source. The link ceiling is evaluated on each read, so raising a conversation above it stops the link immediately without touching the stored flag. A delegated child conversation is private to its owner. Only the owner changes shares.
 
+A conversation counts as shared when it is shared by link or with any person or group (`db::chat_shares::is_shared`, and the `unshared_sql!` condition for queries). Personal agents, their private bindings and delegation never use a shared conversation.
+
 | Endpoint | Purpose |
 |---|---|
 | `GET /api/v0/chat/sessions/{id}/shares` | `{link_allowed, link, subjects[{kind, id, name}]}`. `link` is whether the link is open now. |
