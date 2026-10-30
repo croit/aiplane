@@ -204,8 +204,8 @@ pub struct TemplatePolicy {
 pub struct TemplateView {
     /// `iso`, `tisax`, `bsi` or `tlp`.
     pub id: &'static str,
-    pub name: &'static str,
-    pub description: &'static str,
+    pub name: String,
+    pub description: String,
     pub levels: Vec<LevelBody>,
     pub classes: Vec<ClassBody>,
     pub markings: Vec<MarkingBody>,

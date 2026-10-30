@@ -25,6 +25,7 @@ use aiplane_runtime::rama_server::state::RamaState;
 use rama::http::service::web::extract::{Path, State};
 use rama::http::{Request, Response, StatusCode, header};
 use session_core::chrome::{CappedBodyError, read_body_capped};
+use session_core::i18n::Lang;
 
 use super::{
     bad_request, internal, json_error, json_error_with, json_ok, no_content, not_found,
@@ -219,7 +220,7 @@ fn policy_view(state: &RamaState, scheme: &Scheme) -> PolicyBody {
     }
 }
 
-async fn current_state(state: &RamaState) -> Result<ClassificationState, Response> {
+async fn current_state(state: &RamaState, lang: Lang) -> Result<ClassificationState, Response> {
     let scheme = state.scheme();
     let classes = admin::list_classes(&state.db).await.map_err(internal)?;
     let markings = marking_rules(&state.db)
@@ -239,7 +240,7 @@ async fn current_state(state: &RamaState) -> Result<ClassificationState, Respons
         markings,
         destinations: destinations(state, &scheme).await?.views,
         policy: policy_view(state, &scheme),
-        templates: templates::all(),
+        templates: templates::all(lang),
         system_one_models: system_one_models(state, &scheme),
     })
 }
@@ -248,7 +249,8 @@ async fn current_state(state: &RamaState) -> Result<ClassificationState, Respons
 /// be rated, the templates and the System One models.
 pub async fn get(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = require_admin_json!(state, req);
-    match current_state(&state).await {
+    let lang = Lang::from_request(req.headers());
+    match current_state(&state, lang).await {
         Ok(view) => json_ok(StatusCode::OK, view),
         Err(response) => response,
     }
@@ -259,6 +261,7 @@ pub async fn get(State(state): State<Arc<RamaState>>, req: Request) -> Response 
 /// audited.
 pub async fn save(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, admin_user) = require_admin_json!(state, req);
+    let lang = Lang::from_request(req.headers());
     let (_, body) = req.into_parts();
     let parsed: SaveBody = or_return!(read_json(body, "the classification body").await);
     let scheme = state.scheme();
@@ -290,7 +293,7 @@ pub async fn save(State(state): State<Arc<RamaState>>, req: Request) -> Response
         conversations_moved = moved.len(),
         "classification scheme replaced"
     );
-    match current_state(&state).await {
+    match current_state(&state, lang).await {
         Ok(view) => json_ok(StatusCode::OK, view),
         Err(response) => response,
     }

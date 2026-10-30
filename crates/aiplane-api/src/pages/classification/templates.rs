@@ -4,36 +4,36 @@
 //! The starting points the editor offers: the level scheme of a common
 //! classification standard, with data classes and the markings its documents
 //! usually carry. A template is data the operator then edits; none of it is a
-//! certification. German stamps and level texts are domain content: they are
-//! what a German document carries, not interface strings.
+//! certification. Names and descriptions come from the Fluent catalogs in the
+//! administrator's language and become the scheme's own data once applied.
+//! Stamps, marking values and filename tags are what real documents carry and
+//! stay as they are; so do the rule questions, which are prompts measured
+//! against an English-language System One model.
+
+use session_core::i18n::{Lang, t};
 
 use super::types::{ClassBody, LevelBody, MarkingBody, OutputBody, TemplatePolicy, TemplateView};
 
-/// A level: id, name, description, colour, visible marking, filename tag.
-struct L(
-    &'static str,
-    &'static str,
-    &'static str,
-    &'static str,
-    &'static str,
-    &'static str,
-);
+/// A level: id, colour, visible marking, filename tag. Name and description
+/// are the catalog keys `cls-tpl-<template>-level-<id>-name` / `-description`.
+struct L(&'static str, &'static str, &'static str, &'static str);
 
-fn levels(rows: &[L]) -> Vec<LevelBody> {
+fn levels(template: &str, lang: Lang, rows: &[L]) -> Vec<LevelBody> {
     rows.iter()
         .enumerate()
-        .map(
-            |(rank, L(id, name, description, color, marking_text, tag))| LevelBody {
+        .map(|(rank, L(id, color, marking_text, tag))| {
+            let key = |field: &str| t(lang, &format!("cls-tpl-{template}-level-{id}-{field}"));
+            LevelBody {
                 id: (*id).into(),
                 rank: rank as u32,
-                name: (*name).into(),
-                description: (*description).into(),
+                name: key("name"),
+                description: key("description"),
                 color: (*color).into(),
                 marking_text: (*marking_text).into(),
                 mip_label_id: String::new(),
                 filename_tag: (*tag).into(),
-            },
-        )
+            }
+        })
         .collect()
 }
 
@@ -57,10 +57,8 @@ struct ClassLevels {
     tax: &'static str,
 }
 
-fn classes(at: &ClassLevels) -> Vec<ClassBody> {
+fn classes(lang: Lang, at: &ClassLevels) -> Vec<ClassBody> {
     let class = |id: &str,
-                 name: &str,
-                 description: &str,
                  level_id: &str,
                  patterns: &[&str],
                  question: &str,
@@ -69,8 +67,8 @@ fn classes(at: &ClassLevels) -> Vec<ClassBody> {
                  threshold: f64,
                  action: &str| ClassBody {
         id: id.into(),
-        name: name.into(),
-        description: description.into(),
+        name: t(lang, &format!("cls-class-{id}-name")),
+        description: t(lang, &format!("cls-class-{id}-description")),
         level_id: level_id.into(),
         patterns: patterns.iter().map(|p| (*p).into()).collect(),
         rule_question: question.into(),
@@ -86,8 +84,6 @@ fn classes(at: &ClassLevels) -> Vec<ClassBody> {
     vec![
         class(
             "personal_data",
-            "Personal data",
-            "Information relating to an identified or identifiable natural person (GDPR Art. 4).",
             at.personal,
             &["email"],
             "Is a specific, identifiable person described in this text?",
@@ -98,9 +94,6 @@ fn classes(at: &ClassLevels) -> Vec<ClassBody> {
         ),
         class(
             "special_categories",
-            "Special categories of personal data",
-            "Health, biometric, genetic, religious, political, trade-union, sexual-orientation or \
-             ethnic-origin data about a person (GDPR Art. 9).",
             at.special,
             &[],
             "Does the text mention the health, illness or diagnosis of a specific person, or \
@@ -112,8 +105,6 @@ fn classes(at: &ClassLevels) -> Vec<ClassBody> {
         ),
         class(
             "trade_secrets",
-            "Trade secrets and NDA-covered content",
-            "Information the company protects as a secret or has agreed to keep confidential.",
             at.secrets,
             &[],
             "Is this text sharing a company secret or NDA-protected information?",
@@ -124,8 +115,6 @@ fn classes(at: &ClassLevels) -> Vec<ClassBody> {
         ),
         class(
             "payment_data",
-            "Payment data",
-            "Bank account and payment card numbers.",
             at.payment,
             &["iban", "payment_card"],
             "Does this text contain an IBAN, a credit card number or payment login data?",
@@ -134,18 +123,7 @@ fn classes(at: &ClassLevels) -> Vec<ClassBody> {
             0.6,
             "raise",
         ),
-        class(
-            "tax_id",
-            "Tax identification number",
-            "The German personal tax identification number (Steuer-ID).",
-            at.tax,
-            &["de_tax_id"],
-            "",
-            "",
-            "",
-            0.5,
-            "raise",
-        ),
+        class("tax_id", at.tax, &["de_tax_id"], "", "", "", 0.5, "raise"),
     ]
 }
 
@@ -171,53 +149,36 @@ fn policy(
     }
 }
 
-fn iso() -> TemplateView {
+fn iso(lang: Lang) -> TemplateView {
     TemplateView {
         id: "iso",
-        name: "ISO/IEC 27001 (four levels)",
-        description: "Public, internal, confidential and strictly confidential: the scheme most \
-                      ISO 27001 information classification policies use.",
-        levels: levels(&[
-            L(
-                "public",
-                "Public",
-                "May be shared with anyone.",
-                "success",
-                "",
-                "",
-            ),
-            L(
-                "internal",
-                "Internal",
-                "For staff and trusted partners; not for the public.",
-                "info",
-                "INTERNAL",
-                "internal",
-            ),
-            L(
-                "confidential",
-                "Confidential",
-                "Limited to those who need it; disclosure harms the business.",
-                "warning",
-                "CONFIDENTIAL",
-                "confidential",
-            ),
-            L(
-                "strictly_confidential",
-                "Strictly confidential",
-                "A named circle only; disclosure causes severe damage.",
-                "error",
-                "STRICTLY CONFIDENTIAL",
-                "strictly_confidential",
-            ),
-        ]),
-        classes: classes(&ClassLevels {
-            personal: "internal",
-            special: "strictly_confidential",
-            secrets: "confidential",
-            payment: "confidential",
-            tax: "confidential",
-        }),
+        name: t(lang, "cls-tpl-iso-name"),
+        description: t(lang, "cls-tpl-iso-description"),
+        levels: levels(
+            "iso",
+            lang,
+            &[
+                L("public", "success", "", ""),
+                L("internal", "info", "INTERNAL", "internal"),
+                L("confidential", "warning", "CONFIDENTIAL", "confidential"),
+                L(
+                    "strictly_confidential",
+                    "error",
+                    "STRICTLY CONFIDENTIAL",
+                    "strictly_confidential",
+                ),
+            ],
+        ),
+        classes: classes(
+            lang,
+            &ClassLevels {
+                personal: "internal",
+                special: "strictly_confidential",
+                secrets: "confidential",
+                payment: "confidential",
+                tax: "confidential",
+            },
+        ),
         markings: markings(&[
             ("mip", "Public", "public"),
             ("mip", "General", "internal"),
@@ -238,54 +199,36 @@ fn iso() -> TemplateView {
     }
 }
 
-fn tisax() -> TemplateView {
+fn tisax(lang: Lang) -> TemplateView {
     TemplateView {
         id: "tisax",
-        name: "TISAX / VDA ISA",
-        description: "The four protection classes of the VDA information security assessment: \
-                      public, internal, confidential and strictly confidential, with the German \
-                      stamps automotive documents carry.",
-        levels: levels(&[
-            L(
-                "public",
-                "Public",
-                "Öffentlich: may be published.",
-                "success",
-                "",
-                "",
-            ),
-            L(
-                "internal",
-                "Internal",
-                "Intern: for employees and contractors bound by agreement.",
-                "info",
-                "INTERN",
-                "intern",
-            ),
-            L(
-                "confidential",
-                "Confidential",
-                "Vertraulich: a defined group of recipients.",
-                "warning",
-                "VERTRAULICH",
-                "vertraulich",
-            ),
-            L(
-                "strictly_confidential",
-                "Strictly confidential",
-                "Streng vertraulich: named recipients only.",
-                "error",
-                "STRENG VERTRAULICH",
-                "streng_vertraulich",
-            ),
-        ]),
-        classes: classes(&ClassLevels {
-            personal: "internal",
-            special: "strictly_confidential",
-            secrets: "confidential",
-            payment: "confidential",
-            tax: "confidential",
-        }),
+        name: t(lang, "cls-tpl-tisax-name"),
+        description: t(lang, "cls-tpl-tisax-description"),
+        levels: levels(
+            "tisax",
+            lang,
+            &[
+                L("public", "success", "", ""),
+                L("internal", "info", "INTERN", "intern"),
+                L("confidential", "warning", "VERTRAULICH", "vertraulich"),
+                L(
+                    "strictly_confidential",
+                    "error",
+                    "STRENG VERTRAULICH",
+                    "streng_vertraulich",
+                ),
+            ],
+        ),
+        classes: classes(
+            lang,
+            &ClassLevels {
+                personal: "internal",
+                special: "strictly_confidential",
+                secrets: "confidential",
+                payment: "confidential",
+                tax: "confidential",
+            },
+        ),
         markings: markings(&[
             ("mip", "Öffentlich", "public"),
             ("mip", "Intern", "internal"),
@@ -307,45 +250,30 @@ fn tisax() -> TemplateView {
     }
 }
 
-fn bsi() -> TemplateView {
+fn bsi(lang: Lang) -> TemplateView {
     TemplateView {
         id: "bsi",
-        name: "BSI IT-Grundschutz protection requirement",
-        description: "The three protection requirement categories of BSI IT-Grundschutz: normal, \
-                      high and very high.",
-        levels: levels(&[
-            L(
-                "normal",
-                "Normal",
-                "Schutzbedarf normal: damage is limited and manageable.",
-                "success",
-                "SCHUTZBEDARF NORMAL",
-                "",
-            ),
-            L(
-                "high",
-                "High",
-                "Schutzbedarf hoch: damage can be considerable.",
-                "warning",
-                "SCHUTZBEDARF HOCH",
-                "hoch",
-            ),
-            L(
-                "very_high",
-                "Very high",
-                "Schutzbedarf sehr hoch: damage can threaten the existence of the organisation.",
-                "error",
-                "SCHUTZBEDARF SEHR HOCH",
-                "sehr_hoch",
-            ),
-        ]),
-        classes: classes(&ClassLevels {
-            personal: "high",
-            special: "very_high",
-            secrets: "high",
-            payment: "high",
-            tax: "high",
-        }),
+        name: t(lang, "cls-tpl-bsi-name"),
+        description: t(lang, "cls-tpl-bsi-description"),
+        levels: levels(
+            "bsi",
+            lang,
+            &[
+                L("normal", "success", "SCHUTZBEDARF NORMAL", ""),
+                L("high", "warning", "SCHUTZBEDARF HOCH", "hoch"),
+                L("very_high", "error", "SCHUTZBEDARF SEHR HOCH", "sehr_hoch"),
+            ],
+        ),
+        classes: classes(
+            lang,
+            &ClassLevels {
+                personal: "high",
+                special: "very_high",
+                secrets: "high",
+                payment: "high",
+                tax: "high",
+            },
+        ),
         markings: markings(&[
             ("mip", "Normal", "normal"),
             ("mip", "Hoch", "high"),
@@ -358,61 +286,37 @@ fn bsi() -> TemplateView {
     }
 }
 
-fn tlp() -> TemplateView {
+fn tlp(lang: Lang) -> TemplateView {
     TemplateView {
         id: "tlp",
-        name: "TLP 2.0 (Traffic Light Protocol)",
-        description: "The five sharing labels of FIRST's Traffic Light Protocol 2.0: clear, green, \
-                      amber, amber+strict and red.",
-        levels: levels(&[
-            L(
-                "clear",
-                "TLP:CLEAR",
-                "No limit on disclosure.",
-                "neutral",
-                "",
-                "",
-            ),
-            L(
-                "green",
-                "TLP:GREEN",
-                "The community, not the public.",
-                "success",
-                "TLP:GREEN",
-                "tlp_green",
-            ),
-            L(
-                "amber",
-                "TLP:AMBER",
-                "The organisation and the clients that need it.",
-                "warning",
-                "TLP:AMBER",
-                "tlp_amber",
-            ),
-            L(
-                "amber_strict",
-                "TLP:AMBER+STRICT",
-                "The organisation only.",
-                "warning",
-                "TLP:AMBER+STRICT",
-                "tlp_amber_strict",
-            ),
-            L(
-                "red",
-                "TLP:RED",
-                "Named recipients only; no further sharing.",
-                "error",
-                "TLP:RED",
-                "tlp_red",
-            ),
-        ]),
-        classes: classes(&ClassLevels {
-            personal: "amber",
-            special: "amber_strict",
-            secrets: "amber",
-            payment: "amber",
-            tax: "amber",
-        }),
+        name: t(lang, "cls-tpl-tlp-name"),
+        description: t(lang, "cls-tpl-tlp-description"),
+        levels: levels(
+            "tlp",
+            lang,
+            &[
+                L("clear", "neutral", "", ""),
+                L("green", "success", "TLP:GREEN", "tlp_green"),
+                L("amber", "warning", "TLP:AMBER", "tlp_amber"),
+                L(
+                    "amber_strict",
+                    "warning",
+                    "TLP:AMBER+STRICT",
+                    "tlp_amber_strict",
+                ),
+                L("red", "error", "TLP:RED", "tlp_red"),
+            ],
+        ),
+        classes: classes(
+            lang,
+            &ClassLevels {
+                personal: "amber",
+                special: "amber_strict",
+                secrets: "amber",
+                payment: "amber",
+                tax: "amber",
+            },
+        ),
         markings: markings(&[
             ("stamp", "TLP:CLEAR", "clear"),
             ("stamp", "TLP:GREEN", "green"),
@@ -424,6 +328,72 @@ fn tlp() -> TemplateView {
     }
 }
 
-pub fn all() -> Vec<TemplateView> {
-    vec![iso(), tisax(), bsi(), tlp()]
+pub fn all(lang: Lang) -> Vec<TemplateView> {
+    vec![iso(lang), tisax(lang), bsi(lang), tlp(lang)]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn template(lang: Lang, id: &str) -> TemplateView {
+        all(lang).into_iter().find(|t| t.id == id).unwrap()
+    }
+
+    #[test]
+    fn the_bsi_levels_carry_the_official_german_wording_in_german() {
+        let names: Vec<String> = template(Lang::De, "bsi")
+            .levels
+            .into_iter()
+            .map(|l| l.name)
+            .collect();
+        assert_eq!(names, ["normal", "hoch", "sehr hoch"]);
+    }
+
+    #[test]
+    fn rule_questions_and_markings_do_not_depend_on_the_language() {
+        for lang in [Lang::De, Lang::Fr, Lang::Es, Lang::Ru, Lang::Zh] {
+            for (english, translated) in all(Lang::En).into_iter().zip(all(lang)) {
+                assert_eq!(english.id, translated.id);
+                for (a, b) in english.classes.iter().zip(&translated.classes) {
+                    assert_eq!(a.rule_question, b.rule_question);
+                    assert_eq!(a.rule_positive, b.rule_positive);
+                    assert_eq!(a.rule_negative, b.rule_negative);
+                }
+                for (a, b) in english.levels.iter().zip(&translated.levels) {
+                    assert_eq!(a.marking_text, b.marking_text);
+                    assert_eq!(a.filename_tag, b.filename_tag);
+                }
+                assert_eq!(
+                    serde_json::to_value(&english.markings).unwrap(),
+                    serde_json::to_value(&translated.markings).unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_text_resolves_in_every_language() {
+        for lang in [Lang::En, Lang::De, Lang::Fr, Lang::Es, Lang::Ru, Lang::Zh] {
+            for template in all(lang) {
+                let texts = std::iter::once(&template.name)
+                    .chain(std::iter::once(&template.description))
+                    .chain(
+                        template
+                            .levels
+                            .iter()
+                            .flat_map(|l| [&l.name, &l.description]),
+                    )
+                    .chain(
+                        template
+                            .classes
+                            .iter()
+                            .flat_map(|c| [&c.name, &c.description]),
+                    );
+                for text in texts {
+                    assert!(!text.is_empty() && !text.starts_with("cls-"), "{text}");
+                }
+            }
+        }
+    }
 }

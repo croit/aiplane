@@ -240,6 +240,34 @@ async fn saving_the_iso_template_activates_a_four_level_scheme() {
 }
 
 #[tokio::test]
+async fn the_templates_arrive_in_the_language_of_the_request() {
+    let (state, cookie) = setup().await;
+    let request = Request::builder()
+        .uri("/api/v0/admin/classification")
+        .header("cookie", format!("id={cookie}"))
+        .header("accept-language", "de")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = router(state.clone()).serve(request).await.unwrap();
+
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let view: Value = serde_json::from_slice(&bytes).unwrap();
+    let bsi = view["templates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == "bsi")
+        .unwrap();
+    assert_eq!(bsi["name"], "BSI IT-Grundschutz Schutzbedarf");
+    assert_eq!(bsi["levels"][1]["name"], "hoch");
+    assert_eq!(
+        bsi["classes"][0]["rule_question"],
+        "Is a specific, identifiable person described in this text?"
+    );
+}
+
+#[tokio::test]
 async fn saving_the_bsi_template_gives_normal_high_very_high() {
     let (state, cookie) = setup().await;
 

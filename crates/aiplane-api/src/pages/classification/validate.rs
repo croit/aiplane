@@ -424,6 +424,7 @@ mod tests {
     use super::super::templates;
     use super::super::types::{AssignmentBody, LevelBody, OutputBody, PolicyBody, TemplateView};
     use super::*;
+    use session_core::i18n::Lang;
 
     fn context() -> (HashMap<String, Vec<String>>, ()) {
         (
@@ -476,25 +477,25 @@ mod tests {
     }
 
     fn iso() -> SaveBody {
-        body_of(&templates::all()[0])
+        body_of(&templates::all(Lang::En)[0])
     }
 
     #[test]
     fn every_template_passes_the_rules_it_is_saved_under() {
-        for template in templates::all() {
+        for template in templates::all(Lang::En) {
             let replacement = check(&body_of(&template)).unwrap_or_else(|e| {
                 panic!("{} is refused: {} ({})", template.id, e.message, e.field)
             });
             assert_eq!(replacement.levels.len(), template.levels.len());
             assert_eq!(replacement.classes.len(), template.classes.len());
         }
-        assert_eq!(templates::all().len(), 4);
+        assert_eq!(templates::all(Lang::En).len(), 4);
     }
 
     #[test]
     fn a_template_has_the_levels_its_standard_defines() {
         let ids = |i: usize| -> Vec<String> {
-            templates::all()[i]
+            templates::all(Lang::En)[i]
                 .levels
                 .iter()
                 .map(|l| l.id.clone())
