@@ -141,7 +141,7 @@ export const de: Catalog = {
  "admin-models-tab-defaults": "Standardmodelle",
  "admin-models-tab-routing": "Automatisches Routing",
  "admin-models-tab-upstreams": "Upstreams",
- "admin-needs-admin-role": "Diese Seiten erfordern die Administratorrolle.",
+ "admin-needs-admin-role": "Diese Seiten erfordern Administratorrechte.",
  "admin-no-models": "Noch keine Modelle verfügbar. Sobald ein Upstream-Backend erreichbar ist, erscheint es hier.",
  "admin-no-models-match": "Keine Modelle entsprechen dem aktuellen Filter.",
  "admin-not-configured": "nicht konfiguriert",

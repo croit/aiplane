@@ -20,7 +20,7 @@
 {:else if details}
 	<div role="alert" class="alert alert-warning">
 		<span>{t('notifications-unavailable')}</span>
-		{#if details.account.rbac_roles.includes('admin')}
+		{#if details.account.is_admin}
 			<a class="link" href="/admin/settings">{t('notifications-admin-settings-link')}</a>
 		{/if}
 	</div>

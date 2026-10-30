@@ -1,6 +1,6 @@
 # Configure system features
 
-Open **Administration → Settings** (`/admin/settings`) with the `admin` role. The categories are Chat, Tools, Data, Access, Notifications and Web search. Settings cards show the effective configuration from the server; model pickers use models available for the required pool kind.
+Open **Administration → Settings** (`/admin/settings`) with [administrator rights](access.md). The categories are Chat, Tools, Data, Access, Notifications and Web search. Settings cards show the effective configuration from the server; model pickers use models available for the required pool kind.
 
 ## Change a setting
 

@@ -141,7 +141,7 @@ export const zh: Catalog = {
  "admin-models-tab-defaults": "默认模型",
  "admin-models-tab-routing": "自动路由",
  "admin-models-tab-upstreams": "上游",
- "admin-needs-admin-role": "这些页面需要管理员角色。",
+ "admin-needs-admin-role": "这些页面需要管理员权限。",
  "admin-no-models": "尚未发现任何模型。一旦有可用的上游后端，它就会显示在这里。",
  "admin-no-models-match": "没有模型符合当前筛选。",
  "admin-not-configured": "未配置",

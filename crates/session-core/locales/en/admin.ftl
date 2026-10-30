@@ -69,7 +69,7 @@ admin-search-saved = web-search settings saved
 # The admin shell's role guard, the /admin/comfyui workflow catalog, and the
 # bits of the /admin/models editor the SPA renders that the legacy page didn't.
 
-admin-needs-admin-role = These pages need the admin role.
+admin-needs-admin-role = These pages need administrator rights.
 admin-overwrite-existing = overwrite existing
 admin-comfyui-reload = Reload catalog
 admin-comfyui-reloaded = Catalog reloaded — { $count } workflow(s) loaded.

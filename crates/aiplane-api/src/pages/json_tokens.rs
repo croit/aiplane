@@ -292,6 +292,7 @@ pub async fn details(State(state): State<Arc<RamaState>>, req: Request) -> Respo
                 email: user.email,
                 user_id: user.id,
                 oidc_roles: user.roles,
+                is_admin: state.rbac.is_admin(&role_ids),
                 rbac_roles: role_ids,
             },
         },
@@ -369,4 +370,6 @@ pub struct AccountView {
     pub oidc_roles: Vec<String>,
     /// The RBAC roles those resolve to.
     pub rbac_roles: Vec<String>,
+    /// Whether one of those roles is flagged `is_admin`.
+    pub is_admin: bool,
 }

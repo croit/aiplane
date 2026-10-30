@@ -141,7 +141,7 @@ export const fr: Catalog = {
  "admin-models-tab-defaults": "Modèles par défaut",
  "admin-models-tab-routing": "Routage automatique",
  "admin-models-tab-upstreams": "Amonts",
- "admin-needs-admin-role": "Ces pages nécessitent le rôle administrateur.",
+ "admin-needs-admin-role": "Ces pages nécessitent des droits d’administrateur.",
  "admin-no-models": "Aucun modèle annoncé pour l'instant. Dès qu'un backend en amont sera accessible, il apparaîtra ici.",
  "admin-no-models-match": "Aucun modèle ne correspond au filtre actuel.",
  "admin-not-configured": "non configuré",

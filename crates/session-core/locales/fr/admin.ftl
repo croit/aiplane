@@ -61,7 +61,7 @@ admin-search-saved = paramètres de recherche web enregistrés
 # Le garde-fou de rôle du shell admin, le catalogue de workflows /admin/comfyui
 # et les parties de l'éditeur de modèles absentes de l'ancienne page.
 
-admin-needs-admin-role = Ces pages nécessitent le rôle administrateur.
+admin-needs-admin-role = Ces pages nécessitent des droits d’administrateur.
 admin-overwrite-existing = écraser l'existant
 admin-comfyui-reload = Recharger le catalogue
 admin-comfyui-reloaded = Catalogue rechargé — { $count } workflow(s) chargé(s).

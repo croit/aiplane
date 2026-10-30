@@ -6,7 +6,7 @@
 
 </script>
 
-{#if !me.value?.role_ids?.includes('admin')}
+{#if me.loaded && !me.value?.is_admin}
 	<div class="alert alert-warning mb-4"><span>{t('admin-needs-admin-role')}</span></div>
 {/if}
 

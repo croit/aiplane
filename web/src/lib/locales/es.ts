@@ -141,7 +141,7 @@ export const es: Catalog = {
  "admin-models-tab-defaults": "Modelos predeterminados",
  "admin-models-tab-routing": "Enrutamiento automático",
  "admin-models-tab-upstreams": "Upstreams",
- "admin-needs-admin-role": "Estas páginas requieren el rol de administrador.",
+ "admin-needs-admin-role": "Estas páginas requieren permisos de administrador.",
  "admin-no-models": "Aún no se anuncian modelos. En cuanto un backend upstream esté accesible, aparecerá aquí.",
  "admin-no-models-match": "Ningún modelo coincide con el filtro actual.",
  "admin-not-configured": "sin configurar",

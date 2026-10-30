@@ -62,7 +62,7 @@ admin-search-saved = ajustes de búsqueda web guardados
 # trabajo de /admin/comfyui y las partes del editor de modelos que la página
 # antigua no tenía.
 
-admin-needs-admin-role = Estas páginas requieren el rol de administrador.
+admin-needs-admin-role = Estas páginas requieren permisos de administrador.
 admin-overwrite-existing = sobrescribir el existente
 admin-comfyui-reload = Recargar catálogo
 admin-comfyui-reloaded = Catálogo recargado — { $count } flujo(s) cargado(s).

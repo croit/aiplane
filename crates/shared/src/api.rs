@@ -30,6 +30,11 @@ pub struct Me {
     /// and answers its URL with "not enabled" rather than an error page.
     #[serde(default)]
     pub features: Vec<String>,
+    /// Whether one of the resolved groups is flagged `is_admin`. Clients read
+    /// this rather than a group name: the admin group is named by whoever set
+    /// the gateway up.
+    #[serde(default)]
+    pub is_admin: bool,
     /// Whether the user may build agents (`docs/agents.md`). The web UI shows
     /// the Agents section only when this is true.
     #[serde(default)]

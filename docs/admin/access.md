@@ -1,6 +1,6 @@
 # Manage access, tokens and limits
 
-Use **Administration → Access** to manage groups, inspect users and API tokens, and define usage limits. These administration endpoints require the `admin` role. User creation and identity authentication come from OIDC; the Users screen lists identities that AIplane knows.
+Use **Administration → Access** to manage groups, inspect users and API tokens, and define usage limits. These administration endpoints require administrator rights: membership in a group with **Admin** switched on at `/admin/groups` (the `is_admin` flag). The group's name carries no meaning; the setup wizard calls its group `admins`. User creation and identity authentication come from OIDC; the Users screen lists identities that AIplane knows.
 
 ## Map identity groups to AIplane permissions
 
@@ -128,7 +128,7 @@ The page shows summary metrics and breakdowns by backend, source, model and toke
 
 | Symptom | Check |
 |---|---|
-| Admin page returns forbidden | Effective `admin` role shown for the signed-in identity |
+| Admin page returns forbidden | One of the effective groups shown for the signed-in identity has **Admin** switched on |
 | Group does not match | Actual observed OIDC values, group mapping and effective roles |
 | Agents management unavailable | `can_manage_personal_agents` on a resolved group |
 | Builder unavailable | `can_manage_agents` on a resolved group |

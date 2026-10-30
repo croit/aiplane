@@ -314,6 +314,51 @@ async fn me_with_session_returns_user() {
     assert_eq!(parsed["email"], "alice@example.com");
 }
 
+/// The setup wizard names its admin group `admins`; an operator may name one
+/// `admin` without flagging it. Only the `is_admin` flag decides.
+#[tokio::test]
+async fn me_reports_admin_from_the_group_flag_not_its_name() {
+    use aiplane_core::server::db::{gateway_groups, users};
+    let state = common::state_with_chat_pool("http://unused.invalid").await;
+    gateway_groups::upsert_group(&state.db, "admins", "", true, false)
+        .await
+        .unwrap();
+    gateway_groups::set_mappings_for_group(&state.db, "admins", &["idp-ops".into()])
+        .await
+        .unwrap();
+    gateway_groups::upsert_group(&state.db, "admin", "", false, false)
+        .await
+        .unwrap();
+    gateway_groups::set_mappings_for_group(&state.db, "admin", &["idp-admin".into()])
+        .await
+        .unwrap();
+    state.reload_rbac().await;
+    let mut cookies = Vec::new();
+    for (id, claim) in [("ops", "idp-ops"), ("named", "idp-admin")] {
+        let cookie = common::seed_session(&state, id, &format!("{id}@example.com")).await;
+        let mut user = users::find_by_id(&state.db, id).await.unwrap().unwrap();
+        user.roles = vec![claim.into()];
+        users::upsert(&state.db, &user).await.unwrap();
+        cookies.push((id, cookie));
+    }
+    let app = common::app(state);
+    for ((id, cookie), admin) in cookies.iter().zip([true, false]) {
+        for (path, field) in [
+            ("/api/v0/me", "/is_admin"),
+            ("/api/v0/tokens/details", "/account/is_admin"),
+        ] {
+            let resp = app
+                .serve(req_with_cookie(Method::GET, path, cookie, None))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK, "{id} {path}");
+            let body: serde_json::Value =
+                serde_json::from_slice(&common::read_body(resp).await).unwrap();
+            assert_eq!(body.pointer(field), Some(&admin.into()), "{id} {path}");
+        }
+    }
+}
+
 #[tokio::test]
 async fn create_then_list_then_revoke_then_delete() {
     let state = common::state_with_chat_pool("http://unused.invalid").await;
