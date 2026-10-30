@@ -95,13 +95,15 @@ pub(super) async fn generate_session_title(
     // the conversation's level does not clear. The level is read once the
     // turn has been through its classification (an upload or the typed text
     // can raise it), not when the message was accepted.
-    wait_for_turns_to_settle(&state, &session_id).await;
-    if !state
-        .model_cleared_for_session(&session_id, &model, &PoolAccess::all())
-        .await
-    {
-        tracing::info!(%session_id, %model, "title generation: model not cleared for the conversation's level");
-        return;
+    if state.scheme().is_active() {
+        wait_for_turns_to_settle(&state, &session_id).await;
+        if !state
+            .model_cleared_for_session(&session_id, &model, &PoolAccess::all())
+            .await
+        {
+            tracing::info!(%session_id, %model, "title generation: model not cleared for the conversation's level");
+            return;
+        }
     }
     let raw = match call_upstream(&state, &payer, &model, &user_msg).await {
         Ok(r) => r,
@@ -157,7 +159,7 @@ pub(super) async fn generate_session_title(
     }
 }
 
-const SETTLE_POLL: Duration = Duration::from_millis(100);
+const SETTLE_POLL: Duration = Duration::from_millis(500);
 const SETTLE_LIMIT: Duration = Duration::from_secs(20 * 60);
 
 /// Wait until the conversation has no unfinished work, bounded: a turn

@@ -222,7 +222,7 @@ Calls that send conversation content to a model beside the turn check the conver
 
 | Side call | Behaviour |
 |---|---|
-| Chat title | Runs after the conversation's turns have settled, so the level an upload or a retrieval set is known; skipped when the title model is not cleared for it. |
+| Chat title | With a scheme of more than one level: runs after the conversation's turns have settled, so the level an upload or a retrieval set is known, and is skipped when the title model is not cleared for it. With one level it runs at once. |
 | Compaction summary | Not run when the model is not cleared for the conversation's level. |
 | System One detection and gate | Asked only about text that is being checked; the System One model must itself be cleared for the highest level. |
 | Voice feedback fields, skill drafting, agent judges and routers | Not conversation content of a person's chat (a dictated note, an operator's description, an agent run, which never ratchets). |

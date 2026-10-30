@@ -1724,3 +1724,49 @@ async fn a_note_typed_during_a_tool_round_raises_the_conversation_before_the_nex
         Some("pattern:iban".to_owned())
     );
 }
+
+struct SlowTurnQuickTitle;
+
+impl wiremock::Respond for SlowTurnQuickTitle {
+    fn respond(&self, request: &wiremock::Request) -> ResponseTemplate {
+        if String::from_utf8_lossy(&request.body).contains("You name chat conversations") {
+            return ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{"message": {"role": "assistant", "content": "Title"}}]
+            }));
+        }
+        ResponseTemplate::new(200)
+            .set_body_raw(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n",
+                "text/event-stream",
+            )
+            .set_delay(Duration::from_secs(3))
+    }
+}
+
+#[tokio::test]
+async fn without_a_classification_scheme_the_title_does_not_wait_for_the_turn() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(SlowTurnQuickTitle)
+        .mount(&upstream)
+        .await;
+    let s3 = object_store().await;
+    let state = state(&upstream.uri(), &s3.uri(), false).await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let state = Arc::new(state);
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+
+    let resp = router(state.clone())
+        .serve(submit(&session.id, &cookie, "low-model", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    for _ in 0..20 {
+        if title_requests(&upstream).await == 1 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("the title waited for a turn although nothing is classified");
+}
