@@ -1541,6 +1541,8 @@ export const zh: Catalog = {
  "cls-chat-reason-title": "降低级别",
  "cls-class-action": "匹配时",
  "cls-class-add": "添加数据类别",
+ "cls-class-credentials-description": "密码、API 密钥、令牌和私钥。",
+ "cls-class-credentials-name": "凭据和密钥",
  "cls-class-description": "说明",
  "cls-class-level": "所需级别",
  "cls-class-name": "名称",

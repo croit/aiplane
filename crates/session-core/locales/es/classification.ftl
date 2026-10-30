@@ -291,3 +291,5 @@ cls-class-payment_data-name = Datos de pago
 cls-class-payment_data-description = Números de cuenta bancaria y de tarjeta de pago.
 cls-class-tax_id-name = Número de identificación fiscal
 cls-class-tax_id-description = El número de identificación fiscal personal alemán (Steuer-ID).
+cls-class-credentials-name = Credenciales y claves
+cls-class-credentials-description = Contraseñas, claves de API, tokens y claves privadas.

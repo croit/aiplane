@@ -291,3 +291,5 @@ cls-class-payment_data-name = Платёжные данные
 cls-class-payment_data-description = Номера банковских счетов и платёжных карт.
 cls-class-tax_id-name = Идентификационный номер налогоплательщика
 cls-class-tax_id-description = Немецкий персональный идентификационный номер налогоплательщика (Steuer-ID).
+cls-class-credentials-name = Учётные данные и ключи
+cls-class-credentials-description = Пароли, ключи API, токены и закрытые ключи.

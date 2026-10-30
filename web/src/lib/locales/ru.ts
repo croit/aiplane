@@ -1572,6 +1572,8 @@ export const ru: Catalog = {
  "cls-chat-reason-title": "Понизить уровень",
  "cls-class-action": "При совпадении",
  "cls-class-add": "Добавить класс данных",
+ "cls-class-credentials-description": "Пароли, ключи API, токены и закрытые ключи.",
+ "cls-class-credentials-name": "Учётные данные и ключи",
  "cls-class-description": "Описание",
  "cls-class-level": "Требует уровня",
  "cls-class-name": "Название",

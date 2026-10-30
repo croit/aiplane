@@ -1556,6 +1556,8 @@ export const fr: Catalog = {
  "cls-chat-reason-title": "Abaisser le niveau",
  "cls-class-action": "En cas de correspondance",
  "cls-class-add": "Ajouter une classe de données",
+ "cls-class-credentials-description": "Mots de passe, clés d'API, jetons et clés privées.",
+ "cls-class-credentials-name": "Identifiants et clés",
  "cls-class-description": "Description",
  "cls-class-level": "Exige le niveau",
  "cls-class-name": "Nom",

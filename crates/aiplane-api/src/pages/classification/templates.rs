@@ -47,14 +47,16 @@ fn markings(rows: &[(&str, &str, &str)]) -> Vec<MarkingBody> {
         .collect()
 }
 
-/// The levels the five data classes sit at: personal data, special
-/// categories, trade secrets, payment data, tax identification number.
+/// The levels the six data classes sit at: personal data, special
+/// categories, trade secrets, payment data, tax identification number,
+/// credentials and keys.
 struct ClassLevels {
     personal: &'static str,
     special: &'static str,
     secrets: &'static str,
     payment: &'static str,
     tax: &'static str,
+    credentials: &'static str,
 }
 
 fn classes(lang: Lang, at: &ClassLevels) -> Vec<ClassBody> {
@@ -124,6 +126,16 @@ fn classes(lang: Lang, at: &ClassLevels) -> Vec<ClassBody> {
             "raise",
         ),
         class("tax_id", at.tax, &["de_tax_id"], "", "", "", 0.5, "raise"),
+        class(
+            "credentials",
+            at.credentials,
+            &["credentials"],
+            "",
+            "",
+            "",
+            0.5,
+            "confirm",
+        ),
     ]
 }
 
@@ -177,6 +189,7 @@ fn iso(lang: Lang) -> TemplateView {
                 secrets: "confidential",
                 payment: "confidential",
                 tax: "confidential",
+                credentials: "strictly_confidential",
             },
         ),
         markings: markings(&[
@@ -227,6 +240,7 @@ fn tisax(lang: Lang) -> TemplateView {
                 secrets: "confidential",
                 payment: "confidential",
                 tax: "confidential",
+                credentials: "strictly_confidential",
             },
         ),
         markings: markings(&[
@@ -272,6 +286,7 @@ fn bsi(lang: Lang) -> TemplateView {
                 secrets: "high",
                 payment: "high",
                 tax: "high",
+                credentials: "very_high",
             },
         ),
         markings: markings(&[
@@ -315,6 +330,7 @@ fn tlp(lang: Lang) -> TemplateView {
                 secrets: "amber",
                 payment: "amber",
                 tax: "amber",
+                credentials: "red",
             },
         ),
         markings: markings(&[
@@ -369,6 +385,22 @@ mod tests {
                     serde_json::to_value(&translated.markings).unwrap()
                 );
             }
+        }
+    }
+
+    #[test]
+    fn every_template_has_a_credentials_class_at_its_highest_level_without_a_question() {
+        for template in all(Lang::En) {
+            let top = template.levels.last().unwrap();
+            let class = template
+                .classes
+                .iter()
+                .find(|c| c.id == "credentials")
+                .unwrap_or_else(|| panic!("{} has no credentials class", template.id));
+            assert_eq!(class.level_id, top.id, "{}", template.id);
+            assert_eq!(class.patterns, ["credentials"]);
+            assert_eq!(class.action, "confirm");
+            assert!(class.rule_question.is_empty());
         }
     }
 

@@ -236,7 +236,7 @@ async fn saving_the_iso_template_activates_a_four_level_scheme() {
     assert!(state.scheme().is_active());
     let (_, again) = get(&state, &cookie, "/api/v0/admin/classification").await;
     assert_eq!(again["levels"], saved["levels"]);
-    assert_eq!(again["classes"].as_array().unwrap().len(), 5);
+    assert_eq!(again["classes"].as_array().unwrap().len(), 6);
 }
 
 #[tokio::test]

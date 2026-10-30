@@ -1556,6 +1556,8 @@ export const en: Catalog = {
  "cls-chat-reason-title": "Lower the level",
  "cls-class-action": "When it matches",
  "cls-class-add": "Add a data class",
+ "cls-class-credentials-description": "Passwords, API keys, tokens and private keys.",
+ "cls-class-credentials-name": "Credentials and keys",
  "cls-class-description": "Description",
  "cls-class-level": "Needs level",
  "cls-class-name": "Name",

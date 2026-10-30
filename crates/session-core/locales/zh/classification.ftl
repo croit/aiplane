@@ -291,3 +291,5 @@ cls-class-payment_data-name = 支付数据
 cls-class-payment_data-description = 银行账号和支付卡号码。
 cls-class-tax_id-name = 税务识别号
 cls-class-tax_id-description = 德国个人税务识别号（Steuer-ID）。
+cls-class-credentials-name = 凭据和密钥
+cls-class-credentials-description = 密码、API 密钥、令牌和私钥。

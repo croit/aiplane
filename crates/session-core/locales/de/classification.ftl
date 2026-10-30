@@ -291,3 +291,5 @@ cls-class-payment_data-name = Zahlungsdaten
 cls-class-payment_data-description = Bankkonto- und Zahlungskartennummern.
 cls-class-tax_id-name = Steuer-Identifikationsnummer
 cls-class-tax_id-description = Die deutsche persönliche Steuer-Identifikationsnummer (Steuer-ID).
+cls-class-credentials-name = Zugangsdaten und Schlüssel
+cls-class-credentials-description = Passwörter, API-Schlüssel, Tokens und private Schlüssel.

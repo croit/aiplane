@@ -1556,6 +1556,8 @@ export const de: Catalog = {
  "cls-chat-reason-title": "Stufe senken",
  "cls-class-action": "Bei einem Treffer",
  "cls-class-add": "Datenklasse hinzufügen",
+ "cls-class-credentials-description": "Passwörter, API-Schlüssel, Tokens und private Schlüssel.",
+ "cls-class-credentials-name": "Zugangsdaten und Schlüssel",
  "cls-class-description": "Beschreibung",
  "cls-class-level": "Braucht Stufe",
  "cls-class-name": "Name",
