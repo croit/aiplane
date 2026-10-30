@@ -30,6 +30,7 @@ use rama::http::{Request, Response, StatusCode};
 use serde::Deserialize;
 
 use aiplane_features::server::chat_attachments;
+use aiplane_runtime::chat_sharing::{self, ShareError, Subject, SubjectKind};
 use aiplane_runtime::rama_server::state::RamaState;
 
 use aiplane_core::server::db::users::User;
@@ -255,7 +256,7 @@ pub async fn session_get(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    let session = match readable_session(&state, &user.id, &session_id).await {
+    let session = match readable_session(&state, &user, &session_id).await {
         Ok(Some(s)) => s,
         Ok(None) => return not_found_conversation(),
         Err(resp) => return resp,
@@ -484,7 +485,7 @@ pub async fn session_fork(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    let src = match readable_session(&state, &user.id, &session_id).await {
+    let src = match readable_session(&state, &user, &session_id).await {
         Ok(Some(s)) => s,
         Ok(None) => return not_found_conversation(),
         Err(resp) => return resp,
@@ -508,6 +509,11 @@ pub async fn session_fork(
             return internal(err);
         }
     };
+
+    if let Err(err) = keep_level_in_fork(&state, &src.id, &new_session.id, &user.id).await {
+        let _ = chat::delete_session(&state.db, &user.id, &new_session.id).await;
+        return internal(err);
+    }
 
     // Best-effort attachment copy, same policy as the legacy fork: a failed
     // object copy leaves a marker pointing at an empty key (a broken preview)
@@ -543,6 +549,36 @@ pub async fn session_fork(
             title: new_session.title,
         },
     )
+}
+
+/// A copy holds what the source held, so it starts at the source's level, with
+/// the move audited as `fork`.
+async fn keep_level_in_fork(
+    state: &RamaState,
+    source_id: &str,
+    copy_id: &str,
+    actor: &str,
+) -> Result<(), aiplane_core::server::db::DbError> {
+    use aiplane_core::server::classification as classification_store;
+    let scheme = state.scheme();
+    if !scheme.is_active() {
+        return Ok(());
+    }
+    let stored = classification_store::level_id(&state.db, source_id).await?;
+    let level = scheme.level_or_lowest(stored.as_deref());
+    if level.rank == scheme.lowest().rank {
+        return Ok(());
+    }
+    classification_store::set_level(&state.db, copy_id, &level.id).await?;
+    classification_store::record_event(
+        &state.db,
+        copy_id,
+        &scheme.lowest().id,
+        &level.id,
+        "fork",
+        actor,
+    )
+    .await
 }
 
 /// The caller's new copy of the conversation.
@@ -1135,7 +1171,7 @@ pub async fn session_events(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    let owns_session = match readable_session(&state, &user.id, &session_id).await {
+    let owns_session = match readable_session(&state, &user, &session_id).await {
         Ok(Some(session)) => session.user_id == user.id,
         Ok(None) => return not_found_conversation(),
         Err(resp) => return resp,
@@ -1308,13 +1344,13 @@ async fn session_is_delegated(
 
 async fn readable_session(
     state: &RamaState,
-    user_id: &str,
+    user: &User,
     session_id: &str,
 ) -> Result<Option<chat::Session>, Response> {
-    match chat::get_session_readable(&state.db, user_id, session_id).await {
-        Ok(s) => Ok(s),
-        Err(err) => Err(internal(err)),
-    }
+    let reader = chat_sharing::Reader::new(state, user);
+    chat_sharing::readable_session(state, &reader, session_id)
+        .await
+        .map_err(internal)
 }
 
 // ---------------------------------------------------------------------------
@@ -1716,13 +1752,149 @@ pub async fn session_share(
         Ok(p) => p,
         Err(resp) => return resp,
     };
-    match chat::set_shared(&state.db, &user.id, &session_id, parsed.shared).await {
+    match chat_sharing::set_link(&state, &user.id, &session_id, parsed.shared).await {
         Ok(_) => ok_json(
             StatusCode::OK,
             Shared {
                 shared: parsed.shared,
             },
         ),
+        Err(err) => share_error(err),
+    }
+}
+
+fn share_error(err: ShareError) -> Response {
+    match err {
+        ShareError::LinkAboveCeiling => json_error(
+            StatusCode::CONFLICT,
+            "link_sharing_above_limit",
+            &err.to_string(),
+        ),
+        ShareError::UnknownUser(_) | ShareError::UnknownGroup(_) | ShareError::Owner => {
+            bad_request(err.to_string())
+        }
+        ShareError::Db(err) => internal(err),
+    }
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct SharedSubject {
+    pub kind: SubjectKind,
+    pub id: String,
+    pub name: String,
+}
+
+/// How a conversation is shared.
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct SharesView {
+    /// Whether the conversation's level allows sharing it by link.
+    pub link_allowed: bool,
+    /// Whether the link is open now.
+    pub link: bool,
+    pub subjects: Vec<SharedSubject>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+pub struct SharedSubjectRef {
+    pub kind: SubjectKind,
+    pub id: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(rename = "ChatSharesBody")]
+pub struct SharesBody {
+    pub link: bool,
+    pub subjects: Vec<SharedSubjectRef>,
+}
+
+/// GET /api/v0/chat/sessions/{id}/shares — owner only.
+pub async fn session_shares(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let (_session, user) = require_session_json!(state, req);
+    match chat_sharing::shares(&state, &user.id, &session_id).await {
+        Ok(Some(shares)) => ok_json(StatusCode::OK, shares_view(shares)),
+        Ok(None) => not_found_conversation(),
+        Err(err) => internal(err),
+    }
+}
+
+fn shares_view(shares: chat_sharing::Shares) -> SharesView {
+    SharesView {
+        link_allowed: shares.link_allowed,
+        link: shares.link,
+        subjects: shares
+            .subjects
+            .into_iter()
+            .map(|(subject, name)| SharedSubject {
+                kind: subject.kind,
+                id: subject.id,
+                name,
+            })
+            .collect(),
+    }
+}
+
+/// PUT /api/v0/chat/sessions/{id}/shares — owner only; replaces the link flag
+/// and the listed people and groups. A link above the policy's limit is `409`.
+pub async fn session_shares_put(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let (_session, user) = require_session_json!(state, req);
+    let (_, body) = req.into_parts();
+    let parsed: SharesBody = match read_json(body, "the shares body").await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
+    let subjects: Vec<Subject> = parsed
+        .subjects
+        .into_iter()
+        .map(|s| Subject {
+            kind: s.kind,
+            id: s.id,
+        })
+        .collect();
+    match chat_sharing::replace_shares(&state, &user.id, &session_id, parsed.link, &subjects).await
+    {
+        Ok(true) => match chat_sharing::shares(&state, &user.id, &session_id).await {
+            Ok(Some(shares)) => ok_json(StatusCode::OK, shares_view(shares)),
+            Ok(None) => not_found_conversation(),
+            Err(err) => internal(err),
+        },
+        Ok(false) => not_found_conversation(),
+        Err(err) => share_error(err),
+    }
+}
+
+/// GET /api/v0/chat/sessions/{id}/share-subjects?q= — the users and groups
+/// matching `q`, for the owner choosing who to share with.
+pub async fn session_share_subjects(
+    Path(session_id): Path<String>,
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let (_session, user) = require_session_json!(state, req);
+    if !user_can_write(&state, &user.id, &session_id).await {
+        return not_found_conversation();
+    }
+    let q = crate::pages::query_map(&req)
+        .get("q")
+        .map(|q| q.trim().to_owned())
+        .unwrap_or_default();
+    let mut tx = match aiplane_core::server::db::WriteTx::begin(&state.db).await {
+        Ok(tx) => tx,
+        Err(err) => return internal(err),
+    };
+    let found = match crate::pages::json_agents::search_subjects(&state, &mut tx, &q, None).await {
+        Ok(found) => found,
+        Err(resp) => return resp,
+    };
+    match tx.commit().await {
+        Ok(()) => ok_json(StatusCode::OK, found),
         Err(err) => internal(err),
     }
 }
@@ -1925,7 +2097,7 @@ pub async fn session_export_markdown(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    let session = match readable_session(&state, &user.id, &session_id).await {
+    let session = match readable_session(&state, &user, &session_id).await {
         Ok(Some(s)) => s,
         Ok(None) => return not_found_conversation(),
         Err(resp) => return resp,
@@ -1960,7 +2132,7 @@ pub async fn session_export_pdf(
     req: Request,
 ) -> Response {
     let (_session, user) = require_session_json!(state, req);
-    let session = match readable_session(&state, &user.id, &session_id).await {
+    let session = match readable_session(&state, &user, &session_id).await {
         Ok(Some(s)) => s,
         Ok(None) => return not_found_conversation(),
         Err(resp) => return resp,
@@ -2011,7 +2183,7 @@ pub async fn documents_list(
     // readable" case let a DB error fall straight THROUGH the authorization
     // check and on into serving the documents. An authorization gate that
     // cannot answer must refuse, not shrug.
-    match readable_session(&state, &user.id, &session_id).await {
+    match readable_session(&state, &user, &session_id).await {
         Ok(Some(_)) => {}
         Ok(None) => return not_found_conversation(),
         Err(resp) => return resp,
@@ -2050,7 +2222,7 @@ pub async fn document_get(
     // readable" case let a DB error fall straight THROUGH the authorization
     // check and on into serving the documents. An authorization gate that
     // cannot answer must refuse, not shrug.
-    match readable_session(&state, &user.id, &session_id).await {
+    match readable_session(&state, &user, &session_id).await {
         Ok(Some(_)) => {}
         Ok(None) => return not_found_conversation(),
         Err(resp) => return resp,

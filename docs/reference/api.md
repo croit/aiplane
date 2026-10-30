@@ -710,6 +710,9 @@ Debug fixture routes exist only in development builds.
 | `POST /api/v0/chat/sessions/{id}/messages` |
 | `POST /api/v0/chat/sessions/{id}/pin` |
 | `POST /api/v0/chat/sessions/{id}/share` |
+| `GET /api/v0/chat/sessions/{id}/shares` |
+| `PUT /api/v0/chat/sessions/{id}/shares` |
+| `GET /api/v0/chat/sessions/{id}/share-subjects` |
 | `POST /api/v0/chat/sessions/{id}/steer` |
 | `POST /api/v0/chat/sessions/{id}/steer/{steer_id}/discard` |
 | `DELETE /api/v0/chat/sessions/{id}/turns/{turn_id}` |

@@ -26,6 +26,7 @@
 pub mod agent_run;
 pub mod agents;
 pub mod budget;
+pub mod chat_sharing;
 pub mod classification_detector;
 pub mod classification_gate;
 pub mod classification_output;

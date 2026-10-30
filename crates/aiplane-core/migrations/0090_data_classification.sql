@@ -88,6 +88,15 @@ CREATE TABLE chat_classification_events (
 
 CREATE INDEX idx_chat_classification_events_session ON chat_classification_events (session_id, at);
 
+CREATE TABLE chat_session_shares (
+    session_id   TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    subject_kind TEXT NOT NULL CHECK (subject_kind IN ('user', 'group')),
+    subject_id   TEXT NOT NULL,
+    PRIMARY KEY (session_id, subject_kind, subject_id)
+) STRICT;
+
+CREATE INDEX idx_chat_session_shares_subject ON chat_session_shares (subject_kind, subject_id);
+
 -- ---------------------------------------------------------------------------
 -- Carry an installation that used the old mechanism into the ISO-typical scheme.
 -- ---------------------------------------------------------------------------

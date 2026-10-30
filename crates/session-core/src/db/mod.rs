@@ -1042,41 +1042,6 @@ pub(crate) mod tests {
         assert!(get_turn(&pool, &s.id, "u").await.unwrap().is_some());
     }
 
-    // Owner is the seeded user `u1`; the "viewer" `u2` is only ever a WHERE
-    // param in the read paths (never inserted), so no users row is needed for
-    // it — the FK only bites on the create_session INSERT.
-    #[tokio::test]
-    async fn get_session_readable_owner_shared_and_denied() {
-        let pool = pool().await;
-        let s = create_session(&pool, "u1").await.unwrap();
-        // Owner always reads.
-        assert!(
-            get_session_readable(&pool, "u1", &s.id)
-                .await
-                .unwrap()
-                .is_some()
-        );
-        // A different signed-in user cannot read a private session.
-        assert!(
-            get_session_readable(&pool, "u2", &s.id)
-                .await
-                .unwrap()
-                .is_none()
-        );
-        // After sharing, the other user can read it (and sees shared=true).
-        assert!(set_shared(&pool, "u1", &s.id, true).await.unwrap());
-        let seen = get_session_readable(&pool, "u2", &s.id).await.unwrap();
-        assert!(seen.is_some_and(|s| s.shared));
-        // Unsharing revokes the other user again.
-        assert!(set_shared(&pool, "u1", &s.id, false).await.unwrap());
-        assert!(
-            get_session_readable(&pool, "u2", &s.id)
-                .await
-                .unwrap()
-                .is_none()
-        );
-    }
-
     #[tokio::test]
     async fn set_shared_is_owner_only() {
         let pool = pool().await;
@@ -1154,26 +1119,6 @@ pub(crate) mod tests {
         assert!(listed[0].pinned);
         assert_eq!(listed[1].id, recent.id);
         assert!(!listed[1].pinned);
-    }
-
-    #[tokio::test]
-    async fn turn_session_readable_tracks_share_flag() {
-        let pool = pool().await;
-        let s = create_session(&pool, "u1").await.unwrap();
-        create_user_turn(&pool, &s.id, "turn-1", "hi")
-            .await
-            .unwrap();
-        // Owner: always readable; other: only once shared.
-        assert!(turn_session_readable(&pool, "turn-1", "u1").await.unwrap());
-        assert!(!turn_session_readable(&pool, "turn-1", "u2").await.unwrap());
-        set_shared(&pool, "u1", &s.id, true).await.unwrap();
-        assert!(turn_session_readable(&pool, "turn-1", "u2").await.unwrap());
-        // Unknown turn id → false (no leak).
-        assert!(
-            !turn_session_readable(&pool, "no-such-turn", "u1")
-                .await
-                .unwrap()
-        );
     }
 
     #[tokio::test]

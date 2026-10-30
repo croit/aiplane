@@ -1497,11 +1497,6 @@ pub async fn share_subjects(State(state): State<Arc<RamaState>>, req: Request) -
         .map(|q| q.trim().to_owned())
         .unwrap_or_default();
     let mut tx = or_return!(begin_write(&state, &user, &agent.principal.id).await);
-    let policy = state.rbac.with_snapshot(or_return!(
-        aiplane_core::server::db::gateway_groups::load_snapshot_in(&mut tx)
-            .await
-            .map_err(internal)
-    ));
     let owner = or_return!(
         agents_db::agent_owner_in(&mut tx, &agent.principal.id)
             .await
@@ -1511,6 +1506,26 @@ pub async fn share_subjects(State(state): State<Arc<RamaState>>, req: Request) -
         Some(agents_db::AgentOwner::Organization(id)) => Some(id),
         _ => None,
     };
+    let response = or_return!(search_subjects(&state, &mut tx, &q, org.as_deref()).await);
+    or_return!(tx.commit().await.map_err(internal));
+    json_ok(StatusCode::OK, response)
+}
+
+/// The users and groups matching `q`: nothing for a query shorter than
+/// [`SUBJECT_QUERY_MIN_CHARS`], at most [`SUBJECT_MATCHES`] of each. With
+/// `org`, only its members and member groups. Shared by every route that
+/// shares something with people.
+pub(super) async fn search_subjects(
+    state: &RamaState,
+    tx: &mut aiplane_core::server::db::WriteTx,
+    q: &str,
+    org: Option<&str>,
+) -> Result<ShareSubjects, Response> {
+    let policy = state.rbac.with_snapshot(
+        aiplane_core::server::db::gateway_groups::load_snapshot_in(tx)
+            .await
+            .map_err(internal)?,
+    );
     let mut response = ShareSubjects {
         users: Vec::new(),
         groups: Vec::new(),
@@ -1524,28 +1539,24 @@ pub async fn share_subjects(State(state): State<Arc<RamaState>>, req: Request) -
             } else {
                 SUBJECT_MATCHES as u32
             };
-            let page = or_return!(
-                users::search_page_in(&mut tx, &q, limit, offset)
-                    .await
-                    .map_err(internal)
-            );
+            let page = users::search_page_in(tx, q, limit, offset)
+                .await
+                .map_err(internal)?;
             for user in page.users {
-                if let Some(id) = &org {
-                    let eligible = or_return!(
-                        aiplane_agents::db::organizations::is_member_in(
-                            &mut tx,
-                            id,
-                            &policy.role_ids_for(&user.roles)
-                        )
-                        .await
-                        .map_err(internal)
-                    );
+                if let Some(id) = org {
+                    let eligible = aiplane_agents::db::organizations::is_member_in(
+                        tx,
+                        id,
+                        &policy.role_ids_for(&user.roles),
+                    )
+                    .await
+                    .map_err(internal)?;
                     if !eligible {
                         continue;
                     }
                 }
                 response.users.push(SubjectUser {
-                    email: user.email.eq_ignore_ascii_case(&q).then_some(user.email),
+                    email: user.email.eq_ignore_ascii_case(q).then_some(user.email),
                     id: user.id,
                     name: user.name,
                 });
@@ -1565,14 +1576,12 @@ pub async fn share_subjects(State(state): State<Arc<RamaState>>, req: Request) -
                 break;
             }
         }
-        let group_names = if let Some(id) = &org {
-            or_return!(
-                aiplane_agents::db::organizations::get_admin_in(&mut tx, id)
-                    .await
-                    .map_err(internal)
-            )
-            .map(|org| org.member_groups)
-            .unwrap_or_default()
+        let group_names = if let Some(id) = org {
+            aiplane_agents::db::organizations::get_admin_in(tx, id)
+                .await
+                .map_err(internal)?
+                .map(|org| org.member_groups)
+                .unwrap_or_default()
         } else {
             policy.group_names()
         };
@@ -1583,8 +1592,7 @@ pub async fn share_subjects(State(state): State<Arc<RamaState>>, req: Request) -
             .take(SUBJECT_MATCHES)
             .collect();
     }
-    or_return!(tx.commit().await.map_err(internal));
-    json_ok(StatusCode::OK, response)
+    Ok(response)
 }
 
 /// Users and groups matching a share-subject search.

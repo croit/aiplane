@@ -304,6 +304,7 @@ async fn data_classification_schema_matches_its_fixture() {
         "SELECT type, name, sql FROM sqlite_schema
          WHERE (name LIKE 'classification_%' OR name LIKE 'chat_classification_%'
                 OR name LIKE 'idx_chat_classification_%' OR name = 'chat_session_settings'
+                OR name = 'chat_session_shares' OR name = 'idx_chat_session_shares_subject'
                 OR name = 'pools')
            AND sql IS NOT NULL
          ORDER BY type, name",
@@ -331,4 +332,40 @@ async fn data_classification_schema_matches_its_fixture() {
     } else {
         assert_eq!(actual, SCHEMA);
     }
+}
+
+#[tokio::test]
+async fn a_conversations_shares_go_with_it_and_name_a_user_or_a_group() {
+    let pool = open(Path::new(":memory:")).await.unwrap();
+    pool.execute(sqlx::raw_sql(
+        "INSERT INTO users (id, email, roles_json, created_at, updated_at)
+             VALUES ('alice', 'alice@example.test', '[]', '2026-01-01', '2026-01-01');
+         INSERT INTO chat_sessions (id, user_id, created_at, updated_at)
+             VALUES ('s1', 'alice', '2026-01-01', '2026-01-01');
+         INSERT INTO chat_session_shares (session_id, subject_kind, subject_id)
+             VALUES ('s1', 'user', 'bob'), ('s1', 'group', 'engineering');",
+    ))
+    .await
+    .unwrap();
+
+    let other_kind = sqlx::query(
+        "INSERT INTO chat_session_shares (session_id, subject_kind, subject_id)
+         VALUES ('s1', 'team', 'x')",
+    )
+    .execute(&pool)
+    .await;
+    assert!(
+        other_kind.is_err(),
+        "only a user or a group can be shared with"
+    );
+
+    sqlx::query("DELETE FROM chat_sessions WHERE id = 's1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM chat_session_shares")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
 }

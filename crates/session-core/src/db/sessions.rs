@@ -158,23 +158,16 @@ pub async fn session_has_parent(pool: &Pool, session: &str) -> Result<Option<boo
     )
 }
 
-/// Look up a session readable by `viewer_id`: either they own it, or it has
-/// been shared (`shared = 1`). Used by the read-only paths (view, tail,
-/// attachments) where any signed-in user holding the session's UUID may read
-/// a shared conversation. Mutating paths must keep using the owner-only
-/// [`get_session`].
-pub async fn get_session_readable(
-    pool: &Pool,
-    viewer_id: &str,
-    session_id: &str,
-) -> Result<Option<Session>, DbError> {
+/// A session by id, whoever owns it. For callers that decide who may read it
+/// themselves (sharing lives above this crate); mutating paths keep the
+/// owner-scoped [`get_session`].
+pub async fn get_session_by_id(pool: &Pool, session_id: &str) -> Result<Option<Session>, DbError> {
     let row = sqlx::query(
         r#"SELECT id, user_id, title, created_at, updated_at, shared, pinned
            FROM chat_sessions
-           WHERE id = ? AND (user_id = ? OR (shared = 1 AND parent_turn_id IS NULL))"#,
+           WHERE id = ?"#,
     )
     .bind(session_id)
-    .bind(viewer_id)
     .fetch_optional(pool)
     .await?;
     row.as_ref().map(map_session).transpose()
@@ -189,11 +182,21 @@ pub async fn set_shared(
     session_id: &str,
     shared: bool,
 ) -> Result<bool, DbError> {
+    let mut connection = pool.acquire().await?;
+    set_shared_in(&mut connection, user_id, session_id, shared).await
+}
+
+pub async fn set_shared_in(
+    connection: &mut sqlx::SqliteConnection,
+    user_id: &str,
+    session_id: &str,
+    shared: bool,
+) -> Result<bool, DbError> {
     let res = sqlx::query(r#"UPDATE chat_sessions SET shared = ? WHERE id = ? AND user_id = ? AND parent_turn_id IS NULL"#)
         .bind(shared as i64)
         .bind(session_id)
         .bind(user_id)
-        .execute(pool)
+        .execute(connection)
         .await?;
     Ok(res.rows_affected() > 0)
 }
@@ -217,26 +220,15 @@ pub async fn set_pinned(
     Ok(res.rows_affected() > 0)
 }
 
-/// Whether the chat session a given turn belongs to is readable by
-/// `viewer_id` — owner or shared. Backs the attachment proxy so files in a
-/// shared conversation are fetchable by a viewer, while a private turn's
-/// files stay owner-only. `false` when the turn id doesn't exist.
-pub async fn turn_session_readable(
-    pool: &Pool,
-    turn_id: &str,
-    viewer_id: &str,
-) -> Result<bool, DbError> {
-    let row = sqlx::query(
-        r#"SELECT 1 AS ok
-           FROM chat_turns t
-           JOIN chat_sessions s ON s.id = t.session_id
-           WHERE t.id = ? AND (s.user_id = ? OR (s.shared = 1 AND s.parent_turn_id IS NULL))"#,
+/// The session a turn belongs to; `None` when the turn id does not exist.
+/// Backs the attachment proxy, which checks read access on that session.
+pub async fn session_id_of_turn(pool: &Pool, turn_id: &str) -> Result<Option<String>, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT session_id FROM chat_turns WHERE id = ?")
+            .bind(turn_id)
+            .fetch_optional(pool)
+            .await?,
     )
-    .bind(turn_id)
-    .bind(viewer_id)
-    .fetch_optional(pool)
-    .await?;
-    Ok(row.is_some())
 }
 
 /// Whether `turn_id` is a turn of `session_id`. The session-scoping gate
@@ -437,7 +429,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delegated_child_is_private_even_if_shared_flag_is_set() {
+    async fn delegated_child_cannot_be_deleted() {
         let pool = pool().await;
         let session = create_session(&pool, "u1").await.unwrap();
         sqlx::query("UPDATE chat_sessions SET parent_turn_id = 'parent', shared = 1 WHERE id = ?")
@@ -445,23 +437,11 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        assert!(
-            get_session_readable(&pool, "u2", &session.id)
-                .await
-                .unwrap()
-                .is_none()
-        );
-        assert!(
-            get_session_readable(&pool, "u1", &session.id)
-                .await
-                .unwrap()
-                .is_some()
-        );
         assert!(!delete_session(&pool, "u1", &session.id).await.unwrap());
     }
 
     #[tokio::test]
-    async fn delegated_child_attachments_are_private_even_if_shared_flag_is_set() {
+    async fn a_turn_names_its_session() {
         let pool = pool().await;
         let session = create_session(&pool, "u1").await.unwrap();
         create_turn_pair_if_idle(
@@ -481,9 +461,11 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        assert!(turn_session_readable(&pool, "reply", "u1").await.unwrap());
-        assert!(!turn_session_readable(&pool, "reply", "u2").await.unwrap());
-        assert!(!turn_session_readable(&pool, "missing", "u1").await.unwrap());
+        assert_eq!(
+            session_id_of_turn(&pool, "reply").await.unwrap().as_deref(),
+            Some(session.id.as_str())
+        );
+        assert_eq!(session_id_of_turn(&pool, "missing").await.unwrap(), None);
     }
 
     #[tokio::test]
@@ -590,12 +572,6 @@ mod tests {
             .collect();
         assert_eq!(listed, vec![mine.id.clone()]);
         assert!(get_session(&pool, "u1", &other).await.unwrap().is_none());
-        assert!(
-            get_session_readable(&pool, "u1", &other)
-                .await
-                .unwrap()
-                .is_none()
-        );
         let hits = search_sessions(&pool, "u1", "invoices", 10).await.unwrap();
         assert_eq!(
             hits.iter()
@@ -604,11 +580,6 @@ mod tests {
             vec![mine.id.as_str()]
         );
         assert_eq!(user_for_turn(&pool, &other_turn).await.unwrap(), None);
-        assert!(
-            !turn_session_readable(&pool, &other_turn, "u1")
-                .await
-                .unwrap()
-        );
         assert!(!set_shared(&pool, "u1", &other, true).await.unwrap());
         assert!(!delete_session(&pool, "u1", &other).await.unwrap());
     }

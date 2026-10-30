@@ -173,7 +173,17 @@ pub(super) fn operations() -> Vec<Op> {
         post("/api/v0/chat/sessions/{id}/share", Access::Session)
             .body(json::<chat::ShareBody>())
             .ok(json::<chat::Shared>())
-            .errors(&[400, 404]),
+            .errors(&[400, 404, 409]),
+        get("/api/v0/chat/sessions/{id}/shares", Access::Session)
+            .ok(json::<chat::SharesView>())
+            .errors(&[404]),
+        put("/api/v0/chat/sessions/{id}/shares", Access::Session)
+            .body(json::<chat::SharesBody>())
+            .ok(json::<chat::SharesView>())
+            .errors(&[400, 404, 409]),
+        get("/api/v0/chat/sessions/{id}/share-subjects", Access::Session)
+            .ok(json::<crate::rama_server::pages::json_agents::ShareSubjects>())
+            .errors(&[404]),
         post("/api/v0/chat/sessions/{id}/effort", Access::Session)
             .body(json::<chat::EffortBody>())
             .ok(json::<chat::EffortBody>())

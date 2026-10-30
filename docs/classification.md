@@ -14,7 +14,8 @@ All tables belong to one migration (`0090_data_classification.sql`).
 | `classification_markings` | `(kind, value) -> level_id` with `kind` one of `mip` (a Purview label GUID or name), `tscp`, `sensitivity` and `stamp` (visible stamp text). Upload detection reads it. The filename tag is not a row: it is the level's `filename_tag`. |
 | `classification_assignments` | `(kind, id) -> level_id`, `over` (`hide` or `gate`). `kind` is `pool`, `tool`, `mcp`, `connector` or `collection`. A pool's `id` is its name; triggers follow a rename and remove the row on delete. A tool's `id` is the tool id, an MCP server's and a connector's the server or connector key, a collection's the numeric collection id (a rename cannot orphan it). A destination without a row is at the lowest level and, for a tool, hidden above it. The rows load with the scheme. |
 | `chat_session_settings.level_id` | The conversation's level. `NULL` means the lowest level. |
-| `chat_classification_events` | One row per raise or lowering: `from_level`, `to_level`, `cause` (`default`, `migration`, `user`, `system_one:<class id>`, `pattern:<class id>`, `terms:<class id>`, `marking:*` as in [Resolution](#resolution-1), `retrieval`), `actor`, `reason`. |
+| `chat_session_shares` | `(session_id, subject_kind, subject_id)`: the people (`user`) and groups (`group`) a conversation is shared with; removed with the conversation. See [Sharing](#sharing). |
+| `chat_classification_events` | One row per raise or lowering: `from_level`, `to_level`, `cause` (`default`, `migration`, `user`, `system_one:<class id>`, `pattern:<class id>`, `terms:<class id>`, `marking:*` as in [Resolution](#resolution-1), `retrieval`, `fork`, `scheme_change`), `actor`, `reason`. |
 
 ## Resolution
 
@@ -32,7 +33,7 @@ All endpoints need administrator rights and live under `/api/v0/admin/classifica
 |---|---|
 | `GET /api/v0/admin/classification` | The whole scheme (`active`, `levels`, `classes` with their word-list state, `markings`, `policy`), the `destinations` that can be rated (every pool, tool with its `egress` flag, connector, knowledge collection), the `system_one_models` with `cleared_for_highest` and the `templates`. |
 | `PUT /api/v0/admin/classification` | Replaces the scheme atomically in one transaction. |
-| `POST /api/v0/admin/classification/classes/{id}/terms` | Multipart `file`: replaces the class's word list and reloads the matchers. Answers the preview counts (`count`, `duplicates`, `too_short`, `sample`). |
+| `POST /api/v0/admin/classification/classes/{id}/terms` | Multipart `file`: replaces the class's word list and reloads the matchers. `?column=` names the CSV column (without it the file is one term per line); `?preview=1` saves nothing. Answers the preview counts (`count`, `duplicates`, `too_short`, `sample`). |
 | `DELETE /api/v0/admin/classification/classes/{id}/terms` | Removes the word list. |
 | `POST /api/v0/admin/classification/inspect` | Multipart `file`: the markings the document carries. |
 | `POST /api/v0/admin/classification/test` | Multipart `file` or `text`: the level, causes and classes the saved scheme gives the sample. Writes nothing. |
@@ -47,6 +48,25 @@ All endpoints need administrator rights and live under `/api/v0/admin/classifica
 - the System One model must be served by a System One pool and be cleared for the highest level when a class has a question or any destination is set to `gate`; it may be empty only when neither is the case.
 
 Removing a level moves its conversations as described under [Data classification](admin/settings.md#data-classification) and writes one `scheme_change` event per conversation. The policy is stored in the `settings.classification.*` rows of `app_settings`, so the runtime reads it through the settings mechanism.
+
+## Sharing
+
+A conversation is read by its owner and by:
+
+- anyone signed in, while it is shared by link and its level is at or below `classification.link_share_max_level` (an empty or unknown value is the lowest level; with one level there is no limit);
+- the users listed in `chat_session_shares` (`subject_kind` `user`, the user id);
+- the members of the groups listed there (`subject_kind` `group`, the group id, matched against the reader's groups).
+
+`runtime::chat_sharing::can_read` is the one function that decides, and every read goes through it: the conversation, its live event stream, exports, documents and canvas, attachments and the fork source. The link ceiling is evaluated on each read, so raising a conversation above it stops the link immediately without touching the stored flag. A delegated child conversation is private to its owner. Only the owner changes shares.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/v0/chat/sessions/{id}/shares` | `{link_allowed, link, subjects[{kind, id, name}]}`. `link` is whether the link is open now. |
+| `PUT /api/v0/chat/sessions/{id}/shares` | Body `{link, subjects[{kind, id}]}` replaces the link flag and the list in one transaction. `link: true` above the limit is `409` (`link_sharing_above_limit`); an unknown user or group, or the owner, is `400`. |
+| `POST /api/v0/chat/sessions/{id}/share` | The single link toggle, with the same `409` rule. |
+| `GET /api/v0/chat/sessions/{id}/share-subjects?q=` | The owner's search for people and groups, in the shape of the agents' share search: nothing below two characters, at most eight of each. |
+
+A fork copies the text and the **level** of its source (audited with the cause `fork`) and starts unshared; forking needs read access to the source.
 
 ## Migration of an existing installation
 

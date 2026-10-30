@@ -893,6 +893,18 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
             "/api/v0/chat/sessions/{id}/share",
             pages::chat::json_api::session_share,
         )
+        .with_get(
+            "/api/v0/chat/sessions/{id}/shares",
+            pages::chat::json_api::session_shares,
+        )
+        .with_put(
+            "/api/v0/chat/sessions/{id}/shares",
+            pages::chat::json_api::session_shares_put,
+        )
+        .with_get(
+            "/api/v0/chat/sessions/{id}/share-subjects",
+            pages::chat::json_api::session_share_subjects,
+        )
         .with_post(
             "/api/v0/chat/sessions/{id}/effort",
             pages::chat::json_api::session_effort,
