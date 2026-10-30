@@ -206,10 +206,26 @@ pub(crate) async fn evaluate_attachments(
         }
         Err(error) => return Err(error),
     };
-    let mut findings = inspected.findings;
+    // A label or stamp sets the level before any class is weighed: a class at
+    // or below it neither asks nor is asked about, as for typed text in a
+    // conversation already at that level.
+    let rank_of = |finding: &Finding| scheme.level(&finding.level_id).map(|level| level.rank);
+    let marked = inspected
+        .findings
+        .iter()
+        .filter(|finding| finding.class_id.is_none())
+        .filter_map(rank_of)
+        .fold(rank, u32::max);
+    let mut findings: Vec<Finding> = inspected
+        .findings
+        .into_iter()
+        .filter(|finding| {
+            finding.class_id.is_none() || rank_of(finding).is_some_and(|r| r > marked)
+        })
+        .collect();
     let text = system_one_text(&inspected.texts);
     if !text.trim().is_empty() {
-        match system_one_findings(state, &text, rank).await {
+        match system_one_findings(state, &text, marked).await {
             Ok(found) => findings.extend(found),
             Err(error) => {
                 if !findings.is_empty() {

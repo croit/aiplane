@@ -974,9 +974,41 @@ fn iban_and_rule_classes() -> String {
         "{}
          INSERT INTO classification_data_classes
              (id, name, level_id, patterns, action, rule_question, rule_threshold)
-         VALUES ('person', 'Personal data', 'internal', '[]', 'raise', 'Is a person described?', 0.6);",
+         VALUES ('health', 'Health data', 'strictly_confidential', '[]', 'raise', 'Is health described?', 0.6);",
         iban_class("raise")
     )
+}
+
+#[tokio::test]
+async fn a_class_at_the_level_a_files_label_already_sets_neither_asks_nor_is_asked_about() {
+    use aiplane_core::server::classification::ClassificationMode::Enforce;
+    let (upstream, state, session, (status, error)) = send_with(
+        "INSERT INTO classification_data_classes
+             (id, name, level_id, patterns, action, rule_question, rule_threshold)
+         VALUES ('secret', 'Trade secret', 'confidential', '[]', 'confirm', 'Is this a trade secret?', 0.6);",
+        Enforce,
+        "high-model",
+        "please read this",
+        Some(("mip_confidential.docx", "application/octet-stream")),
+    )
+    .await;
+    assert_eq!(status, chat::TurnStatus::Completed, "{error}");
+    assert_eq!(
+        events(&state, &session).await,
+        vec![(
+            "public".into(),
+            "confidential".into(),
+            format!("marking:mip:{CONFIDENTIAL_GUID}")
+        )]
+    );
+    let asked = upstream
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|request| request.url.path() == "/systemone")
+        .count();
+    assert_eq!(asked, 0, "nothing above Confidential has a rule");
 }
 
 #[tokio::test]
