@@ -619,3 +619,38 @@ async fn the_settings_editor_no_longer_lists_the_classification_section() {
         "{settings}"
     );
 }
+
+#[tokio::test]
+async fn a_pool_on_a_loopback_backend_is_in_the_own_network() {
+    let upstream = wiremock::MockServer::start().await;
+    let state = common::state_with_admin_rbac(&upstream.uri()).await;
+    let cookie = common::seed_session(&state, "boss", "boss@example.com").await;
+    aiplane_core::server::db::users::upsert(
+        &state.db,
+        &aiplane_core::server::db::users::User {
+            id: "boss".into(),
+            email: "boss@example.com".into(),
+            name: None,
+            roles: vec!["admin".into()],
+            created_at: jiff::Timestamp::now(),
+            updated_at: jiff::Timestamp::now(),
+            timezone: None,
+            speech_voice: None,
+        },
+    )
+    .await
+    .unwrap();
+    let state = Arc::new(state);
+
+    let (status, view) = get(&state, &cookie, "/api/v0/admin/classification").await;
+
+    assert_eq!(status, StatusCode::OK);
+    let pool = view["destinations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["kind"] == "pool" && d["id"] == "pool")
+        .unwrap();
+    assert_eq!(pool["hosting"], "own_network");
+    assert_eq!(pool["hosts"], json!(["127.0.0.1"]));
+}

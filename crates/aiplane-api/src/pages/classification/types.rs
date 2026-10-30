@@ -227,6 +227,12 @@ pub struct DestinationView {
     pub over: &'static str,
     /// Data given to this destination leaves AIplane.
     pub egress: bool,
+    /// Pools only: `own_network`, `cloud` or `unknown` (a backend host does not resolve).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hosting: Option<&'static str>,
+    /// Pools only: the hosts of the pool's backends.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hosts: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
@@ -235,6 +241,8 @@ pub struct SystemOneModelView {
     /// `null` while no pool serving it is rated.
     pub level_id: Option<String>,
     pub cleared_for_highest: bool,
+    /// The System One pools serving the model.
+    pub pools: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]

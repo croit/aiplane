@@ -8,6 +8,13 @@ import {
 	csvColumns,
 	diffSummary,
 	draftFrom,
+	egressSummary,
+	finalizeDraft,
+	modelBlocksActivation,
+	modelCleared,
+	pickSystemOneModel,
+	prefillPools,
+	withoutQuestions,
 	groupDestinations,
 	levelOptions,
 	mergeMarkings,
@@ -209,4 +216,82 @@ test('pattern, word-list, marking and retrieval causes have catalog messages', (
 	assert.deepEqual(causeMessage('terms:trade_secrets'), { key: 'cls-cause-terms', args: { class: 'trade_secrets' } });
 	assert.deepEqual(causeMessage('marking:mip:9fbde396-1a24-4c79-8edf-9254a0f35055'), { key: 'cls-cause-marking', args: {} });
 	assert.deepEqual(causeMessage('retrieval'), { key: 'cls-cause-retrieval', args: {} });
+});
+
+const modelStep = (): ClassificationState => {
+	const s = state();
+	s.destinations = [
+		dest('pool', 'qwen', null, { hosting: 'own_network', hosts: ['llm01.int'] }),
+		dest('pool', 'zai', null, { hosting: 'cloud', hosts: ['api.z.ai'] }),
+		dest('pool', 'odd', null, { hosting: 'unknown', hosts: ['gone.example'] }),
+		dest('tool', 'search_web', null, { egress: true }),
+		dest('tool', 'clock', null),
+		dest('mcp', 'github', null, { egress: true })
+	];
+	s.classes[0]!.rule_question = 'Is it personal?';
+	s.classes[0]!.rule_positive = 'a name';
+	s.classes[0]!.rule_negative = 'weather';
+	return s;
+};
+const models = [
+	{ id: 'qwen-big', level_id: null, cleared_for_highest: false, pools: ['qwen'] },
+	{ id: 'glm', level_id: null, cleared_for_highest: false, pools: ['zai'] }
+];
+const rate = (draft: ReturnType<typeof draftFrom>, id: string, level: string | null) => ({ ...draft, destinations: draft.destinations.map((d) => (d.id === id ? { ...d, level_id: level } : d)) });
+
+test('pools are prefilled from where their backends run, unknown stays unrated', () => {
+	const draft = prefillPools(draftFrom(modelStep()));
+	const level = (id: string) => draft.destinations.find((d) => d.id === id)!.level_id;
+	assert.equal(level('qwen'), 'secret');
+	assert.equal(level('zai'), 'public');
+	assert.equal(level('odd'), null);
+	assert.equal(level('search_web'), null);
+});
+
+test('a pool the operator already rated keeps its rating', () => {
+	const draft = prefillPools(rate(draftFrom(modelStep()), 'qwen', 'internal'));
+	assert.equal(draft.destinations.find((d) => d.id === 'qwen')!.level_id, 'internal');
+});
+
+test('the System One model is preselected only when exactly one is cleared in the draft', () => {
+	const draft = prefillPools(draftFrom(modelStep()));
+	assert.equal(pickSystemOneModel(draft, models), 'qwen-big');
+	assert.equal(pickSystemOneModel(rate(draft, 'zai', 'secret'), models), '');
+	assert.equal(pickSystemOneModel(rate(draft, 'qwen', null), models), '');
+	assert.equal(pickSystemOneModel(draft, []), '');
+});
+
+test('a model is cleared only when all its pools are at the highest level', () => {
+	const draft = prefillPools(draftFrom(modelStep()));
+	assert.equal(modelCleared(draft, { pools: ['qwen'] }), true);
+	assert.equal(modelCleared(draft, { pools: ['qwen', 'zai'] }), false);
+	assert.equal(modelCleared(draft, { pools: [] }), false);
+});
+
+test('without a model the rule questions go and patterns, markings and word lists stay', () => {
+	const draft = withoutQuestions(draftFrom(modelStep()));
+	const pii = draft.classes[0]!;
+	assert.deepEqual([pii.rule_question, pii.rule_positive, pii.rule_negative], ['', '', '']);
+	assert.deepEqual(pii.patterns, ['email']);
+	assert.equal(pii.terms.count, 3);
+	assert.equal(draft.markings.length, 1);
+});
+
+test('finalizing sets the model, or clears the questions when there is none', () => {
+	const draft = prefillPools(draftFrom(modelStep()));
+	assert.equal(finalizeDraft(draft, 'qwen-big').policy.system_one_model, 'qwen-big');
+	assert.equal(finalizeDraft(draft, 'qwen-big').classes[0]!.rule_question, 'Is it personal?');
+	assert.equal(finalizeDraft(draft, '').classes[0]!.rule_question, '');
+});
+
+test('activation is blocked for a model whose pool is not at the highest level', () => {
+	const draft = prefillPools(draftFrom(modelStep()));
+	assert.equal(modelBlocksActivation(draft, models, 'qwen-big'), false);
+	assert.equal(modelBlocksActivation(draft, models, 'glm'), true);
+	assert.equal(modelBlocksActivation(draft, models, ''), false);
+});
+
+test('egress destinations outside pools are counted with their first names', () => {
+	assert.deepEqual(egressSummary(modelStep().destinations), { count: 2, names: ['search_web', 'github'] });
+	assert.deepEqual(egressSummary(modelStep().destinations, 1), { count: 2, names: ['search_web'] });
 });

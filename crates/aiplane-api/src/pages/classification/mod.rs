@@ -5,6 +5,7 @@
 //! scheme. The policy fields live in the settings rows, written in the same
 //! transaction as the levels they refer to.
 
+mod hosting;
 mod templates;
 pub mod types;
 mod validate;
@@ -85,6 +86,8 @@ fn rated(
         level_id: assignment.map(|a| a.level_id.clone()),
         over: assignment.map_or(Over::Hide, |a| a.over).as_str(),
         egress,
+        hosting: None,
+        hosts: Vec::new(),
     }
 }
 
@@ -146,6 +149,18 @@ async fn destinations(state: &RamaState, scheme: &Scheme) -> Result<Destinations
     Ok(Destinations { views })
 }
 
+/// Pools carry where their backends run: the fact the assistant prefills their level from.
+async fn with_hosting(state: &RamaState, mut views: Vec<DestinationView>) -> Vec<DestinationView> {
+    let found = hosting::of_pools(&state.upstreams.pools()).await;
+    for view in views.iter_mut().filter(|v| v.kind == "pool") {
+        if let Some((hosting, hosts)) = found.get(&view.id) {
+            view.hosting = Some(hosting.as_str());
+            view.hosts = hosts.clone();
+        }
+    }
+    views
+}
+
 /// For each System One model, the pools serving it.
 fn system_one_pools(state: &RamaState) -> HashMap<String, Vec<String>> {
     let mut out: HashMap<String, Vec<String>> = HashMap::new();
@@ -192,6 +207,7 @@ fn system_one_models(state: &RamaState, scheme: &Scheme) -> Vec<SystemOneModelVi
                 id,
                 level_id,
                 cleared_for_highest: rank >= highest,
+                pools,
             }
         })
         .collect();
@@ -239,7 +255,7 @@ async fn current_state(state: &RamaState, lang: Lang) -> Result<ClassificationSt
         levels: scheme.levels().iter().map(LevelBody::from).collect(),
         classes: classes.iter().map(ClassView::from).collect(),
         markings,
-        destinations: destinations(state, &scheme).await?.views,
+        destinations: with_hosting(state, destinations(state, &scheme).await?.views).await,
         policy: policy_view(state, &scheme),
         templates: templates::all(lang),
         system_one_models: system_one_models(state, &scheme),

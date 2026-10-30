@@ -59,6 +59,8 @@ export type DestinationKind = 'pool' | 'tool' | 'mcp' | 'connector' | 'collectio
 export const DESTINATION_KINDS: readonly DestinationKind[] = ['pool', 'tool', 'mcp', 'connector', 'collection'];
 export type Over = 'hide' | 'gate';
 
+export type Hosting = 'own_network' | 'cloud' | 'unknown';
+
 export interface Destination {
 	kind: DestinationKind;
 	id: string;
@@ -69,6 +71,10 @@ export interface Destination {
 	/** Only meaningful for a tool, MCP server or connector with `egress`. */
 	over: Over;
 	egress: boolean;
+	/** Pools only: where the backends run. */
+	hosting?: Hosting;
+	/** Pools only: the backend hosts. */
+	hosts?: string[];
 }
 
 export interface Policy {
@@ -100,6 +106,7 @@ export interface SystemOneModel {
 	id: string;
 	level_id: string | null;
 	cleared_for_highest: boolean;
+	pools: string[];
 }
 
 /** `GET /api/v0/admin/classification`. */
@@ -506,6 +513,63 @@ export function csvColumns(text: string): string[] {
 /** A System One model is needed once any class has a rule or any destination is gated. */
 export function needsClearedModel(draft: Draft): boolean {
 	return draft.classes.some((c) => c.rule_question.trim() !== '') || draft.destinations.some((d) => d.level_id !== null && d.over === 'gate' && choosesOver(d));
+}
+
+// ---------------------------------------------------------------------------
+// The assistant's model step
+
+const highestLevel = (draft: Draft): Level => sortedLevels(draft.levels).at(-1)!;
+
+/**
+ * Rate every unrated pool from where its backends run: in the own network the
+ * highest level, in the cloud the lowest, unknown stays unrated.
+ */
+export function prefillPools(draft: Draft): Draft {
+	const sorted = sortedLevels(draft.levels);
+	const level = { own_network: sorted.at(-1)!.id, cloud: sorted[0]!.id } as const;
+	return {
+		...draft,
+		destinations: draft.destinations.map((d) => {
+			if (d.kind !== 'pool' || d.level_id !== null || !d.hosting || d.hosting === 'unknown') return d;
+			return { ...d, level_id: level[d.hosting] };
+		})
+	};
+}
+
+/** Whether every pool serving the model is rated at the draft's highest level. */
+export function modelCleared(draft: Draft, model: Pick<SystemOneModel, 'pools'>): boolean {
+	const top = highestLevel(draft).id;
+	return model.pools.length > 0 && model.pools.every((pool) => draft.destinations.some((d) => d.kind === 'pool' && d.id === pool && d.level_id === top));
+}
+
+/** The one model cleared for the highest level in the draft; none when there are none or several to choose from. */
+export function pickSystemOneModel(draft: Draft, models: readonly SystemOneModel[]): string {
+	const cleared = models.filter((m) => modelCleared(draft, m));
+	return cleared.length === 1 ? cleared[0]!.id : '';
+}
+
+/** Without a model the questions cannot be asked: patterns, markings and word lists stay. */
+export function withoutQuestions(draft: Draft): Draft {
+	return { ...draft, classes: draft.classes.map((c) => ({ ...c, rule_question: '', rule_positive: '', rule_negative: '' })) };
+}
+
+/** The draft the assistant saves: the chosen model set, and no questions when there is none. */
+export function finalizeDraft(draft: Draft, model: string): Draft {
+	const withModel = { ...draft, policy: { ...draft.policy, system_one_model: model } };
+	return model === '' ? withoutQuestions(withModel) : withModel;
+}
+
+/** Activating is refused while the chosen model is not cleared for the highest level, or one is needed and none is chosen. */
+export function modelBlocksActivation(draft: Draft, models: readonly SystemOneModel[], model: string): boolean {
+	if (model === '') return needsClearedModel(finalizeDraft(draft, ''));
+	const chosen = models.find((m) => m.id === model);
+	return !chosen || !modelCleared(draft, chosen);
+}
+
+/** The destinations that send data out of AIplane without being a pool: how many, and the first few names. */
+export function egressSummary(destinations: readonly Destination[], shown = 3): { count: number; names: string[] } {
+	const egress = destinations.filter((d) => d.kind !== 'pool' && d.egress);
+	return { count: egress.length, names: egress.slice(0, shown).map((d) => d.name) };
 }
 
 // ---------------------------------------------------------------------------
