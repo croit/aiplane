@@ -57,7 +57,11 @@
 	} = $props();
 
 	const cause = $derived(causeMessage(classification?.cause));
-	let modelOptions = $derived(modelSelectOptions(models, (price) => formatModelPrice(price, currency, t, n)));
+	let modelOptions = $derived(modelSelectOptions(
+			models,
+			(price) => formatModelPrice(price, currency, t, n),
+			(levelId) => classification?.levels.find((l) => l.id === levelId)?.name ?? null
+		));
 	let transcriptionOptions = $derived(transcriptionModels.map((id) => ({ value: id, label: id })));
 	let speechOptions = $derived([
 		{ value: '', label: t('chat-render-tts-voice-default') },

@@ -25,6 +25,8 @@ export type Effort = (typeof EFFORTS)[number];
 /** One entry of `GET /api/v0/models`. */
 export interface ChatModelChoice {
 	id: string;
+	/** The highest level the model is cleared for; `null` while classification is not active. */
+	level_id?: string | null;
 	/** The operator's one-line description, when one is configured. */
 	description?: string;
 	/** The effort levels this model offers; empty when effort changes nothing. */

@@ -725,8 +725,19 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
                     unit: named.map(|p| p.pricing_unit.as_str()).unwrap_or("tokens"),
                 }
             });
+            let level_id = scheme
+                .is_active()
+                .then(|| {
+                    scheme
+                        .levels()
+                        .iter()
+                        .find(|level| level.rank == choice.level_rank)
+                        .map(|level| level.id.clone())
+                })
+                .flatten();
             ChatModel {
                 id: choice.id,
+                level_id,
                 description,
                 efforts: efforts
                     .unwrap_or_default()
@@ -753,6 +764,9 @@ pub struct ChatModels {
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct ChatModel {
     pub id: String,
+    /// The highest level the model is cleared for; `null` while the
+    /// classification scheme is not active.
+    pub level_id: Option<String>,
     /// The operator's one-line description, shown under the name in the
     /// picker. `null` when none is configured.
     pub description: Option<String>,

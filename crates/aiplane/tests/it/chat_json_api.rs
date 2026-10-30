@@ -2775,6 +2775,87 @@ async fn a_one_level_install_reports_classification_inactive() {
     let body: serde_json::Value = serde_json::from_str(&body_string(detail).await).unwrap();
     assert_eq!(body["classification"]["active"], false);
     assert!(body["classification"]["level"].is_null());
+    assert!(body["classification"]["cause"].is_null());
+}
+
+/// The session says why it is at its level (the latest event's cause) and
+/// whether the level may be lowered.
+#[tokio::test]
+async fn the_session_names_the_cause_of_its_level_and_whether_it_may_be_lowered() {
+    let upstream = MockServer::start().await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    seed_levels(&state, "with_reason").await;
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let app = router(state.clone());
+    let before = app
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/chat/sessions/{}", session.id),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let before: serde_json::Value = serde_json::from_str(&body_string(before).await).unwrap();
+    assert!(before["classification"]["cause"].is_null());
+    assert_eq!(before["classification"]["lowering"], "with_reason");
+
+    post_level(&app, &cookie, &session.id, r#"{"level":"confidential"}"#).await;
+
+    let after = app
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/chat/sessions/{}", session.id),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let after: serde_json::Value = serde_json::from_str(&body_string(after).await).unwrap();
+    assert_eq!(after["classification"]["cause"], "user");
+}
+
+/// Each model carries the highest level it is cleared for, and none while the
+/// scheme is inactive.
+#[tokio::test]
+async fn the_model_list_names_the_level_each_model_is_cleared_for() {
+    let upstream = MockServer::start().await;
+    let state = state_with_chat_access_at_level(
+        &upstream.uri(),
+        Arc::new(ToolRegistry::new()),
+        Arc::new(Resolver::empty()),
+        1,
+    )
+    .await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let state = Arc::new(state);
+    let level_ids = |body: serde_json::Value| -> Vec<serde_json::Value> {
+        body["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["level_id"].clone())
+            .collect()
+    };
+    let listed = async || {
+        let resp = router(state.clone())
+            .serve(json_req(
+                Method::GET,
+                "/api/v0/models".into(),
+                &cookie,
+                None,
+            ))
+            .await
+            .unwrap();
+        serde_json::from_str::<serde_json::Value>(&body_string(resp).await).unwrap()
+    };
+    let inactive = level_ids(listed().await);
+    assert!(!inactive.is_empty());
+    assert!(inactive.iter().all(serde_json::Value::is_null));
+
+    seed_levels(&state, "never").await;
+    let active = level_ids(listed().await);
+    assert!(active.iter().all(|id| id == "internal"), "{active:?}");
 }
 
 /// Raising is allowed and audited; lowering is refused under `never` with 403.

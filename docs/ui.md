@@ -132,7 +132,7 @@ and escaped for Markdown, so a name cannot inject markup. Text wrapped in
 `<prompt>…</prompt>` becomes a chip that sends exactly that text in one click —
 what the person had already typed is put back into the composer afterwards.
 The tag is rendered on this card only, so a model's answer can never grow
-buttons of its own. The model picker lists only the models cleared for the conversation's classification level (`GET /api/v0/models?session=`); the server enforces the same rule on the turn. The session detail carries `classification: {active, level, levels}` for a level control.
+buttons of its own. The model picker lists only the models cleared for the conversation's classification level (`GET /api/v0/models?session=`); the server enforces the same rule on the turn. Each model of that list carries `level_id`, the highest level it is cleared for (`null` while the scheme is inactive), shown as a chip in the picker. The session detail carries `classification: {active, level, levels, lowering, cause}` for a level control: `lowering` says whether the level may be lowered and `cause` is the cause of the latest level change, shown as the reason beside the level.
 
 ### Bounded viewport
 

@@ -613,7 +613,10 @@ export function sharesBody(link: boolean, subjects: ChatShares['subjects']): Sha
 /** The catalog key and arguments naming why a conversation is at its level; `null` when the server named none. */
 export function causeMessage(cause: string | null | undefined): { key: string; args: Record<string, string> } | null {
 	if (!cause) return null;
-	if (cause.startsWith('system_one:')) return { key: 'cls-cause-system-one', args: { class: cause.slice('system_one:'.length) } };
+	for (const prefix of ['system_one', 'pattern', 'terms']) {
+		if (cause.startsWith(`${prefix}:`)) return { key: `cls-cause-${prefix.replace('_', '-')}`, args: { class: cause.slice(prefix.length + 1) } };
+	}
+	if (cause.startsWith('marking:')) return { key: 'cls-cause-marking', args: {} };
 	return { key: `cls-cause-${cause.replace(/_/g, '-')}`, args: {} };
 }
 

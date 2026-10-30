@@ -200,8 +200,9 @@ test('a level cause names its catalog message, a detector cause carries the clas
 	assert.deepEqual(causeMessage('system_one:pii'), { key: 'cls-cause-system-one', args: { class: 'pii' } });
 });
 
-test('a level cause names its catalog message, a detector cause carries the class', () => {
-	assert.equal(causeMessage(null), null);
-	assert.deepEqual(causeMessage('scheme_change'), { key: 'cls-cause-scheme-change', args: {} });
-	assert.deepEqual(causeMessage('system_one:pii'), { key: 'cls-cause-system-one', args: { class: 'pii' } });
+test('pattern, word-list, marking and retrieval causes have catalog messages', () => {
+	assert.deepEqual(causeMessage('pattern:iban'), { key: 'cls-cause-pattern', args: { class: 'iban' } });
+	assert.deepEqual(causeMessage('terms:trade_secrets'), { key: 'cls-cause-terms', args: { class: 'trade_secrets' } });
+	assert.deepEqual(causeMessage('marking:mip:9fbde396-1a24-4c79-8edf-9254a0f35055'), { key: 'cls-cause-marking', args: {} });
+	assert.deepEqual(causeMessage('retrieval'), { key: 'cls-cause-retrieval', args: {} });
 });

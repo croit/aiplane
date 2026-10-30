@@ -25,6 +25,10 @@
       "documentation": "admin/access.md"
     },
     {
+      "source": "web/src/routes/admin/classification/+page.svelte",
+      "documentation": "admin/settings.md"
+    },
+    {
       "source": "web/src/routes/admin/comfyui/+page.svelte",
       "documentation": "admin/settings.md"
     },

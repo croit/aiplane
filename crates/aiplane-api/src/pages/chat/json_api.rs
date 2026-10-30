@@ -1803,6 +1803,11 @@ pub struct ClassificationView {
     pub level: Option<LevelView>,
     /// Every level in rank order; empty while the scheme is not active.
     pub levels: Vec<LevelView>,
+    /// `never` or `with_reason`: whether the level may be lowered.
+    pub lowering: &'static str,
+    /// Why the conversation is at its level: the cause of its latest level
+    /// change; `null` while it has none or the scheme is not active.
+    pub cause: Option<String>,
 }
 
 async fn classification_view(
@@ -1810,11 +1815,14 @@ async fn classification_view(
     session_id: &str,
 ) -> Result<ClassificationView, aiplane_core::server::db::DbError> {
     let scheme = state.scheme();
+    let lowering = state.config().classification.lowering;
     if !scheme.is_active() {
         return Ok(ClassificationView {
             active: false,
             level: None,
             levels: Vec::new(),
+            lowering: lowering.as_str(),
+            cause: None,
         });
     }
     let stored = aiplane_core::server::classification::level_id(&state.db, session_id).await?;
@@ -1822,6 +1830,9 @@ async fn classification_view(
         active: true,
         level: Some(scheme.level_or_lowest(stored.as_deref()).into()),
         levels: scheme.levels().iter().map(LevelView::from).collect(),
+        lowering: lowering.as_str(),
+        cause: aiplane_core::server::classification::admin::latest_cause(&state.db, session_id)
+            .await?,
     })
 }
 

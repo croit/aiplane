@@ -31,3 +31,15 @@ test('a supplied price formatter adds a neutral price badge, and nothing for a r
 		]
 	);
 });
+
+test('a model cleared for a level carries a level chip, and none while classification is inactive', () => {
+	const name = (id: string) => ({ confidential: 'Confidential' })[id] ?? null;
+	assert.deepEqual(
+		modelSelectOptions([{ id: 'a', level_id: 'confidential' }, { id: 'b', level_id: null }, { id: 'c' }], undefined, name),
+		[
+			{ value: 'a', label: 'a', badges: [{ label: 'Confidential', tone: 'neutral' }] },
+			{ value: 'b', label: 'b', badges: [] },
+			{ value: 'c', label: 'c', badges: [] }
+		]
+	);
+});
