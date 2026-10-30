@@ -211,3 +211,7 @@ share-dialog-link = 任何拥有链接的人都可以阅读
 share-dialog-link-not-allowed = 在此级别下，对话不能通过链接分享，只能分享给指定的人员和群组。
 share-dialog-empty = 尚未与任何人分享。
 share-dialog-save = 保存
+
+cls-turn-not-approved = 该内容未获批准发送到所选模型。
+cls-turn-blocked = 内容策略禁止将此请求发送到所选模型。请删除策略指出的内容，或向管理员询问此处可使用哪些数据。
+cls-turn-model-not-cleared = 此对话的分级为 { $level }；所选模型未获准处理该级别。请选择已获准处理该级别的模型。

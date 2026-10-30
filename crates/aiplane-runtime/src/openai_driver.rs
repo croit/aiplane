@@ -25,6 +25,7 @@ use async_trait::async_trait;
 use rama::futures::StreamExt;
 use session_core::db::{self as chat, ToolCallStatus, Turn, TurnRole, TurnStatus};
 use session_core::driver::{SessionContext, SessionDriver, TurnError, TurnOutcome};
+use session_core::i18n::{Lang, args, t, t_args};
 use session_core::workers::{SteerNote, TurnUpdate};
 
 use crate::agent_run::{Actor, AgentRun};
@@ -568,6 +569,10 @@ pub fn build_tool_context(state: &Arc<RamaState>, facts: TurnFacts) -> ToolConte
         agent,
         personal_agent,
         personal_execution,
+        classification: Some(crate::classification_output::TurnClassification {
+            scheme: state.scheme(),
+            config: Arc::new(state.config().classification.clone()),
+        }),
         call_id: None,
         token_id: None,
         pool_access,
@@ -1326,6 +1331,13 @@ async fn run_one_turn(
         compaction.as_ref(),
         d.history_limit,
     );
+    let mut approved_by_user = settle_classification_decision(
+        d,
+        crate::classification_upload::evaluate_attachments(&d.state, &d.tool_ctx)
+            .await
+            .map_err(upstream_err)?,
+    )
+    .await?;
     enrich_current_message_with_ocr(d, &ctx, &mut messages).await;
 
     // One leading system message, from the turn's policy — see
@@ -1367,38 +1379,19 @@ async fn run_one_turn(
     let target = target.map_err(upstream_err)?;
     let (routing_model, access, automatic_decision) =
         (target.model.as_str(), target.access, target.decision);
-    let mut approved_by_user = false;
-    match crate::classification_detector::evaluate_for_turn(
-        &d.state,
-        &routing_state,
-        routing_model,
-        &access,
-        &tool_ctx,
+    approved_by_user |= settle_classification_decision(
+        d,
+        crate::classification_detector::evaluate_for_turn(
+            &d.state,
+            &routing_state,
+            routing_model,
+            &access,
+            &tool_ctx,
+        )
+        .await
+        .map_err(upstream_err)?,
     )
-    .await
-    .map_err(upstream_err)?
-    {
-        crate::classification_detector::Decision::Allow => {}
-        crate::classification_detector::Decision::Confirm => {
-            if !crate::classification_detector::confirm_in_chat(
-                d.tool_ctx.chat_feedback.as_ref(),
-                d.tool_ctx.assistant_turn_id.as_deref(),
-            )
-            .await
-            {
-                return Err(TurnError::Upstream {
-                    message: "Content was not approved for sending to the selected model.".into(),
-                });
-            }
-            approved_by_user = true;
-        }
-        crate::classification_detector::Decision::Deny => {
-            return Err(TurnError::Upstream {
-                message: "Content policy prevents sending this request to the selected model."
-                    .into(),
-            });
-        }
-    }
+    .await?;
     let real_model = d
         .state
         .upstreams
@@ -1429,10 +1422,10 @@ async fn run_one_turn(
                 .as_deref(),
         );
         return Err(TurnError::Upstream {
-            message: format!(
-                "This conversation is classified {}; the selected model is not cleared for \
-                 it. Choose a model that is cleared for that level.",
-                conversation.name
+            message: t_args(
+                Lang::En,
+                "cls-turn-model-not-cleared",
+                &args([("level", conversation.name.clone().into())]),
             ),
         });
     }
@@ -3605,6 +3598,35 @@ fn inject_ocr_blocks(messages: &mut [serde_json::Value], blocks: &[String]) -> b
         blocks.join("\n\n")
     ));
     true
+}
+
+/// Turn what the classification check decided into the turn's course: `true`
+/// when the person approved sending the content, an error when it is refused.
+async fn settle_classification_decision(
+    d: &OpenAiDriver,
+    decision: crate::classification_detector::Decision,
+) -> Result<bool, TurnError> {
+    use crate::classification_detector::{Decision, confirm_in_chat};
+    match decision {
+        Decision::Allow => Ok(false),
+        Decision::Confirm => {
+            if confirm_in_chat(
+                d.tool_ctx.chat_feedback.as_ref(),
+                d.tool_ctx.assistant_turn_id.as_deref(),
+            )
+            .await
+            {
+                Ok(true)
+            } else {
+                Err(TurnError::Upstream {
+                    message: t(Lang::En, "cls-turn-not-approved"),
+                })
+            }
+        }
+        Decision::Deny => Err(TurnError::Upstream {
+            message: t(Lang::En, "cls-turn-blocked"),
+        }),
+    }
 }
 
 /// Build the prior-history message list replayed upstream: every turn before

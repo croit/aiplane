@@ -1315,6 +1315,37 @@ fn activity_events_are_written_only_through_the_activity_log() {
     );
 }
 
+/// Where a file enters a conversation's object storage without being marked
+/// with the conversation's level first.
+const UNSTAMPED_UPLOADS: &[Allowed] = &[
+    Allowed {
+        path: "aiplane-runtime/src/classification_output.rs",
+        why: "the stamping helper itself: the one place generated files are stored",
+    },
+    Allowed {
+        path: "aiplane-api/src/pages/chat/mod.rs",
+        why: "the user's own composer upload: it is input, inspected on arrival, never marked",
+    },
+    Allowed {
+        path: "aiplane-features/src/server/comfyui/scheduler.rs",
+        why: "images and videos from ComfyUI: no marking can be written into them, and the \
+              scheduler sits below the runtime layer that holds the policy",
+    },
+];
+
+#[test]
+fn generated_files_are_stored_only_through_the_stamping_helper() {
+    let uploads = scan(&["chat_attachments::upload("], |s| s.code.as_str());
+    assert_within(
+        "A file is stored in a conversation without being marked with its level. Tools, the \
+         sandbox and MCP spills store generated files through \
+         aiplane_runtime::classification_output::upload_stamped, which applies the operator's \
+         output marking; calling chat_attachments::upload directly leaves the file unmarked.",
+        UNSTAMPED_UPLOADS,
+        &uploads,
+    );
+}
+
 #[test]
 fn the_mask_blanks_comments_strings_and_test_items_but_keeps_lines() {
     let src = "let a = \"Client::new()\"; // Client::new()\n\

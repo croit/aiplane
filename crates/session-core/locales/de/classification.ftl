@@ -211,3 +211,7 @@ share-dialog-link = Jeder mit dem Link kann sie lesen
 share-dialog-link-not-allowed = Auf dieser Stufe lässt sich eine Unterhaltung nicht per Link teilen, nur mit benannten Personen und Gruppen.
 share-dialog-empty = Noch mit niemandem geteilt.
 share-dialog-save = Speichern
+
+cls-turn-not-approved = Der Inhalt wurde nicht für den Versand an das gewählte Modell freigegeben.
+cls-turn-blocked = Die Inhaltsrichtlinie verbietet es, diese Anfrage an das gewählte Modell zu senden. Entfernen Sie den von der Richtlinie genannten Inhalt oder fragen Sie eine Administration, welche Daten hier verwendet werden dürfen.
+cls-turn-model-not-cleared = Diese Unterhaltung ist als { $level } eingestuft; das gewählte Modell ist dafür nicht freigegeben. Wählen Sie ein Modell, das für diese Stufe freigegeben ist.

@@ -23,6 +23,7 @@ use shared::api::ToolDef;
 use aiplane_core::server::db::usage::UsageSource;
 use aiplane_features::server::chat_attachments;
 use aiplane_features::server::image_gen::UsageMeta;
+use aiplane_runtime::classification_output::upload_stamped;
 use aiplane_runtime::server::tools::{Tool, ToolContext, ToolError, ToolFuture};
 
 pub struct EditImage;
@@ -164,10 +165,9 @@ impl Tool for EditImage {
                     .await
                     .map_err(|e| ToolError::Failed(format!("reserve filename: {e}")))?;
             let size = edited.bytes.len() as u64;
-            let outcome =
-                chat_attachments::upload(s3, turn_id, &filename, &edited.mime, edited.bytes)
-                    .await
-                    .map_err(|e| ToolError::Failed(format!("s3 upload failed: {e}")))?;
+            let outcome = upload_stamped(&ctx, s3, turn_id, &filename, &edited.mime, edited.bytes)
+                .await
+                .map_err(|e| ToolError::Failed(format!("s3 upload failed: {e}")))?;
 
             let marker = chat_attachments::marker_line(turn_id, &outcome);
             chat::append_content(&ctx.db, turn_id, &format!("\n\n{marker}\n\n"))
@@ -230,6 +230,7 @@ mod tests {
             agent: None,
             personal_agent: None,
             personal_execution: None,
+            classification: None,
             pending_actions: None,
             pending_execution_facts: None,
             call_id: None,

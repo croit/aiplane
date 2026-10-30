@@ -455,6 +455,7 @@ fn proxy_tool_ctx(
         agent: None,
         personal_agent: None,
         personal_execution: None,
+        classification: None,
         pending_actions: None,
         pending_execution_facts: None,
         call_id: None,

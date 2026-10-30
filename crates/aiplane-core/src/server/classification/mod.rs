@@ -21,4 +21,4 @@ pub use scheme::{
     Action, Assignment, DataClass, DestinationKind, Level, MarkingKind, MarkingRule, Over, Rule,
     Scheme,
 };
-pub use store::{assignments, load_scheme, marking_rules, pool_ranks};
+pub use store::{assignments, class_terms, load_scheme, marking_rules, pool_ranks};

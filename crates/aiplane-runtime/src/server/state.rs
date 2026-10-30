@@ -246,6 +246,9 @@ pub struct AppState {
     /// database per check. Swapped by [`Self::reload_scheme`]; read through
     /// [`Self::scheme`].
     scheme: Arc<ArcSwap<Scheme>>,
+    /// The classes' word lists, compiled once with the scheme and swapped with
+    /// it by [`Self::reload_scheme`]; read through [`Self::term_matchers`].
+    term_matchers: Arc<ArcSwap<crate::classification_detector::TermMatchers>>,
     /// RAG indexer + index cache. `None` when RAG is off; `rag_search` /
     /// `rag_list_collections` then surface a clear "not configured" error
     /// rather than silently misroute.
@@ -315,6 +318,7 @@ impl AppState {
             rbac,
             surface: Arc::new(ArcSwap::from_pointee(FeatureSurface::default())),
             scheme: Arc::new(ArcSwap::from_pointee(Scheme::default())),
+            term_matchers: Arc::default(),
             indexer: None,
             crypto,
             mcp,
@@ -762,6 +766,10 @@ impl AppState {
         self.scheme.load_full()
     }
 
+    pub fn term_matchers(&self) -> Arc<crate::classification_detector::TermMatchers> {
+        self.term_matchers.load_full()
+    }
+
     /// Whether `model` may receive the conversation `session_id`: always true
     /// while the scheme is inactive, otherwise the model's level must reach the
     /// conversation's. An unknown model is not cleared.
@@ -791,7 +799,12 @@ impl AppState {
     /// after every settings save and after any edit of the scheme tables.
     pub async fn reload_scheme(&self) {
         match aiplane_core::server::classification::load_scheme(&self.db).await {
-            Ok(scheme) => self.scheme.store(Arc::new(scheme)),
+            Ok(scheme) => {
+                self.term_matchers.store(Arc::new(
+                    crate::classification_detector::TermMatchers::load(&self.db).await,
+                ));
+                self.scheme.store(Arc::new(scheme));
+            }
             Err(err) => {
                 tracing::error!(error = %err, "reading the classification scheme; keeping the current one");
             }

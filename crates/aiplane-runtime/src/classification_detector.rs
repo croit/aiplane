@@ -11,6 +11,7 @@ use std::time::Duration;
 use aiplane_core::server::capped_read;
 use aiplane_core::server::classification::{self, Action, ClassificationMode, Scheme};
 use aiplane_core::server::upstreams::{PoolAccess, PoolKind};
+use aiplane_features::server::classification::{TermMatcher, find_patterns};
 use serde_json::{Value, json};
 
 use crate::server::AppState;
@@ -33,25 +34,118 @@ pub struct Matched {
     pub action: Action,
 }
 
+/// One reason to hold a conversation at a level, whatever found it: a class
+/// the System One model recognised, a pattern or a word of a class, or a
+/// marking a file carries (no class, always `raise`). `cause` is the audited,
+/// content-free reason.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Finding {
+    pub class_id: Option<String>,
+    pub level_id: String,
+    pub cause: String,
+    pub action: Action,
+}
+
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Detection {
     pub matches: Vec<Matched>,
 }
 
-impl Detection {
-    pub fn strongest(&self) -> Option<Action> {
-        self.matches.iter().map(|m| m.action).max()
+/// The word lists of the data classes, compiled once per scheme reload.
+#[derive(Clone, Default)]
+pub struct TermMatchers(std::collections::HashMap<String, TermMatcher>);
+
+impl TermMatchers {
+    pub async fn load(db: &aiplane_core::server::db::Pool) -> Self {
+        let lists = match classification::class_terms(db).await {
+            Ok(lists) => lists,
+            Err(error) => {
+                tracing::error!(error = %error, "reading the classification word lists; none will match");
+                return Self::default();
+            }
+        };
+        Self(
+            lists
+                .into_iter()
+                .filter_map(|(class_id, terms)| match TermMatcher::new(&terms) {
+                    Ok(matcher) => Some((class_id, matcher)),
+                    Err(error) => {
+                        tracing::error!(class = %class_id, error = %error, "a classification word list could not be compiled; it will not match");
+                        None
+                    }
+                })
+                .collect(),
+        )
     }
 
+    fn matches(&self, class_id: &str, text: &str) -> bool {
+        self.0
+            .get(class_id)
+            .is_some_and(|matcher| matcher.matches(text))
+    }
+}
+
+/// The classes above `target_rank` that `text` matches by a built-in pattern
+/// or a word of the class's list. Needs no model and asks nothing.
+pub fn static_findings(
+    scheme: &Scheme,
+    terms: &TermMatchers,
+    text: &str,
+    target_rank: u32,
+) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for (class, level) in scheme.classes_above(target_rank) {
+        let ids: Vec<&str> = class.patterns.iter().map(String::as_str).collect();
+        if !find_patterns(text, &ids).is_empty() {
+            out.push(Finding {
+                class_id: Some(class.id.clone()),
+                level_id: level.id.clone(),
+                cause: format!("pattern:{}", class.id),
+                action: class.action,
+            });
+        }
+        if terms.matches(&class.id, text) {
+            out.push(Finding {
+                class_id: Some(class.id.clone()),
+                level_id: level.id.clone(),
+                cause: format!("terms:{}", class.id),
+                action: class.action,
+            });
+        }
+    }
+    out
+}
+
+pub fn strongest(findings: &[Finding]) -> Option<Action> {
+    findings.iter().map(|finding| finding.action).max()
+}
+
+pub fn stateless_decision(findings: &[Finding]) -> Decision {
+    match strongest(findings) {
+        None => Decision::Allow,
+        Some(Action::Confirm) => Decision::Confirm,
+        Some(Action::Raise | Action::Block) => Decision::Deny,
+    }
+}
+
+impl Detection {
     /// Without a conversation to raise, a class whose action is `raise` has
     /// nothing to do but keep the request away from a model that is not
     /// cleared for it.
     pub fn stateless_decision(&self) -> Decision {
-        match self.strongest() {
-            None => Decision::Allow,
-            Some(Action::Confirm) => Decision::Confirm,
-            Some(Action::Raise | Action::Block) => Decision::Deny,
-        }
+        stateless_decision(&self.findings())
+    }
+
+    pub fn findings(&self) -> Vec<Finding> {
+        self.matches
+            .iter()
+            .map(|matched| Finding {
+                class_id: Some(matched.class_id.clone()),
+                level_id: matched.level_id.clone(),
+                cause: format!("system_one:{}", matched.class_id),
+                action: matched.action,
+            })
+            .collect()
     }
 }
 
@@ -248,6 +342,38 @@ fn settle(
     }
 }
 
+/// What the System One model finds in `text` among the classes above
+/// `target_rank`. A failing model refuses the request in enforce mode and is
+/// logged in monitor mode.
+pub async fn system_one_findings(
+    state: &AppState,
+    text: &str,
+    target_rank: u32,
+) -> Result<Vec<Finding>, String> {
+    let request = json!({"messages": [{"role": "user", "content": text}]});
+    let mode = state.config().classification.mode;
+    Ok(settle(mode, detect(state, &request, target_rank).await)?
+        .map(|detection| detection.findings())
+        .unwrap_or_default())
+}
+
+/// Everything a text can show about its level for the classes above
+/// `target_rank`: patterns and word lists first, then the System One model.
+/// Nothing is asked when the scheme is inactive.
+pub async fn text_findings(
+    state: &AppState,
+    text: &str,
+    target_rank: u32,
+) -> Result<Vec<Finding>, String> {
+    let scheme = state.scheme();
+    if !scheme.is_active() {
+        return Ok(Vec::new());
+    }
+    let mut findings = static_findings(&scheme, &state.term_matchers(), text, target_rank);
+    findings.extend(system_one_findings(state, text, target_rank).await?);
+    Ok(findings)
+}
+
 fn model_rank(state: &AppState, model: &str, access: &PoolAccess) -> Option<u32> {
     state
         .upstreams
@@ -316,39 +442,52 @@ pub(crate) async fn evaluate_for_turn(
     if mode == ClassificationMode::Monitor || detection.matches.is_empty() {
         return Ok(Decision::Allow);
     }
-    // Person chats only: an agent's model comes from its spec, so ratcheting
-    // its conversation would silently narrow the agent rather than offer the
-    // person a choice.
+    Ok(apply_findings(state, &scheme, context, &detection.findings()).await)
+}
+
+/// What the findings do to a turn. In a person's chat each one raises the
+/// conversation to its level and the strongest action decides; anywhere else
+/// nothing is stored and the decision follows the findings alone.
+///
+/// Person chats only: an agent's model comes from its spec, so ratcheting its
+/// conversation would silently narrow the agent rather than offer the person
+/// a choice.
+pub(crate) async fn apply_findings(
+    state: &AppState,
+    scheme: &Scheme,
+    context: &crate::server::tools::ToolContext,
+    findings: &[Finding],
+) -> Decision {
     if context.agent.is_none()
         && let Some(session_id) = context.session_id.as_deref()
     {
         let actor = context.principal.subject_id();
-        for matched in &detection.matches {
+        for finding in findings {
             if let Err(error) = classification::raise(
                 &state.db,
-                &scheme,
+                scheme,
                 session_id,
-                &matched.level_id,
-                &format!("system_one:{}", matched.class_id),
+                &finding.level_id,
+                &finding.cause,
                 actor,
             )
             .await
             {
                 tracing::warn!(
                     session_id,
-                    class = %matched.class_id,
+                    cause = %finding.cause,
                     error = %error,
                     "could not raise the conversation after a classification match"
                 );
             }
         }
-        return Ok(match detection.strongest() {
+        return match strongest(findings) {
             Some(Action::Block) => Decision::Deny,
             Some(Action::Confirm) => Decision::Confirm,
             _ => Decision::Allow,
-        });
+        };
     }
-    Ok(detection.stateless_decision())
+    stateless_decision(findings)
 }
 
 #[cfg(test)]
@@ -522,7 +661,7 @@ mod tests {
                 .collect(),
         };
         assert_eq!(
-            detection(&[Action::Raise, Action::Block, Action::Confirm]).strongest(),
+            strongest(&detection(&[Action::Raise, Action::Block, Action::Confirm]).findings()),
             Some(Action::Block)
         );
         assert_eq!(

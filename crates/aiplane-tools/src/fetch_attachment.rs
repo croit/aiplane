@@ -50,6 +50,7 @@ use aiplane_features::server::chat_attachments::{
 };
 use aiplane_features::server::file_refs::{self, FileRef};
 use aiplane_features::server::pdf::{self, PdfError};
+use aiplane_runtime::classification_output::upload_stamped;
 use aiplane_runtime::server::tools::sandbox::{SandboxClient, b64};
 use aiplane_runtime::server::tools::{
     Tool, ToolContext, ToolError, ToolFuture, tool_content_parts, truncate_on_char_boundary,
@@ -154,12 +155,12 @@ async fn extract_office(
                 .map_err(|e| ToolError::Failed(format!("reserve image name: {e}")))?,
             None => art.name.clone(),
         };
-        chat_attachments::upload(s3, turn_id, &stored, mime, img)
+        let outcome = upload_stamped(ctx, s3, turn_id, &stored, mime, img)
             .await
             .map_err(|e| ToolError::Failed(format!("upload extracted image: {e}")))?;
         image_refs.push(json!({
             "file": art.name,
-            "ref": format!("att:{turn_id}/{stored}"),
+            "ref": format!("att:{turn_id}/{}", outcome.filename),
         }));
     }
     if !image_refs.is_empty()
@@ -1134,6 +1135,7 @@ mod tests {
             agent: None,
             personal_agent: None,
             personal_execution: None,
+            classification: None,
             pending_actions: None,
             pending_execution_facts: None,
             call_id: None,
@@ -1202,6 +1204,7 @@ mod tests {
             agent: None,
             personal_agent: None,
             personal_execution: None,
+            classification: None,
             pending_actions: None,
             pending_execution_facts: None,
             call_id: None,

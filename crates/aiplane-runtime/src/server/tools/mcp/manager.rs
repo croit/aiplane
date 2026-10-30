@@ -2326,6 +2326,7 @@ mod tests {
             agent: None,
             personal_agent: None,
             personal_execution: None,
+            classification: None,
             call_id: None,
         };
         let audited = AuditedTool {

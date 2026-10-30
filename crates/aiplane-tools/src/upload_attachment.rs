@@ -23,6 +23,7 @@ use session_core::db as chat;
 use shared::api::ToolDef;
 
 use aiplane_features::server::chat_attachments;
+use aiplane_runtime::classification_output::upload_stamped;
 use aiplane_runtime::server::tools::{Tool, ToolContext, ToolError, ToolFuture};
 
 /// Hard cap on the decoded byte size of one upload. Mirrors the
@@ -140,7 +141,7 @@ impl Tool for UploadAttachment {
                     .await
                     .map_err(|e| ToolError::Failed(format!("reserve filename: {e}")))?;
 
-            let outcome = chat_attachments::upload(s3, turn_id, &filename, &args.mime, bytes)
+            let outcome = upload_stamped(&ctx, s3, turn_id, &filename, &args.mime, bytes)
                 .await
                 .map_err(|e| ToolError::Failed(format!("s3 upload failed: {e}")))?;
 
@@ -265,6 +266,7 @@ mod tests {
             agent: None,
             personal_agent: None,
             personal_execution: None,
+            classification: None,
             pending_actions: None,
             pending_execution_facts: None,
             call_id: None,
@@ -319,6 +321,7 @@ mod tests {
             agent: None,
             personal_agent: None,
             personal_execution: None,
+            classification: None,
             pending_actions: None,
             pending_execution_facts: None,
             call_id: None,

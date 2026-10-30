@@ -60,6 +60,8 @@ pub struct DataClass {
     pub id: String,
     pub name: String,
     pub level_id: String,
+    /// Ids of the built-in patterns that mark content as this class.
+    pub patterns: Vec<String>,
     pub rule: Option<Rule>,
     pub action: Action,
 }
@@ -170,6 +172,7 @@ pub struct Assignment {
 pub struct Scheme {
     levels: Vec<Level>,
     classes: Vec<DataClass>,
+    assignments: Vec<Assignment>,
 }
 
 impl Default for Scheme {
@@ -187,6 +190,7 @@ impl Default for Scheme {
                 filename_tag: String::new(),
             }],
             classes: Vec::new(),
+            assignments: Vec::new(),
         }
     }
 }
@@ -199,7 +203,33 @@ impl Scheme {
             return Self::default();
         }
         levels.sort_by_key(|level| level.rank);
-        Self { levels, classes }
+        Self {
+            levels,
+            classes,
+            assignments: Vec::new(),
+        }
+    }
+
+    pub fn with_assignments(mut self, assignments: Vec<Assignment>) -> Self {
+        self.assignments = assignments;
+        self
+    }
+
+    pub fn assignments(&self) -> &[Assignment] {
+        &self.assignments
+    }
+
+    /// The assignment of one destination, if it has one.
+    pub fn assignment(&self, kind: DestinationKind, id: &str) -> Option<&Assignment> {
+        self.assignments
+            .iter()
+            .find(|assignment| assignment.kind == kind && assignment.id == id)
+    }
+
+    /// The level a destination is cleared for: its assignment, or the lowest
+    /// level when it has none.
+    pub fn destination_level(&self, kind: DestinationKind, id: &str) -> &Level {
+        self.level_or_lowest(self.assignment(kind, id).map(|a| a.level_id.as_str()))
     }
 
     /// The feature is active exactly when there is more than one level.
@@ -277,6 +307,7 @@ mod tests {
             id: id.into(),
             name: id.into(),
             level_id: level_id.into(),
+            patterns: Vec::new(),
             rule: None,
             action: Action::Raise,
         }
@@ -328,6 +359,29 @@ mod tests {
         assert_eq!(ids(0), ["pii", "nda"]);
         assert_eq!(ids(1), ["nda"]);
         assert!(ids(2).is_empty());
+    }
+
+    #[test]
+    fn an_unassigned_destination_is_at_the_lowest_level() {
+        let scheme = Scheme::new(vec![level("public", 0), level("secret", 1)], vec![])
+            .with_assignments(vec![Assignment {
+                kind: DestinationKind::Tool,
+                id: "mailer".into(),
+                level_id: "secret".into(),
+                over: Over::Gate,
+            }]);
+        assert_eq!(
+            scheme.destination_level(DestinationKind::Tool, "mailer").id,
+            "secret"
+        );
+        assert_eq!(
+            scheme.destination_level(DestinationKind::Tool, "other").id,
+            "public"
+        );
+        assert_eq!(
+            scheme.destination_level(DestinationKind::Mcp, "mailer").id,
+            "public"
+        );
     }
 
     #[test]

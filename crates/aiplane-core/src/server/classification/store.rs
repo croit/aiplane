@@ -43,7 +43,7 @@ pub async fn load_scheme(db: &Pool) -> Result<Scheme, DbError> {
 
     let mut classes = Vec::new();
     for row in sqlx::query(
-        "SELECT id, name, level_id, rule_question, rule_positive, rule_negative,
+        "SELECT id, name, level_id, patterns, rule_question, rule_positive, rule_negative,
                 rule_threshold, action
            FROM classification_data_classes ORDER BY id",
     )
@@ -52,10 +52,15 @@ pub async fn load_scheme(db: &Pool) -> Result<Scheme, DbError> {
     {
         let action: String = row.try_get("action")?;
         let question: String = row.try_get("rule_question")?;
+        let patterns: String = row.try_get("patterns")?;
         classes.push(DataClass {
             id: row.try_get("id")?,
             name: row.try_get("name")?,
             level_id: row.try_get("level_id")?,
+            patterns: serde_json::from_str(&patterns).map_err(|source| DbError::Decode {
+                column: "patterns",
+                source: source.into(),
+            })?,
             rule: (!question.trim().is_empty()).then(|| Rule {
                 question,
                 positive: row.get("rule_positive"),
@@ -65,7 +70,22 @@ pub async fn load_scheme(db: &Pool) -> Result<Scheme, DbError> {
             action: Action::parse(&action).ok_or_else(|| decode("action", &action))?,
         });
     }
-    Ok(Scheme::new(levels, classes))
+    Ok(Scheme::new(levels, classes).with_assignments(assignments(db).await?))
+}
+
+/// The word list of every class that has one, as `class id -> terms`.
+pub async fn class_terms(db: &Pool) -> Result<HashMap<String, Vec<String>>, DbError> {
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    for row in
+        sqlx::query("SELECT class_id, term FROM classification_terms ORDER BY class_id, term")
+            .fetch_all(db)
+            .await?
+    {
+        out.entry(row.try_get("class_id")?)
+            .or_default()
+            .push(row.try_get("term")?);
+    }
+    Ok(out)
 }
 
 /// Every marking-to-level mapping.
@@ -170,6 +190,27 @@ mod tests {
         let all = assignments(&db).await.unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].over, Over::Hide);
+    }
+
+    #[tokio::test]
+    async fn patterns_and_word_lists_are_read_back_per_class() {
+        let db = open(Path::new(":memory:")).await.unwrap();
+        sqlx::query(
+            "INSERT INTO classification_levels (id, rank, name) VALUES ('secret', 1, 'Secret');
+             INSERT INTO classification_data_classes (id, name, level_id, patterns)
+             VALUES ('pay', 'Payment', 'secret', '[\"iban\",\"payment_card\"]'),
+                    ('names', 'Names', 'secret', '[]');
+             INSERT INTO classification_terms (class_id, term) VALUES ('names', 'Project Aurora'), ('names', 'Orion');",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        let scheme = load_scheme(&db).await.unwrap();
+        let pay = scheme.classes().iter().find(|c| c.id == "pay").unwrap();
+        assert_eq!(pay.patterns, ["iban", "payment_card"]);
+        let terms = class_terms(&db).await.unwrap();
+        assert_eq!(terms["names"], ["Orion", "Project Aurora"]);
+        assert!(!terms.contains_key("pay"));
     }
 
     #[tokio::test]

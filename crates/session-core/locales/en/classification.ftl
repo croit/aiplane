@@ -211,3 +211,7 @@ share-dialog-link = Anyone with the link can read it
 share-dialog-link-not-allowed = At this level a conversation cannot be shared by link, only with named people and groups.
 share-dialog-empty = Not shared with anyone yet.
 share-dialog-save = Save
+
+cls-turn-not-approved = Content was not approved for sending to the selected model.
+cls-turn-blocked = Content policy prevents sending this request to the selected model. Remove the content the policy names, or ask an administrator which data may be used here.
+cls-turn-model-not-cleared = This conversation is classified { $level }; the selected model is not cleared for it. Choose a model that is cleared for that level.

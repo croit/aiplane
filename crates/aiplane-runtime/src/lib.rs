@@ -27,6 +27,8 @@ pub mod agent_run;
 pub mod agents;
 pub mod budget;
 pub mod classification_detector;
+pub mod classification_output;
+pub mod classification_upload;
 pub mod finish;
 pub mod loop_guard;
 pub mod openai_driver;

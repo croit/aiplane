@@ -458,7 +458,9 @@ async fn handle(
             Err(e) => return Spilled::Refused(format!("a filename could not be reserved ({e})")),
         };
 
-    match chat_attachments::upload(s3, turn_id, &filename, &mime, bytes).await {
+    match crate::classification_output::upload_stamped(ctx, s3, turn_id, &filename, &mime, bytes)
+        .await
+    {
         Ok(outcome) => {
             // Same splice `upload_attachment` does: the marker is what makes
             // the file real — it renders the chip AND is the only record that
