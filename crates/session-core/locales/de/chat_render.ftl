@@ -62,6 +62,7 @@ chat-render-tools-done = Fertig
 chat-render-close = Schließen
 
 chat-render-share-label-on = Freigegeben ✓
+chat-render-share-link-copied = Link kopiert ✓
 chat-render-share-label-off = Freigeben
 chat-render-share-tooltip = Freigegebene Chats können von jedem angemeldeten Benutzer mit dem Link gelesen werden
 
@@ -107,3 +108,4 @@ chat-render-confidential-requires-gdpr = GDPR-Abdeckung
 chat-render-confidential-requires-nda = NDA-Abdeckung
 chat-render-confidential-no-model = Kein Modell ist für vertrauliche Daten freigegeben. Bitte einen Administrator, eines freizugeben.
 chat-render-confidential-model-switched = Diese Unterhaltung ist jetzt vertraulich; das gewählte Modell war dafür nicht freigegeben.
+chat-render-last-model-unavailable = Das zuletzt in dieser Unterhaltung genutzte Modell { $model } ist hier nicht verfügbar; stattdessen ist das erste verfügbare Modell ausgewählt.

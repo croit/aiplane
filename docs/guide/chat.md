@@ -6,7 +6,7 @@ Use a conversation for a continuing task: its messages, attachments, generated a
 
 ![The conversation composer with tools, effort selection, attachment, dictation and send controls.](../img/guide/chat-composer.png)
 
-Choose the model from the header before sending a message. The available list is filtered by permissions. Configuration can also expose automatic routes or aliases through the shared model list. Compliance indicators in the picker describe the installation's configured model metadata; they are not a certification produced by AIplane.
+Choose the model from the header before sending a message. The available list is filtered by permissions. Configuration can also expose automatic routes or aliases through the shared model list. Compliance indicators in the picker describe the installation's configured model metadata; they are not a certification produced by AIplane. Reopening a conversation selects the model its last answer came from; a new conversation starts on the first model in the list. If that model is not in your list, the first available model is selected and a notice names the one that was replaced.
 
 The composer offers the effort levels **off**, **low**, **medium**, **high** and **xhigh**. A new conversation starts at **low**, which is enough for most questions; choose a higher level for hard multi-step problems. Higher levels also allow more tool rounds per answer (off 8, low and medium 16, high 32, xhigh 64). The picker lists only the levels the selected model can express — a model that always reasons offers no **off** — and is disabled when the model has no supported reasoning parameter. It is a model request setting, not a guaranteed response time or quality level.
 
@@ -51,7 +51,7 @@ Read the confirmation before proceeding. If you need to retain the original, exp
 
 ## Share and fork
 
-Select the sharing button in the header to enable sharing, then give another signed-in user the conversation URL. Sharing makes the conversation readable by **any signed-in user on the installation**, not a selected recipient list. It is not an anonymous public link.
+Select the sharing button in the header to enable sharing; where the browser allows clipboard access, the conversation URL is copied and the button briefly shows **Link copied**; without that label nothing was copied. Give that URL to another signed-in user. Sharing makes the conversation readable by **any signed-in user on the installation**, not a selected recipient list. It is not an anonymous public link.
 
 A reader sees a read-only conversation and can select **Fork** to copy it into their own conversations and continue there. Attachment copying is best effort; if the storage copy fails, a fork can retain text with unavailable attachment references. Turning sharing off removes access through the original shared conversation; it does not remove copies already made through Fork.
 

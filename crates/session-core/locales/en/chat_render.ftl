@@ -61,6 +61,7 @@ chat-render-tools-done = Done
 chat-render-close = Close
 
 chat-render-share-label-on = Shared ✓
+chat-render-share-link-copied = Link copied ✓
 chat-render-share-label-off = Share
 chat-render-share-tooltip = Shared chats are readable by any signed-in user who has the link
 
@@ -106,3 +107,4 @@ chat-render-confidential-requires-gdpr = GDPR coverage
 chat-render-confidential-requires-nda = NDA coverage
 chat-render-confidential-no-model = No model is cleared for confidential data. Ask an administrator to clear one.
 chat-render-confidential-model-switched = This conversation is confidential now; the selected model was not cleared for it.
+chat-render-last-model-unavailable = The model this conversation last used, { $model }, is not available here; the first available model is selected instead.

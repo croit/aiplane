@@ -62,6 +62,7 @@ chat-render-tools-done = Terminé
 chat-render-close = Fermer
 
 chat-render-share-label-on = Partagé ✓
+chat-render-share-link-copied = Lien copié ✓
 chat-render-share-label-off = Partager
 chat-render-share-tooltip = Les chats partagés sont lisibles par tout utilisateur connecté disposant du lien
 
@@ -107,3 +108,4 @@ chat-render-confidential-requires-gdpr = couverture GDPR
 chat-render-confidential-requires-nda = couverture NDA
 chat-render-confidential-no-model = Aucun modèle n'est autorisé pour les données confidentielles. Demandez à un administrateur d'en autoriser un.
 chat-render-confidential-model-switched = Cette conversation est désormais confidentielle ; le modèle sélectionné n'y était pas autorisé.
+chat-render-last-model-unavailable = Le modèle utilisé en dernier dans cette conversation, { $model }, n'est pas disponible ici ; le premier modèle disponible est sélectionné à la place.
