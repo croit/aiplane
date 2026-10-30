@@ -772,7 +772,8 @@ impl AppState {
 
     /// Whether `model` may receive the conversation `session_id`: always true
     /// while the scheme is inactive, otherwise the model's level must reach the
-    /// conversation's. An unknown model is not cleared.
+    /// conversation's. At the lowest level every model is cleared, even one
+    /// the registry does not list (yet); above it an unknown model is not.
     pub async fn model_cleared_for_session(
         &self,
         session_id: &str,
@@ -788,6 +789,9 @@ impl AppState {
             .ok()
             .flatten();
         let conversation = scheme.level_or_lowest(stored.as_deref());
+        if conversation.rank == scheme.lowest().rank {
+            return true;
+        }
         self.upstreams
             .models_with_level_for_kind_for(aiplane_core::server::upstreams::PoolKind::Chat, access)
             .into_iter()

@@ -1280,3 +1280,30 @@ async fn an_unraised_conversation_is_still_titled_once_its_turn_has_settled() {
     }
     panic!("no title request reached the cleared model");
 }
+
+#[tokio::test]
+async fn every_model_is_cleared_for_a_conversation_at_the_lowest_level() {
+    let upstream = chat_upstream().await;
+    let s3 = object_store().await;
+    let state = state(&upstream.uri(), &s3.uri(), true).await;
+    let access = aiplane_core::server::upstreams::PoolAccess::all();
+    common::seed_session(&state, "alice", "alice@example.com").await;
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+
+    // A model the registry does not list yet (its backend still probing at
+    // boot) or reaches through a route: nothing to protect at the lowest level.
+    assert!(
+        state
+            .model_cleared_for_session(&session.id, "not-listed-model", &access)
+            .await
+    );
+
+    classification::set_level(&state.db, &session.id, "internal")
+        .await
+        .unwrap();
+    assert!(
+        !state
+            .model_cleared_for_session(&session.id, "not-listed-model", &access)
+            .await
+    );
+}
