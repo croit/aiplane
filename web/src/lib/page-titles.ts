@@ -37,6 +37,7 @@ const exactTitles: Record<string, PageTitleDescriptor> = {
 	'/admin/models/edit': { key: 'admin-edit-model-page-title', branded: false },
 	'/admin/comfyui': { key: 'admin-comfyui-page-title', branded: false },
 	'/admin/comfyui/jobs': { key: 'admin-comfyui-jobs-page-title', branded: false },
+	'/admin/classification': { key: 'cls-heading', branded: false },
 	'/admin/limits': { key: 'limits-heading', branded: false },
 	'/admin/settings': { key: 'settings-heading', branded: false }
 };

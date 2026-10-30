@@ -67,3 +67,4 @@ page-title-branded = { $title } — AIplane
 admin-access-heading = Acceso y límites
 
 nav-documentation = Docs
+nav-classification = Clasificación

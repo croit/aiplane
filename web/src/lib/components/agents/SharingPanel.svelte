@@ -1,6 +1,6 @@
 <script lang="ts">
-	import SearchableSelect from '#lib/components/SearchableSelect.svelte';
-	import { agentsApi, ownerLabel, SHARE_ACCESS, shareSubjectLabel, shareSubjectOptions, type AgentError, type Share, type ShareAccess, type ShareSubjectMatches } from '#lib/agents.js';
+	import SubjectPicker from '#lib/components/sharing/SubjectPicker.svelte';
+	import { agentsApi, ownerLabel, SHARE_ACCESS, shareSubjectLabel, type AgentError, type Share, type ShareAccess } from '#lib/agents.js';
 	import { locale, t } from '#lib/i18n.svelte.js';
 
 	/**
@@ -24,35 +24,8 @@
 	let access = $state<ShareAccess>('respond');
 	let subject = $state('');
 	let picked = $state<{ value: string; label: string } | null>(null);
-	let found = $state<ShareSubjectMatches | null>(null);
 	let error = $state<string | null>(null);
 	let busy = $state(false);
-	let asked = 0;
-	const options = $derived.by(() => {
-		const matches = shareSubjectOptions(found, kind);
-		return picked && !matches.some((o) => o.value === picked!.value) ? [picked, ...matches] : matches;
-	});
-
-	async function search(q: string) {
-		const ticket = ++asked;
-		try {
-			const result = await agentsApi.shareSubjects(agentId, q);
-			if (ticket === asked) found = result;
-		} catch (err) {
-			if (ticket === asked) error = (err as AgentError).message;
-		}
-	}
-
-	function pick(value: string) {
-		picked = options.find((o) => o.value === value) ?? null;
-	}
-
-	function setKind(next: Share['subject_kind']) {
-		kind = next;
-		subject = '';
-		picked = null;
-		found = null;
-	}
 
 	async function run(action: () => Promise<unknown>) {
 		busy = true;
@@ -113,7 +86,6 @@
 		</table>
 	</div>
 
-	{#if found?.truncated}<div class="alert alert-info" role="status"><span>{t('organization-share-search-truncated')}</span></div>{/if}
 	{#if writable}
 		<form class="flex flex-wrap items-end gap-3" onsubmit={(e) => { e.preventDefault(); void add(); }}>
 			<label class="flex flex-col gap-1">
@@ -122,17 +94,7 @@
 					{#each SHARE_ACCESS as level (level)}<option value={level}>{t(`agents-share-${level}`)}</option>{/each}
 				</select>
 			</label>
-			<label class="flex flex-col gap-1">
-				<span class="label-text">{t('agents-share-subject-kind')}</span>
-				<select class="select w-32" value={kind} onchange={(e) => setKind(e.currentTarget.value as Share['subject_kind'])}>
-					<option value="user">{t('agents-share-kind-user')}</option>
-					<option value="group">{t('agents-share-kind-group')}</option>
-				</select>
-			</label>
-			<div class="flex flex-col gap-1">
-				<span class="label-text">{t(`agents-share-kind-${kind}`)}</span>
-				<SearchableSelect {options} bind:value={subject} onsearch={(q) => void search(q)} onchange={pick} ariaLabel={t(`agents-share-kind-${kind}`)} placeholder={t('agents-pick')} class="w-64 max-w-full" />
-			</div>
+			<SubjectPicker search={(q) => agentsApi.shareSubjects(agentId, q)} bind:kind bind:subject bind:picked onerror={(err) => (error = (err as AgentError).message)} />
 			<button class="btn btn-primary" type="submit" disabled={busy || !subject}>{t('agents-share-add')}</button>
 		</form>
 	{/if}

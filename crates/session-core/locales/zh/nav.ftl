@@ -67,3 +67,4 @@ page-title-branded = { $title } — AIplane
 admin-access-heading = 访问与限额
 
 nav-documentation = 文档
+nav-classification = 分级

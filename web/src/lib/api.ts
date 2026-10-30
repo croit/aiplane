@@ -297,6 +297,7 @@ export const api = {
 			session: import('./chat-protocol.js').ChatSession;
 			turns: import('./chat-protocol.js').TurnWithTools[];
 			effort: Effort;
+			classification?: import('./classification.js').ChatClassification;
 			/** Operator welcome text, shown while the conversation has no turns. */
 			welcome: string;
 			compacted_up_to_seq: number | null;

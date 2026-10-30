@@ -193,6 +193,7 @@
 		['nav-skills', '/admin/skills', 'sparkles'],
 		['nav-connectors', '/admin/connectors', 'plug'],
 		['nav-comfyui', '/admin/comfyui', 'sparkles'],
+		['nav-classification', '/admin/classification', 'shield'],
 		['nav-settings', '/admin/settings', 'sliders']
 	];
 

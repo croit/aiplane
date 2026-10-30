@@ -3,6 +3,7 @@
 	import SearchableSelect from '#lib/components/SearchableSelect.svelte';
 	import { modelSelectOptions, type ChatModelOption } from '#lib/model-option.js';
 	import { formatModelPrice } from '#lib/model-price.js';
+	import { causeMessage, levelBadgeClass, type ChatClassification } from '#lib/classification.js';
 
 	let {
 		id,
@@ -12,6 +13,8 @@
 		canFork,
 		shared,
 		linkCopied,
+		classification,
+		linkAllowed,
 		models,
 		currency,
 		model = $bindable(),
@@ -23,6 +26,7 @@
 		hasCanvas,
 		oncanvas,
 		onshare,
+		onsharepeople,
 		onfork,
 		onspeechvoice
 	}: {
@@ -33,6 +37,9 @@
 		canFork: boolean;
 		shared: boolean;
 		linkCopied: boolean;
+		classification: ChatClassification | null;
+		/** Whether the conversation's level lets it be shared by link. */
+		linkAllowed: boolean;
 		models: ChatModelOption[];
 		currency: string;
 		model: string;
@@ -44,10 +51,12 @@
 		hasCanvas: boolean;
 		oncanvas: () => void;
 		onshare: () => void;
+		onsharepeople: () => void;
 		onfork: () => void;
 		onspeechvoice: () => void;
 	} = $props();
 
+	const cause = $derived(causeMessage(classification?.cause));
 	let modelOptions = $derived(modelSelectOptions(models, (price) => formatModelPrice(price, currency, t, n)));
 	let transcriptionOptions = $derived(transcriptionModels.map((id) => ({ value: id, label: id })));
 	let speechOptions = $derived([
@@ -60,6 +69,9 @@
 	<h1 class="hidden min-w-0 flex-1 truncate text-lg font-semibold sm:block">
 		{title?.trim() || t('chat-render-new-conversation-fallback')}
 	</h1>
+	{#if classification?.active && classification.level}
+		<span class={levelBadgeClass(classification.level.color)} title={cause ? t(cause.key, cause.args) : undefined} data-classification-badge>{classification.level.name}</span>
+	{/if}
 	{#if canWrite}
 		<div class="order-last flex w-full min-w-0 items-center gap-2 sm:order-none sm:w-auto">
 			{#if models.length > 0}
@@ -101,8 +113,13 @@
 
 		{#if isOwner && hasCanvas}<button class="btn btn-ghost btn-sm" onclick={oncanvas} aria-label={t('chat-render-canvas-toggle-title')} title={t('chat-render-canvas-toggle-title')}><span aria-hidden="true">▣</span><span class="hidden sm:inline">{t('chat-render-canvas-toggle-label')}</span></button>{/if}
 		{#if canWrite}
-			<button class="btn btn-ghost btn-sm" onclick={onshare} title={t('chat-render-share-tooltip')}>
-				{linkCopied ? t('chat-render-share-link-copied') : shared ? t('chat-render-share-label-on') : t('chat-render-share-label-off')}
+			{#if linkAllowed}
+				<button class="btn btn-ghost btn-sm" onclick={onshare} title={t('chat-render-share-tooltip')}>
+					{linkCopied ? t('chat-render-share-link-copied') : shared ? t('chat-render-share-label-on') : t('chat-render-share-label-off')}
+				</button>
+			{/if}
+			<button class="btn btn-ghost btn-sm" onclick={onsharepeople} title={t('share-people-tooltip')}>
+				{linkAllowed ? t('share-people-label') : t('chat-render-share-label-off')}
 			</button>
 		{:else if canFork}
 			<button class="btn btn-ghost btn-sm" onclick={onfork} title={t('chat-render-fork-tooltip')}>{t('chat-render-fork-label')}</button>

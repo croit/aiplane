@@ -1,0 +1,63 @@
+<script lang="ts">
+	import { buildBody, classificationApi, draftFrom, failure, type ClassificationState, type Draft } from '#lib/classification.js';
+	import LevelsStep from './LevelsStep.svelte';
+	import ClassesStep from './ClassesStep.svelte';
+	import MarkingsStep from './MarkingsStep.svelte';
+	import DestinationsStep from './DestinationsStep.svelte';
+	import OutputStep from './OutputStep.svelte';
+	import PolicyStep from './PolicyStep.svelte';
+	import { untrack } from 'svelte';
+	import { t } from '#lib/i18n.svelte.js';
+
+	/** The active scheme, every section of the assistant editable in place; one Save replaces the scheme. */
+	let { saved, onsaved, onassistant }: {
+		saved: ClassificationState;
+		onsaved: (state: ClassificationState) => void;
+		onassistant: () => void;
+	} = $props();
+
+	let draft = $state<Draft>(untrack(() => draftFrom(saved)));
+	let error = $state<string | null>(null);
+	let done = $state(false);
+	let busy = $state(false);
+	const sections = ['levels', 'classes', 'markings', 'destinations', 'output', 'policy'] as const;
+
+	async function save() {
+		busy = true;
+		error = null;
+		done = false;
+		try {
+			const next = await classificationApi.save(buildBody(draft));
+			onsaved(next);
+			draft = draftFrom(next);
+			done = true;
+		} catch (err) {
+			error = failure(err);
+		} finally {
+			busy = false;
+		}
+	}
+</script>
+
+<div class="space-y-4">
+	{#each sections as section, i (section)}
+		<div class="collapse collapse-arrow border border-base-300 bg-base-100">
+			<input type="radio" name="cls-section" checked={i === 0} aria-label={t(`cls-step-${section}`)} />
+			<div class="collapse-title font-semibold">{t(`cls-step-${section}`)}</div>
+			<div class="collapse-content">
+				{#if section === 'levels'}<LevelsStep bind:draft />
+				{:else if section === 'classes'}<ClassesStep bind:draft {saved} />
+				{:else if section === 'markings'}<MarkingsStep bind:draft />
+				{:else if section === 'destinations'}<DestinationsStep bind:draft />
+				{:else if section === 'output'}<OutputStep bind:draft />
+				{:else}<PolicyStep bind:draft models={saved.system_one_models} />{/if}
+			</div>
+		</div>
+	{/each}
+	{#if error}<div class="alert alert-error text-sm" role="alert"><span>{error}</span></div>{/if}
+	{#if done}<div class="alert alert-success text-sm" role="status"><span>{t('cls-saved')}</span></div>{/if}
+	<div class="flex flex-wrap items-center justify-between gap-2">
+		<button class="btn" type="button" onclick={onassistant}>{t('cls-run-assistant')}</button>
+		<button class="btn btn-primary" type="button" disabled={busy} onclick={save}>{t('cls-save')}</button>
+	</div>
+</div>
