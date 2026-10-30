@@ -30,7 +30,8 @@ cls-assist-hosting-unknown = Unknown ({ $hosts })
 cls-assist-egress = { $count } tools and connectors send data out of AIplane (for example { $names }). They are hidden above { $level }. Adjust this later on the Destinations tab.
 cls-assist-model = Content check by a System One model
 cls-assist-model-help = Without a model, content is only checked by patterns such as IBAN, document labels and word lists.
-cls-assist-no-questions = No model: the questions of the data classes are removed; patterns, markings and word lists stay.
+cls-assist-questions-inactive = Without a model, the questions of the data classes stay inactive until one is chosen; patterns, markings and word lists apply.
+cls-class-rule-inactive = Inactive: no System One model selected
 cls-levels-lead = Order the levels from the lowest to the highest. Each level can carry its own marking text, file name tag and label id for the documents the plane produces.
 cls-level-name = Name
 cls-level-unnamed = (unnamed)
@@ -163,7 +164,7 @@ cls-policy-model = System One model
 cls-policy-model-none = No model
 cls-policy-model-not-cleared = { $model } (not cleared for the highest level)
 cls-policy-model-help = The model that reads content for the questions of the data classes and for gates. It sees the highest level of data, so only a model cleared for it can be chosen.
-cls-policy-model-needed = A model is needed because a data class has a question or a destination asks first.
+cls-policy-model-needed = A model is needed because a destination asks first.
 cls-policy-model-uncleared-picked = This model is not cleared for the highest level; saving will be refused.
 cls-policy-mode = Mode
 cls-policy-mode-monitor = Monitor
@@ -235,7 +236,6 @@ cls-tool-hidden = { $tool } is not available in this conversation, which is clas
 cls-gate-blocked = { $tool } was not called: its arguments contain data of class { $classes }, which the tool is not cleared for. Remove that data from the arguments or use another tool.
 cls-gate-unavailable = { $tool } was not called: the model that checks its arguments could not be reached, so nothing leaves the conversation unchecked. Retry later or ask an administrator to check the System One model.
 cls-detector-unavailable = The message was not sent: the model that checks it for classified content could not be reached, so nothing goes to a model unchecked. Retry later or ask an administrator to check the System One model.
-cls-detector-not-configured = The message was not sent: data classification asks a System One model about it, but none is configured. Ask an administrator to choose one under Administration > Data classification.
 
 # Template texts: the administrator's language; applied, they become the scheme's own data.
 cls-tpl-iso-name = ISO/IEC 27001 (four levels)

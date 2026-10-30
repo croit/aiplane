@@ -1139,7 +1139,7 @@ async fn a_class_at_the_level_a_files_label_already_sets_neither_asks_nor_is_ask
 }
 
 #[tokio::test]
-async fn rules_without_a_configured_system_one_model_refuse_the_turn_and_say_none_is_configured() {
+async fn rule_questions_stay_dormant_without_a_system_one_model_while_a_pattern_still_raises() {
     let upstream = chat_upstream().await;
     let s3 = object_store().await;
     let state = state_with(
@@ -1158,7 +1158,7 @@ async fn rules_without_a_configured_system_one_model_refuse_the_turn_and_say_non
             &session.id,
             &cookie,
             "high-model",
-            "hello there",
+            &format!("pay {IBAN}"),
             None,
         ))
         .await
@@ -1166,10 +1166,20 @@ async fn rules_without_a_configured_system_one_model_refuse_the_turn_and_say_non
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
     wait_settled(&state, &session.id).await;
     let (status, error) = last_turn_status(&state, &session.id).await;
-    assert_eq!(status, chat::TurnStatus::Errored);
-    assert!(error.contains("none is configured"), "{error}");
-    assert!(!error.contains("could not be reached"), "{error}");
-    assert_eq!(chat_requests(&upstream).await, 0);
+    assert_eq!(status, chat::TurnStatus::Completed, "{error}");
+    assert_eq!(
+        events(&state, &session.id).await,
+        vec![(
+            "public".into(),
+            "confidential".into(),
+            "pattern:iban".into()
+        )]
+    );
+    assert_eq!(
+        chat_requests(&upstream).await,
+        1,
+        "only the chat call, no System One call"
+    );
 }
 
 #[tokio::test]

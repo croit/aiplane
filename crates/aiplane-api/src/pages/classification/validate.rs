@@ -334,21 +334,6 @@ pub fn validate(body: &SaveBody, context: &Context<'_>) -> Result<Replacement, I
         .any(|c| !c.rule_question.trim().is_empty());
     let uses_gate = assignments.iter().any(|a| a.over == Over::Gate);
     if model.is_empty() {
-        let asking: Vec<&str> = body
-            .classes
-            .iter()
-            .filter(|c| !c.rule_question.trim().is_empty())
-            .map(|c| c.name.trim())
-            .collect();
-        if !asking.is_empty() {
-            return invalid(
-                "policy.system_one_model",
-                format!(
-                    "policy.system_one_model: the data classes {} ask the System One model a question; choose a System One model, or clear their questions",
-                    asking.join(", ")
-                ),
-            );
-        }
         if uses_gate {
             return invalid(
                 "policy.system_one_model",
@@ -503,11 +488,7 @@ mod tests {
     #[test]
     fn every_template_passes_the_rules_it_is_saved_under() {
         for template in templates::all(Lang::En) {
-            let mut body = body_of(&template);
-            for class in &mut body.classes {
-                class.rule_question.clear();
-            }
-            let replacement = check(&body).unwrap_or_else(|e| {
+            let replacement = check(&body_of(&template)).unwrap_or_else(|e| {
                 panic!("{} is refused: {} ({})", template.id, e.message, e.field)
             });
             assert_eq!(replacement.levels.len(), template.levels.len());
@@ -580,9 +561,6 @@ mod tests {
     #[test]
     fn a_label_id_must_be_a_guid_and_is_stored_normalised() {
         let mut body = iso();
-        for class in &mut body.classes {
-            class.rule_question.clear();
-        }
         body.levels[2].mip_label_id = "nope".into();
         assert_eq!(refused(&body).field, "levels[2].mip_label_id");
         body.levels[2].mip_label_id = "{3F2504E0-4F89-11D3-9A0C-0305E82C3301}".into();
@@ -680,28 +658,6 @@ mod tests {
         assert!(refused(&body).message.contains("gate"));
         body.policy.system_one_model = "guard".into();
         assert!(refused(&body).message.contains("not cleared"));
-    }
-
-    #[test]
-    fn classes_with_a_question_and_no_model_are_refused_by_name() {
-        let mut body = iso();
-        body.policy.system_one_model.clear();
-        for class in &mut body.classes {
-            class.rule_question = "Does it hold personal data?".into();
-        }
-        let names = body
-            .classes
-            .iter()
-            .map(|c| c.name.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let error = refused(&body);
-        assert_eq!(error.field, "policy.system_one_model");
-        assert!(error.message.contains(&names), "{}", error.message);
-        for class in &mut body.classes {
-            class.rule_question.clear();
-        }
-        assert!(check(&body).is_ok());
     }
 
     #[test]

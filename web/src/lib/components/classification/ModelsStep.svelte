@@ -51,7 +51,7 @@
 			{/each}
 		</select>
 		<span class="text-xs text-base-content/60">{t('cls-assist-model-help')}</span>
-		{#if model === ''}<span class="text-xs text-warning">{t('cls-assist-no-questions')}</span>{/if}
+		{#if model === ''}<span class="text-xs text-warning">{t('cls-assist-questions-inactive')}</span>{/if}
 		{#if unclearedPicked}<span class="text-xs text-error">{t('cls-policy-model-uncleared-picked')}</span>{/if}
 	</label>
 </div>

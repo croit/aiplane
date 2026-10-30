@@ -30,7 +30,8 @@ cls-assist-hosting-unknown = 未知（{ $hosts }）
 cls-assist-egress = 有 { $count } 个工具和连接器会把数据发送到 AIplane 之外（例如 { $names }）。高于 { $level } 时它们会被隐藏。之后可在“目的地”标签页中调整。
 cls-assist-model = 由 System One 模型检查内容
 cls-assist-model-help = 没有模型时，只通过 IBAN 等模式、文档标记和词表检查内容。
-cls-assist-no-questions = 无模型：数据类别的问题将被移除；模式、标记和词表保留。
+cls-assist-questions-inactive = 未选择模型时，数据类别的问题保持停用，直到选定模型；模式、标记和词表仍然生效。
+cls-class-rule-inactive = 已停用：未选择 System One 模型
 cls-levels-lead = 按从低到高的顺序排列级别。每个级别可以为生成的文档设置标记文本、文件名标签和标签 ID。
 cls-level-name = 名称
 cls-level-unnamed = （未命名）
@@ -163,7 +164,7 @@ cls-policy-model = System One 模型
 cls-policy-model-none = 无模型
 cls-policy-model-not-cleared = { $model }（未获准处理最高级别）
 cls-policy-model-help = 负责读取内容以回答数据类别问题和执行确认的模型。它会接触最高级别的数据，因此只能选择获准处理该级别的模型。
-cls-policy-model-needed = 需要选择模型：有数据类别设置了问题，或有目的地需先询问。
+cls-policy-model-needed = 需要选择模型：有目的地需先询问。
 cls-policy-model-uncleared-picked = 该模型未获准处理最高级别；保存将被拒绝。
 cls-policy-mode = 模式
 cls-policy-mode-monitor = 监控
@@ -235,7 +236,6 @@ cls-tool-hidden = { $tool } 在此对话中不可用：对话的密级为 { $lev
 cls-gate-blocked = { $tool } 未被调用：其参数包含类别为 { $classes } 的数据，而该工具未获准处理此类数据。请从参数中移除这些数据，或改用其他工具。
 cls-gate-unavailable = { $tool } 未被调用：负责检查其参数的模型无法连接，因此不会有未经检查的内容离开对话。请稍后重试，或请管理员检查 System One 模型。
 cls-detector-unavailable = 消息未发送：用于检查其分类内容的模型无法访问，未经检查的内容不会发送给任何模型。请稍后重试，或请管理员检查 System One 模型。
-cls-detector-not-configured = 消息未发送：数据分类需要通过 System One 模型检查该消息，但尚未配置模型。请联系管理员在“管理 > 数据分类”中选择一个模型。
 
 # Template texts: the administrator's language; applied, they become the scheme's own data.
 cls-tpl-iso-name = ISO/IEC 27001（四级）

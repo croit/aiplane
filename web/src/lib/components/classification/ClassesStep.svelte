@@ -47,7 +47,10 @@
 				</fieldset>
 
 				<div class="space-y-2 rounded-box border border-base-300 p-3">
-					<h5 class="m-0 text-sm font-semibold">{t('cls-class-rule')}</h5>
+					<div class="flex flex-wrap items-center gap-2">
+						<h5 class="m-0 text-sm font-semibold">{t('cls-class-rule')}</h5>
+						{#if draft.policy.system_one_model === ''}<span class="badge badge-warning badge-sm">{t('cls-class-rule-inactive')}</span>{/if}
+					</div>
 					<p class="m-0 text-xs text-base-content/60">{t('cls-class-rule-help')}</p>
 					<label class="flex flex-col gap-1">
 						<span class="text-xs">{t('cls-class-question')}</span>

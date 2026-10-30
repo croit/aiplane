@@ -232,46 +232,20 @@ fn questions_for(scheme: &Scheme, target_rank: u32) -> Vec<Question> {
         .collect()
 }
 
-/// Why the System One model could not answer: nothing is configured to ask,
-/// or asking failed.
-#[derive(Debug, PartialEq)]
-pub enum DetectorError {
-    NotConfigured,
-    Failed(String),
-}
-
-impl std::fmt::Display for DetectorError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NotConfigured => f.write_str(
-                "data classification has rules to apply but no System One model is configured",
-            ),
-            Self::Failed(reason) => f.write_str(reason),
-        }
-    }
-}
-
-impl From<String> for DetectorError {
-    fn from(reason: String) -> Self {
-        Self::Failed(reason)
-    }
-}
-
 /// Ask the System One model about every class above `target_rank` that has a
-/// rule. No questions means no call and no match.
+/// rule. No questions, or no System One model configured, means no call and
+/// no match: the questions stay dormant while patterns, markings and word
+/// lists still apply.
 pub async fn detect(
     state: &AppState,
     request: &Value,
     target_rank: u32,
-) -> Result<Detection, DetectorError> {
-    let questions = questions_for(&state.scheme(), target_rank);
-    if questions.is_empty() {
-        return Ok(Detection::default());
-    }
+) -> Result<Detection, String> {
     let config = state.config();
     let model = config.classification.system_one_model.trim();
-    if model.is_empty() {
-        return Err(DetectorError::NotConfigured);
+    let questions = questions_for(&state.scheme(), target_rank);
+    if model.is_empty() || questions.is_empty() {
+        return Ok(Detection::default());
     }
     let body_questions: serde_json::Map<String, Value> = questions
         .iter()
@@ -312,7 +286,7 @@ pub async fn detect(
         .await
         .map_err(|error| format!("reading the classification model's response: {error}"))?;
     if !status.is_success() {
-        return Err(format!("the classification model returned HTTP {status}").into());
+        return Err(format!("the classification model returned HTTP {status}"));
     }
     let detection = parse_matches(&answer, &questions)?;
     tracing::info!(
@@ -354,7 +328,7 @@ fn parse_matches(answer: &Value, questions: &[Question]) -> Result<Detection, St
 /// in monitor mode, where `None` stands for "nothing was evaluated".
 fn settle(
     mode: ClassificationMode,
-    result: Result<Detection, DetectorError>,
+    result: Result<Detection, String>,
 ) -> Result<Option<Detection>, String> {
     match (mode, result) {
         (_, Ok(detection)) => Ok(Some(detection)),
@@ -364,13 +338,7 @@ fn settle(
         }
         (ClassificationMode::Enforce, Err(error)) => {
             tracing::warn!(error = %error, "data classification could not evaluate the request; refusing it");
-            Err(t(
-                Lang::En,
-                match error {
-                    DetectorError::NotConfigured => "cls-detector-not-configured",
-                    DetectorError::Failed(_) => "cls-detector-unavailable",
-                },
-            ))
+            Err(t(Lang::En, "cls-detector-unavailable"))
         }
     }
 }
@@ -909,17 +877,10 @@ mod tests {
     #[test]
     fn monitor_mode_swallows_a_detector_failure_and_enforce_refuses() {
         assert_eq!(
-            settle(ClassificationMode::Monitor, Err("down".to_string().into())),
+            settle(ClassificationMode::Monitor, Err("down".into())),
             Ok(None)
         );
-        assert!(settle(ClassificationMode::Enforce, Err("down".to_string().into())).is_err());
-        let refusal = settle(
-            ClassificationMode::Enforce,
-            Err(DetectorError::NotConfigured),
-        )
-        .unwrap_err();
-        assert_eq!(refusal, t(Lang::En, "cls-detector-not-configured"));
-        assert_ne!(refusal, t(Lang::En, "cls-detector-unavailable"));
+        assert!(settle(ClassificationMode::Enforce, Err("down".into())).is_err());
     }
 
     #[test]

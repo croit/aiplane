@@ -510,9 +510,9 @@ export function csvColumns(text: string): string[] {
 // ---------------------------------------------------------------------------
 // Policy
 
-/** A System One model is needed once any class has a rule or any destination is gated. */
+/** A System One model is needed once any destination is gated; a class's question alone only stays inactive without one. */
 export function needsClearedModel(draft: Draft): boolean {
-	return draft.classes.some((c) => c.rule_question.trim() !== '') || draft.destinations.some((d) => d.level_id !== null && d.over === 'gate' && choosesOver(d));
+	return draft.destinations.some((d) => d.level_id !== null && d.over === 'gate' && choosesOver(d));
 }
 
 // ---------------------------------------------------------------------------
@@ -548,20 +548,14 @@ export function pickSystemOneModel(draft: Draft, models: readonly SystemOneModel
 	return cleared.length === 1 ? cleared[0]!.id : '';
 }
 
-/** Without a model the questions cannot be asked: patterns, markings and word lists stay. */
-export function withoutQuestions(draft: Draft): Draft {
-	return { ...draft, classes: draft.classes.map((c) => ({ ...c, rule_question: '', rule_positive: '', rule_negative: '' })) };
-}
-
-/** The draft the assistant saves: the chosen model set, and no questions when there is none. */
+/** The draft the assistant saves: the chosen model set; the questions stay either way and are inactive until a model is chosen. */
 export function finalizeDraft(draft: Draft, model: string): Draft {
-	const withModel = { ...draft, policy: { ...draft.policy, system_one_model: model } };
-	return model === '' ? withoutQuestions(withModel) : withModel;
+	return { ...draft, policy: { ...draft.policy, system_one_model: model } };
 }
 
 /** Activating is refused while the chosen model is not cleared for the highest level, or one is needed and none is chosen. */
 export function modelBlocksActivation(draft: Draft, models: readonly SystemOneModel[], model: string): boolean {
-	if (model === '') return needsClearedModel(finalizeDraft(draft, ''));
+	if (model === '') return needsClearedModel(draft);
 	const chosen = models.find((m) => m.id === model);
 	return !chosen || !modelCleared(draft, chosen);
 }

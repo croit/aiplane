@@ -14,7 +14,6 @@ import {
 	modelCleared,
 	pickSystemOneModel,
 	prefillPools,
-	withoutQuestions,
 	groupDestinations,
 	levelOptions,
 	mergeMarkings,
@@ -164,12 +163,11 @@ test('the request body omits terms and unrated destinations, and drops over wher
 	assert.deepEqual(body.levels.map((l) => l.rank), [0, 1, 2]);
 });
 
-test('a System One model is required once a class has a rule or a destination is gated', () => {
+test('a System One model is required once a destination is gated, not for a class question', () => {
 	const draft = draftFrom(state());
 	assert.equal(needsClearedModel(draft), false);
 	draft.classes[0]!.rule_question = 'Is it personal?';
-	assert.equal(needsClearedModel(draft), true);
-	draft.classes[0]!.rule_question = '';
+	assert.equal(needsClearedModel(draft), false);
 	draft.destinations = [dest('tool', 't', 'secret', { egress: true, over: 'gate' })];
 	assert.equal(needsClearedModel(draft), true);
 });
@@ -268,20 +266,12 @@ test('a model is cleared only when all its pools are at the highest level', () =
 	assert.equal(modelCleared(draft, { pools: [] }), false);
 });
 
-test('without a model the rule questions go and patterns, markings and word lists stay', () => {
-	const draft = withoutQuestions(draftFrom(modelStep()));
-	const pii = draft.classes[0]!;
-	assert.deepEqual([pii.rule_question, pii.rule_positive, pii.rule_negative], ['', '', '']);
-	assert.deepEqual(pii.patterns, ['email']);
-	assert.equal(pii.terms.count, 3);
-	assert.equal(draft.markings.length, 1);
-});
-
-test('finalizing sets the model, or clears the questions when there is none', () => {
+test('finalizing sets the model and keeps the questions with or without one', () => {
 	const draft = prefillPools(draftFrom(modelStep()));
 	assert.equal(finalizeDraft(draft, 'qwen-big').policy.system_one_model, 'qwen-big');
 	assert.equal(finalizeDraft(draft, 'qwen-big').classes[0]!.rule_question, 'Is it personal?');
-	assert.equal(finalizeDraft(draft, '').classes[0]!.rule_question, '');
+	assert.equal(finalizeDraft(draft, '').policy.system_one_model, '');
+	assert.equal(finalizeDraft(draft, '').classes[0]!.rule_question, 'Is it personal?');
 });
 
 test('activation is blocked for a model whose pool is not at the highest level', () => {

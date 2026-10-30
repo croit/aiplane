@@ -30,7 +30,8 @@ cls-assist-hosting-unknown = Desconocido ({ $hosts })
 cls-assist-egress = { $count } herramientas y conectores envían datos fuera de AIplane (por ejemplo { $names }). Se ocultan por encima de { $level }. Puede ajustarlo después en la pestaña Destinos.
 cls-assist-model = Comprobación del contenido por un modelo System One
 cls-assist-model-help = Sin modelo, el contenido solo se comprueba con patrones como el IBAN, marcas de documentos y listas de palabras.
-cls-assist-no-questions = Sin modelo: se eliminan las preguntas de las clases de datos; los patrones, marcados y listas de palabras se mantienen.
+cls-assist-questions-inactive = Sin modelo, las preguntas de las clases de datos quedan inactivas hasta elegir uno; los patrones, marcados y listas de palabras se aplican.
+cls-class-rule-inactive = Inactiva: ningún modelo System One seleccionado
 cls-levels-lead = Ordene los niveles del más bajo al más alto. Cada nivel puede llevar su texto de marcado, su etiqueta de nombre de archivo y su id de etiqueta para los documentos generados.
 cls-level-name = Nombre
 cls-level-unnamed = (sin nombre)
@@ -163,7 +164,7 @@ cls-policy-model = Modelo de System One
 cls-policy-model-none = Ningún modelo
 cls-policy-model-not-cleared = { $model } (no autorizado para el nivel más alto)
 cls-policy-model-help = El modelo que lee el contenido para las preguntas de las clases de datos y las confirmaciones. Ve datos del nivel más alto, así que solo puede elegirse un modelo autorizado.
-cls-policy-model-needed = Se necesita un modelo porque una clase de datos tiene una pregunta o un destino pide confirmación.
+cls-policy-model-needed = Se necesita un modelo porque un destino pide confirmación.
 cls-policy-model-uncleared-picked = Este modelo no está autorizado para el nivel más alto; se rechazará el guardado.
 cls-policy-mode = Modo
 cls-policy-mode-monitor = Supervisión
@@ -235,7 +236,6 @@ cls-tool-hidden = { $tool } no está disponible en esta conversación, clasifica
 cls-gate-blocked = { $tool } no se llamó: sus argumentos contienen datos de la clase { $classes }, para la que la herramienta no está autorizada. Quita esos datos de los argumentos o usa otra herramienta.
 cls-gate-unavailable = { $tool } no se llamó: no se pudo contactar con el modelo que comprueba sus argumentos, así que nada sale de la conversación sin comprobar. Inténtalo más tarde o pide a un administrador que revise el modelo System One.
 cls-detector-unavailable = El mensaje no se envió: no se pudo contactar con el modelo que comprueba su contenido clasificado, y nada llega a un modelo sin comprobar. Inténtalo más tarde o pide a un administrador que revise el modelo System One.
-cls-detector-not-configured = El mensaje no se envió: la clasificación de datos lo consulta a un modelo System One, pero no hay ninguno configurado. Pide a un administrador que elija uno en Administración > Clasificación de datos.
 
 # Template texts: the administrator's language; applied, they become the scheme's own data.
 cls-tpl-iso-name = ISO/IEC 27001 (cuatro niveles)
