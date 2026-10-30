@@ -25,8 +25,8 @@ export interface Level {
 
 export type Action = 'raise' | 'confirm' | 'block';
 export const ACTIONS: readonly Action[] = ['raise', 'confirm', 'block'];
-export type PatternId = 'email' | 'iban' | 'payment_card' | 'de_tax_id';
-export const PATTERN_IDS: readonly PatternId[] = ['email', 'iban', 'payment_card', 'de_tax_id'];
+export type PatternId = 'email' | 'iban' | 'payment_card' | 'de_tax_id' | 'de_social_security' | 'us_ssn' | 'credentials';
+export const PATTERN_IDS: readonly PatternId[] = ['email', 'iban', 'payment_card', 'de_tax_id', 'de_social_security', 'us_ssn', 'credentials'];
 
 export interface Terms {
 	count: number;

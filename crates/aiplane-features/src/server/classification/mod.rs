@@ -23,7 +23,10 @@ mod zip_io;
 mod tests;
 
 pub use markings::{Marking, Markings, TSCP_CATEGORY_NAME, read_markings};
-pub use patterns::{DE_TAX_ID, EMAIL, IBAN, PATTERN_IDS, PAYMENT_CARD, find_patterns};
+pub use patterns::{
+    CREDENTIALS, DE_SOCIAL_SECURITY, DE_TAX_ID, EMAIL, IBAN, PATTERN_IDS, PAYMENT_CARD, US_SSN,
+    find_patterns,
+};
 pub use resolve::{Cause, Mapping, Resolved, resolve};
 pub use stamp::{StampOptions, Stamped, stamp_output};
 pub use terms::{MIN_TERM_CHARS, TermError, TermMatcher, TermUpload, parse_term_upload};

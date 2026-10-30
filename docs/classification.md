@@ -142,6 +142,9 @@ Images and unknown binaries have no text. `stamp_matches(text, rules)` returns t
 | `iban` | 15 to 34 letters and digits, optionally in groups separated by single spaces, with a valid ISO 13616 mod-97 check. |
 | `payment_card` | 13 to 19 digits, optionally in groups separated by single spaces or dashes, with a valid Luhn check. |
 | `de_tax_id` | A German Steuer-ID: 11 digits (groups allowed), no leading zero, exactly one digit repeated two or three times among the first ten and never three in a row, and a valid ISO 7064 MOD 11,10 check digit. |
+| `de_social_security` | A German Sozialversicherungsnummer: 12 characters (area number 02 to 89, birth date DDMMYY, the initial of the birth name, a two-digit serial and the check digit; single spaces between the parts allowed). The check digit is the official one: the initial becomes its two-digit alphabet position, the twelve digits are weighted 2, 1, 2, 5, 7, 1, 2, 1, 2, 1, 2, 1 and the digit sums of the products are added modulo 10. |
+| `us_ssn` | A US Social Security number written `AAA-GG-SSSS` with dashes (bare nine-digit numbers are not matched); area 000, 666 and 900 to 999, group 00 and serial 0000 are not valid. |
+| `credentials` | Secrets that identify themselves: PEM private key headers, AWS access key ids (`AKIA`/`ASIA` plus 16 characters), GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_` plus 36 characters, `github_pat_`), `sk-`, `sk-ant-` and `sk-proj-` API keys (at least 20 characters including a digit), Slack tokens (`xox[baprs]-`), JSON Web Tokens (three base64url segments starting `eyJ`) and passwords in URLs (`scheme://user:password@host`; empty and obvious placeholder passwords such as `<password>` or `****` are ignored). There is no generic "password=" heuristic. |
 
 ### Word lists
 
