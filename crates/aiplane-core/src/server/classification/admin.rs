@@ -135,7 +135,9 @@ pub async fn list_classes(db: &Pool) -> Result<Vec<ClassRecord>, DbError> {
 /// transaction. A class whose id is kept keeps its word list. A conversation
 /// at a removed level moves to the lowest kept level above it that existed
 /// before, else to the highest level of the new scheme, with an audit event of
-/// cause `scheme_change`. The caller has validated the replacement.
+/// cause `scheme_change`. A removed lowest level maps to the new lowest: rank 0
+/// means unclassified in either scheme, so moving it up would rate a chat
+/// higher than one that never had a level stored. The caller has validated the replacement.
 pub async fn replace(
     db: &Pool,
     replacement: &Replacement,
@@ -151,6 +153,12 @@ pub async fn replace(
         .levels
         .iter()
         .max_by_key(|l| l.rank)
+        .map(|l| l.id.clone())
+        .unwrap_or_default();
+    let lowest = replacement
+        .levels
+        .iter()
+        .min_by_key(|l| l.rank)
         .map(|l| l.id.clone())
         .unwrap_or_default();
 
@@ -183,10 +191,13 @@ pub async fn replace(
 
     let mut moved = Vec::new();
     for (removed, removed_rank) in old.iter().filter(|(id, _)| !new_ids.contains(id.as_str())) {
-        let target = old
-            .iter()
-            .find(|(id, rank)| rank > removed_rank && new_ids.contains(id.as_str()))
-            .map_or(highest.as_str(), |(id, _)| id.as_str());
+        let target = if *removed_rank == 0 {
+            lowest.as_str()
+        } else {
+            old.iter()
+                .find(|(id, rank)| rank > removed_rank && new_ids.contains(id.as_str()))
+                .map_or(highest.as_str(), |(id, _)| id.as_str())
+        };
         let sessions: Vec<String> =
             sqlx::query_scalar("SELECT session_id FROM chat_session_settings WHERE level_id = ?")
                 .bind(removed)
@@ -538,6 +549,29 @@ mod tests {
             Some("scheme_change")
         );
         assert_eq!(latest_cause(&db, "s2").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn a_removed_lowest_level_sends_its_conversations_to_the_new_lowest() {
+        let db = database().await;
+        replace(&db, &replacement(&[("public", 0), ("secret", 1)]), "admin")
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO chat_session_settings (session_id, level_id, updated_at) VALUES ('s1', 'public', 'now')")
+            .execute(&db)
+            .await
+            .unwrap();
+        replace(
+            &db,
+            &replacement(&[("normal", 0), ("high", 1), ("very_high", 2)]),
+            "admin",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            super::super::level_id(&db, "s1").await.unwrap().as_deref(),
+            Some("normal")
+        );
     }
 
     #[tokio::test]

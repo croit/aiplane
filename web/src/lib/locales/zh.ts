@@ -1571,7 +1571,7 @@ export const zh: Catalog = {
  "cls-diff-destinations-rated": "{count} 个目的地首次评级",
  "cls-diff-levels-added": "新增级别：{names}",
  "cls-diff-levels-edited": "编辑了 {count} 个级别",
- "cls-diff-levels-removed": "移除的级别：{names}。处于这些级别的对话将移至上一级。",
+ "cls-diff-levels-removed": "移除的级别：{names}。处于这些级别的对话将移至上一级；处于最低级别的对话移至新的最低级别。",
  "cls-diff-levels-reordered": "级别顺序已更改。",
  "cls-diff-markings": "标记：之前 {before} 个，之后 {after} 个",
  "cls-diff-none": "与已保存的方案没有差异。",

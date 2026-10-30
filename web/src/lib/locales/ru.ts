@@ -1602,7 +1602,7 @@ export const ru: Catalog = {
  "cls-diff-destinations-rated": "Впервые оценено назначений: {count}",
  "cls-diff-levels-added": "Добавлены уровни: {names}",
  "cls-diff-levels-edited": "Изменено уровней: {count}",
- "cls-diff-levels-removed": "Удалены уровни: {names}. Беседы на них переходят на следующий более высокий уровень.",
+ "cls-diff-levels-removed": "Удалены уровни: {names}. Беседы на них переходят на следующий более высокий уровень; беседы на самом низком уровне — на новый самый низкий.",
  "cls-diff-levels-reordered": "Порядок уровней изменился.",
  "cls-diff-markings": "Маркировки: было {before}, стало {after}",
  "cls-diff-none": "Ничто не отличается от сохранённой схемы.",

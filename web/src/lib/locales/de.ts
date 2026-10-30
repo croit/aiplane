@@ -1586,7 +1586,7 @@ export const de: Catalog = {
  "cls-diff-destinations-rated": "{count} Ziele erstmals bewertet",
  "cls-diff-levels-added": "Stufen hinzugefügt: {names}",
  "cls-diff-levels-edited": "{count} Stufen bearbeitet",
- "cls-diff-levels-removed": "Stufen entfernt: {names}. Unterhaltungen auf diesen Stufen rücken auf die nächsthöhere.",
+ "cls-diff-levels-removed": "Stufen entfernt: {names}. Unterhaltungen auf diesen Stufen rücken auf die nächsthöhere; Unterhaltungen auf der niedrigsten Stufe kommen auf die neue niedrigste.",
  "cls-diff-levels-reordered": "Die Reihenfolge der Stufen hat sich geändert.",
  "cls-diff-markings": "Kennzeichnungen: vorher {before}, nachher {after}",
  "cls-diff-none": "Nichts weicht vom gespeicherten Schema ab.",

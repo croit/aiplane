@@ -1586,7 +1586,7 @@ export const fr: Catalog = {
  "cls-diff-destinations-rated": "{count} destinations évaluées pour la première fois",
  "cls-diff-levels-added": "Niveaux ajoutés : {names}",
  "cls-diff-levels-edited": "{count} niveaux modifiés",
- "cls-diff-levels-removed": "Niveaux supprimés : {names}. Les conversations à ces niveaux passent au niveau supérieur.",
+ "cls-diff-levels-removed": "Niveaux supprimés : {names}. Les conversations à ces niveaux passent au niveau supérieur ; celles du niveau le plus bas passent au nouveau niveau le plus bas.",
  "cls-diff-levels-reordered": "L'ordre des niveaux a changé.",
  "cls-diff-markings": "Marquages : {before} avant, {after} après",
  "cls-diff-none": "Rien ne diffère du schéma enregistré.",
