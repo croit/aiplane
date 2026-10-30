@@ -449,7 +449,10 @@ pub async fn evaluate_for_model(
 }
 
 /// The check before a chat turn reaches `model`. In a person's chat each match
-/// raises the conversation to the class's level (cause `system_one:<class>`).
+/// raises the conversation to the class's level (cause `system_one:<class>`),
+/// so every class above the conversation's level is checked, whatever the
+/// model is cleared for: the level outlives this turn's model (tools, sharing,
+/// the next model picked). Elsewhere only the classes above the model matter.
 pub(crate) async fn evaluate_for_turn(
     state: &AppState,
     request: &Value,
@@ -457,10 +460,25 @@ pub(crate) async fn evaluate_for_turn(
     access: &PoolAccess,
     context: &crate::server::tools::ToolContext,
 ) -> Result<Decision, String> {
-    let Some(rank) = model_rank(state, model, access) else {
-        return Ok(Decision::Allow);
-    };
     let scheme = state.scheme();
+    let person_session = context
+        .session_id
+        .as_deref()
+        .filter(|_| context.agent.is_none());
+    let rank = match person_session {
+        Some(session_id) => match classification::level_id(&state.db, session_id).await {
+            Ok(stored) => scheme.level_or_lowest(stored.as_deref()).rank,
+            Err(error) => {
+                return Err(format!(
+                    "reading the conversation's classification level failed ({error}); try again"
+                ));
+            }
+        },
+        None => match model_rank(state, model, access) {
+            Some(rank) => rank,
+            None => return Ok(Decision::Allow),
+        },
+    };
     if !questions_for(&scheme, rank).is_empty() {
         let authority = context
             .agent

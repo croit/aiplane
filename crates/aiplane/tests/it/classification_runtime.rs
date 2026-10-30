@@ -893,6 +893,21 @@ async fn send_to_low_model(
     String,
     (chat::TurnStatus, String),
 ) {
+    send_to(action, mode, "low-model", message, file).await
+}
+
+async fn send_to(
+    action: &str,
+    mode: aiplane_core::server::classification::ClassificationMode,
+    model: &str,
+    message: &str,
+    file: Option<(&str, &str)>,
+) -> (
+    MockServer,
+    Arc<RamaState>,
+    String,
+    (chat::TurnStatus, String),
+) {
     let upstream = chat_upstream().await;
     let s3 = object_store().await;
     let state = state_with(
@@ -909,13 +924,7 @@ async fn send_to_low_model(
     let state = Arc::new(state);
     let session = chat::create_session(&state.db, "alice").await.unwrap();
     let resp = router(state.clone())
-        .serve(submit_message(
-            &session.id,
-            &cookie,
-            "low-model",
-            message,
-            file,
-        ))
+        .serve(submit_message(&session.id, &cookie, model, message, file))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
@@ -940,6 +949,23 @@ async fn a_typed_iban_raises_the_conversation_and_the_uncleared_model_is_refused
         )]
     );
     assert_eq!(chat_requests(&upstream).await, 0);
+}
+
+#[tokio::test]
+async fn typed_text_raises_the_conversation_even_when_the_model_is_cleared_for_every_level() {
+    use aiplane_core::server::classification::ClassificationMode::Enforce;
+    let (upstream, state, session, (status, error)) =
+        send_to("raise", Enforce, "high-model", &format!("pay {IBAN}"), None).await;
+    assert_eq!(status, chat::TurnStatus::Completed, "{error}");
+    assert_eq!(
+        events(&state, &session).await,
+        vec![(
+            "public".into(),
+            "confidential".into(),
+            "pattern:iban".into()
+        )]
+    );
+    assert_eq!(chat_requests(&upstream).await, 1);
 }
 
 #[tokio::test]
