@@ -110,6 +110,10 @@ impl Tool for ReadSkill {
         READ_SKILL_ID
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         // The model already has the name → description listing in its system
         // context, so the schema stays short and stable (no per-user skill

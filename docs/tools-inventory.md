@@ -13,6 +13,9 @@ browser workflow.
   tool appears.
 - **Chat-only** — the tool needs an AIplane conversation and is unavailable to
   direct model API requests.
+- **Egress** — whether the tool's arguments or results can leave AIplane
+  (`Tool::egress`). MCP tools, ComfyUI workflows and the sandbox tools are
+  always `yes`; the `typst_<template>` family is `no`.
 - **Toggle key** — the switch an administrator can grant and a person can
   enable for their conversation. Related tools may share one switch.
 
@@ -21,9 +24,13 @@ sandbox tools when their service is absent. Their switches are disabled and
 link to the relevant setup page. Tools that need storage, knowledge indexing,
 or notification setup also show when that prerequisite is missing.
 
-With [data classification](classification.md#tools) active, every tool listed
-here also has a maximum level per assignment, hidden or gated above it in a
-conversation. An unrated tool is at the lowest level and hidden above it.
+With [data classification](classification.md#tools) active, every tool that
+can send data out of AIplane (**Egress** `yes`) also has a maximum level per
+assignment, hidden or gated above it in a conversation. An unrated egress tool
+is at the lowest level and hidden above it. A tool marked `no` receives and
+returns data that stays inside AIplane and is never filtered or gated. `yes` is
+the default: a tool is marked `no` only when nothing it is given or returns
+reaches an external URL, API, MCP server or model backend it names.
 
 ## Always registered
 
@@ -31,55 +38,55 @@ No configuration required. A tool here can still fail at runtime when its
 *storage* is unconfigured (e.g. S3 attachment storage), but it fails with a clear
 message rather than being absent.
 
-| Tool | Chat-only | Toggle key | What it does |
-|---|---|---|---|
-| `enable_tools` | — | *(hidden, always on)* | The lazy-disclosure bootstrap: turns other tool groups on for the rest of the conversation. Not presented as a toggle — `allowed_tools_for_session` force-keeps `BOOTSTRAP_TOOL_ID`, so a switch for it would be inert. |
-| `search_gateway_tools` | — | *(hidden, `/v1` only)* | Searches the Auto capabilities allowed by an API token and exposes at most five matching tool schemas in the next model round. |
-| `company_echo` | — | *(hidden)* | Diagnostic echo tool for checking a custom installation's tool connection. It is hidden from normal tool selection. |
-| `get_current_timestamp` | — | `get_current_timestamp` | Timezone-aware current date/time, from the caller's `users.timezone`. |
-| `convert_currency` | — | `convert_currency` | Currency conversion at daily ECB reference rates. |
-| `ask_user` | yes | `ask_user` | Ask the user a short question mid-turn and wait for the answer, rather than guessing. Needs a live chat turn *and* someone watching it; times out and reports `answered: false` otherwise. |
-| `forward_request` | yes | `forward_request` | An active personal agent sends an explicit task to another active agent it may address: a personal agent belonging to its owner (both directed consents), or an organization agent the caller's member organization consented to receive from (cross-boundary consent plus the caller's current membership). The receiver uses its own tools, memory, credentials and approval rules. Ordinary chats and stateless `/v1` requests do not offer this personal variant. See [Agent communication](agents-communication.md) and [cross-organization delegation](agents-cross-organization.md). |
-| `notify_user` | — | `notify_user` | Send the user a Web Push notification (long work finished, a scheduled action found something). Deliberately *not* chat-only — a notification lands on a device, not in a conversation, so it also works from the headless scheduler. Hard limit of **one per turn**, latched in `PushNotifier`; errors clearly when Web Push is unconfigured or the user has no subscribed device. |
-| `get_user_location` | — | `get_user_location` | Caller's location: a browser GPS prompt when a live chat turn is watching, else coarse GeoIP. |
-| `generate_qr_code` | yes | `generate_qr_code` | QR codes (URL, WiFi, vCard, SEPA) as PNG/SVG, rendered in-process. |
-| `search_web` | — | `search_web` | Web search via SearXNG, Brave, or Tavily, with optional domain and recency filters. A confirmed exhausted provider quota triggers another configured provider; the result identifies the one used. When every configured provider is exhausted, the error lists each one's quota failure and marks the configured provider. Tavily has a separate Enable switch and is eligible only when enabled with a stored key. Configured on `/admin/settings?tab=web-search`. |
-| `browser_control` | yes | `browser_control` | Act in the user's own logged-in browser (navigate, read, click, type, screenshot) through the extension paired with the open chat page. Actions travel as a batch and run in order. The extension, not AIplane, decides what may run; nothing happens until the user switches it on. Users set it up at `/tools/browser`. See [tools and integrations](guide/tools-and-integrations.md). |
-| `show_screenshot` | yes | `show_screenshot` | Show the user a capture of their browser page — viewport, whole page, one element (`ref`) or a rectangle (`region`) — as an inline attachment in the reply. Browser-control screenshots are for the assistant; this tool shows a capture to the user. It uses the browser extension and needs attachment storage. See [tools and integrations](guide/tools-and-integrations.md). |
-| `fetch_url` | — | `fetch_url` | HTTP GET through `outbound_guard` (public hosts only unless `$AIPLANE_ALLOW_PRIVATE_NETWORKS`; every redirect re-checked; 32 MiB read cap, 4 MiB returned-text cap). HTML is reduced to readable text unless `raw` is set; images come back viewable; other binary returns metadata. |
-| `wikipedia` | — | `wikipedia` | Summary of the best-matching Wikipedia article. |
-| `dns_lookup` | — | `dns_lookup` | DNS records over DoH. |
-| `whois_lookup` | — | `whois_lookup` | Domain registration via RDAP. |
-| `tls_cert` | — | `tls_cert` | TLS certificate inspection (issuer, validity, days to expiry, SANs). The host is checked through `outbound_guard` like a `fetch_url` URL. |
-| `fetch_attachment` | — | `fetch_attachment` | Read any file of the conversation — an attachment or (by id/title) a canvas document, which comes back as text plus its version. Tiered PDF reading — text layer, rasterised pages, `mode="ocr"` (gateway OCR, images too), `mode="auto"` (text-or-OCR) — with `page_from`/`page_to`; Office files return structured content. |
-| `upload_attachment` | yes | `upload_attachment` | Attach a model-generated file to the reply. |
-| `offer_download` | yes | `upload_attachment` | Hand a file the conversation *already holds* to the user as a download chip on the current reply — an attachment, or a canvas document (its current version is written out as a file, named from the document's title) — including objects with no chip of their own (a typst render's hidden `.json` data base, an intermediate artifact) and files from earlier turns. Takes a reference, never content: the object is copied inside S3, so a large payload never round-trips through the model as prose. Session-scoped twice over — a marker-backed id is proven in-session by the enumeration, an unlisted `<turn_id>/<filename>` by `turn_in_session`. Shares the `upload_attachment` toggle: one switch for "let the assistant hand me files". |
-| `zip_attachments` | yes | `upload_attachment` | Bundle several files the conversation already holds into one `.zip` and attach it as a single download chip. Takes the same reference spellings as `offer_download` (`<turn_id>/<filename>`, canvas `document_id`, bare filename) in `ids`, plus an optional archive `filename` (`.zip` appended when missing). Unlike `offer_download` the bytes cannot stay inside S3 — the archive is assembled in memory — so it is capped at 64 entries and 256 MiB of uncompressed members, and members are read sequentially so the first bad id is the one reported. Colliding entry names are suffixed (`report.md`, `report-2.md`) rather than overwriting each other; a canvas document contributes a snapshot of its current version. Shares the `upload_attachment` toggle. |
-| `list_attachments` | yes | `list_attachments` | Inventory of the conversation's files, so assets get reused rather than regenerated. |
-| `load_image_url` | yes | `load_image_url` | Fetch an image from a URL (through `outbound_guard`, like `fetch_url`) and keep it as a reusable conversation attachment. |
-| `import_file` | yes | `document` | Turn a text attachment (upload or produced artifact) into an editable, versioned canvas document — server-side, so the content never round-trips through the model. The on-ramp that makes an uploaded `.typ`/`.csv`/`.json`/`.md` editable a passage at a time (and hand-editable by the user); `offer_download` is the exit ramp. Text formats only: binary attachments stay attachments, already usable by id (`att:` refs, sandbox staging, `fetch_attachment`). Capped at the same 512 KB the document tools can write. |
-| `create_document` | yes | `document` | Open a canvas document. |
-| `edit_document` | yes | `document` | Apply passage edits to text-format canvas documents, or JSON Patch to JSON/TOML documents; every edit creates a version. |
-| `edit_document_section` | yes | `document` | Edit one section of a canvas document. |
-| `read_document` | yes | `document` | Read a canvas document back. |
-| `list_documents` | yes | `document` | List the conversation's canvas documents. |
-| `list_document_versions` | yes | `document` | Version history of a canvas document. |
-| `restore_document_version` | yes | `document` | Roll a canvas document back to an earlier version. |
-| `delete_document` | yes | `document` | Soft-delete a canvas document: hidden from the canvas and from `list_documents`, version history kept, reversible. |
-| `undelete_document` | yes | `document` | Undo a `delete_document`. Deliberately *not* named `restore_document` — that would sit one suffix away from `restore_document_version`, which does something else entirely. |
-| `schedule_action` | yes | `schedule` | Create a recurring prompt (5-field cron + IANA timezone, defaulting to `users.timezone`). Validates with `Cron::parse` and returns `describe()` + the next 3 run times, so a wrong-but-valid expression is caught before the first run. Inherits the turn's model from `ToolContext.model`; **always** creates the action with tools off. |
-| `list_scheduled_actions` | — | `schedule` | The caller's own scheduled actions, each with the same human schedule preview. Read-only, so it works off-chat. |
-| `delete_scheduled_action` | yes | `schedule` | Delete one of the caller's actions. Another user's id is reported as missing, not forbidden (no existence leak). |
-| `rag_search` | — | `rag_search` | Hybrid search (dense kNN fused with FTS5/BM25) over an indexed collection. Returns chunks with path, line range, score. Optional `path_glob` scopes it to part of the corpus — filtered inside the query on the lexical side, and after kNN candidate generation on the dense side (which is why the candidate pool widens when it is set). |
-| `rag_grep` | — | `rag_grep` | Regex scan over an indexed collection's chunk text: matching lines with file, line number and context. For patterns BM25 cannot express (`TODO\(.*\)`, `impl .* for Tool`). Full scan with no index behind it, so it is bounded by result / row / wall-clock limits and reports which one it hit. |
-| `rag_list_collections` | — | `rag_list_collections` | Discover which collections exist before searching them. |
-| `rag_query_documents` | — | `rag_query_documents` | Filter, sort and total the documents of a collection by the fields its extraction profile pulled out (vendor, date, amount, project). The answer to any question about a *set* of documents — the latest, the largest, how many, how much — which top-k passage retrieval structurally cannot give: it returns five similar chunks and no way to know whether that was all of them. Always reports `total_matches` alongside the returned page, and surfaces the distinct values a text filter matched so `ACME` hitting both `ACME GmbH` and `ACME Deutschland AG` is visible rather than silently resolved. |
-| `rag_list_documents` | — | `rag_query_documents` | Folder-scoped document listing with the **stored** per-document summaries written at index time. Turns "find everything about project X and summarise it" into one call over ~200 tokens per document rather than re-reading every file. |
-| `rag_fetch_document` | — | `rag_query_documents` | Full extracted text of one indexed document by `document_id`. The drill-down after a hit; truncates long documents with a note rather than flooding the context. |
-| `remember` | — | `memory` | Persist a durable fact for the user or acting agent. Personal and organization agent writes remain in that agent's own scope; new content is bounded to 2,000 UTF-8 bytes. |
-| `recall` | — | `memory` | Read at most 200 recent notes with explicit scopes. A personal agent reads own and user notes; an organization agent reads own and shared organization notes, without employee profiles. |
-| `update_memory` | — | `memory` | Correct an authorized fact by its returned ID and scope, within 2,000 UTF-8 bytes. Agents can change only their own notes. |
-| `forget` | — | `memory` | Delete an authorized fact by ID and scope. Agents cannot delete user or shared organization notes. |
+| Tool | Chat-only | Egress | Toggle key | What it does |
+|---|---|---|---|---|
+| `enable_tools` | — | no | *(hidden, always on)* | The lazy-disclosure bootstrap: turns other tool groups on for the rest of the conversation. Not presented as a toggle — `allowed_tools_for_session` force-keeps `BOOTSTRAP_TOOL_ID`, so a switch for it would be inert. |
+| `search_gateway_tools` | — | no | *(hidden, `/v1` only)* | Searches the Auto capabilities allowed by an API token and exposes at most five matching tool schemas in the next model round. |
+| `company_echo` | — | no | *(hidden)* | Diagnostic echo tool for checking a custom installation's tool connection. It is hidden from normal tool selection. |
+| `get_current_timestamp` | — | no | `get_current_timestamp` | Timezone-aware current date/time, from the caller's `users.timezone`. |
+| `convert_currency` | — | yes | `convert_currency` | Currency conversion at daily ECB reference rates. |
+| `ask_user` | yes | no | `ask_user` | Ask the user a short question mid-turn and wait for the answer, rather than guessing. Needs a live chat turn *and* someone watching it; times out and reports `answered: false` otherwise. |
+| `forward_request` | yes | yes | `forward_request` | An active personal agent sends an explicit task to another active agent it may address: a personal agent belonging to its owner (both directed consents), or an organization agent the caller's member organization consented to receive from (cross-boundary consent plus the caller's current membership). The receiver uses its own tools, memory, credentials and approval rules. Ordinary chats and stateless `/v1` requests do not offer this personal variant. See [Agent communication](agents-communication.md) and [cross-organization delegation](agents-cross-organization.md). |
+| `notify_user` | — | yes | `notify_user` | Send the user a Web Push notification (long work finished, a scheduled action found something). Deliberately *not* chat-only — a notification lands on a device, not in a conversation, so it also works from the headless scheduler. Hard limit of **one per turn**, latched in `PushNotifier`; errors clearly when Web Push is unconfigured or the user has no subscribed device. |
+| `get_user_location` | — | yes | `get_user_location` | Caller's location: a browser GPS prompt when a live chat turn is watching, else coarse GeoIP. |
+| `generate_qr_code` | yes | no | `generate_qr_code` | QR codes (URL, WiFi, vCard, SEPA) as PNG/SVG, rendered in-process. |
+| `search_web` | — | yes | `search_web` | Web search via SearXNG, Brave, or Tavily, with optional domain and recency filters. A confirmed exhausted provider quota triggers another configured provider; the result identifies the one used. When every configured provider is exhausted, the error lists each one's quota failure and marks the configured provider. Tavily has a separate Enable switch and is eligible only when enabled with a stored key. Configured on `/admin/settings?tab=web-search`. |
+| `browser_control` | yes | yes | `browser_control` | Act in the user's own logged-in browser (navigate, read, click, type, screenshot) through the extension paired with the open chat page. Actions travel as a batch and run in order. The extension, not AIplane, decides what may run; nothing happens until the user switches it on. Users set it up at `/tools/browser`. See [tools and integrations](guide/tools-and-integrations.md). |
+| `show_screenshot` | yes | no | `show_screenshot` | Show the user a capture of their browser page — viewport, whole page, one element (`ref`) or a rectangle (`region`) — as an inline attachment in the reply. Browser-control screenshots are for the assistant; this tool shows a capture to the user. It uses the browser extension and needs attachment storage. See [tools and integrations](guide/tools-and-integrations.md). |
+| `fetch_url` | — | yes | `fetch_url` | HTTP GET through `outbound_guard` (public hosts only unless `$AIPLANE_ALLOW_PRIVATE_NETWORKS`; every redirect re-checked; 32 MiB read cap, 4 MiB returned-text cap). HTML is reduced to readable text unless `raw` is set; images come back viewable; other binary returns metadata. |
+| `wikipedia` | — | yes | `wikipedia` | Summary of the best-matching Wikipedia article. |
+| `dns_lookup` | — | yes | `dns_lookup` | DNS records over DoH. |
+| `whois_lookup` | — | yes | `whois_lookup` | Domain registration via RDAP. |
+| `tls_cert` | — | yes | `tls_cert` | TLS certificate inspection (issuer, validity, days to expiry, SANs). The host is checked through `outbound_guard` like a `fetch_url` URL. |
+| `fetch_attachment` | — | no | `fetch_attachment` | Read any file of the conversation — an attachment or (by id/title) a canvas document, which comes back as text plus its version. Tiered PDF reading — text layer, rasterised pages, `mode="ocr"` (gateway OCR, images too), `mode="auto"` (text-or-OCR) — with `page_from`/`page_to`; Office files return structured content. |
+| `upload_attachment` | yes | no | `upload_attachment` | Attach a model-generated file to the reply. |
+| `offer_download` | yes | no | `upload_attachment` | Hand a file the conversation *already holds* to the user as a download chip on the current reply — an attachment, or a canvas document (its current version is written out as a file, named from the document's title) — including objects with no chip of their own (a typst render's hidden `.json` data base, an intermediate artifact) and files from earlier turns. Takes a reference, never content: the object is copied inside S3, so a large payload never round-trips through the model as prose. Session-scoped twice over — a marker-backed id is proven in-session by the enumeration, an unlisted `<turn_id>/<filename>` by `turn_in_session`. Shares the `upload_attachment` toggle: one switch for "let the assistant hand me files". |
+| `zip_attachments` | yes | no | `upload_attachment` | Bundle several files the conversation already holds into one `.zip` and attach it as a single download chip. Takes the same reference spellings as `offer_download` (`<turn_id>/<filename>`, canvas `document_id`, bare filename) in `ids`, plus an optional archive `filename` (`.zip` appended when missing). Unlike `offer_download` the bytes cannot stay inside S3 — the archive is assembled in memory — so it is capped at 64 entries and 256 MiB of uncompressed members, and members are read sequentially so the first bad id is the one reported. Colliding entry names are suffixed (`report.md`, `report-2.md`) rather than overwriting each other; a canvas document contributes a snapshot of its current version. Shares the `upload_attachment` toggle. |
+| `list_attachments` | yes | no | `list_attachments` | Inventory of the conversation's files, so assets get reused rather than regenerated. |
+| `load_image_url` | yes | yes | `load_image_url` | Fetch an image from a URL (through `outbound_guard`, like `fetch_url`) and keep it as a reusable conversation attachment. |
+| `import_file` | yes | no | `document` | Turn a text attachment (upload or produced artifact) into an editable, versioned canvas document — server-side, so the content never round-trips through the model. The on-ramp that makes an uploaded `.typ`/`.csv`/`.json`/`.md` editable a passage at a time (and hand-editable by the user); `offer_download` is the exit ramp. Text formats only: binary attachments stay attachments, already usable by id (`att:` refs, sandbox staging, `fetch_attachment`). Capped at the same 512 KB the document tools can write. |
+| `create_document` | yes | no | `document` | Open a canvas document. |
+| `edit_document` | yes | no | `document` | Apply passage edits to text-format canvas documents, or JSON Patch to JSON/TOML documents; every edit creates a version. |
+| `edit_document_section` | yes | no | `document` | Edit one section of a canvas document. |
+| `read_document` | yes | no | `document` | Read a canvas document back. |
+| `list_documents` | yes | no | `document` | List the conversation's canvas documents. |
+| `list_document_versions` | yes | no | `document` | Version history of a canvas document. |
+| `restore_document_version` | yes | no | `document` | Roll a canvas document back to an earlier version. |
+| `delete_document` | yes | no | `document` | Soft-delete a canvas document: hidden from the canvas and from `list_documents`, version history kept, reversible. |
+| `undelete_document` | yes | no | `document` | Undo a `delete_document`. Deliberately *not* named `restore_document` — that would sit one suffix away from `restore_document_version`, which does something else entirely. |
+| `schedule_action` | yes | no | `schedule` | Create a recurring prompt (5-field cron + IANA timezone, defaulting to `users.timezone`). Validates with `Cron::parse` and returns `describe()` + the next 3 run times, so a wrong-but-valid expression is caught before the first run. Inherits the turn's model from `ToolContext.model`; **always** creates the action with tools off. |
+| `list_scheduled_actions` | — | no | `schedule` | The caller's own scheduled actions, each with the same human schedule preview. Read-only, so it works off-chat. |
+| `delete_scheduled_action` | yes | no | `schedule` | Delete one of the caller's actions. Another user's id is reported as missing, not forbidden (no existence leak). |
+| `rag_search` | — | no | `rag_search` | Hybrid search (dense kNN fused with FTS5/BM25) over an indexed collection. Returns chunks with path, line range, score. Optional `path_glob` scopes it to part of the corpus — filtered inside the query on the lexical side, and after kNN candidate generation on the dense side (which is why the candidate pool widens when it is set). |
+| `rag_grep` | — | no | `rag_grep` | Regex scan over an indexed collection's chunk text: matching lines with file, line number and context. For patterns BM25 cannot express (`TODO\(.*\)`, `impl .* for Tool`). Full scan with no index behind it, so it is bounded by result / row / wall-clock limits and reports which one it hit. |
+| `rag_list_collections` | — | no | `rag_list_collections` | Discover which collections exist before searching them. |
+| `rag_query_documents` | — | no | `rag_query_documents` | Filter, sort and total the documents of a collection by the fields its extraction profile pulled out (vendor, date, amount, project). The answer to any question about a *set* of documents — the latest, the largest, how many, how much — which top-k passage retrieval structurally cannot give: it returns five similar chunks and no way to know whether that was all of them. Always reports `total_matches` alongside the returned page, and surfaces the distinct values a text filter matched so `ACME` hitting both `ACME GmbH` and `ACME Deutschland AG` is visible rather than silently resolved. |
+| `rag_list_documents` | — | no | `rag_query_documents` | Folder-scoped document listing with the **stored** per-document summaries written at index time. Turns "find everything about project X and summarise it" into one call over ~200 tokens per document rather than re-reading every file. |
+| `rag_fetch_document` | — | no | `rag_query_documents` | Full extracted text of one indexed document by `document_id`. The drill-down after a hit; truncates long documents with a note rather than flooding the context. |
+| `remember` | — | no | `memory` | Persist a durable fact for the user or acting agent. Personal and organization agent writes remain in that agent's own scope; new content is bounded to 2,000 UTF-8 bytes. |
+| `recall` | — | no | `memory` | Read at most 200 recent notes with explicit scopes. A personal agent reads own and user notes; an organization agent reads own and shared organization notes, without employee profiles. |
+| `update_memory` | — | no | `memory` | Correct an authorized fact by its returned ID and scope, within 2,000 UTF-8 bytes. Agents can change only their own notes. |
+| `forget` | — | no | `memory` | Delete an authorized fact by ID and scope. Agents cannot delete user or shared organization notes. |
 
 The canvas tools, the four memory tools and the three scheduling tools
 collapse to the `document`, `memory` and `schedule` keys respectively — see
@@ -104,23 +111,23 @@ unless its owner approves from the inbox.
 Gated so the model is never offered a tool whose every call could only answer
 "not configured".
 
-| Tool | Gate | Chat-only | Toggle key |
-|---|---|---|---|
-| `lookup_ip` | GeoIP configured (`geoip.enabled`) | — | `lookup_ip` |
-| `generate_image` | an `image`-kind upstream pool exists | yes | `generate_image` |
-| `edit_image` | an image backend advertises `supports_edit` | yes | `edit_image` |
-| `read_skill` | skills configured (`skills.enabled`) | — | *(always on when the caller has a permitted skill)* |
-| `run_in_sandbox` | `sandbox.enabled` | — | `run_in_sandbox` |
-| `generate_document` | `sandbox.enabled` | — | `generate_document` |
-| `export_document` | `sandbox.enabled` | yes | `document` |
-| `convert_document` | `sandbox.enabled` | — | `convert_document` |
-| `edit_presentation` | `sandbox.enabled` | — | `edit_presentation` |
-| `capture_webpage` | `sandbox.enabled` **and** the runner reports egress | — | `capture_webpage` |
-| `browse_page` | `sandbox.enabled` **and** the runner reports egress | — | `browse_page` |
-| `render_typst` | `sandbox.enabled` | — | `render_typst` |
-| `render_excalidraw` | `sandbox.enabled` | — | `render_excalidraw` |
-| `render_video` | `sandbox.enabled` | — | `render_video` |
-| `read_sandbox_output` | `sandbox.enabled` | yes | `read_sandbox_output` |
+| Tool | Gate | Chat-only | Egress | Toggle key |
+|---|---|---|---|---|
+| `lookup_ip` | GeoIP configured (`geoip.enabled`) | — | yes | `lookup_ip` |
+| `generate_image` | an `image`-kind upstream pool exists | yes | yes | `generate_image` |
+| `edit_image` | an image backend advertises `supports_edit` | yes | yes | `edit_image` |
+| `read_skill` | skills configured (`skills.enabled`) | — | no | *(always on when the caller has a permitted skill)* |
+| `run_in_sandbox` | `sandbox.enabled` | — | yes | `run_in_sandbox` |
+| `generate_document` | `sandbox.enabled` | — | yes | `generate_document` |
+| `export_document` | `sandbox.enabled` | yes | yes | `document` |
+| `convert_document` | `sandbox.enabled` | — | yes | `convert_document` |
+| `edit_presentation` | `sandbox.enabled` | — | yes | `edit_presentation` |
+| `capture_webpage` | `sandbox.enabled` **and** the runner reports egress | — | yes | `capture_webpage` |
+| `browse_page` | `sandbox.enabled` **and** the runner reports egress | — | yes | `browse_page` |
+| `render_typst` | `sandbox.enabled` | — | yes | `render_typst` |
+| `render_excalidraw` | `sandbox.enabled` | — | yes | `render_excalidraw` |
+| `render_video` | `sandbox.enabled` | — | yes | `render_video` |
+| `read_sandbox_output` | `sandbox.enabled` | yes | no | `read_sandbox_output` |
 
 `export_document` is the one sandbox tool that rides the canvas `document`
 toggle: it exports a canvas document, so it belongs to that capability from

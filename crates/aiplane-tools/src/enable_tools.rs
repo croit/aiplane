@@ -158,6 +158,10 @@ impl Tool for EnableTools {
         "enable_tools"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         let catalog = self.full_catalog();
         let mut description = String::from(

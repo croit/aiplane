@@ -57,6 +57,10 @@ impl Tool for OfferDownload {
         "offer_download"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),

@@ -27,6 +27,10 @@ impl Tool for ListAttachments {
         "list_attachments"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),

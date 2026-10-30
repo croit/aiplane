@@ -1,7 +1,8 @@
 //! What a conversation's level means for the tools it can call.
 //!
-//! A tool is a destination with a maximum level, set per tool, per MCP server
-//! or per connector. Once the conversation is above it, the tool is either
+//! A tool that can send data out of AIplane ([`Tool::egress`]) is a destination
+//! with a maximum level, set per tool, per MCP server or per connector. Tools
+//! whose data stays inside the plane are never filtered or gated. Once the conversation is above it, the tool is either
 //! hidden or gated, as its assignment says. A gated tool stays callable: only
 //! its arguments leave the conversation, so they are checked first (patterns,
 //! word lists and the System One model, for the classes above the tool's level)
@@ -65,12 +66,20 @@ pub async fn conversation_rank(ctx: &ToolContext, scheme: &Scheme, session_id: &
     }
 }
 
-/// Drop the tools a conversation at `rank` may not see: above their clearance
-/// and set to be hidden. Gated tools stay.
-pub fn retain_visible(scheme: &Scheme, rank: u32, offered: &mut Vec<String>) {
+/// Drop the tools a conversation at `rank` may not see: tools that can send
+/// data out of AIplane, above their clearance and set to be hidden. Gated
+/// tools stay, and so does every tool whose data stays inside the plane.
+pub fn retain_visible(
+    scheme: &Scheme,
+    rank: u32,
+    offered: &mut Vec<String>,
+    source: &dyn ToolSource,
+) {
     offered.retain(|id| {
         let clearance = clearance(scheme, id);
-        rank <= clearance.rank || clearance.over == Over::Gate
+        rank <= clearance.rank
+            || clearance.over == Over::Gate
+            || source.get(id).is_some_and(|tool| !tool.egress())
     });
 }
 
@@ -95,7 +104,7 @@ impl ToolSource for ClassifiedToolSource<'_> {
     fn get(&self, id: &str) -> Option<Arc<dyn Tool>> {
         let tool = self.inner.get(id)?;
         let scheme = self.state.scheme();
-        if !scheme.is_active() {
+        if !scheme.is_active() || !tool.egress() {
             return Some(tool);
         }
         Some(Arc::new(ClassifiedTool {
@@ -265,6 +274,10 @@ impl Tool for ClassifiedTool {
         })
     }
 
+    fn egress(&self) -> bool {
+        self.inner.egress()
+    }
+
     fn max_duration(&self) -> Option<Duration> {
         self.inner.max_duration()
     }
@@ -322,10 +335,51 @@ mod tests {
         ])
     }
 
+    struct Probe {
+        id: &'static str,
+        egress: bool,
+    }
+
+    impl Tool for Probe {
+        fn id(&self) -> &str {
+            self.id
+        }
+        fn schema(&self) -> ToolDef {
+            crate::server::tools::echo::Echo.schema()
+        }
+        fn egress(&self) -> bool {
+            self.egress
+        }
+        fn run<'a>(&'a self, _ctx: ToolContext, _args: Value) -> ToolFuture<'a> {
+            Box::pin(async { Ok(Value::Null) })
+        }
+    }
+
     fn offered(scheme: &Scheme, rank: u32, ids: &[&str]) -> Vec<String> {
+        let registry = crate::server::tools::ToolRegistry::new()
+            .with(Probe {
+                id: "edit_image",
+                egress: true,
+            })
+            .with(Probe {
+                id: "search_web",
+                egress: true,
+            })
+            .with(Probe {
+                id: "list_attachments",
+                egress: false,
+            });
         let mut offered: Vec<String> = ids.iter().map(|id| (*id).to_owned()).collect();
-        retain_visible(scheme, rank, &mut offered);
+        retain_visible(scheme, rank, &mut offered, &registry);
         offered
+    }
+
+    #[test]
+    fn a_tool_whose_data_stays_inside_the_plane_is_never_hidden() {
+        assert_eq!(
+            offered(&scheme(), 2, &["list_attachments"]),
+            ["list_attachments"]
+        );
     }
 
     #[test]

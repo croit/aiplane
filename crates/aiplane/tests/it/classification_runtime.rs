@@ -66,6 +66,27 @@ async fn state_with(
     extra_sql: &str,
     configure: impl FnOnce(&mut aiplane_core::server::config::Config),
 ) -> RamaState {
+    state_full(
+        upstream,
+        s3,
+        active,
+        extra_sql,
+        configure,
+        Arc::new(aiplane_runtime::server::tools::ToolRegistry::new()),
+        Arc::new(aiplane_core::server::rbac::Resolver::empty()),
+    )
+    .await
+}
+
+async fn state_full(
+    upstream: &str,
+    s3: &str,
+    active: bool,
+    extra_sql: &str,
+    configure: impl FnOnce(&mut aiplane_core::server::config::Config),
+    tools: Arc<aiplane_runtime::server::tools::ToolRegistry>,
+    rbac: Arc<aiplane_core::server::rbac::Resolver>,
+) -> RamaState {
     let db_pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
     let mut pools = HashMap::new();
     for (name, kind, rank, models) in [
@@ -116,7 +137,7 @@ async fn state_with(
         .await
         .unwrap();
     }
-    let state = common::state_from_registry_with_config(db_pool, registry, config);
+    let state = common::state_from_parts(db_pool, registry, config, tools, rbac);
     state.reload_scheme().await;
     state
 }
@@ -130,6 +151,7 @@ async fn object_store() -> MockServer {
     for (name, mime) in [
         ("mip_confidential.docx", "application/octet-stream"),
         ("mip_internal.pdf", "application/pdf"),
+        ("iban.txt", "text/plain"),
     ] {
         Mock::given(method("GET"))
             .and(path_regex(format!(".*/{}$", regex_escape(name))))
@@ -176,9 +198,19 @@ async fn chat_requests(upstream: &MockServer) -> usize {
 }
 
 fn submit(session_id: &str, cookie: &str, model: &str, file: Option<(&str, &str)>) -> Request {
+    submit_message(session_id, cookie, model, "please read this", file)
+}
+
+fn submit_message(
+    session_id: &str,
+    cookie: &str,
+    model: &str,
+    message: &str,
+    file: Option<(&str, &str)>,
+) -> Request {
     let boundary = "----classification";
     let mut body = Vec::new();
-    for (name, value) in [("model", model), ("message", "please read this")] {
+    for (name, value) in [("model", model), ("message", message)] {
         body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
         body.extend_from_slice(
             format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n")
@@ -543,6 +575,34 @@ async fn system_one_calls(server: &MockServer) -> usize {
     server.received_requests().await.unwrap().len()
 }
 
+/// A tool that can send data out of AIplane, which the real echo and
+/// timestamp tools do not.
+struct Outbound(&'static str);
+
+impl aiplane_runtime::server::tools::Tool for Outbound {
+    fn id(&self) -> &str {
+        self.0
+    }
+    fn schema(&self) -> shared::api::ToolDef {
+        probe_schema(self.0)
+    }
+    fn run<'a>(
+        &'a self,
+        _ctx: ToolContext,
+        args: serde_json::Value,
+    ) -> aiplane_runtime::server::tools::ToolFuture<'a> {
+        Box::pin(async move { Ok(args) })
+    }
+}
+
+fn probe_schema(id: &str) -> shared::api::ToolDef {
+    shared::api::ToolDef::function(
+        id,
+        "a test probe",
+        serde_json::json!({"type": "object", "properties": {"message": {"type": "string"}}}),
+    )
+}
+
 struct Gate {
     source_state: Arc<aiplane_runtime::server::AppState>,
     context: ToolContext,
@@ -588,8 +648,8 @@ async fn call_with(
     tool: &str,
     args: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    use aiplane_runtime::server::tools::{ToolRegistry, ToolSource as _, echo::Echo};
-    let registry = ToolRegistry::new().with(Echo);
+    use aiplane_runtime::server::tools::{ToolRegistry, ToolSource as _};
+    let registry = ToolRegistry::new().with(Outbound("company_echo"));
     let source = aiplane_runtime::classification_gate::ClassifiedToolSource::new(
         &registry,
         gate.source_state.clone(),
@@ -745,7 +805,7 @@ async fn a_hidden_tool_above_its_level_is_refused_when_called() {
     use aiplane_runtime::server::tools::{ToolRegistry, ToolSource as _};
     let guard = system_one(Some(0.0)).await;
     let gate = gate(&guard, "confidential", |_| {}).await;
-    let registry = ToolRegistry::new().with(aiplane_runtime::server::tools::time::CurrentTimestamp);
+    let registry = ToolRegistry::new().with(Outbound("get_current_timestamp"));
     let source = aiplane_runtime::classification_gate::ClassifiedToolSource::new(
         &registry,
         gate.source_state.clone(),
@@ -810,4 +870,413 @@ async fn an_unrated_collection_and_monitor_mode_leave_the_level_alone() {
     .await;
     raise_for_collection(&monitored.context, 7).await.unwrap();
     assert!(raised_events(&monitored).await.is_empty());
+}
+
+const IBAN: &str = "DE89370400440532013000";
+
+fn iban_class(action: &str) -> String {
+    format!(
+        "INSERT INTO classification_data_classes (id, name, level_id, patterns, action)
+         VALUES ('iban', 'Bank account', 'confidential', '[\"iban\"]', '{action}');"
+    )
+}
+
+/// Send a message (with an optional file) to the uncleared model and settle.
+async fn send_to_low_model(
+    action: &str,
+    mode: aiplane_core::server::classification::ClassificationMode,
+    message: &str,
+    file: Option<(&str, &str)>,
+) -> (
+    MockServer,
+    Arc<RamaState>,
+    String,
+    (chat::TurnStatus, String),
+) {
+    let upstream = chat_upstream().await;
+    let s3 = object_store().await;
+    let state = state_with(
+        &upstream.uri(),
+        &s3.uri(),
+        true,
+        &iban_class(action),
+        move |config| {
+            config.classification.mode = mode;
+        },
+    )
+    .await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let state = Arc::new(state);
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let resp = router(state.clone())
+        .serve(submit_message(
+            &session.id,
+            &cookie,
+            "low-model",
+            message,
+            file,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    wait_settled(&state, &session.id).await;
+    let status = last_turn_status(&state, &session.id).await;
+    (upstream, state, session.id, status)
+}
+
+#[tokio::test]
+async fn a_typed_iban_raises_the_conversation_and_the_uncleared_model_is_refused() {
+    use aiplane_core::server::classification::ClassificationMode::Enforce;
+    let (upstream, state, session, (status, error)) =
+        send_to_low_model("raise", Enforce, &format!("pay {IBAN}"), None).await;
+    assert_eq!(status, chat::TurnStatus::Errored);
+    assert!(error.contains("Confidential"), "{error}");
+    assert_eq!(
+        events(&state, &session).await,
+        vec![(
+            "public".into(),
+            "confidential".into(),
+            "pattern:iban".into()
+        )]
+    );
+    assert_eq!(chat_requests(&upstream).await, 0);
+}
+
+#[tokio::test]
+async fn a_confirm_class_without_an_approval_stops_typed_text_and_uploads_alike() {
+    use aiplane_core::server::classification::ClassificationMode::Enforce;
+    for (message, file) in [
+        (format!("pay {IBAN}"), None),
+        ("read this".to_owned(), Some(("iban.txt", "text/plain"))),
+    ] {
+        let (upstream, _state, _session, (status, error)) =
+            send_to_low_model("confirm", Enforce, &message, file).await;
+        assert_eq!(status, chat::TurnStatus::Errored);
+        assert!(error.contains("not approved"), "{error}");
+        assert_eq!(chat_requests(&upstream).await, 0);
+    }
+}
+
+#[tokio::test]
+async fn a_block_class_refuses_typed_text_and_uploads_alike() {
+    use aiplane_core::server::classification::ClassificationMode::Enforce;
+    for (message, file) in [
+        (format!("pay {IBAN}"), None),
+        ("read this".to_owned(), Some(("iban.txt", "text/plain"))),
+    ] {
+        let (upstream, _state, _session, (status, error)) =
+            send_to_low_model("block", Enforce, &message, file).await;
+        assert_eq!(status, chat::TurnStatus::Errored);
+        assert!(error.contains("prevents sending"), "{error}");
+        assert_eq!(chat_requests(&upstream).await, 0);
+    }
+}
+
+#[tokio::test]
+async fn in_monitor_mode_typed_text_and_uploads_are_recorded_only() {
+    use aiplane_core::server::classification::ClassificationMode::Monitor;
+    for (message, file) in [
+        (format!("pay {IBAN}"), None),
+        ("read this".to_owned(), Some(("iban.txt", "text/plain"))),
+    ] {
+        let (upstream, state, session, (status, _)) =
+            send_to_low_model("block", Monitor, &message, file).await;
+        assert_eq!(status, chat::TurnStatus::Completed);
+        assert!(events(&state, &session).await.is_empty());
+        assert_eq!(chat_requests(&upstream).await, 1);
+    }
+}
+
+/// A granted tool whose call raises the conversation as a retrieval does.
+struct Retrieval;
+
+impl aiplane_runtime::server::tools::Tool for Retrieval {
+    fn id(&self) -> &str {
+        "rag_search"
+    }
+    fn schema(&self) -> shared::api::ToolDef {
+        probe_schema("rag_search")
+    }
+    fn egress(&self) -> bool {
+        false
+    }
+    fn run<'a>(
+        &'a self,
+        ctx: ToolContext,
+        _args: serde_json::Value,
+    ) -> aiplane_runtime::server::tools::ToolFuture<'a> {
+        Box::pin(async move {
+            aiplane_runtime::classification_retrieval::raise_for_collection(&ctx, 7)
+                .await
+                .map_err(aiplane_runtime::server::tools::ToolError::Failed)?;
+            Ok(serde_json::json!({"hits": ["a confidential passage"]}))
+        })
+    }
+}
+
+/// Round one asks for `rag_search`; every later round answers.
+struct ToolThenAnswer(std::sync::atomic::AtomicUsize);
+
+impl wiremock::Respond for ToolThenAnswer {
+    fn respond(&self, request: &wiremock::Request) -> ResponseTemplate {
+        if String::from_utf8_lossy(&request.body).contains("You name chat conversations") {
+            return ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{"message": {"role": "assistant", "content": "Title"}}]
+            }));
+        }
+        let round = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let frames = if round == 0 {
+            vec![
+                serde_json::json!({"choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [{"index": 0, "id": "call-0", "type": "function", "function": {"name": "rag_search", "arguments": "{}"}}]}, "finish_reason": null}]}),
+                serde_json::json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}),
+            ]
+        } else {
+            vec![
+                serde_json::json!({"choices": [{"index": 0, "delta": {"content": "answer"}, "finish_reason": "stop"}]}),
+            ]
+        };
+        let mut body = String::new();
+        for frame in frames {
+            body.push_str(&format!("data: {frame}\n\n"));
+        }
+        body.push_str("data: [DONE]\n\n");
+        ResponseTemplate::new(200).set_body_raw(body, "text/event-stream")
+    }
+}
+
+const TOOLS_SQL: &str = "
+    INSERT INTO classification_assignments (kind, id, level_id, over) VALUES
+        ('collection', '7', 'confidential', 'hide');";
+
+/// A person with granted tools, all enabled for the conversation.
+async fn chat_with_tools(upstream: &MockServer) -> (Arc<RamaState>, String, String) {
+    use aiplane_core::server::rbac::Resolver;
+    use aiplane_core::server::rbac::config::{RbacConfig, RoleConfig, RoleMapping};
+    use aiplane_runtime::server::tools::{ToolRegistry, time::CurrentTimestamp};
+    let rbac = Resolver::build(
+        RbacConfig {
+            default_role: None,
+            mappings: vec![RoleMapping {
+                oidc_value: "engineering".into(),
+                role: "engineer".into(),
+            }],
+        },
+        vec![RoleConfig {
+            id: "engineer".into(),
+            admin: false,
+            tools: vec![
+                "fetch_url".into(),
+                "get_current_timestamp".into(),
+                "rag_search".into(),
+            ],
+            skills: vec![],
+        }],
+    )
+    .unwrap();
+    let tools = ToolRegistry::new()
+        .with(Outbound("fetch_url"))
+        .with(CurrentTimestamp)
+        .with(Retrieval);
+    let s3 = object_store().await;
+    let state = state_full(
+        &upstream.uri(),
+        &s3.uri(),
+        true,
+        TOOLS_SQL,
+        |_| {},
+        Arc::new(tools),
+        Arc::new(rbac),
+    )
+    .await;
+    let now = jiff::Timestamp::now();
+    aiplane_core::server::db::users::upsert(
+        &state.db,
+        &aiplane_core::server::db::users::User {
+            id: "alice".into(),
+            email: "alice@example.com".into(),
+            name: None,
+            roles: vec!["engineering".into()],
+            created_at: now,
+            updated_at: now,
+            timezone: None,
+            speech_voice: None,
+        },
+    )
+    .await
+    .unwrap();
+    let cookie = state
+        .sessions
+        .sign(&state.sessions.create("alice").await.unwrap().id);
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    for key in ["fetch_url", "get_current_timestamp", "rag_search"] {
+        aiplane_core::server::db::chat_session_tools::set(
+            &state.db,
+            &session.id,
+            key,
+            true,
+            "manual",
+        )
+        .await
+        .unwrap();
+    }
+    (Arc::new(state), cookie, session.id)
+}
+
+fn offered_tools(request: &wiremock::Request) -> Vec<String> {
+    let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+    body["tools"]
+        .as_array()
+        .map(|tools| {
+            tools
+                .iter()
+                .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+async fn turn_requests(upstream: &MockServer) -> Vec<wiremock::Request> {
+    upstream
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|request| request.url.path() == "/chat/completions")
+        .filter(|request| {
+            !String::from_utf8_lossy(&request.body).contains("You name chat conversations")
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn an_egress_tool_above_its_level_is_not_offered_but_an_internal_tool_is() {
+    for level in [None, Some("confidential")] {
+        let upstream_for_level = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n",
+                "text/event-stream",
+            ))
+            .mount(&upstream_for_level)
+            .await;
+        let (state, cookie, session) = chat_with_tools(&upstream_for_level).await;
+        if let Some(level) = level {
+            classification::set_level(&state.db, &session, level)
+                .await
+                .unwrap();
+        }
+        let resp = router(state.clone())
+            .serve(submit(&session, &cookie, "high-model", None))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        wait_settled(&state, &session).await;
+        let requests = turn_requests(&upstream_for_level).await;
+        let offered = offered_tools(&requests[0]);
+        assert!(
+            offered.contains(&"get_current_timestamp".to_owned()),
+            "{offered:?}"
+        );
+        assert_eq!(
+            offered.contains(&"fetch_url".to_owned()),
+            level.is_none(),
+            "level {level:?}: {offered:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_level_raised_by_a_retrieval_ends_the_turn_before_the_next_round_reaches_an_uncleared_model()
+ {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ToolThenAnswer(Default::default()))
+        .mount(&upstream)
+        .await;
+    let (state, cookie, session) = chat_with_tools(&upstream).await;
+    let resp = router(state.clone())
+        .serve(submit(&session, &cookie, "low-model", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    wait_settled(&state, &session).await;
+
+    let (status, error) = last_turn_status(&state, &session).await;
+    assert_eq!(status, chat::TurnStatus::Errored);
+    assert!(error.contains("Confidential"), "{error}");
+    assert_eq!(
+        turn_requests(&upstream).await.len(),
+        1,
+        "round two never left"
+    );
+    assert_eq!(
+        events(&state, &session)
+            .await
+            .last()
+            .map(|event| event.2.clone()),
+        Some("retrieval".to_owned())
+    );
+}
+
+async fn title_requests(upstream: &MockServer) -> usize {
+    upstream
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|request| {
+            String::from_utf8_lossy(&request.body).contains("You name chat conversations")
+        })
+        .count()
+}
+
+#[tokio::test]
+async fn a_conversation_raised_by_its_first_upload_gets_no_title_from_an_uncleared_model() {
+    let upstream = chat_upstream().await;
+    let s3 = object_store().await;
+    let state = state(&upstream.uri(), &s3.uri(), true).await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let state = Arc::new(state);
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+
+    let resp = router(state.clone())
+        .serve(submit(
+            &session.id,
+            &cookie,
+            "low-model",
+            Some(("mip_confidential.docx", "application/octet-stream")),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    wait_settled(&state, &session.id).await;
+    tokio::time::sleep(Duration::from_millis(600)).await;
+
+    assert_eq!(title_requests(&upstream).await, 0);
+}
+
+#[tokio::test]
+async fn an_unraised_conversation_is_still_titled_once_its_turn_has_settled() {
+    let upstream = chat_upstream().await;
+    let s3 = object_store().await;
+    let state = state(&upstream.uri(), &s3.uri(), true).await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let state = Arc::new(state);
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+
+    let resp = router(state.clone())
+        .serve(submit(&session.id, &cookie, "low-model", None))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    wait_settled(&state, &session.id).await;
+    for _ in 0..50 {
+        if title_requests(&upstream).await == 1 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("no title request reached the cleared model");
 }

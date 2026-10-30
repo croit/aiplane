@@ -143,6 +143,10 @@ impl Tool for Remember {
         "remember"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),
@@ -261,6 +265,10 @@ impl Tool for Recall {
         "recall"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),
@@ -371,6 +379,10 @@ struct UpdateArgs {
 impl Tool for UpdateMemory {
     fn id(&self) -> &str {
         "update_memory"
+    }
+
+    fn egress(&self) -> bool {
+        false
     }
 
     fn schema(&self) -> ToolDef {
@@ -562,6 +574,10 @@ struct ForgetArgs {
 impl Tool for Forget {
     fn id(&self) -> &str {
         "forget"
+    }
+
+    fn egress(&self) -> bool {
+        false
     }
 
     fn schema(&self) -> ToolDef {

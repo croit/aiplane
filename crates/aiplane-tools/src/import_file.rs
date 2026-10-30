@@ -59,6 +59,10 @@ impl Tool for ImportFile {
         "import_file"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),

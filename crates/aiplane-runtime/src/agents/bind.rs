@@ -360,6 +360,10 @@ impl Tool for BoundTool {
         self.inner.read_only()
     }
 
+    fn egress(&self) -> bool {
+        self.inner.egress()
+    }
+
     fn schema(&self) -> ToolDef {
         without_bound(self.inner.schema(), &self.binds)
     }

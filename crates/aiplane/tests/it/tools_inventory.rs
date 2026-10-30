@@ -92,6 +92,8 @@ const DYNAMIC_ID_IMPLS: &[&str] = &[
     "aiplane-runtime/src/server/tools/mcp/manager.rs",
     // comfyui_<workflow>
     "aiplane-runtime/src/server/comfyui_tool.rs",
+    // Outbound — a test probe tool with an id chosen by the test
+    "aiplane/tests/it/classification_runtime.rs",
     // ClassifiedTool — delegates to the wrapped tool
     "aiplane-runtime/src/classification_gate.rs",
     // AskFirst — delegates to the wrapped tool
@@ -395,4 +397,45 @@ fn chat_only_tools_are_documented_as_such() {
             "`{id}` is chat-only in code but its inventory row doesn't say so:\n{row}"
         );
     }
+}
+
+#[test]
+fn the_egress_column_matches_the_tools_egress() {
+    let doc = std::fs::read_to_string(repo_root().join("docs/tools-inventory.md"))
+        .expect("docs/tools-inventory.md exists");
+    let registry = aiplane::tool_registry::base_registry(
+        std::sync::Arc::new(aiplane_core::server::rbac::Resolver::empty()),
+        None,
+        false,
+    );
+    let mut egress_column = None;
+    let mut cells = std::collections::HashMap::new();
+    for line in doc.lines() {
+        if line.starts_with("| Tool |") {
+            egress_column = line.split('|').position(|cell| cell.trim() == "Egress");
+        } else if let (Some(column), Some(rest)) = (egress_column, line.strip_prefix("| `")) {
+            let id = rest.split('`').next().unwrap_or_default().to_owned();
+            if let Some(cell) = line.split('|').nth(column) {
+                cells.insert(id, cell.trim().to_owned());
+            }
+        } else if !line.starts_with('|') {
+            egress_column = None;
+        }
+    }
+    let mut checked = 0;
+    for id in registry.ids() {
+        let tool = registry.get(id).unwrap();
+        let documented = cells
+            .get(id)
+            .unwrap_or_else(|| panic!("`{id}` has no Egress cell in docs/tools-inventory.md"));
+        let expected = if tool.egress() { "yes" } else { "no" };
+        assert_eq!(
+            documented,
+            expected,
+            "`{id}`: the inventory says egress `{documented}` but `Tool::egress` is {}",
+            tool.egress()
+        );
+        checked += 1;
+    }
+    assert!(checked > 20, "only {checked} tools were compared");
 }

@@ -1725,6 +1725,7 @@ async fn run_one_turn(
                 &live_state.scheme(),
                 rank,
                 &mut allowed_tools,
+                &tool_source,
             );
         }
         if final_round && !closing {

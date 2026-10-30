@@ -191,6 +191,10 @@ impl Tool for RagQueryDocuments {
         "rag_query_documents"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),
@@ -434,6 +438,10 @@ impl Tool for RagListDocuments {
         "rag_list_documents"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),
@@ -537,6 +545,10 @@ impl Tool for RagFetchDocument {
 
     fn id(&self) -> &str {
         "rag_fetch_document"
+    }
+
+    fn egress(&self) -> bool {
+        false
     }
 
     fn schema(&self) -> ToolDef {

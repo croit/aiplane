@@ -128,6 +128,10 @@ Everything below applies to a person's conversation. With one level none of it r
 
 Monitor mode (`classification.mode = monitor`) logs what enforce mode would do and takes no action: nothing is raised, asked or refused by a detector, a collection or the gate. The model filter, the tool filter and the levels a conversation already holds apply in both modes.
 
+### Typed text
+
+Before a message goes to a model, the text of the request is checked for the classes above that model's level, by the same code as an upload's text: the built-in patterns and word lists of those classes first, then the System One model. A match raises the conversation (`pattern:<class id>`, `terms:<class id>`, `system_one:<class id>`) and the class's action applies. On `/v1/chat/completions` and in agent runs nothing is stored and a match refuses the request (`confirm` asks where a person can answer).
+
 ### Uploads
 
 When a turn starts, before any model reads the attachments (OCR is a model too), the files attached to the latest message are inspected. Each file gives findings; the conversation rises to the highest one, with a content-free cause.
@@ -149,16 +153,31 @@ After the raise the model check runs as before: a model whose level is below the
 
 ### Tools
 
-A tool is a destination with a maximum level (see `classification_assignments`). Re-evaluated at the start of every round:
+Only a tool that can send data out of AIplane (`Tool::egress`, the **Egress** column of [tools-inventory.md](tools-inventory.md)) is a destination with a maximum level (see `classification_assignments`). A tool whose arguments and results stay inside the plane (attachments, canvas documents, memory, scheduling, own knowledge collections, QR codes, typst templates, `enable_tools`) is never filtered or gated. MCP tools, ComfyUI workflows and the sandbox tools always count as egress, and so does any tool that does not say otherwise. Re-evaluated at the start of every round:
 
 - `over = hide`: above its level the tool is not offered, and a call to it is refused with a message naming the conversation's level.
 - `over = gate`: the tool stays offered. Before each call above its level the arguments are checked for the classes above the tool's level: the patterns and word lists of those classes, then the System One model. No match: the call runs. A match: with `classification.gate_on_match = ask` the call pauses on the ordinary approval prompt, which names the matched classes; with `block` it is refused with a message naming them. If the System One model cannot be reached the call is refused and the message says so. A call approved on the prompt runs without a second check. Nothing is raised: the arguments leave, the conversation does not change.
 
-An unrated tool is at the lowest level and hidden above it. A tool such as `edit_image` has no rule of its own; its assignment decides.
+An unrated egress tool is at the lowest level and hidden above it. A tool such as `edit_image` has no rule of its own; its assignment decides.
 
 ### Generated files
 
 Every file a tool, the sandbox or an MCP spill adds to a conversation goes through `upload_stamped` (`aiplane-runtime`), which marks it with the conversation's level as [Output marking](#output-marking) describes. The architecture test `generated_files_are_stored_only_through_the_stamping_helper` keeps it the only path; the user's own composer upload and the ComfyUI scheduler (images and video, below the runtime layer) are the listed exceptions. A file that cannot be rewritten is stored with the file name tag only and a warning is logged. With one level or at the lowest level the bytes are stored unchanged.
+
+### Side calls
+
+Calls that send conversation content to a model beside the turn check the conversation's level first:
+
+| Side call | Behaviour |
+|---|---|
+| Chat title | Runs after the conversation's turns have settled, so the level an upload or a retrieval set is known; skipped when the title model is not cleared for it. |
+| Compaction summary | Not run when the model is not cleared for the conversation's level. |
+| System One detection and gate | Asked only about text that is being checked; the System One model must itself be cleared for the highest level. |
+| Voice feedback fields, skill drafting, agent judges and routers | Not conversation content of a person's chat (a dictated note, an operator's description, an agent run, which never ratchets). |
+
+### Messages
+
+Messages the turn raises on its own (refusals, the gate's messages to the model) are rendered in English: the person's interface language is a browser cookie and request header, not stored with the user, so a background turn does not know it.
 
 ### Stateless requests
 

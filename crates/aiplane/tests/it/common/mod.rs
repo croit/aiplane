@@ -91,8 +91,22 @@ pub fn state_from_registry_with_config(
     registry: Arc<upstreams::UpstreamRegistry>,
     config: Config,
 ) -> RamaState {
-    let tools = Arc::new(ToolRegistry::new());
-    let rbac = Arc::new(Resolver::empty());
+    state_from_parts(
+        db_pool,
+        registry,
+        config,
+        Arc::new(ToolRegistry::new()),
+        Arc::new(Resolver::empty()),
+    )
+}
+
+pub fn state_from_parts(
+    db_pool: db::Pool,
+    registry: Arc<upstreams::UpstreamRegistry>,
+    config: Config,
+    tools: Arc<ToolRegistry>,
+    rbac: Arc<Resolver>,
+) -> RamaState {
     let app = AppState::new(config, db_pool.clone(), registry, tools, rbac)
         .with_tool_family_builder(aiplane::tool_families::typst());
     let sessions = SessionStore::new(db_pool, TEST_SECRET);

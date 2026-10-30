@@ -50,6 +50,10 @@ impl Tool for ShowScreenshot {
         "show_screenshot"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn max_duration(&self) -> Option<std::time::Duration> {
         crate::browser_control::BrowserControl.max_duration()
     }

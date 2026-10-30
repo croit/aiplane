@@ -60,6 +60,10 @@ impl Tool for RagListCollections {
         "rag_list_collections"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),
@@ -229,6 +233,10 @@ impl Tool for RagSearch {
 
     fn id(&self) -> &str {
         "rag_search"
+    }
+
+    fn egress(&self) -> bool {
+        false
     }
 
     fn schema(&self) -> ToolDef {
@@ -449,6 +457,10 @@ impl Tool for RagGrep {
 
     fn id(&self) -> &str {
         "rag_grep"
+    }
+
+    fn egress(&self) -> bool {
+        false
     }
 
     fn schema(&self) -> ToolDef {

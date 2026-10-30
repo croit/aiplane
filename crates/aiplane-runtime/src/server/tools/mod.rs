@@ -584,6 +584,15 @@ pub trait Tool: Send + Sync + 'static {
     /// that is not read-only); everything else is `false` because nothing
     /// is known about it. An agent asks for approval before such a call
     /// unless its spec sets the tool's `permission` (`docs/agent-hil.md` → "Per-tool approval").
+    /// Whether this tool's arguments or results can leave AIplane: an
+    /// external URL or API, an MCP server, a model backend the tool names.
+    /// Data classification filters and gates only tools that do, so the
+    /// default is the safe answer; a tool overrides it only when nothing it
+    /// receives or returns leaves the plane.
+    fn egress(&self) -> bool {
+        true
+    }
+
     fn changes_state(&self) -> bool {
         false
     }
@@ -608,6 +617,10 @@ pub(crate) mod tests {
         }
         fn id(&self) -> &str {
             "company_echo"
+        }
+
+        fn egress(&self) -> bool {
+            false
         }
         fn schema(&self) -> shared::api::ToolDef {
             echo::Echo.schema()

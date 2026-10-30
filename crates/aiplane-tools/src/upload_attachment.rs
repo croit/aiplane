@@ -53,6 +53,10 @@ impl Tool for UploadAttachment {
         "upload_attachment"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),

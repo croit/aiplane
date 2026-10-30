@@ -85,6 +85,10 @@ impl Tool for LivePersonalAgentTool {
         self.initial.read_only()
     }
 
+    fn egress(&self) -> bool {
+        self.initial.egress()
+    }
+
     fn changes_state(&self) -> bool {
         self.initial.changes_state()
     }
@@ -381,6 +385,10 @@ mod tests {
         fn id(&self) -> &str {
             "company_echo"
         }
+
+        fn egress(&self) -> bool {
+            false
+        }
         fn schema(&self) -> ToolDef {
             crate::server::tools::echo::Echo.schema()
         }
@@ -536,6 +544,10 @@ mod tests {
         fn id(&self) -> &str {
             "company_echo"
         }
+
+        fn egress(&self) -> bool {
+            false
+        }
         fn schema(&self) -> ToolDef {
             Echo.schema()
         }
@@ -567,6 +579,10 @@ mod tests {
     impl Tool for PendingSideEffect {
         fn id(&self) -> &str {
             "get_current_timestamp"
+        }
+
+        fn egress(&self) -> bool {
+            false
         }
         fn schema(&self) -> ToolDef {
             crate::server::tools::time::CurrentTimestamp.schema()
@@ -798,6 +814,10 @@ mod tests {
     impl Tool for PrincipalEcho {
         fn id(&self) -> &str {
             "company_echo"
+        }
+
+        fn egress(&self) -> bool {
+            false
         }
         fn schema(&self) -> ToolDef {
             Echo.schema()

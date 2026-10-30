@@ -92,7 +92,10 @@ pub(super) async fn generate_session_title(
         "title generation: starting"
     );
     // The title call carries the user's message, so it must not reach a model
-    // the conversation's level does not clear.
+    // the conversation's level does not clear. The level is read once the
+    // turn has been through its classification (an upload or the typed text
+    // can raise it), not when the message was accepted.
+    wait_for_turns_to_settle(&state, &session_id).await;
     if !state
         .model_cleared_for_session(&session_id, &model, &PoolAccess::all())
         .await
@@ -151,6 +154,30 @@ pub(super) async fn generate_session_title(
     // title on the user's next page interaction.
     if let Some(worker) = state.chats.get(&user_id, &session_id) {
         let _ = worker.broadcast.send(TurnUpdate::SidebarChanged);
+    }
+}
+
+const SETTLE_POLL: Duration = Duration::from_millis(100);
+const SETTLE_LIMIT: Duration = Duration::from_secs(20 * 60);
+
+/// Wait until no turn of the conversation is running, bounded. A turn that
+/// is still running after the bound is not waited for further: the title is
+/// then checked against whatever level the conversation holds.
+async fn wait_for_turns_to_settle(state: &RamaState, session_id: &str) {
+    let started = std::time::Instant::now();
+    while started.elapsed() < SETTLE_LIMIT {
+        let running = chat::list_turns(&state.db, session_id)
+            .await
+            .map(|turns| {
+                turns
+                    .iter()
+                    .any(|turn| turn.turn.status == chat::TurnStatus::InProgress)
+            })
+            .unwrap_or(false);
+        if !running {
+            return;
+        }
+        tokio::time::sleep(SETTLE_POLL).await;
     }
 }
 

@@ -74,6 +74,10 @@ impl Tool for TypstRenderTool {
         self.id
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     /// A render is fast (PDF+PNG on the host, ~seconds) UNLESS the template
     /// runs a sandbox export (pptx/docx via typ2pptx/pdf2docx), which can take
     /// tens of seconds. Without this the 30 s default `TOOL_TIMEOUT` kills the
@@ -1548,6 +1552,10 @@ impl Tool for TypstEditTool {
         self.id
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     /// Same as the render tool: an edit re-renders (incl. any sandbox pptx/docx
     /// export), so allow the sandbox ceiling rather than the 30 s default.
     fn max_duration(&self) -> Option<std::time::Duration> {
@@ -1769,6 +1777,10 @@ impl Tool for TypstReadTool {
         self.id
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         // `id` is `typst_<tid>_read`; the render/edit siblings drop `_read`.
         let render_id = self.id.strip_suffix("_read").unwrap_or(self.id);
@@ -1856,6 +1868,10 @@ impl TypstPptxTool {
 impl Tool for TypstPptxTool {
     fn id(&self) -> &str {
         self.id
+    }
+
+    fn egress(&self) -> bool {
+        false
     }
 
     /// This tool's whole job is the sandbox pptx export, so it always needs the

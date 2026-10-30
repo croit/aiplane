@@ -23,6 +23,10 @@ impl Tool for Echo {
         "company_echo"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),

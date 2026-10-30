@@ -267,6 +267,10 @@ impl Tool for FetchAttachment {
         "fetch_attachment"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),

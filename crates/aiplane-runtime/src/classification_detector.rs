@@ -382,6 +382,52 @@ fn model_rank(state: &AppState, model: &str, access: &PoolAccess) -> Option<u32>
         .find_map(|(id, rank)| (id == model).then_some(rank))
 }
 
+/// The text of a chat request's messages: string content and text parts.
+fn request_text(request: &Value) -> String {
+    let mut text = String::new();
+    for message in request
+        .get("messages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        match message.get("content") {
+            Some(Value::String(content)) => text.push_str(content),
+            Some(Value::Array(parts)) => {
+                for part in parts {
+                    if let Some(part_text) = part.get("text").and_then(Value::as_str) {
+                        text.push_str(part_text);
+                        text.push('\n');
+                    }
+                }
+            }
+            _ => {}
+        }
+        text.push('\n');
+    }
+    text
+}
+
+/// Everything a request shows about its level for the classes above
+/// `target_rank`: patterns and word lists first, then the System One model.
+async fn request_findings(
+    state: &AppState,
+    request: &Value,
+    target_rank: u32,
+) -> Result<Vec<Finding>, String> {
+    let mode = state.config().classification.mode;
+    let mut findings = static_findings(
+        &state.scheme(),
+        &state.term_matchers(),
+        &request_text(request),
+        target_rank,
+    );
+    if let Some(detection) = settle(mode, detect(state, request, target_rank).await)? {
+        findings.extend(detection.findings());
+    }
+    Ok(findings)
+}
+
 /// The stateless check for `/v1`: nothing is stored, the decision follows the
 /// matched classes. Monitor mode never acts.
 pub async fn evaluate_for_model(
@@ -394,11 +440,9 @@ pub async fn evaluate_for_model(
         return Ok(Decision::Allow);
     };
     let mode = state.config().classification.mode;
-    let Some(detection) = settle(mode, detect(state, request, rank).await)? else {
-        return Ok(Decision::Allow);
-    };
+    let findings = request_findings(state, request, rank).await?;
     Ok(if mode == ClassificationMode::Enforce {
-        detection.stateless_decision()
+        stateless_decision(&findings)
     } else {
         Decision::Allow
     })
@@ -436,13 +480,17 @@ pub(crate) async fn evaluate_for_turn(
         .await?;
     }
     let mode = state.config().classification.mode;
-    let Some(detection) = settle(mode, detect(state, request, rank).await)? else {
-        return Ok(Decision::Allow);
-    };
-    if mode == ClassificationMode::Monitor || detection.matches.is_empty() {
+    let findings = request_findings(state, request, rank).await?;
+    if mode == ClassificationMode::Monitor || findings.is_empty() {
+        if !findings.is_empty() {
+            tracing::info!(
+                causes = ?findings.iter().map(|finding| finding.cause.as_str()).collect::<Vec<_>>(),
+                "data classification would act on this request in enforce mode"
+            );
+        }
         return Ok(Decision::Allow);
     }
-    Ok(apply_findings(state, &scheme, context, &detection.findings()).await)
+    Ok(apply_findings(state, &scheme, context, &findings).await)
 }
 
 /// What the findings do to a turn. In a person's chat each one raises the

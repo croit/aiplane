@@ -386,6 +386,10 @@ impl Tool for GenerateQrCode {
         "generate_qr_code"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),

@@ -155,6 +155,10 @@ impl Tool for ScheduleAction {
         "schedule_action"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),
@@ -337,6 +341,10 @@ impl Tool for ListScheduledActions {
         "list_scheduled_actions"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),
@@ -376,6 +384,10 @@ struct DeleteArgs {
 impl Tool for DeleteScheduledAction {
     fn id(&self) -> &str {
         "delete_scheduled_action"
+    }
+
+    fn egress(&self) -> bool {
+        false
     }
 
     fn schema(&self) -> ToolDef {
