@@ -56,6 +56,16 @@ fn s3_config(endpoint: &str) -> S3Config {
 /// at the lowest level and a `high-model` pool cleared for everything. Chat
 /// models, the System One model and the object store all answer from mocks.
 async fn state(upstream: &str, s3: &str, active: bool) -> RamaState {
+    state_with(upstream, s3, active, "", |_| {}).await
+}
+
+async fn state_with(
+    upstream: &str,
+    s3: &str,
+    active: bool,
+    extra_sql: &str,
+    configure: impl FnOnce(&mut aiplane_core::server::config::Config),
+) -> RamaState {
     let db_pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
     let mut pools = HashMap::new();
     for (name, kind, rank, models) in [
@@ -90,6 +100,7 @@ async fn state(upstream: &str, s3: &str, active: bool) -> RamaState {
     let mut config = common::test_config();
     config.chat.s3 = Some(s3_config(s3));
     config.classification.system_one_model = "guard-model".into();
+    configure(&mut config);
     if active {
         sqlx::raw_sql(&format!(
             "INSERT INTO classification_levels (id, rank, name, color, filename_tag, mip_label_id) VALUES
@@ -98,7 +109,8 @@ async fn state(upstream: &str, s3: &str, active: bool) -> RamaState {
                  ('strictly_confidential', 3, 'Strictly confidential', 'error', 'strict', '');
              INSERT INTO classification_markings (kind, value, level_id) VALUES
                  ('mip', '{CONFIDENTIAL_GUID}', 'confidential'),
-                 ('mip', '{INTERNAL_GUID}', 'internal');"
+                 ('mip', '{INTERNAL_GUID}', 'internal');
+             {extra_sql}"
         ))
         .execute(&db_pool)
         .await
@@ -495,4 +507,307 @@ async fn generated_files_are_stored_unchanged_at_the_lowest_level_and_with_one_l
     for (_, body) in stored(&s3).await {
         assert_eq!(body, docx);
     }
+}
+
+const GATE_SQL: &str = "
+    INSERT INTO classification_data_classes (id, name, level_id, rule_question, rule_positive, rule_negative, rule_threshold, action)
+        VALUES ('secret', 'Secret project', 'confidential', '', '', '', 0.5, 'raise'),
+               ('pii', 'Personal data', 'confidential', 'Does the text contain personal data?', 'a name and an address', 'a recipe', 0.5, 'raise');
+    INSERT INTO classification_terms (class_id, term) VALUES ('secret', 'project-falcon');
+    INSERT INTO classification_assignments (kind, id, level_id, over) VALUES
+        ('tool', 'company_echo', 'internal', 'gate'),
+        ('tool', 'get_current_timestamp', 'internal', 'hide'),
+        ('mcp', 'wiki', 'internal', 'hide'),
+        ('connector', 'wiki', 'confidential', 'hide'),
+        ('tool', 'edit_image', 'internal', 'hide'),
+        ('collection', '7', 'confidential', 'hide');
+";
+
+async fn system_one(answer: Option<f64>) -> MockServer {
+    let server = MockServer::start().await;
+    let response = match answer {
+        Some(score) => ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "answers": {"pii": {"type": "noul", "noul": score}}
+        })),
+        None => ResponseTemplate::new(503),
+    };
+    Mock::given(method("POST"))
+        .and(path("/systemone"))
+        .respond_with(response)
+        .mount(&server)
+        .await;
+    server
+}
+
+async fn system_one_calls(server: &MockServer) -> usize {
+    server.received_requests().await.unwrap().len()
+}
+
+struct Gate {
+    source_state: Arc<aiplane_runtime::server::AppState>,
+    context: ToolContext,
+}
+
+async fn gate(
+    upstream: &MockServer,
+    level: &str,
+    configure: impl FnOnce(&mut aiplane_core::server::config::Config),
+) -> Gate {
+    let s3 = object_store().await;
+    let state = state_with(&upstream.uri(), &s3.uri(), true, GATE_SQL, configure).await;
+    common::seed_session(&state, "alice", "alice@example.com").await;
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    classification::set_level(&state.db, &session.id, level)
+        .await
+        .unwrap();
+    Gate {
+        context: ToolContext {
+            session_id: Some(session.id),
+            classification: Some(TurnClassification {
+                scheme: state.scheme(),
+                config: Arc::new(state.config().classification.clone()),
+            }),
+            suspend: aiplane_runtime::suspend::Suspend::Available,
+            ..ToolContext::for_test(state.db.clone())
+        },
+        source_state: Arc::new(aiplane_runtime::server::AppState::clone(&state)),
+    }
+}
+
+async fn call(
+    gate: &Gate,
+    tool: &str,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    call_with(gate, &gate.context, tool, args).await
+}
+
+async fn call_with(
+    gate: &Gate,
+    context: &ToolContext,
+    tool: &str,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    use aiplane_runtime::server::tools::{ToolRegistry, ToolSource as _, echo::Echo};
+    let registry = ToolRegistry::new().with(Echo);
+    let source = aiplane_runtime::classification_gate::ClassifiedToolSource::new(
+        &registry,
+        gate.source_state.clone(),
+    );
+    let tool = source.get(tool).expect("the tool is registered");
+    tool.run(context.clone(), args)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+fn pause(body: &serde_json::Value) -> aiplane_runtime::suspend::SuspendRequest {
+    aiplane_runtime::suspend::extract_suspend(body).expect("the call paused for an approval")
+}
+
+#[tokio::test]
+async fn a_gated_tool_runs_when_its_arguments_are_clean() {
+    let guard = system_one(Some(0.0)).await;
+    let gate = gate(&guard, "confidential", |_| {}).await;
+    let out = call(
+        &gate,
+        "company_echo",
+        serde_json::json!({"message": "hello"}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        aiplane_runtime::suspend::extract_suspend(&out).is_none(),
+        "{out}"
+    );
+    assert_eq!(system_one_calls(&guard).await, 1);
+}
+
+#[tokio::test]
+async fn a_gated_tool_asks_with_the_matched_class_names_and_runs_once_approved() {
+    let guard = system_one(Some(0.0)).await;
+    let gate = gate(&guard, "confidential", |_| {}).await;
+    let args = serde_json::json!({"message": "the plan of project-falcon"});
+    let paused = call(&gate, "company_echo", args.clone()).await.unwrap();
+    let request = pause(&paused);
+    assert_eq!(request.message.as_deref(), Some("Secret project"));
+    assert_eq!(
+        request.kind,
+        session_core::db::SuspensionKind::Approval,
+        "the existing approval protocol, not a new one"
+    );
+
+    let approved = ToolContext {
+        suspend: aiplane_runtime::suspend::Suspend::Decided(
+            session_core::db::SuspensionKind::Approval,
+            session_core::db::Decision::AllowOnce,
+        ),
+        ..gate.context.clone()
+    };
+    let out = call_with(&gate, &approved, "company_echo", args)
+        .await
+        .unwrap();
+    assert!(
+        aiplane_runtime::suspend::extract_suspend(&out).is_none(),
+        "{out}"
+    );
+}
+
+#[tokio::test]
+async fn a_system_one_match_in_the_arguments_asks_too() {
+    let guard = system_one(Some(0.9)).await;
+    let gate = gate(&guard, "confidential", |_| {}).await;
+    let paused = call(
+        &gate,
+        "company_echo",
+        serde_json::json!({"message": "Ada, 1 Main St"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(pause(&paused).message.as_deref(), Some("Personal data"));
+}
+
+#[tokio::test]
+async fn with_the_block_policy_a_match_is_refused_without_asking() {
+    use aiplane_core::server::classification::GateOnMatch;
+    let guard = system_one(Some(0.0)).await;
+    let gate = gate(&guard, "confidential", |config| {
+        config.classification.gate_on_match = GateOnMatch::Block;
+    })
+    .await;
+    let error = call(
+        &gate,
+        "company_echo",
+        serde_json::json!({"message": "project-falcon"}),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error.contains("Secret project") && error.contains("was not called"),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn an_unreachable_gate_model_blocks_the_call_and_says_so() {
+    let guard = system_one(None).await;
+    let gate = gate(&guard, "confidential", |_| {}).await;
+    let error = call(
+        &gate,
+        "company_echo",
+        serde_json::json!({"message": "hello"}),
+    )
+    .await
+    .unwrap_err();
+    assert!(error.contains("could not be reached"), "{error}");
+}
+
+#[tokio::test]
+async fn a_tool_cleared_for_the_conversation_runs_without_any_check() {
+    let guard = system_one(Some(1.0)).await;
+    let gate = gate(&guard, "internal", |_| {}).await;
+    let out = call(
+        &gate,
+        "company_echo",
+        serde_json::json!({"message": "project-falcon"}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        aiplane_runtime::suspend::extract_suspend(&out).is_none(),
+        "{out}"
+    );
+    assert_eq!(system_one_calls(&guard).await, 0);
+}
+
+#[tokio::test]
+async fn in_monitor_mode_a_gated_match_is_only_logged() {
+    use aiplane_core::server::classification::ClassificationMode;
+    let guard = system_one(Some(0.0)).await;
+    let gate = gate(&guard, "confidential", |config| {
+        config.classification.mode = ClassificationMode::Monitor;
+    })
+    .await;
+    let out = call(
+        &gate,
+        "company_echo",
+        serde_json::json!({"message": "project-falcon"}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        aiplane_runtime::suspend::extract_suspend(&out).is_none(),
+        "{out}"
+    );
+}
+
+#[tokio::test]
+async fn a_hidden_tool_above_its_level_is_refused_when_called() {
+    use aiplane_runtime::server::tools::{ToolRegistry, ToolSource as _};
+    let guard = system_one(Some(0.0)).await;
+    let gate = gate(&guard, "confidential", |_| {}).await;
+    let registry = ToolRegistry::new().with(aiplane_runtime::server::tools::time::CurrentTimestamp);
+    let source = aiplane_runtime::classification_gate::ClassifiedToolSource::new(
+        &registry,
+        gate.source_state.clone(),
+    );
+    let error = source
+        .get("get_current_timestamp")
+        .unwrap()
+        .run(gate.context.clone(), serde_json::json!({}))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("Confidential") && error.contains("not cleared"),
+        "{error}"
+    );
+}
+
+async fn raised_events(gate: &Gate) -> Vec<(String, String, String)> {
+    let state = &gate.source_state;
+    let session = gate.context.session_id.as_deref().unwrap();
+    sqlx::query_as::<_, (String, String, String)>(
+        "SELECT from_level, to_level, cause FROM chat_classification_events WHERE session_id = ? ORDER BY at, rowid",
+    )
+    .bind(session)
+    .fetch_all(&state.db)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn reading_a_classified_collection_raises_the_conversation_with_the_retrieval_cause() {
+    use aiplane_runtime::classification_retrieval::raise_for_collection;
+    let guard = system_one(Some(0.0)).await;
+    let gate = gate(&guard, "internal", |_| {}).await;
+
+    raise_for_collection(&gate.context, 7).await.unwrap();
+
+    let session = gate.context.session_id.as_deref().unwrap();
+    assert_eq!(
+        classification::level_id(&gate.source_state.db, session)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("confidential")
+    );
+    let events = raised_events(&gate).await;
+    assert_eq!(events.last().unwrap().2, "retrieval", "{events:?}");
+}
+
+#[tokio::test]
+async fn an_unrated_collection_and_monitor_mode_leave_the_level_alone() {
+    use aiplane_core::server::classification::ClassificationMode;
+    use aiplane_runtime::classification_retrieval::raise_for_collection;
+    let guard = system_one(Some(0.0)).await;
+    let gate = gate(&guard, "internal", |_| {}).await;
+    raise_for_collection(&gate.context, 99).await.unwrap();
+    assert!(raised_events(&gate).await.is_empty());
+
+    let monitored = self::gate(&guard, "internal", |config| {
+        config.classification.mode = ClassificationMode::Monitor;
+    })
+    .await;
+    raise_for_collection(&monitored.context, 7).await.unwrap();
+    assert!(raised_events(&monitored).await.is_empty());
 }

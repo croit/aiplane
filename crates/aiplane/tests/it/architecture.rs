@@ -834,6 +834,10 @@ const DISPATCHERS: &[(Allowed, Option<&str>)] = &[
 /// Who may call `Tool::run` directly rather than through the runner.
 const DIRECT_TOOL_RUNS: &[Allowed] = &[
     Allowed {
+        path: "aiplane-runtime/src/classification_gate.rs",
+        why: "the classification wrapper hides, gates or lets through a call the grant-narrowed source already resolved, before its inner dispatch",
+    },
+    Allowed {
         path: "aiplane-runtime/src/agents/profile.rs",
         why: "the organization wrapper revalidates the initially granted tool's exact private turn, current principal grants and selected account before inner dispatch",
     },

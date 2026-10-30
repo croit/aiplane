@@ -10,11 +10,11 @@ All tables belong to one migration (`0090_data_classification.sql`).
 |---|---|
 | `classification_levels` | `id`, unique `rank` (0 is the lowest), `name`, `description`, `color`, and the marking fields `marking_text` (visible text), `mip_label_id` (Purview label GUID) and `filename_tag`. A fresh installation holds one level, `public`. |
 | `classification_data_classes` | A class a System One model can recognise: `level_id` (the level the content needs), `action` (`raise`, `confirm`, `block`), and the rule (`rule_question`, positive and negative examples, `rule_threshold`). A class with an empty `rule_question` has no detector. |
-| `classification_terms` | Reserved: the word-list terms of a data class. No code reads it yet. |
-| `classification_markings` | `(kind, value) -> level_id` with `kind` one of `mip` (a Purview label GUID or name), `tscp`, `sensitivity` and `stamp` (visible stamp text). The marking library below reads it; no request path does yet. The filename tag is not a row: it is the level's `filename_tag`. |
-| `classification_assignments` | `(kind, id) -> level_id`, `over` (`hide` or `gate`). `kind` is `pool`, `tool`, `mcp`, `connector` or `collection`; only `pool` is read. A pool's `id` is its name; triggers follow a rename and remove the row on delete. |
+| `classification_terms` | The word-list terms of a data class. Read into one `TermMatcher` per class when the scheme loads; a settings save rebuilds them. |
+| `classification_markings` | `(kind, value) -> level_id` with `kind` one of `mip` (a Purview label GUID or name), `tscp`, `sensitivity` and `stamp` (visible stamp text). Upload detection reads it. The filename tag is not a row: it is the level's `filename_tag`. |
+| `classification_assignments` | `(kind, id) -> level_id`, `over` (`hide` or `gate`). `kind` is `pool`, `tool`, `mcp`, `connector` or `collection`. A pool's `id` is its name; triggers follow a rename and remove the row on delete. A tool's `id` is the tool id, an MCP server's and a connector's the server or connector key, a collection's the numeric collection id (a rename cannot orphan it). A destination without a row is at the lowest level and, for a tool, hidden above it. The rows load with the scheme. |
 | `chat_session_settings.level_id` | The conversation's level. `NULL` means the lowest level. |
-| `chat_classification_events` | One row per raise or lowering: `from_level`, `to_level`, `cause` (`default`, `migration`, `user`, `system_one:<class id>`), `actor`, `reason`. |
+| `chat_classification_events` | One row per raise or lowering: `from_level`, `to_level`, `cause` (`default`, `migration`, `user`, `system_one:<class id>`, `pattern:<class id>`, `terms:<class id>`, `marking:*` as in [Resolution](#resolution-1), `retrieval`), `actor`, `reason`. |
 
 ## Resolution
 
@@ -39,7 +39,7 @@ An installation that never used any of these keeps the single `public` level and
 
 ## Markings, patterns and word lists
 
-The library in `aiplane-features` (`server::classification`) reads what a file or text carries. It takes bytes and strings and returns values; it reads no database and nothing in a request path calls it yet.
+The library in `aiplane-features` (`server::classification`) reads what a file or text carries. It takes bytes and strings and returns values and reads no database; [upload detection](#uploads) and the [tool gate](#tools) call it.
 
 ### Digital markings
 
@@ -121,3 +121,45 @@ Images and unknown binaries have no text. `stamp_matches(text, rules)` returns t
 - The file name tag is `{stem}-{tag}.{ext}`. A tag of any level already on the stem is replaced, never stacked. A restamp replaces the first-line text, the HTML banner and meta tag, the Word header paragraph and the label properties the same way.
 - A document that cannot be rewritten (a damaged package, a part this cannot edit) is an error and the caller decides whether to deliver it unmarked.
 - MIP protection (encryption) is out of scope: the label is metadata only.
+
+## At runtime
+
+Everything below applies to a person's conversation. With one level none of it runs: no file is parsed, no model is asked, no file is marked.
+
+Monitor mode (`classification.mode = monitor`) logs what enforce mode would do and takes no action: nothing is raised, asked or refused by a detector, a collection or the gate. The model filter, the tool filter and the levels a conversation already holds apply in both modes.
+
+### Uploads
+
+When a turn starts, before any model reads the attachments (OCR is a model too), the files attached to the latest message are inspected. Each file gives findings; the conversation rises to the highest one, with a content-free cause.
+
+| Source | Cause |
+|---|---|
+| Digital marking, visible stamp or file name tag mapped by [Resolution](#resolution-1); unreadable or over-size file (64 MiB) | `marking:*` |
+| A built-in pattern of a data class, in the first 1 MiB of text | `pattern:<class id>` |
+| A word of a data class's list | `terms:<class id>` |
+| The System One model, asked about the first 32 KiB of text for the classes above the conversation's level | `system_one:<class id>` |
+
+A class's action applies exactly as for typed text: `raise` raises, `confirm` asks the person before the content goes to the model, `block` refuses the turn. A marking always raises. In monitor mode only the System One question is asked and logged. A failure of the System One model refuses the turn in enforce mode.
+
+After the raise the model check runs as before: a model whose level is below the conversation's is refused unless the person just approved the content for it. The check is repeated at the start of every later round, so a level that rises during a turn (a retrieval) ends the turn at the next round instead of sending the new content to an uncleared model. An approval covers the level the conversation had when it was given.
+
+### Retrieval
+
+`rag_search`, `rag_grep` and the document tools raise the conversation to the level assigned to the collection (cause `retrieval`) before they return a result, and only when they return content. If the level cannot be stored the call fails and the result is withheld. Agent runs never raise.
+
+### Tools
+
+A tool is a destination with a maximum level (see `classification_assignments`). Re-evaluated at the start of every round:
+
+- `over = hide`: above its level the tool is not offered, and a call to it is refused with a message naming the conversation's level.
+- `over = gate`: the tool stays offered. Before each call above its level the arguments are checked for the classes above the tool's level: the patterns and word lists of those classes, then the System One model. No match: the call runs. A match: with `classification.gate_on_match = ask` the call pauses on the ordinary approval prompt, which names the matched classes; with `block` it is refused with a message naming them. If the System One model cannot be reached the call is refused and the message says so. A call approved on the prompt runs without a second check. Nothing is raised: the arguments leave, the conversation does not change.
+
+An unrated tool is at the lowest level and hidden above it. A tool such as `edit_image` has no rule of its own; its assignment decides.
+
+### Generated files
+
+Every file a tool, the sandbox or an MCP spill adds to a conversation goes through `upload_stamped` (`aiplane-runtime`), which marks it with the conversation's level as [Output marking](#output-marking) describes. The architecture test `generated_files_are_stored_only_through_the_stamping_helper` keeps it the only path; the user's own composer upload and the ComfyUI scheduler (images and video, below the runtime layer) are the listed exceptions. A file that cannot be rewritten is stored with the file name tag only and a warning is logged. With one level or at the lowest level the bytes are stored unchanged.
+
+### Stateless requests
+
+`/v1/chat/completions` and agent runs have no conversation to raise. The System One check runs for the classes above the target model's level: a match with action `raise` or `block` refuses the request, `confirm` asks where a person can answer and refuses otherwise.

@@ -215,3 +215,6 @@ share-dialog-save = Save
 cls-turn-not-approved = Content was not approved for sending to the selected model.
 cls-turn-blocked = Content policy prevents sending this request to the selected model. Remove the content the policy names, or ask an administrator which data may be used here.
 cls-turn-model-not-cleared = This conversation is classified { $level }; the selected model is not cleared for it. Choose a model that is cleared for that level.
+cls-tool-hidden = { $tool } is not available in this conversation, which is classified { $level }; the tool is not cleared for that level. Use another tool, or continue in a new conversation.
+cls-gate-blocked = { $tool } was not called: its arguments contain data of class { $classes }, which the tool is not cleared for. Remove that data from the arguments or use another tool.
+cls-gate-unavailable = { $tool } was not called: the model that checks its arguments could not be reached, so nothing leaves the conversation unchecked. Retry later or ask an administrator to check the System One model.

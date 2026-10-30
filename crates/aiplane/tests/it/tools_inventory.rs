@@ -92,6 +92,8 @@ const DYNAMIC_ID_IMPLS: &[&str] = &[
     "aiplane-runtime/src/server/tools/mcp/manager.rs",
     // comfyui_<workflow>
     "aiplane-runtime/src/server/comfyui_tool.rs",
+    // ClassifiedTool — delegates to the wrapped tool
+    "aiplane-runtime/src/classification_gate.rs",
     // AskFirst — delegates to the wrapped tool
     "aiplane-runtime/src/server/tools/ask_first.rs",
     // ActionPolicy preserves the wrapped tool's id.

@@ -25,7 +25,7 @@ A **pool** has a name, a `kind` (`chat` | `transcription` | `embedding` | `image
 
 A **backend** can belong to one or more pools and carries a name, base URL, an API key (entered once, stored encrypted; an env-var name can be given as a fallback), weight, max in-flight, health path, client-facing aliases, an optional model list, an optional [extra-header map](#extra-headers), and a capability flag. Each pool gets its own runtime view of that backend, so pool-specific model policy stays isolated even when the name, URL, and credentials are shared:
 
-- **Supports image editing** (`supports_edit`, default off). Marks an image backend as capable of editing. The `edit_image` tool is only registered when some image backend sets this, and is otherwise not restricted by classification level.
+- **Supports image editing** (`supports_edit`, default off). Marks an image backend as capable of editing. The `edit_image` tool is only registered when some image backend sets this, and, like every tool, carries a classification level: see [data classification](classification.md#tools).
 
 ### Extra headers
 

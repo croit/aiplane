@@ -83,6 +83,7 @@ async fn open(
         .collection_store(rref.id, &rref.data_uuid)
         .await
         .map_err(|e| ToolError::Failed(format!("opening collection store: {e}")))?;
+    crate::rag::raise_for_retrieval(ctx, collection.id).await?;
     Ok((collection, store, profile))
 }
 

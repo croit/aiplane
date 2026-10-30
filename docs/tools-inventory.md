@@ -21,6 +21,10 @@ sandbox tools when their service is absent. Their switches are disabled and
 link to the relevant setup page. Tools that need storage, knowledge indexing,
 or notification setup also show when that prerequisite is missing.
 
+With [data classification](classification.md#tools) active, every tool listed
+here also has a maximum level per assignment, hidden or gated above it in a
+conversation. An unrated tool is at the lowest level and hidden above it.
+
 ## Always registered
 
 No configuration required. A tool here can still fail at runtime when its

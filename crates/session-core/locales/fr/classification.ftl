@@ -215,3 +215,6 @@ share-dialog-save = Enregistrer
 cls-turn-not-approved = Le contenu n'a pas été approuvé pour l'envoi au modèle sélectionné.
 cls-turn-blocked = La politique de contenu interdit d'envoyer cette requête au modèle sélectionné. Retirez le contenu désigné par la politique ou demandez à un administrateur quelles données peuvent être utilisées ici.
 cls-turn-model-not-cleared = Cette conversation est classée { $level } ; le modèle sélectionné n'est pas habilité pour ce niveau. Choisissez un modèle habilité pour ce niveau.
+cls-tool-hidden = { $tool } n'est pas disponible dans cette conversation, classée { $level } : l'outil n'est pas habilité pour ce niveau. Utilisez un autre outil ou continuez dans une nouvelle conversation.
+cls-gate-blocked = { $tool } n'a pas été appelé : ses arguments contiennent des données de la classe { $classes }, pour laquelle l'outil n'est pas habilité. Retirez ces données des arguments ou utilisez un autre outil.
+cls-gate-unavailable = { $tool } n'a pas été appelé : le modèle qui vérifie ses arguments est injoignable, donc rien ne quitte la conversation sans contrôle. Réessayez plus tard ou demandez à un administrateur de vérifier le modèle System One.

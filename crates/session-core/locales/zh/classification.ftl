@@ -215,3 +215,6 @@ share-dialog-save = 保存
 cls-turn-not-approved = 该内容未获批准发送到所选模型。
 cls-turn-blocked = 内容策略禁止将此请求发送到所选模型。请删除策略指出的内容，或向管理员询问此处可使用哪些数据。
 cls-turn-model-not-cleared = 此对话的分级为 { $level }；所选模型未获准处理该级别。请选择已获准处理该级别的模型。
+cls-tool-hidden = { $tool } 在此对话中不可用：对话的密级为 { $level }，而该工具未获准处理此密级。请改用其他工具，或在新对话中继续。
+cls-gate-blocked = { $tool } 未被调用：其参数包含类别为 { $classes } 的数据，而该工具未获准处理此类数据。请从参数中移除这些数据，或改用其他工具。
+cls-gate-unavailable = { $tool } 未被调用：负责检查其参数的模型无法连接，因此不会有未经检查的内容离开对话。请稍后重试，或请管理员检查 System One 模型。

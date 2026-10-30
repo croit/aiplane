@@ -1287,7 +1287,15 @@ async fn run_one_turn(
     // An agent run's synthetic tools are no grant: they sit over the
     // grant-narrowed source, never inside it.
     let live_state = Arc::new((**d.state).clone());
-    let tool_source = policy.tool_source(&granted_source, &live_state);
+    let classified_source =
+        crate::classification_gate::ClassifiedToolSource::new(&granted_source, live_state.clone());
+    let person_chat =
+        d.tool_ctx.agent.is_none() && d.persona.is_none() && d.tool_ctx.session_id.is_some();
+    let tool_source = if person_chat {
+        policy.tool_source(&classified_source, &live_state)
+    } else {
+        policy.tool_source(&granted_source, &live_state)
+    };
     let context_grants = if d.tool_ctx.personal_agent.is_some() {
         tool_source.ids()
     } else {
@@ -1407,28 +1415,12 @@ async fn run_one_turn(
     // picker filtered the list. The check runs on the resolved model so an
     // automatic route is judged by the target it actually picked. A user who
     // just approved this turn's content for the model has overridden it.
-    if !approved_by_user
-        && !d
-            .state
-            .model_cleared_for_session(&ctx.session_id, &real_model, &access)
-            .await
-    {
-        let scheme = d.state.scheme();
-        let conversation = scheme.level_or_lowest(
-            aiplane_core::server::classification::level_id(&d.state.db, &ctx.session_id)
-                .await
-                .ok()
-                .flatten()
-                .as_deref(),
-        );
-        return Err(TurnError::Upstream {
-            message: t_args(
-                Lang::En,
-                "cls-turn-model-not-cleared",
-                &args([("level", conversation.name.clone().into())]),
-            ),
-        });
-    }
+    let approved_rank = if approved_by_user {
+        Some(conversation_rank(d, &ctx.session_id).await)
+    } else {
+        ensure_model_cleared(d, &ctx.session_id, &real_model, &access).await?;
+        None
+    };
 
     let effort = Effort::from_db(
         aiplane_core::server::db::chat_session_settings::get_effort(&d.state.db, &ctx.session_id)
@@ -1676,6 +1668,15 @@ async fn run_one_turn(
                 limit_hit = Some(limit);
             }
         }
+        if round > start_round {
+            match approved_rank {
+                None => ensure_model_cleared(d, &ctx.session_id, &real_model, &access).await?,
+                Some(approved) if conversation_rank(d, &ctx.session_id).await > approved => {
+                    ensure_model_cleared(d, &ctx.session_id, &real_model, &access).await?;
+                }
+                Some(_) => {}
+            }
+        }
         let final_round = round + 1 == max_rounds || limit_hit.is_some();
 
         // Build the request. `stream: true` so we can forward
@@ -1713,6 +1714,19 @@ async fn run_one_turn(
         // Resolved every round: a person's mid-turn `enable_tools` call
         // surfaces the newly-enabled schemas on the next one.
         let mut allowed_tools = policy.offer(d, &ctx.session_id, &user_mcp, &granted).await;
+        if person_chat && live_state.scheme().is_active() {
+            let rank = crate::classification_gate::conversation_rank(
+                &tool_ctx,
+                &live_state.scheme(),
+                &ctx.session_id,
+            )
+            .await;
+            crate::classification_gate::retain_visible(
+                &live_state.scheme(),
+                rank,
+                &mut allowed_tools,
+            );
+        }
         if final_round && !closing {
             policy.narrow_final_offer(&mut allowed_tools, &tool_source);
         }
@@ -3598,6 +3612,47 @@ fn inject_ocr_blocks(messages: &mut [serde_json::Value], blocks: &[String]) -> b
         blocks.join("\n\n")
     ));
     true
+}
+
+async fn conversation_rank(d: &OpenAiDriver, session_id: &str) -> u32 {
+    let scheme = d.state.scheme();
+    let stored = aiplane_core::server::classification::level_id(&d.state.db, session_id)
+        .await
+        .ok()
+        .flatten();
+    scheme.level_or_lowest(stored.as_deref()).rank
+}
+
+/// Refuse the turn when the conversation's level has outgrown the model: the
+/// level can rise while a turn runs, when a retrieval or an upload reveals
+/// more than the first message did.
+async fn ensure_model_cleared(
+    d: &OpenAiDriver,
+    session_id: &str,
+    model: &str,
+    access: &aiplane_core::server::upstreams::PoolAccess,
+) -> Result<(), TurnError> {
+    if d.state
+        .model_cleared_for_session(session_id, model, access)
+        .await
+    {
+        return Ok(());
+    }
+    let scheme = d.state.scheme();
+    let conversation = scheme.level_or_lowest(
+        aiplane_core::server::classification::level_id(&d.state.db, session_id)
+            .await
+            .ok()
+            .flatten()
+            .as_deref(),
+    );
+    Err(TurnError::Upstream {
+        message: t_args(
+            Lang::En,
+            "cls-turn-model-not-cleared",
+            &args([("level", conversation.name.clone().into())]),
+        ),
+    })
 }
 
 /// Turn what the classification check decided into the turn's course: `true`

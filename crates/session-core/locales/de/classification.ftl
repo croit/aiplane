@@ -215,3 +215,6 @@ share-dialog-save = Speichern
 cls-turn-not-approved = Der Inhalt wurde nicht für den Versand an das gewählte Modell freigegeben.
 cls-turn-blocked = Die Inhaltsrichtlinie verbietet es, diese Anfrage an das gewählte Modell zu senden. Entfernen Sie den von der Richtlinie genannten Inhalt oder fragen Sie eine Administration, welche Daten hier verwendet werden dürfen.
 cls-turn-model-not-cleared = Diese Unterhaltung ist als { $level } eingestuft; das gewählte Modell ist dafür nicht freigegeben. Wählen Sie ein Modell, das für diese Stufe freigegeben ist.
+cls-tool-hidden = { $tool } ist in dieser Unterhaltung nicht verfügbar: Sie ist als { $level } eingestuft und das Werkzeug ist dafür nicht freigegeben. Nutze ein anderes Werkzeug oder fahre in einer neuen Unterhaltung fort.
+cls-gate-blocked = { $tool } wurde nicht aufgerufen: Die Argumente enthalten Daten der Klasse { $classes }, für die das Werkzeug nicht freigegeben ist. Entferne diese Daten aus den Argumenten oder nutze ein anderes Werkzeug.
+cls-gate-unavailable = { $tool } wurde nicht aufgerufen: Das Modell, das die Argumente prüft, war nicht erreichbar, daher verlässt nichts ungeprüft die Unterhaltung. Versuche es später erneut oder bitte eine Administratorin, das System-One-Modell zu prüfen.
