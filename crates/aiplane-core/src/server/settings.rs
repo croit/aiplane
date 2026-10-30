@@ -515,6 +515,7 @@ pub static SECTIONS: &[SectionSpec] = &[
             f("classification.output.visible", Kind::Bool),
             f("classification.output.metadata", Kind::Bool),
             f("classification.output.filename", Kind::Bool),
+            f("classification.mip_tenant_id", Kind::Text),
         ],
     },
     SectionSpec {
@@ -1053,6 +1054,7 @@ pub fn apply(settings: &Settings, config: &mut Config) {
         unreadable_level: settings.text_or("classification.unreadable_level", ""),
         system_one_model: settings.text_or("classification.system_one_model", ""),
         mode: ClassificationMode::parse(&settings.text_or("classification.mode", "enforce")),
+        mip_tenant_id: settings.text_or("classification.mip_tenant_id", ""),
         output: OutputMarking {
             visible: settings.bool("classification.output.visible", false),
             metadata: settings.bool("classification.output.metadata", false),
@@ -1585,6 +1587,7 @@ pub fn snapshot(c: &Config) -> Vec<(String, String)> {
         "classification.output.filename",
         cl.output.filename.to_string(),
     );
+    put("classification.mip_tenant_id", cl.mip_tenant_id.clone());
 
     put("feedback.enabled", fb.is_some().to_string());
     put(
@@ -1805,11 +1808,19 @@ mod tests {
                 ("classification.system_one_model", "guard"),
                 ("classification.mode", "monitor"),
                 ("classification.output.filename", "true"),
+                (
+                    "classification.mip_tenant_id",
+                    "72f988bf-86f1-41af-91ab-2d7cd011db47",
+                ),
             ]),
             &mut config,
         );
         assert_eq!(config.classification.lowering, Lowering::WithReason);
         assert_eq!(config.classification.mode, ClassificationMode::Monitor);
+        assert_eq!(
+            config.classification.mip_tenant_id,
+            "72f988bf-86f1-41af-91ab-2d7cd011db47"
+        );
         assert!(config.classification.output.filename);
         for (key, expected) in [
             ("classification.default_level", "internal"),

@@ -2589,6 +2589,8 @@ export const ru: Catalog = {
  "settings-f-classification-lowering-help": "Можно ли снова понизить уровень беседы после его повышения.",
  "settings-f-classification-lowering-opt-never": "Никогда",
  "settings-f-classification-lowering-opt-with_reason": "С причиной, с записью в журнал",
+ "settings-f-classification-mip_tenant_id": "Идентификатор клиента Microsoft Purview",
+ "settings-f-classification-mip_tenant_id-help": "Идентификатор клиента (сайта), записываемый в свойства метки MIP созданных документов. Пустое значение записывает пустой идентификатор сайта.",
  "settings-f-classification-mode": "Режим обнаружения",
  "settings-f-classification-mode-help": "Наблюдение записывает находки детектора и ничего не меняет; Принудительно повышает уровень бесед и применяет действие класса.",
  "settings-f-classification-mode-opt-enforce": "Принудительно",

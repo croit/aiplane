@@ -336,3 +336,5 @@ settings-f-classification-output-metadata = Kennzeichnung in Metadaten der Ausga
 settings-f-classification-output-metadata-help = Die Stufe in die Metadaten erzeugter Dokumente schreiben.
 settings-f-classification-output-filename = Stufe im Dateinamen
 settings-f-classification-output-filename-help = Das Dateinamen-Kürzel der Stufe an erzeugte Dateien anhängen.
+settings-f-classification-mip_tenant_id = Microsoft-Purview-Mandanten-ID
+settings-f-classification-mip_tenant_id-help = Die Mandanten-ID (Site-ID), die in die MIP-Label-Eigenschaften erzeugter Dokumente geschrieben wird. Leer schreibt eine leere Site-ID.

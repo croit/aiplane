@@ -2567,6 +2567,8 @@ export const en: Catalog = {
  "settings-f-classification-lowering-help": "Whether a conversation's level may be lowered again after it was raised.",
  "settings-f-classification-lowering-opt-never": "Never",
  "settings-f-classification-lowering-opt-with_reason": "With a reason, audited",
+ "settings-f-classification-mip_tenant_id": "Microsoft Purview tenant id",
+ "settings-f-classification-mip_tenant_id-help": "The tenant (site) id written into the MIP label properties of generated documents. Empty writes an empty site id.",
  "settings-f-classification-mode": "Detection mode",
  "settings-f-classification-mode-help": "Monitor logs what the detector finds and changes nothing; enforce raises conversations and applies the class action.",
  "settings-f-classification-mode-opt-enforce": "Enforce",

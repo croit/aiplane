@@ -336,3 +336,5 @@ settings-f-classification-output-metadata = Marquage dans les métadonnées de l
 settings-f-classification-output-metadata-help = Écrire le niveau dans les métadonnées des documents générés.
 settings-f-classification-output-filename = Niveau dans les noms de fichiers
 settings-f-classification-output-filename-help = Ajouter l'étiquette de nom de fichier du niveau aux fichiers générés.
+settings-f-classification-mip_tenant_id = Identifiant du locataire Microsoft Purview
+settings-f-classification-mip_tenant_id-help = L'identifiant du locataire (site) écrit dans les propriétés d'étiquette MIP des documents générés. Vide écrit un identifiant de site vide.

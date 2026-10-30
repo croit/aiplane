@@ -5,7 +5,10 @@ use std::collections::HashMap;
 
 use sqlx::Row;
 
-use super::scheme::{Action, Assignment, DataClass, DestinationKind, Level, Over, Rule, Scheme};
+use super::scheme::{
+    Action, Assignment, DataClass, DestinationKind, Level, MarkingKind, MarkingRule, Over, Rule,
+    Scheme,
+};
 use crate::server::db::{DbError, Pool};
 
 fn decode(column: &'static str, value: &str) -> DbError {
@@ -18,7 +21,8 @@ fn decode(column: &'static str, value: &str) -> DbError {
 /// Read the whole scheme: the snapshot hot paths use instead of the database.
 pub async fn load_scheme(db: &Pool) -> Result<Scheme, DbError> {
     let levels = sqlx::query(
-        "SELECT id, rank, name, description, color FROM classification_levels ORDER BY rank",
+        "SELECT id, rank, name, description, color, marking_text, mip_label_id,
+                filename_tag FROM classification_levels ORDER BY rank",
     )
     .fetch_all(db)
     .await?
@@ -30,6 +34,9 @@ pub async fn load_scheme(db: &Pool) -> Result<Scheme, DbError> {
             name: row.try_get("name")?,
             description: row.try_get("description")?,
             color: row.try_get("color")?,
+            marking_text: row.try_get("marking_text")?,
+            mip_label_id: row.try_get("mip_label_id")?,
+            filename_tag: row.try_get("filename_tag")?,
         })
     })
     .collect::<Result<Vec<_>, sqlx::Error>>()?;
@@ -59,6 +66,25 @@ pub async fn load_scheme(db: &Pool) -> Result<Scheme, DbError> {
         });
     }
     Ok(Scheme::new(levels, classes))
+}
+
+/// Every marking-to-level mapping.
+pub async fn marking_rules(db: &Pool) -> Result<Vec<MarkingRule>, DbError> {
+    let mut out = Vec::new();
+    for row in sqlx::query(
+        "SELECT kind, value, level_id FROM classification_markings ORDER BY kind, value",
+    )
+    .fetch_all(db)
+    .await?
+    {
+        let kind: String = row.try_get("kind")?;
+        out.push(MarkingRule {
+            kind: MarkingKind::parse(&kind).ok_or_else(|| decode("kind", &kind))?,
+            value: row.try_get("value")?,
+            level_id: row.try_get("level_id")?,
+        });
+    }
+    Ok(out)
 }
 
 /// Every destination assignment.
@@ -144,5 +170,29 @@ mod tests {
         let all = assignments(&db).await.unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].over, Over::Hide);
+    }
+
+    #[tokio::test]
+    async fn marking_rules_are_read_back_by_kind() {
+        let db = open(Path::new(":memory:")).await.unwrap();
+        sqlx::query(
+            "INSERT INTO classification_levels (id, rank, name) VALUES ('secret', 1, 'Secret');
+             INSERT INTO classification_markings (kind, value, level_id)
+             VALUES ('mip', '9fbde396-1a24-4c79-8edf-9254a0f35055', 'secret'),
+                    ('stamp', 'VERTRAULICH', 'secret');",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        let rules = marking_rules(&db).await.unwrap();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].kind, MarkingKind::Mip);
+        assert_eq!(rules[1].value, "VERTRAULICH");
+        assert!(
+            sqlx::query("INSERT INTO classification_markings VALUES ('filename', 'x', 'secret')")
+                .execute(&db)
+                .await
+                .is_err()
+        );
     }
 }

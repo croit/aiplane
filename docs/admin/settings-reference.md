@@ -23,6 +23,7 @@ Category: **Access**.
 | `classification.output.visible` | Boolean | Stamp the level's marking text onto generated documents. Ships off. | No |
 | `classification.output.metadata` | Boolean | Write the level into the metadata of generated documents. Ships off. | No |
 | `classification.output.filename` | Boolean | Add the level's file name tag to generated files. Ships off. | No |
+| `classification.mip_tenant_id` | Text | Microsoft Purview tenant (site) id written into the MIP label properties of generated documents. Empty writes an empty site id. | No |
 
 The level fields name a level id from the `classification_levels` table; an empty or unknown id resolves to the lowest level. The detector sends the request messages to the selected System One model, so assess its own pool before selecting it. See [data classification](settings.md#data-classification).
 

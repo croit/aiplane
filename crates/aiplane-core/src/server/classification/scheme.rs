@@ -11,6 +11,9 @@ pub struct Level {
     pub description: String,
     /// A daisyUI semantic colour: `neutral`, `info`, `success`, `warning` or `error`.
     pub color: String,
+    pub marking_text: String,
+    pub mip_label_id: String,
+    pub filename_tag: String,
 }
 
 /// What a detector does when it recognises a data class that the target is
@@ -59,6 +62,46 @@ pub struct DataClass {
     pub level_id: String,
     pub rule: Option<Rule>,
     pub action: Action,
+}
+
+/// Where a digital marking sits: a Microsoft Purview label (GUID or name), a
+/// TSCP business authorization category, an e-mail `Sensitivity` header, or a
+/// visible stamp text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkingKind {
+    Mip,
+    Tscp,
+    Sensitivity,
+    Stamp,
+}
+
+impl MarkingKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Mip => "mip",
+            Self::Tscp => "tscp",
+            Self::Sensitivity => "sensitivity",
+            Self::Stamp => "stamp",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "mip" => Some(Self::Mip),
+            "tscp" => Some(Self::Tscp),
+            "sensitivity" => Some(Self::Sensitivity),
+            "stamp" => Some(Self::Stamp),
+            _ => None,
+        }
+    }
+}
+
+/// One mapping from a marking value to the level it means.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkingRule {
+    pub kind: MarkingKind,
+    pub value: String,
+    pub level_id: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,6 +182,9 @@ impl Default for Scheme {
                 name: "Public".into(),
                 description: String::new(),
                 color: "success".into(),
+                marking_text: String::new(),
+                mip_label_id: String::new(),
+                filename_tag: String::new(),
             }],
             classes: Vec::new(),
         }
@@ -220,6 +266,9 @@ mod tests {
             name: id.into(),
             description: String::new(),
             color: "neutral".into(),
+            marking_text: String::new(),
+            mip_label_id: String::new(),
+            filename_tag: String::new(),
         }
     }
 

@@ -44,7 +44,7 @@ CREATE TABLE classification_terms (
 ) STRICT;
 
 CREATE TABLE classification_markings (
-    kind     TEXT NOT NULL CHECK (kind IN ('mip', 'tscp', 'sensitivity', 'stamp', 'filename')),
+    kind     TEXT NOT NULL CHECK (kind IN ('mip', 'tscp', 'sensitivity', 'stamp')),
     value    TEXT NOT NULL,
     level_id TEXT NOT NULL REFERENCES classification_levels(id),
     PRIMARY KEY (kind, value)

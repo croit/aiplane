@@ -1,0 +1,11 @@
+From: Procurement <procurement@example.com>
+To: Finance <finance@example.com>
+Subject: Draft contract
+Date: Thu, 01 Oct 2026 08:00:00 +0000
+Message-ID: <289828b1-ce09-5a1a-9804-d08e3177c28d@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 7bit
+msip_labels: MSIP_Label_9fbde396-1a24-4c79-8edf-9254a0f35055_Enabled=True; MSIP_Label_9fbde396-1a24-4c79-8edf-9254a0f35055_SiteId=72f988bf-86f1-41af-91ab-2d7cd011db47; MSIP_Label_9fbde396-1a24-4c79-8edf-9254a0f35055_SetDate=2026-10-01T08:00:00Z; MSIP_Label_9fbde396-1a24-4c79-8edf-9254a0f35055_Name=Confidential; MSIP_Label_9fbde396-1a24-4c79-8edf-9254a0f35055_ContentBits=0; MSIP_Label_9fbde396-1a24-4c79-8edf-9254a0f35055_Method=Standard;
+
+Draft contract attached tomorrow.

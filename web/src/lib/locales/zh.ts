@@ -2546,6 +2546,8 @@ export const zh: Catalog = {
  "settings-f-classification-lowering-help": "对话级别被提高后，是否允许再次降低。",
  "settings-f-classification-lowering-opt-never": "从不",
  "settings-f-classification-lowering-opt-with_reason": "需说明原因并记入审计",
+ "settings-f-classification-mip_tenant_id": "Microsoft Purview 租户 ID",
+ "settings-f-classification-mip_tenant_id-help": "写入所生成文档 MIP 标签属性的租户（站点）ID。留空则写入空的站点 ID。",
  "settings-f-classification-mode": "检测模式",
  "settings-f-classification-mode-help": "监控只记录检测结果而不做任何改变；强制则提高对话级别并执行类别的动作。",
  "settings-f-classification-mode-opt-enforce": "强制",

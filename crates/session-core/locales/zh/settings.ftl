@@ -335,3 +335,5 @@ settings-f-classification-output-metadata = 输出的元数据标记
 settings-f-classification-output-metadata-help = 将级别写入生成文档的元数据。
 settings-f-classification-output-filename = 文件名中的级别
 settings-f-classification-output-filename-help = 为生成的文件加上该级别的文件名标记。
+settings-f-classification-mip_tenant_id = Microsoft Purview 租户 ID
+settings-f-classification-mip_tenant_id-help = 写入所生成文档 MIP 标签属性的租户（站点）ID。留空则写入空的站点 ID。

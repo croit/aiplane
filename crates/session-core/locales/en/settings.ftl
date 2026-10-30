@@ -346,3 +346,5 @@ settings-f-classification-output-metadata = Metadata marking on output
 settings-f-classification-output-metadata-help = Write the level into the metadata of generated documents.
 settings-f-classification-output-filename = Level in file names
 settings-f-classification-output-filename-help = Add the level's file name tag to generated files.
+settings-f-classification-mip_tenant_id = Microsoft Purview tenant id
+settings-f-classification-mip_tenant_id-help = The tenant (site) id written into the MIP label properties of generated documents. Empty writes an empty site id.

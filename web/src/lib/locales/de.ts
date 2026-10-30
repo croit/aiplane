@@ -2567,6 +2567,8 @@ export const de: Catalog = {
  "settings-f-classification-lowering-help": "Ob die Stufe einer Unterhaltung nach dem Anheben wieder gesenkt werden darf.",
  "settings-f-classification-lowering-opt-never": "Nie",
  "settings-f-classification-lowering-opt-with_reason": "Mit Begründung, protokolliert",
+ "settings-f-classification-mip_tenant_id": "Microsoft-Purview-Mandanten-ID",
+ "settings-f-classification-mip_tenant_id-help": "Die Mandanten-ID (Site-ID), die in die MIP-Label-Eigenschaften erzeugter Dokumente geschrieben wird. Leer schreibt eine leere Site-ID.",
  "settings-f-classification-mode": "Erkennungsmodus",
  "settings-f-classification-mode-help": "Überwachen protokolliert, was der Detektor findet, und ändert nichts; Erzwingen hebt Unterhaltungen an und wendet die Aktion der Klasse an.",
  "settings-f-classification-mode-opt-enforce": "Erzwingen",

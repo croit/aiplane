@@ -2567,6 +2567,8 @@ export const es: Catalog = {
  "settings-f-classification-lowering-help": "Si el nivel de una conversación puede bajarse de nuevo tras haberse subido.",
  "settings-f-classification-lowering-opt-never": "Nunca",
  "settings-f-classification-lowering-opt-with_reason": "Con motivo, auditado",
+ "settings-f-classification-mip_tenant_id": "ID de inquilino de Microsoft Purview",
+ "settings-f-classification-mip_tenant_id-help": "El ID de inquilino (sitio) que se escribe en las propiedades de etiqueta MIP de los documentos generados. Vacío escribe un ID de sitio vacío.",
  "settings-f-classification-mode": "Modo de detección",
  "settings-f-classification-mode-help": "Supervisar registra lo que encuentra el detector y no cambia nada; Aplicar sube el nivel de las conversaciones y ejecuta la acción de la clase.",
  "settings-f-classification-mode-opt-enforce": "Aplicar",

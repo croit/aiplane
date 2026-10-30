@@ -5,6 +5,7 @@
 //! so the split didn't have to churn every call site; see the crate docs.
 
 pub mod chat_attachments;
+pub mod classification;
 pub mod comfyui;
 pub mod embeddings;
 pub mod file_refs;

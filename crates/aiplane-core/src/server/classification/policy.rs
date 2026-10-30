@@ -94,6 +94,7 @@ pub struct ClassificationConfig {
     pub unreadable_level: String,
     pub system_one_model: String,
     pub mode: ClassificationMode,
+    pub mip_tenant_id: String,
     pub output: OutputMarking,
 }
 

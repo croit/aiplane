@@ -336,3 +336,5 @@ settings-f-classification-output-metadata = Маркировка в метада
 settings-f-classification-output-metadata-help = Записывать уровень в метаданные созданных документов.
 settings-f-classification-output-filename = Уровень в именах файлов
 settings-f-classification-output-filename-help = Добавлять к созданным файлам метку уровня в имени файла.
+settings-f-classification-mip_tenant_id = Идентификатор клиента Microsoft Purview
+settings-f-classification-mip_tenant_id-help = Идентификатор клиента (сайта), записываемый в свойства метки MIP созданных документов. Пустое значение записывает пустой идентификатор сайта.
