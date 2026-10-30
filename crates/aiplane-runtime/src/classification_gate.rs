@@ -25,7 +25,8 @@ use crate::server::tools::mcp::MCP_ID_PREFIX;
 use crate::server::tools::{
     Tool, ToolAction, ToolActionFuture, ToolContext, ToolError, ToolFuture, ToolPhase, ToolSource,
 };
-use crate::suspend::SuspendRequest;
+use crate::suspend::{Suspend, SuspendRequest};
+use session_core::db::SuspensionKind;
 
 /// The level a tool is cleared for and what happens above it. An MCP tool
 /// takes its connector's assignment, else its server's; a tool without an
@@ -244,14 +245,9 @@ impl Tool for ClassifiedTool {
                 )));
             }
             let config = self.state.config().classification.clone();
-            let decided = matches!(ctx.suspend, crate::suspend::Suspend::Decided(..));
-            let gate = if decided {
-                Gate::Matched(String::new())
-            } else {
-                match self.checked(&ctx, &args).await {
-                    Err(_) if config.mode == ClassificationMode::Monitor => Gate::Clear,
-                    other => other?,
-                }
+            let gate = match self.checked(&ctx, &args).await {
+                Err(_) if config.mode == ClassificationMode::Monitor => Gate::Clear,
+                other => other?,
             };
             let Gate::Matched(classes) = gate else {
                 return self.inner.run(ctx, args).await;
@@ -264,6 +260,14 @@ impl Tool for ClassifiedTool {
                     "cls-gate-blocked",
                     vec![("tool", id), ("classes", classes)],
                 )));
+            }
+            if matches!(
+                ctx.suspend,
+                Suspend::Decided(kind, _) if kind != SuspensionKind::Approval
+            ) {
+                // The call resumes after a pause of the inner tool, which only
+                // ran once this gate had granted the same arguments.
+                return self.inner.run(ctx, args).await;
             }
             let mut request = SuspendRequest::approval(DEFAULT_APPROVAL_TIMEOUT);
             request.message = (!classes.is_empty()).then_some(classes);

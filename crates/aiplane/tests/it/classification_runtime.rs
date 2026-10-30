@@ -713,6 +713,85 @@ async fn a_gated_tool_asks_with_the_matched_class_names_and_runs_once_approved()
 }
 
 #[tokio::test]
+async fn a_call_resumed_after_its_own_tools_approval_runs_under_the_block_policy() {
+    use aiplane_core::server::classification::GateOnMatch;
+    let guard = system_one(Some(0.0)).await;
+    let gate = gate(&guard, "confidential", |config| {
+        config.classification.gate_on_match = GateOnMatch::Block;
+    })
+    .await;
+    let resumed = ToolContext {
+        suspend: aiplane_runtime::suspend::Suspend::Decided(
+            session_core::db::SuspensionKind::Approval,
+            session_core::db::Decision::AllowOnce,
+        ),
+        ..gate.context.clone()
+    };
+    let out = call_with(
+        &gate,
+        &resumed,
+        "company_echo",
+        serde_json::json!({"message": "hello"}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        aiplane_runtime::suspend::extract_suspend(&out).is_none(),
+        "{out}"
+    );
+}
+
+#[tokio::test]
+async fn a_call_resumed_with_a_value_for_its_own_tool_runs_when_its_arguments_are_clean() {
+    let guard = system_one(Some(0.0)).await;
+    let gate = gate(&guard, "confidential", |_| {}).await;
+    let resumed = ToolContext {
+        suspend: aiplane_runtime::suspend::Suspend::Decided(
+            session_core::db::SuspensionKind::SecureInput,
+            session_core::db::Decision::Value {
+                value: serde_json::json!("123456"),
+            },
+        ),
+        ..gate.context.clone()
+    };
+    let out = call_with(
+        &gate,
+        &resumed,
+        "company_echo",
+        serde_json::json!({"message": "hello"}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        aiplane_runtime::suspend::extract_suspend(&out).is_none(),
+        "{out}"
+    );
+}
+
+#[tokio::test]
+async fn a_resumed_call_with_matching_arguments_runs_when_the_decision_is_for_another_pause() {
+    let guard = system_one(Some(0.0)).await;
+    let gate = gate(&guard, "confidential", |_| {}).await;
+    let resumed = ToolContext {
+        suspend: aiplane_runtime::suspend::Suspend::Decided(
+            session_core::db::SuspensionKind::SecureInput,
+            session_core::db::Decision::Value {
+                value: serde_json::json!("123456"),
+            },
+        ),
+        ..gate.context.clone()
+    };
+    let outcome = call_with(
+        &gate,
+        &resumed,
+        "company_echo",
+        serde_json::json!({"message": "project-falcon"}),
+    )
+    .await;
+    assert!(outcome.is_ok(), "{outcome:?}");
+}
+
+#[tokio::test]
 async fn a_system_one_match_in_the_arguments_asks_too() {
     let guard = system_one(Some(0.9)).await;
     let gate = gate(&guard, "confidential", |_| {}).await;
