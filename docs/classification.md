@@ -22,7 +22,7 @@ All tables belong to one migration (`0090_data_classification.sql`).
 - The scheme is loaded into an immutable `Scheme` snapshot held in `AppState` and replaced after boot and after every settings save. The admin API reloads it after every change; a change made to the tables by other means takes effect on the next settings save or restart.
 - With one level, `Scheme::is_active` is false: no level is shown, no model is hidden and the detector asks nothing.
 - A model's level is the lowest rank of the pools serving it. Pools without an assignment are at rank 0.
-- A new conversation stores `classification.default_level` only when its rank is above the lowest, with the event cause `default`.
+- A new conversation of a person stores `classification.default_level` only when its rank is above the lowest, with the event cause `default`. This holds for conversations opened in the app and for those a scheduled action or a webhook opens for its owner (`classification_default::apply_default_level`); a run that reuses a conversation keeps that conversation's level. Agent runs have their own conversations and no default.
 - `raise` runs in an immediate transaction and does nothing unless the target is higher. `lower` needs `classification.lowering = with_reason` and a non-empty reason. Both write an event.
 
 ## Administration API

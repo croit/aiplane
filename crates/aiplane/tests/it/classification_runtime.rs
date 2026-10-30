@@ -1770,3 +1770,73 @@ async fn without_a_classification_scheme_the_title_does_not_wait_for_the_turn() 
     }
     panic!("the title waited for a turn although nothing is classified");
 }
+
+#[tokio::test]
+async fn a_conversation_a_background_run_opens_starts_at_the_policys_default_level() {
+    use aiplane_runtime::server::headless::{OpenParams, Owner, open_user_session};
+    let upstream = chat_upstream().await;
+    let s3 = object_store().await;
+    let state = state_with(&upstream.uri(), &s3.uri(), true, "", |config| {
+        config.classification.default_level = "internal".into();
+    })
+    .await;
+    common::seed_session(&state, "alice", "alice@example.com").await;
+
+    let (fresh, _) = open_user_session(
+        &state,
+        OpenParams {
+            owner: Owner::User("alice"),
+            title: "nightly",
+            prompt: "summarise",
+            model: "low-model",
+            existing_session: None,
+            personal_agent_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        classification::level_id(&state.db, &fresh)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("internal")
+    );
+    assert_eq!(events(&state, &fresh).await[0].2, "default");
+
+    chat::finalize_turn(
+        &state.db,
+        &chat::list_turns(&state.db, &fresh).await.unwrap()[1]
+            .turn
+            .id,
+        chat::TurnStatus::Completed,
+        None,
+    )
+    .await
+    .unwrap();
+    classification::set_level(&state.db, &fresh, "confidential")
+        .await
+        .unwrap();
+    let (reused, _) = open_user_session(
+        &state,
+        OpenParams {
+            owner: Owner::User("alice"),
+            title: "nightly",
+            prompt: "again",
+            model: "low-model",
+            existing_session: Some(fresh.clone()),
+            personal_agent_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(reused, fresh);
+    assert_eq!(
+        classification::level_id(&state.db, &fresh)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("confidential"),
+        "a reused conversation keeps its own level"
+    );
+}

@@ -190,22 +190,12 @@ async fn apply_default_level(
     session: &chat::Session,
     created: bool,
 ) -> Result<(), aiplane_core::server::db::DbError> {
-    use aiplane_core::server::classification;
-    let scheme = state.scheme();
-    if !created || !scheme.is_active() {
+    if !created {
         return Ok(());
     }
-    let level = scheme.resolve(&state.config().classification.default_level);
-    if level.rank == 0 {
-        return Ok(());
-    }
-    classification::set_level(&state.db, &session.id, &level.id).await?;
-    classification::record_event(
-        &state.db,
+    aiplane_runtime::classification_default::apply_default_level(
+        state,
         &session.id,
-        &scheme.lowest().id,
-        &level.id,
-        "default",
         &session.user_id,
     )
     .await
