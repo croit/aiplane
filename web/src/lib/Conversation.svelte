@@ -18,6 +18,9 @@
 	import { me } from '#lib/session.svelte.js';
 	import { renderWelcome } from '#lib/welcome.js';
 	import { locale, t, time, n } from '#lib/i18n.svelte.js';
+	import { chatClassificationApi, type ChatClassification } from '#lib/classification.js';
+	import LevelSelector from '#lib/components/chat/LevelSelector.svelte';
+	import ShareDialog from '#lib/components/sharing/ShareDialog.svelte';
 	import ConversationHeader from '#lib/components/chat/ConversationHeader.svelte';
 	import DictationButton from '#lib/components/chat/DictationButton.svelte';
 	import CapabilityPicker from '#lib/components/chat/CapabilityPicker.svelte';
@@ -40,6 +43,10 @@
 
 	let controller = $state<ReturnType<typeof createConversationController> | null>(null);
 	let session = $state<ChatSession | null>(null);
+	let classification = $state<ChatClassification | null>(null);
+	// A link is the default until the server says the level forbids one.
+	let linkAllowed = $state(true);
+	let shareDialogOpen = $state(false);
 	let model = $state('');
 	let lastModel: string | null = null;
 	let models = $state<ChatModelChoice[]>([]);
@@ -258,6 +265,7 @@
 			permissions = { can_write: snap.can_write, can_delete: snap.can_delete, delegation: snap.delegation };
 			compactedUpToSeq = snap.compacted_up_to_seq;
 			effort = snap.effort;
+			classification = snap.classification ?? null;
 			welcome = snap.welcome;
 			assets = snap.assets;
 			if (snap.assets.length > 0 && window.innerWidth >= 768) canvasOpen = true;
@@ -269,6 +277,21 @@
 			notice = String(err);
 			return false;
 		}
+	}
+
+	async function loadShares() {
+		if (!canWrite) return;
+		try {
+			linkAllowed = (await chatClassificationApi.shares(id)).link_allowed;
+		} catch {
+			linkAllowed = true;
+		}
+	}
+
+	/** A level change refreshes what depends on it: the badge, the share rule and the models cleared for it. */
+	async function levelChanged() {
+		await Promise.all([loadMeta(), loadModels()]);
+		await loadShares();
 	}
 
 	async function refreshConversationMeta() {
@@ -378,11 +401,13 @@
 		// the end of a turn re-reads the documents as well.
 		c.onTurnFinalized = () => {
 			void refreshConversationMeta();
+			if (classification?.active) void loadModels();
 			void loadDocuments();
 		};
 		controller = c;
 		const meta = loadMeta();
 		void meta.then((loaded) => { if (mounted && loaded) c.attach(); });
+		void meta.then(() => loadShares());
 		void Promise.all([meta, loadModels()]).then(() => { if (mounted) chooseOpeningModel(); });
 		void loadDocuments();
 		// Follow the end as the transcript grows. A ResizeObserver rather than
@@ -960,6 +985,8 @@
 		{canFork}
 		shared={session?.shared ?? false}
 		linkCopied={shareLinkCopied}
+		{classification}
+		{linkAllowed}
 		{models}
 		currency={modelCurrency}
 		bind:model
@@ -971,6 +998,7 @@
 		{hasCanvas}
 		oncanvas={() => (canvasOpen = !canvasOpen)}
 		onshare={toggleShare}
+		onsharepeople={() => (shareDialogOpen = true)}
 		onfork={fork}
 		onspeechvoice={saveSpeechVoice}
 	/>
@@ -1263,9 +1291,15 @@
 <div data-chat-composer class="card mt-3 w-full shrink-0 border border-base-300 bg-base-100/85 backdrop-blur-sm">
 	<div class="flex flex-col gap-1 p-2">
 		{#if paused}<p class="m-0 px-2 text-sm text-warning" role="status">{t('chat-composer-paused')}</p>{/if}
+		{#if classification?.active && models.length === 0}
+			<div class="alert alert-warning alert-soft mx-2 py-2 text-xs" role="alert"><span>{t('cls-chat-no-model')}</span></div>
+		{/if}
 		<div class="flex flex-wrap items-center gap-2">
 			<CapabilityPicker capabilities={tools} onset={setCapability} />
 			<span class="flex-1"></span>
+			{#if classification?.active && classification.level}
+				<LevelSelector sessionId={id} {classification} onchanged={levelChanged} onerror={(message) => (notice = message)} />
+			{/if}
 			<select
 				class="select select-xs w-auto max-w-48"
 				aria-label={t('chat-render-effort-title')}
@@ -1495,4 +1529,8 @@
 			<button onclick={closeVoice}>{t('chat-render-close')}</button>
 		</form>
 	</dialog>
+{/if}
+
+{#if canWrite}
+	<ShareDialog bind:open={shareDialogOpen} sessionId={id} onsaved={async () => { await loadMeta(); await loadShares(); }} />
 {/if}

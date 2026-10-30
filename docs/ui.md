@@ -1176,6 +1176,20 @@ agent builder's test chat and a person's own chat. Its pure half is
   `agents-test-waiting-*`), a `note`, a heading snippet (the inbox's), the
   answer callback, and the error to show.
 - **Strings** are `suspension-*` in `suspension.ftl`.
+## Data classification
+
+`/admin/classification` (an admin sidebar entry) edits the classification scheme described in [`classification.md`](classification.md). `lib/classification.ts` holds the types of `GET`/`PUT /api/v0/admin/classification`, the upload calls and the pure logic (template application, level reordering into contiguous ranks, unrated counts, name-based marking suggestion, the diff, the request body); `components/classification/` holds the steps.
+
+- **One scheme, two views.** With a single level the page shows an intro card and *Set up*. With several it shows the overview: every section of the assistant as a collapsible, one *Save*, and *Run assistant again*.
+- **The assistant** is eight steps (`StepIndicator`) over one client-side draft: start (a template or the current scheme), levels, data classes, markings, destinations, output marking, policy, review. Nothing is sent before *Activate*, which is one `PUT`; the server's validation message is shown on the review step. The review lists what differs from the saved scheme and how many destinations stay unrated (they get the lowest level).
+- **Word lists** upload per saved class: a preview (`?preview=1`, with a column picker for a CSV) shows the count, duplicates and entries that are too short before the list replaces the old one. A new class shows a "save first" hint. *Test with a sample file* runs the saved scheme, not the draft.
+- **Destinations** are rated one kind at a time with a progress bar per kind; rows that were unrated when the step opened come first and stay in place. A pool offers four guidance questions that suggest a level; the rating is the operator's own declaration and the suggestion is applied only on request. A tool, MCP server or connector with `egress` also chooses between hiding and gating.
+- **The System One model** list disables models that are not cleared for the highest level.
+
+In a conversation, `classification.active` shows the level as a daisyUI badge in the header (colour from the level, tooltip the cause of the latest change) and a level selector in the composer toolbar. The selector offers higher levels always and lower ones only when `lowering` is `with_reason`, asking for the reason in a modal; after a change the session and the model list are reloaded, and when no model is cleared for the level the composer shows a warning. Nothing is shown while the scheme is inactive.
+
+*Share* in the conversation header follows the share rule the server reports (`GET …/shares`): where `link_allowed`, the link toggle works as before beside *Share with people*; otherwise the button opens `ShareDialog`, which lists the people and groups with read access and adds more through `SubjectPicker`, the same search the agents' `SharingPanel` uses (`components/sharing/`).
+
 ## Reactive state
 
 Shared state lives in `.svelte.ts` modules exporting `$state` objects, built as factories rather than classes — `$state` in a module closure is the documented universal-reactivity pattern, and the returned object's methods close over it directly.
