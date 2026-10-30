@@ -7,9 +7,10 @@
 	import OutputStep from './OutputStep.svelte';
 	import PolicyStep from './PolicyStep.svelte';
 	import { untrack } from 'svelte';
+	import { page } from '$app/state';
 	import { t } from '#lib/i18n.svelte.js';
 
-	/** The active scheme, every section of the assistant editable in place; one Save replaces the scheme. */
+	/** The active scheme, every section of the assistant on its own tab over one draft; one Save replaces the scheme. */
 	let { saved, onsaved, onassistant }: {
 		saved: ClassificationState;
 		onsaved: (state: ClassificationState) => void;
@@ -21,6 +22,7 @@
 	let done = $state(false);
 	let busy = $state(false);
 	const sections = ['levels', 'classes', 'markings', 'destinations', 'output', 'policy'] as const;
+	const selected = $derived(sections.find((s) => s === page.url.searchParams.get('tab')) ?? sections[0]);
 
 	async function save() {
 		busy = true;
@@ -40,20 +42,19 @@
 </script>
 
 <div class="space-y-4">
-	{#each sections as section, i (section)}
-		<div class="collapse collapse-arrow border border-base-300 bg-base-100">
-			<input type="radio" name="cls-section" checked={i === 0} aria-label={t(`cls-step-${section}`)} />
-			<div class="collapse-title font-semibold">{t(`cls-step-${section}`)}</div>
-			<div class="collapse-content">
-				{#if section === 'levels'}<LevelsStep bind:draft />
-				{:else if section === 'classes'}<ClassesStep bind:draft {saved} />
-				{:else if section === 'markings'}<MarkingsStep bind:draft />
-				{:else if section === 'destinations'}<DestinationsStep bind:draft />
-				{:else if section === 'output'}<OutputStep bind:draft />
-				{:else}<PolicyStep bind:draft models={saved.system_one_models} />{/if}
-			</div>
-		</div>
-	{/each}
+	<nav class="tabs tabs-border w-full overflow-x-auto" aria-label={t('cls-heading')}>
+		{#each sections as section (section)}
+			<a class:tab-active={selected === section} class="tab whitespace-nowrap" href="/admin/classification?tab={section}">{t(`cls-step-${section}`)}</a>
+		{/each}
+	</nav>
+	<div class="min-h-64">
+		{#if selected === 'levels'}<LevelsStep bind:draft />
+		{:else if selected === 'classes'}<ClassesStep bind:draft {saved} />
+		{:else if selected === 'markings'}<MarkingsStep bind:draft />
+		{:else if selected === 'destinations'}<DestinationsStep bind:draft />
+		{:else if selected === 'output'}<OutputStep bind:draft />
+		{:else}<PolicyStep bind:draft models={saved.system_one_models} />{/if}
+	</div>
 	{#if error}<div class="alert alert-error text-sm" role="alert"><span>{error}</span></div>{/if}
 	{#if done}<div class="alert alert-success text-sm" role="status"><span>{t('cls-saved')}</span></div>{/if}
 	<div class="flex flex-wrap items-center justify-between gap-2">

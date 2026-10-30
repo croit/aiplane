@@ -27,9 +27,7 @@
 		{#if assisting}
 			<ClassificationAssistant saved={current} oncancel={() => (assisting = false)} onactivated={(next) => { current = next; assisting = false; }} />
 		{:else if current.active}
-			
-				<ClassificationOverview saved={current} onsaved={(next) => (current = next)} onassistant={() => (assisting = true)} />
-			
+			<ClassificationOverview saved={current} onsaved={(next) => (current = next)} onassistant={() => (assisting = true)} />
 		{:else}
 			<div class="card card-border bg-base-100">
 				<div class="card-body gap-3">
