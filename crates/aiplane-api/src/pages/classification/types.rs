@@ -167,6 +167,9 @@ pub struct PolicyBody {
     pub lowering: String,
     /// `ask` or `block`.
     pub gate_on_match: String,
+    /// Whether a person's approval may send a turn to a model that is not
+    /// cleared for the conversation's level.
+    pub user_override: bool,
     pub link_share_max_level: String,
     pub unknown_label_level: String,
     pub unreadable_level: String,

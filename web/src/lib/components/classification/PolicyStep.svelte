@@ -27,6 +27,13 @@
 			</select>
 			<span class="text-xs text-base-content/60">{t('cls-policy-gate-help')}</span>
 		</label>
+		<label class="flex items-start gap-3">
+			<input type="checkbox" class="toggle toggle-sm mt-0.5" bind:checked={draft.policy.user_override} />
+			<span>
+				<span class="block text-sm font-medium">{t('cls-policy-override')}</span>
+				<span class="block text-xs text-base-content/60">{t('cls-policy-override-help')}</span>
+			</span>
+		</label>
 		<label class="flex flex-col gap-1">
 			<span class="text-sm font-medium">{t('cls-policy-link')}</span>
 			<LevelSelect levels={draft.levels} bind:value={draft.policy.link_share_max_level} ariaLabel={t('cls-policy-link')} />

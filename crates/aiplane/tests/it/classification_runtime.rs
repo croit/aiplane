@@ -943,6 +943,25 @@ async fn send_with(
     String,
     (chat::TurnStatus, String),
 ) {
+    send_with_person(classes_sql, mode, model, message, file, None, true).await
+}
+
+/// `approval`: the person's answer to the content guard prompt, given as
+/// soon as it is shown; `None` leaves nobody listening.
+async fn send_with_person(
+    classes_sql: &str,
+    mode: aiplane_core::server::classification::ClassificationMode,
+    model: &str,
+    message: &str,
+    file: Option<(&str, &str)>,
+    approval: Option<&'static str>,
+    user_override: bool,
+) -> (
+    MockServer,
+    Arc<RamaState>,
+    String,
+    (chat::TurnStatus, String),
+) {
     let upstream = chat_upstream().await;
     let s3 = object_store().await;
     let state = state_with(
@@ -952,12 +971,41 @@ async fn send_with(
         classes_sql,
         move |config| {
             config.classification.mode = mode;
+            config.classification.user_override = user_override;
         },
     )
     .await;
     let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
     let state = Arc::new(state);
     let session = chat::create_session(&state.db, "alice").await.unwrap();
+    if let Some(label) = approval {
+        let mut starts = state.chats.subscribe_starts();
+        let state = state.clone();
+        tokio::spawn(async move {
+            let Ok(started) = starts.recv().await else {
+                return;
+            };
+            let Some((turn_id, mut updates)) =
+                state.chats.subscribe(&started.user_id, &started.session_id)
+            else {
+                return;
+            };
+            while let Ok(update) = updates.recv().await {
+                if matches!(update, session_core::workers::TurnUpdate::Prompt(_)) {
+                    while !state.ask_feedback.resolve(
+                        &turn_id,
+                        aiplane_runtime::server::tools::feedback::AskReply::Answered {
+                            choices: vec![label.to_owned()],
+                            text: None,
+                        },
+                    ) {
+                        tokio::task::yield_now().await;
+                    }
+                    return;
+                }
+            }
+        });
+    }
     let resp = router(state.clone())
         .serve(submit_message(&session.id, &cookie, model, message, file))
         .await
@@ -1107,6 +1155,58 @@ async fn a_confirm_class_without_an_approval_stops_typed_text_and_uploads_alike(
         assert!(error.contains("not approved"), "{error}");
         assert_eq!(chat_requests(&upstream).await, 0);
     }
+}
+
+#[tokio::test]
+async fn an_approved_confirm_sends_to_an_uncleared_model_while_users_may_override() {
+    use aiplane_core::server::classification::ClassificationMode::Enforce;
+    let (upstream, _state, _session, (status, error)) = send_with_person(
+        &iban_class("confirm"),
+        Enforce,
+        "low-model",
+        &format!("pay {IBAN}"),
+        None,
+        Some("approve"),
+        true,
+    )
+    .await;
+    assert_eq!(status, chat::TurnStatus::Completed, "{error}");
+    assert_eq!(chat_requests(&upstream).await, 1);
+}
+
+#[tokio::test]
+async fn an_approved_confirm_still_refuses_an_uncleared_model_when_users_may_not_override() {
+    use aiplane_core::server::classification::ClassificationMode::Enforce;
+    let (upstream, _state, _session, (status, error)) = send_with_person(
+        &iban_class("confirm"),
+        Enforce,
+        "low-model",
+        &format!("pay {IBAN}"),
+        None,
+        Some("approve"),
+        false,
+    )
+    .await;
+    assert_eq!(status, chat::TurnStatus::Errored);
+    assert!(error.contains("not cleared"), "{error}");
+    assert_eq!(chat_requests(&upstream).await, 0);
+}
+
+#[tokio::test]
+async fn an_approved_confirm_reaches_a_cleared_model_when_users_may_not_override() {
+    use aiplane_core::server::classification::ClassificationMode::Enforce;
+    let (upstream, _state, _session, (status, error)) = send_with_person(
+        &iban_class("confirm"),
+        Enforce,
+        "high-model",
+        &format!("pay {IBAN}"),
+        None,
+        Some("approve"),
+        false,
+    )
+    .await;
+    assert_eq!(status, chat::TurnStatus::Completed, "{error}");
+    assert_eq!(chat_requests(&upstream).await, 1);
 }
 
 #[tokio::test]

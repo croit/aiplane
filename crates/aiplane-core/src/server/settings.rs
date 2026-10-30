@@ -736,6 +736,7 @@ pub static STORED_SECTIONS: &[SectionSpec] = &[SectionSpec {
             "classification.gate_on_match",
             Kind::Choice(&["ask", "block"]),
         ),
+        f("classification.user_override", Kind::Bool),
         f("classification.link_share_max_level", Kind::Text),
         f("classification.unknown_label_level", Kind::Text),
         f("classification.unreadable_level", Kind::Text),
@@ -1056,6 +1057,7 @@ pub fn apply(settings: &Settings, config: &mut Config) {
         default_level: settings.text_or("classification.default_level", ""),
         lowering: Lowering::parse(&settings.text_or("classification.lowering", "never")),
         gate_on_match: GateOnMatch::parse(&settings.text_or("classification.gate_on_match", "ask")),
+        user_override: settings.bool("classification.user_override", true),
         link_share_max_level: settings.text_or("classification.link_share_max_level", ""),
         unknown_label_level: settings.text_or("classification.unknown_label_level", ""),
         unreadable_level: settings.text_or("classification.unreadable_level", ""),
@@ -1565,6 +1567,7 @@ pub fn snapshot(c: &Config) -> Vec<(String, String)> {
         "classification.gate_on_match",
         cl.gate_on_match.as_str().to_string(),
     );
+    put("classification.user_override", cl.user_override.to_string());
     put(
         "classification.link_share_max_level",
         cl.link_share_max_level.clone(),
@@ -1804,6 +1807,7 @@ mod tests {
         assert_eq!(unset.classification.lowering, Lowering::Never);
         assert_eq!(unset.classification.gate_on_match, GateOnMatch::Ask);
         assert_eq!(unset.classification.mode, ClassificationMode::Enforce);
+        assert!(unset.classification.user_override);
         assert!(unset.classification.default_level.is_empty());
 
         let mut config = Config::default();
@@ -1812,6 +1816,7 @@ mod tests {
                 ("classification.default_level", "internal"),
                 ("classification.lowering", "with_reason"),
                 ("classification.gate_on_match", "block"),
+                ("classification.user_override", "false"),
                 ("classification.system_one_model", "guard"),
                 ("classification.mode", "monitor"),
                 ("classification.output.filename", "true"),
@@ -1833,6 +1838,7 @@ mod tests {
             ("classification.default_level", "internal"),
             ("classification.lowering", "with_reason"),
             ("classification.gate_on_match", "block"),
+            ("classification.user_override", "false"),
             ("classification.system_one_model", "guard"),
             ("classification.mode", "monitor"),
             ("classification.output.filename", "true"),

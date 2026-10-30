@@ -32,6 +32,7 @@ const policy: Policy = {
 	default_level: 'public',
 	lowering: 'never',
 	gate_on_match: 'ask',
+	user_override: true,
 	link_share_max_level: 'internal',
 	unknown_label_level: 'secret',
 	unreadable_level: 'secret',
@@ -89,7 +90,10 @@ test('a template replaces the scheme but keeps word lists and destination rating
 		markings: [{ kind: 'mip', value: 'x', level_id: 'clear' }],
 		policy: { mode: 'enforce', output: { visible: true, metadata: false, filename: false } }
 	};
-	const draft = applyTemplate(draftFrom(state()), template);
+	const before = state();
+	before.policy.user_override = false;
+	const draft = applyTemplate(draftFrom(before), template);
+	assert.equal(draft.policy.user_override, false);
 	assert.deepEqual(draft.levels.map((l) => l.id), ['clear', 'internal']);
 	assert.equal(draft.classes[0]!.terms.count, 3);
 	assert.equal(draft.classes[0]!.action, 'confirm');

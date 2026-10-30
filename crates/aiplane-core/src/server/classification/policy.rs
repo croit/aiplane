@@ -84,11 +84,14 @@ pub struct OutputMarking {
 /// The operator's classification policy, from the settings rows. Level
 /// settings hold level ids; an empty or unknown id reads as the scheme's
 /// lowest level (see `Scheme::resolve`).
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClassificationConfig {
     pub default_level: String,
     pub lowering: Lowering,
     pub gate_on_match: GateOnMatch,
+    /// Whether a person's approval of confirmed content also lets the turn
+    /// go to a model that is not cleared for the conversation's level.
+    pub user_override: bool,
     pub link_share_max_level: String,
     pub unknown_label_level: String,
     pub unreadable_level: String,
@@ -96,6 +99,24 @@ pub struct ClassificationConfig {
     pub mode: ClassificationMode,
     pub mip_tenant_id: String,
     pub output: OutputMarking,
+}
+
+impl Default for ClassificationConfig {
+    fn default() -> Self {
+        Self {
+            default_level: String::new(),
+            lowering: Lowering::default(),
+            gate_on_match: GateOnMatch::default(),
+            user_override: true,
+            link_share_max_level: String::new(),
+            unknown_label_level: String::new(),
+            unreadable_level: String::new(),
+            system_one_model: String::new(),
+            mode: ClassificationMode::default(),
+            mip_tenant_id: String::new(),
+            output: OutputMarking::default(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -123,6 +144,7 @@ mod tests {
         let config = ClassificationConfig::default();
         assert_eq!(config.lowering, Lowering::Never);
         assert_eq!(config.gate_on_match, GateOnMatch::Ask);
+        assert!(config.user_override);
         assert_eq!(config.mode, ClassificationMode::Enforce);
     }
 }

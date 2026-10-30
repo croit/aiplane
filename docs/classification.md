@@ -176,6 +176,8 @@ Monitor mode (`classification.mode = monitor`) logs what enforce mode would do a
 
 Before a message goes to a model, what the person wrote since the last answer is checked for the classes above the conversation's level, by the same code as an upload's text: the built-in patterns and word lists of those classes first, then the System One model. The operator's system prompt and earlier messages are not checked again (they were checked when sent, and the level only rises). The check runs whatever the selected model is cleared for, because the level outlives the turn: it decides the tools, sharing and the next model. A match raises the conversation (`pattern:<class id>`, `terms:<class id>`, `system_one:<class id>`) and the class's action applies. On `/v1/chat/completions` and in agent runs nothing is stored: everything the client sent except the model's earlier answers is checked for the classes above the target model's level, and a match refuses the request (`confirm` asks where a person can answer).
 
+In a person's chat, an approved `confirm` also lets the turn go to a model that is not cleared for the conversation's level while `classification.user_override` is `true` (the default; a missing row reads as `true`). With `false` the approval confirms the content only: the model-clearance check runs as for any turn, and a model that is not cleared refuses the turn with the usual message, so the person has to pick a cleared model. Later rounds of the turn are checked as for a turn without an approval.
+
 ### Uploads
 
 When a turn starts, before any model reads the attachments (OCR is a model too), the files attached to the latest message are inspected. Each file gives findings; the conversation rises to the highest one, with a content-free cause.

@@ -206,6 +206,7 @@ fn policy_view(state: &RamaState, scheme: &Scheme) -> PolicyBody {
         default_level: scheme.resolve(&policy.default_level).id.clone(),
         lowering: policy.lowering.as_str().to_owned(),
         gate_on_match: policy.gate_on_match.as_str().to_owned(),
+        user_override: policy.user_override,
         link_share_max_level: scheme.resolve(&policy.link_share_max_level).id.clone(),
         unknown_label_level: scheme.resolve(&policy.unknown_label_level).id.clone(),
         unreadable_level: scheme.resolve(&policy.unreadable_level).id.clone(),

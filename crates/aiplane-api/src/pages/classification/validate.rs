@@ -389,6 +389,10 @@ pub fn validate(body: &SaveBody, context: &Context<'_>) -> Result<Replacement, I
                 policy.gate_on_match.clone(),
             ),
             (
+                "classification.user_override".into(),
+                policy.user_override.to_string(),
+            ),
+            (
                 "classification.link_share_max_level".into(),
                 policy.link_share_max_level.clone(),
             ),
@@ -446,6 +450,7 @@ mod tests {
                 default_level: policy.default_level.clone().unwrap_or(first.clone()),
                 lowering: policy.lowering.clone().unwrap_or("never".into()),
                 gate_on_match: policy.gate_on_match.clone().unwrap_or("ask".into()),
+                user_override: true,
                 link_share_max_level: policy.link_share_max_level.clone().unwrap_or(first),
                 unknown_label_level: policy.unknown_label_level.clone().unwrap_or(last.clone()),
                 unreadable_level: policy.unreadable_level.clone().unwrap_or(last),

@@ -284,6 +284,21 @@ async fn saving_the_bsi_template_gives_normal_high_very_high() {
 }
 
 #[tokio::test]
+async fn users_may_override_the_model_clearance_by_default_and_the_choice_round_trips() {
+    let (state, cookie) = setup().await;
+    let (_, current) = get(&state, &cookie, "/api/v0/admin/classification").await;
+    assert_eq!(current["policy"]["user_override"], true);
+
+    let mut body = template_body(&current, "iso");
+    body["policy"]["user_override"] = json!(false);
+    let (status, _) = put(&state, &cookie, &body).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, saved) = get(&state, &cookie, "/api/v0/admin/classification").await;
+    assert_eq!(saved["policy"]["user_override"], false);
+}
+
+#[tokio::test]
 async fn a_refused_save_names_the_field_and_changes_nothing() {
     let (state, cookie) = setup().await;
     let (_, current) = get(&state, &cookie, "/api/v0/admin/classification").await;

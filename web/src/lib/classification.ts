@@ -75,6 +75,7 @@ export interface Policy {
 	default_level: string;
 	lowering: 'never' | 'with_reason';
 	gate_on_match: 'ask' | 'block';
+	user_override: boolean;
 	link_share_max_level: string;
 	unknown_label_level: string;
 	unreadable_level: string;

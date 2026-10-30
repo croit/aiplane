@@ -1415,7 +1415,7 @@ async fn run_one_turn(
     // picker filtered the list. The check runs on the resolved model so an
     // automatic route is judged by the target it actually picked. A user who
     // just approved this turn's content for the model has overridden it.
-    let approved_rank = if approved_by_user {
+    let approved_rank = if approved_by_user && d.state.config().classification.user_override {
         Some(conversation_rank(d, &ctx.session_id).await)
     } else {
         ensure_model_cleared(d, &ctx.session_id, &real_model, &access).await?;
