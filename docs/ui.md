@@ -1195,7 +1195,7 @@ agent builder's test chat and a person's own chat. Its pure half is
 
 In a conversation, `classification.active` shows the level as a daisyUI badge in the header (colour from the level, tooltip the cause of the latest change) and a level selector in the composer toolbar. The selector offers higher levels always and lower ones only when `lowering` is `with_reason`, asking for the reason in a modal; after a change the session and the model list are reloaded, and when no model is cleared for the level the composer shows a warning. In monitor mode, `observed` shows as an info box in the composer: the level the content would require, the matched classes and the chat's level (`cls-chat-observed`). Nothing is shown while the scheme is inactive.
 
-*Share* in the conversation header follows the share rule the server reports (`GET …/shares`): where `link_allowed`, the link toggle works as before beside *Share with people*; otherwise the button opens `ShareDialog`, which lists the people and groups with read access and adds more through `SubjectPicker`, the same search the agents' `SharingPanel` uses (`components/sharing/`).
+*Share* in the conversation header opens `ShareDialog` (`components/sharing/`) with three exclusive choices saved through `PUT …/shares`: not shared, by link (disabled with the reason when the server reports `link_allowed: false`), or only the listed people and groups, added through `SubjectPicker`, the same search the agents' `SharingPanel` uses. Saving the link choice copies the conversation URL (`clipboard.ts`); the button then briefly reads *Link copied*, and *Shared* while the link or any person or group has access.
 
 ## Reactive state
 

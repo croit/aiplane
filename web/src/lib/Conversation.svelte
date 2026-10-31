@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { api, ApiError, EFFORTS, refusalSentence, responseError } from '#lib/api.js';
+	import { api, ApiError, EFFORTS, responseError } from '#lib/api.js';
 	import type { CanvasDocument, ChatAsset, ChatCapability, ChatModelChoice, Effort } from '#lib/api.js';
 	import { createConversationController } from '#lib/chat.svelte.js';
 	import { extensionStatus, onExtensionState, requestActivation } from '#lib/browser-bridge.js';
@@ -45,7 +45,7 @@
 	let session = $state<ChatSession | null>(null);
 	let classification = $state<ChatClassification | null>(null);
 	// A link is the default until the server says the level forbids one.
-	let linkAllowed = $state(true);
+	let sharedWithPeople = $state(false);
 	let shareDialogOpen = $state(false);
 	let model = $state('');
 	let lastModel: string | null = null;
@@ -282,9 +282,9 @@
 	async function loadShares() {
 		if (!canWrite) return;
 		try {
-			linkAllowed = (await chatClassificationApi.shares(id)).link_allowed;
+			sharedWithPeople = (await chatClassificationApi.shares(id)).subjects.length > 0;
 		} catch {
-			linkAllowed = true;
+			sharedWithPeople = false;
 		}
 	}
 
@@ -760,54 +760,10 @@
 	let shareLinkCopied = $state(false);
 	let shareLinkCopiedTimer: number | undefined;
 
-	async function toggleShare() {
-		if (!canWrite) return;
+	function shareSaved(linkCopied: boolean) {
 		window.clearTimeout(shareLinkCopiedTimer);
-		shareLinkCopied = false;
-		const shared = !(session?.shared ?? false);
-		const saved = postJson(`/api/v0/chat/sessions/${id}/share`, { shared }).then(
-			() => true,
-			(err) => {
-				if (err instanceof ApiError && err.code === 'link_sharing_above_limit') {
-					notice = t('share-dialog-link-not-allowed');
-					void loadShares();
-				} else {
-					notice = err instanceof ApiError ? refusalSentence(err, t) : String(err);
-				}
-				return false;
-			}
-		);
-		const copied = shared ? copyLinkOnceShared(saved) : Promise.resolve(false);
-		if (!(await saved)) return;
-		await loadMeta();
-		if (await copied) {
-			shareLinkCopied = true;
-			shareLinkCopiedTimer = window.setTimeout(() => (shareLinkCopied = false), 1500);
-		}
-	}
-
-	/**
-	 * The clipboard write starts inside the click — the browser allows it only
-	 * with the click's user activation, which an awaited round trip can
-	 * outlive — but its content waits for the server: a refused share leaves
-	 * the clipboard as it was rather than holding a link nobody can open.
-	 */
-	async function copyLinkOnceShared(saved: Promise<boolean>): Promise<boolean> {
-		const link = window.location.href;
-		try {
-			if (typeof ClipboardItem === 'undefined') {
-				if (!(await saved)) return false;
-				await navigator.clipboard.writeText(link);
-			} else {
-				const text = saved.then((ok) =>
-					ok ? new Blob([link], { type: 'text/plain' }) : Promise.reject(new Error('the conversation was not shared'))
-				);
-				await navigator.clipboard.write([new ClipboardItem({ 'text/plain': text })]);
-			}
-			return true;
-		} catch {
-			return false;
-		}
+		shareLinkCopied = linkCopied;
+		if (linkCopied) shareLinkCopiedTimer = window.setTimeout(() => (shareLinkCopied = false), 1500);
 	}
 
 	let answering = $state<string | null>(null);
@@ -991,10 +947,9 @@
 		{isOwner}
 		{canWrite}
 		{canFork}
-		shared={session?.shared ?? false}
+		shared={(session?.shared ?? false) || sharedWithPeople}
 		linkCopied={shareLinkCopied}
 		{classification}
-		{linkAllowed}
 		{models}
 		currency={modelCurrency}
 		bind:model
@@ -1005,8 +960,7 @@
 		bind:speechVoice
 		{hasCanvas}
 		oncanvas={() => (canvasOpen = !canvasOpen)}
-		onshare={toggleShare}
-		onsharepeople={() => (shareDialogOpen = true)}
+		onshare={() => (shareDialogOpen = true)}
 		onfork={fork}
 		onspeechvoice={saveSpeechVoice}
 	/>
@@ -1547,5 +1501,5 @@
 {/if}
 
 {#if canWrite}
-	<ShareDialog bind:open={shareDialogOpen} sessionId={id} onsaved={async () => { await loadMeta(); await loadShares(); }} />
+	<ShareDialog bind:open={shareDialogOpen} sessionId={id} onsaved={async (linkCopied) => { await Promise.all([loadMeta(), loadShares()]); shareSaved(linkCopied); }} />
 {/if}

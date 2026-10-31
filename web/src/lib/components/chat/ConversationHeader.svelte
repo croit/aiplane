@@ -14,7 +14,6 @@
 		shared,
 		linkCopied,
 		classification,
-		linkAllowed,
 		models,
 		currency,
 		model = $bindable(),
@@ -26,7 +25,6 @@
 		hasCanvas,
 		oncanvas,
 		onshare,
-		onsharepeople,
 		onfork,
 		onspeechvoice
 	}: {
@@ -38,8 +36,6 @@
 		shared: boolean;
 		linkCopied: boolean;
 		classification: ChatClassification | null;
-		/** Whether the conversation's level lets it be shared by link. */
-		linkAllowed: boolean;
 		models: ChatModelOption[];
 		currency: string;
 		model: string;
@@ -51,7 +47,6 @@
 		hasCanvas: boolean;
 		oncanvas: () => void;
 		onshare: () => void;
-		onsharepeople: () => void;
 		onfork: () => void;
 		onspeechvoice: () => void;
 	} = $props();
@@ -117,13 +112,8 @@
 
 		{#if isOwner && hasCanvas}<button class="btn btn-ghost btn-sm" onclick={oncanvas} aria-label={t('chat-render-canvas-toggle-title')} title={t('chat-render-canvas-toggle-title')}><span aria-hidden="true">▣</span><span class="hidden sm:inline">{t('chat-render-canvas-toggle-label')}</span></button>{/if}
 		{#if canWrite}
-			{#if linkAllowed}
-				<button class="btn btn-ghost btn-sm" onclick={onshare} title={t('chat-render-share-tooltip')}>
-					{linkCopied ? t('chat-render-share-link-copied') : shared ? t('chat-render-share-label-on') : t('chat-render-share-label-off')}
-				</button>
-			{/if}
-			<button class="btn btn-ghost btn-sm" onclick={onsharepeople} title={t('share-people-tooltip')}>
-				{linkAllowed ? t('share-people-label') : t('chat-render-share-label-off')}
+			<button class="btn btn-ghost btn-sm" onclick={onshare} title={t('chat-render-share-tooltip')}>
+				{linkCopied ? t('chat-render-share-link-copied') : shared ? t('chat-render-share-label-on') : t('chat-render-share-label-off')}
 			</button>
 		{:else if canFork}
 			<button class="btn btn-ghost btn-sm" onclick={onfork} title={t('chat-render-fork-tooltip')}>{t('chat-render-fork-label')}</button>

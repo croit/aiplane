@@ -62,7 +62,7 @@ chat-render-close = Fermer
 chat-render-share-label-on = Partagé ✓
 chat-render-share-link-copied = Lien copié ✓
 chat-render-share-label-off = Partager
-chat-render-share-tooltip = Les chats partagés sont lisibles par tout utilisateur connecté disposant du lien
+chat-render-share-tooltip = Partager cette conversation par lien ou avec des personnes et groupes nommés
 
 chat-render-fork-tooltip = Copier cette conversation dans vos propres chats pour continuer à discuter
 chat-render-fork-label = Continuer dans mes chats

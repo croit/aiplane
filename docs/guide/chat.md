@@ -51,9 +51,13 @@ Read the confirmation before proceeding. If you need to retain the original, exp
 
 ## Share and fork
 
-Select the sharing button in the header to enable sharing; where the browser allows clipboard access, the conversation URL is copied and the button briefly shows **Link copied**; without that label nothing was copied. Give that URL to another signed-in user. A link makes the conversation readable by **any signed-in user on the installation**, not a selected recipient list. It is not an anonymous public link.
+Select **Share** in the header to open the share dialog and choose one of three options:
 
-When the administrator has defined [data classification levels](../admin/settings.md#data-classification), a link works only up to the highest level the administrator allows for link sharing. Above it the button opens a dialog where you share the conversation with named people and groups instead; only they can read it. Raising a link-shared conversation above the limit closes the link at once, and your share dialog shows the link as unavailable. Searching for a person or group needs at least two characters.
+- **Not shared**: only you can read the conversation.
+- **By link**: **any signed-in user on the installation** who has the link can read it; it is not an anonymous public link. When you save, the conversation URL is copied where the browser allows clipboard access, and the button briefly shows **Link copied**; without that label nothing was copied. Give that URL to another signed-in user.
+- **Only the following people and groups**: only the people and groups you add can read it. Searching for a person or group needs at least two characters.
+
+While the conversation is shared either way, the button reads **Shared**. When the administrator has defined [data classification levels](../admin/settings.md#data-classification), the link option works only up to the highest level the administrator allows for link sharing; above it the option is unavailable and says why. Raising a link-shared conversation above the limit closes the link at once.
 
 A reader sees a read-only conversation and can select **Fork** to copy it into their own conversations and continue there. Attachment copying is best effort; if the storage copy fails, a fork can retain text with unavailable attachment references. A fork keeps the conversation's level, starts unshared and needs read access to the original. Turning sharing off removes access through the original shared conversation; it does not remove copies already made through Fork.
 

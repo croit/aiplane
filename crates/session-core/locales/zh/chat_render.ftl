@@ -59,7 +59,7 @@ chat-render-close = 关闭
 chat-render-share-label-on = 已共享 ✓
 chat-render-share-link-copied = 链接已复制 ✓
 chat-render-share-label-off = 共享
-chat-render-share-tooltip = 已共享的对话，任何持有链接的已登录用户都可以阅读
+chat-render-share-tooltip = 通过链接或与指定的人员和群组共享此对话
 
 chat-render-fork-tooltip = 将此对话复制到您自己的聊天中，以便继续对话
 chat-render-fork-label = 在我的聊天中继续

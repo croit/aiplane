@@ -62,7 +62,7 @@ chat-render-close = Schließen
 chat-render-share-label-on = Freigegeben ✓
 chat-render-share-link-copied = Link kopiert ✓
 chat-render-share-label-off = Freigeben
-chat-render-share-tooltip = Freigegebene Chats können von jedem angemeldeten Benutzer mit dem Link gelesen werden
+chat-render-share-tooltip = Diese Unterhaltung per Link oder mit benannten Personen und Gruppen teilen
 
 chat-render-fork-tooltip = Diese Unterhaltung in deine eigenen Chats kopieren, um weiterzuchatten
 chat-render-fork-label = In meinen Chats fortsetzen

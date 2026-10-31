@@ -63,7 +63,7 @@ chat-render-close = Закрыть
 chat-render-share-label-on = Открыт доступ ✓
 chat-render-share-link-copied = Ссылка скопирована ✓
 chat-render-share-label-off = Поделиться
-chat-render-share-tooltip = Общие чаты может читать любой авторизованный пользователь, у которого есть ссылка
+chat-render-share-tooltip = Открыть этот разговор по ссылке или для указанных людей и групп
 
 chat-render-fork-tooltip = Скопировать эту беседу в свои чаты, чтобы продолжить общение
 chat-render-fork-label = Продолжить в моих чатах
