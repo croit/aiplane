@@ -339,6 +339,7 @@ mod tests {
                 name: "refund".into(),
                 arguments: "{}".into(),
                 actions: None,
+                rememberable: false,
             },
             tail: Vec::new(),
             budget_used: chat::BudgetUsed::default(),
@@ -347,6 +348,7 @@ mod tests {
             expires_at: t0() + 90 * DAY,
             created_at: t0(),
             run_context: None,
+            bundled_calls: Vec::new(),
         };
         assert!(chat::suspend_turn(&pool, &suspension).await.unwrap());
         last_active(&pool, &waiting, t0()).await;

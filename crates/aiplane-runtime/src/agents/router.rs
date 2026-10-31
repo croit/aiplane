@@ -646,6 +646,7 @@ pub(super) async fn paused_result(
                 expires_at: paused.expires_at,
             }),
             context: None,
+            rememberable: false,
         })));
     }
     Ok(None)

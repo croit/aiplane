@@ -304,7 +304,8 @@ pub struct PendingSuspension {
     pub notified_at: Option<Timestamp>,
 }
 
-const PENDING_SELECT: &str = "SELECT s.turn_id, s.request_id, s.kind, s.message, s.tool_call, \
+const PENDING_SELECT: &str =
+    "SELECT s.turn_id, s.request_id, s.kind, s.message, s.tool_call, s.bundled_calls, \
      s.tail, s.budget_used, s.child_turn, s.on_timeout, s.expires_at, s.created_at, \
      s.run_context, s.notified_at, t.session_id, cs.user_id, cs.principal_id, \
      cs.agent_version, cs.title \
@@ -469,6 +470,7 @@ mod tests {
                 name: "company_echo".into(),
                 arguments: r#"{"message":"hi"}"#.into(),
                 actions: None,
+                rememberable: false,
             },
             tail: vec![serde_json::json!({"role": "assistant", "content": null})],
             budget_used: BudgetUsed {
@@ -482,6 +484,7 @@ mod tests {
             expires_at,
             created_at: Timestamp::now(),
             run_context: None,
+            bundled_calls: Vec::new(),
         }
     }
 

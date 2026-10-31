@@ -3109,6 +3109,8 @@ export const es: Catalog = {
  "suspension-answer-label": "Tu respuesta",
  "suspension-answer-required": "Escribe primero una respuesta.",
  "suspension-approve": "Aprobar una vez",
+ "suspension-approve-all": "Aprobar las {count} una vez",
+ "suspension-approve-conversation": "Permitir siempre en este chat",
  "suspension-browser-error": "Se interrumpió la conexión con el navegador. Inténtalo de nuevo o devuelve el control al agente.",
  "suspension-browser-frame-alt": "Vista actual del navegador del agente",
  "suspension-browser-instructions": "El agente está en pausa. Haz clic o desplázate por la vista del navegador y escribe en el campo activo de abajo. Tus acciones solo se envían a esta sesión del navegador.",

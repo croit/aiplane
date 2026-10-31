@@ -1043,6 +1043,7 @@ pub(crate) fn decision_from(
 ) -> Result<chat::Decision, &'static str> {
     match (kind, value) {
         (chat::DecisionKind::AllowOnce, None) => Ok(chat::Decision::AllowOnce),
+        (chat::DecisionKind::AllowConversation, None) => Ok(chat::Decision::AllowConversation),
         (chat::DecisionKind::Deny, None) => Ok(chat::Decision::Deny {
             reason: chat::DenyReason::User,
         }),

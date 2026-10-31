@@ -34,6 +34,8 @@ For a deliberate change of direction, type the new instruction and select **Inte
 
 A tool can ask a question, request a decision, or pause for approval. Read the question and the available choices. Select an explicit choice when approving an operation; explanatory free text is not a substitute for selecting an approval option.
 
+When the model calls several tools in one step that each need your approval, one card lists all of them, and your answer applies to every call. **Always allow in this chat**, offered for connector tools you set to ask, approves the listed tools for the rest of this conversation: later calls to them here run without asking. A new conversation asks again; to stop being asked anywhere, set the tool to always on your Tools page.
+
 Some questions replace the composer until answered or skipped. A suspended turn holds the conversation until its decision is answered. Shared-conversation readers cannot answer on the owner's behalf. Requests that can be answered through the inbox are also described in [Automation and inbox](automation-and-inbox.md).
 
 Location requests have a dedicated share button and use the browser's permission prompt. Skipping a location request does not grant location access.

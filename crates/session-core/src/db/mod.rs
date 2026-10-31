@@ -326,6 +326,7 @@ mod search;
 mod sessions;
 mod steers;
 pub mod suspensions;
+pub mod tool_approvals;
 mod tool_calls;
 mod turns;
 
@@ -336,6 +337,7 @@ pub use search::*;
 pub use sessions::*;
 pub use steers::*;
 pub use suspensions::*;
+pub use tool_approvals::*;
 pub use tool_calls::*;
 pub use turns::*;
 
@@ -503,12 +505,20 @@ pub(crate) mod tests {
                 FOREIGN KEY (turn_id) REFERENCES chat_turns(id) ON DELETE CASCADE,
                 UNIQUE (turn_id, seq)
             )"#,
+            r#"CREATE TABLE chat_session_tool_approvals (
+                session_id  TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+                tool        TEXT NOT NULL,
+                actions     TEXT NOT NULL,
+                approved_at TEXT NOT NULL,
+                PRIMARY KEY (session_id, tool, actions)
+            ) STRICT"#,
             r#"CREATE TABLE chat_turn_suspensions (
                 turn_id      TEXT PRIMARY KEY NOT NULL REFERENCES chat_turns(id) ON DELETE CASCADE,
                 request_id   TEXT NOT NULL UNIQUE,
                 kind         TEXT NOT NULL,
                 message      TEXT,
                 tool_call    TEXT NOT NULL,
+                bundled_calls TEXT NOT NULL DEFAULT '[]',
                 tail         TEXT NOT NULL,
                 budget_used  TEXT NOT NULL,
                 child_turn   TEXT,

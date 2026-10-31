@@ -23,6 +23,7 @@ use crate::agent_run::AgentRun;
 use crate::server::tools::runner::{self, ToolCallRef, ToolResultRecord};
 use crate::server::tools::{ToolContext, ToolSource, extract_content_parts};
 use crate::suspend::{ChildPause, ResumeFrom, Suspend, SuspendRequest, extract_suspend};
+use session_core::db::SuspensionKind;
 
 /// The answer to a second suspend request in the same round. A turn waits
 /// for one decision at a time; the model can ask again once it has the first.
@@ -44,25 +45,82 @@ pub(super) fn started_at(now: Instant, resume: Option<&ResumeFrom>) -> Instant {
         .unwrap_or(now)
 }
 
-/// The round's pause, if one of its calls asked for a decision. Every other
-/// suspend request in the round is answered with an error in place, so the
-/// rest of the round records and replays as usual.
+/// A round's pause: the call that asked first, and the round's other calls
+/// the same answer settles.
+pub(super) struct Pause {
+    pub call: ToolCallRef,
+    pub request: SuspendRequest,
+    pub bundled: Vec<PendingCall>,
+}
+
+impl Pause {
+    pub(super) fn single(call: ToolCallRef, request: SuspendRequest) -> Self {
+        Self {
+            call,
+            request,
+            bundled: Vec::new(),
+        }
+    }
+
+    /// Whether `call_id` waits on this pause and so has no result yet.
+    pub(super) fn waits_on(&self, call_id: &str) -> bool {
+        self.call.id == call_id || self.bundled.iter().any(|call| call.id == call_id)
+    }
+
+    /// Whether `request` can wait on this pause's answer: plain approvals
+    /// ask the same question of every call, so one answer covers them all.
+    /// Anything else — a message, a sub-agent's pause, its own deadline or
+    /// options — needs its own answer, since the pause keeps only the first
+    /// call's.
+    fn takes(&self, request: &SuspendRequest) -> bool {
+        let first = &self.request;
+        [first, request].iter().all(|r| {
+            r.kind == SuspensionKind::Approval
+                && r.child.is_none()
+                && r.message.is_none()
+                && r.context.is_none()
+        }) && first.timeout_secs == request.timeout_secs
+            && first.on_timeout == request.on_timeout
+            && first.rememberable == request.rememberable
+    }
+}
+
+fn pending_call(call: &ToolCallRef, request: &SuspendRequest) -> PendingCall {
+    PendingCall {
+        id: call.id.clone(),
+        name: call.name.clone(),
+        arguments: call.arguments_raw.clone(),
+        actions: request.actions.clone(),
+        execution_facts: request.execution_facts.clone(),
+        rememberable: request.rememberable,
+    }
+}
+
+/// The round's pause, if one of its calls asked for a decision. Further
+/// approvals join it; every other suspend request in the round is answered
+/// with an error in place, so the rest of the round records and replays as
+/// usual.
 pub(super) fn take_pause(
     d: &OpenAiDriver,
     calls: &[ToolCallRef],
     results: &mut [ToolResultRecord],
-) -> Option<(ToolCallRef, SuspendRequest)> {
-    let mut pause = None;
+) -> Option<Pause> {
+    let mut pause: Option<Pause> = None;
     for (call, result) in calls.iter().zip(results.iter_mut()) {
         let Some(request) = extract_suspend(&result.body) else {
             continue;
         };
         let refusal = if d.tool_ctx.suspend != Suspend::Available {
             CANNOT_PAUSE
-        } else if pause.is_some() {
-            ONE_DECISION_AT_A_TIME
+        } else if let Some(pause) = pause.as_mut() {
+            if !pause.takes(&request) {
+                ONE_DECISION_AT_A_TIME
+            } else {
+                pause.bundled.push(pending_call(call, &request));
+                continue;
+            }
         } else {
-            pause = Some((call.clone(), request));
+            pause = Some(Pause::single(call.clone(), request));
             continue;
         };
         result.body = json!({ "error": refusal });
@@ -74,31 +132,38 @@ pub(super) fn take_pause(
 /// Write the pause and flip the turn to `suspended`. The caller returns from
 /// the turn afterwards; the worker harness sees the paused row and leaves it.
 ///
-/// A turn stopped while its tools ran is not paused: the waiting call is
+/// A turn stopped while its tools ran is not paused: the waiting calls are
 /// settled as never run, and the harness records the cancel.
 pub(super) async fn pause(
     d: &OpenAiDriver,
     ctx: &SessionContext,
-    call: &ToolCallRef,
-    request: SuspendRequest,
+    pause: Pause,
     tail: &[Value],
     budget_used: BudgetUsed,
 ) -> Result<(), TurnError> {
+    let Pause {
+        call,
+        request,
+        bundled,
+    } = pause;
     if ctx.cancel.load(std::sync::atomic::Ordering::SeqCst) {
-        settle_call(
-            d,
-            ctx,
-            &call.id,
-            "The turn was stopped before this call's decision was asked for.",
-            ToolCallStatus::Errored,
-        )
-        .await?;
+        for id in std::iter::once(&call.id).chain(bundled.iter().map(|c| &c.id)) {
+            settle_call(
+                d,
+                ctx,
+                id,
+                "The turn was stopped before this call's decision was asked for.",
+                ToolCallStatus::Errored,
+            )
+            .await?;
+        }
         return Ok(());
     }
+    let tool_call = pending_call(&call, &request);
     let now = jiff::Timestamp::now();
     let expires_at = match &request.child {
         Some(child) => {
-            check_child(d, ctx, call, child).await?;
+            check_child(d, ctx, &call, child).await?;
             child.expires_at
         }
         None => now + jiff::SignedDuration::from_secs(request.timeout_secs as i64),
@@ -139,13 +204,8 @@ pub(super) async fn pause(
         request_id: uuid::Uuid::new_v4().to_string(),
         kind: request.kind,
         message: request.message,
-        tool_call: PendingCall {
-            execution_facts: request.execution_facts.clone(),
-            actions: request.actions,
-            id: call.id.clone(),
-            name: call.name.clone(),
-            arguments: call.arguments_raw.clone(),
-        },
+        tool_call,
+        bundled_calls: bundled,
         tail: tail.to_vec(),
         budget_used,
         child_turn: request.child.map(|c| c.turn_id),
@@ -161,6 +221,7 @@ pub(super) async fn pause(
         tracing::info!(
             turn = %ctx.assistant_turn_id,
             tool = %call.name,
+            bundled = suspension.bundled_calls.len(),
             kind = request.kind.as_str(),
             rounds = budget_used.rounds,
             "turn suspended for a decision"
@@ -175,6 +236,7 @@ pub(super) async fn pause(
                         "request_id": suspension.request_id,
                         "kind": suspension.kind,
                         "tool": suspension.tool_call.name,
+                        "bundled": suspension.bundled_calls.iter().map(|c| &c.name).collect::<Vec<_>>(),
                         "child_turn": suspension.child_turn,
                         "expires_at": suspension.expires_at,
                     }),
@@ -374,10 +436,98 @@ pub(super) async fn resume_into(
             start_round: suspension.budget_used.rounds,
         });
     }
+    if resume.decision == Decision::AllowConversation {
+        for call in suspension.calls().filter(|call| call.rememberable) {
+            chat::approve_tool_for_session(
+                &d.state.db,
+                &ctx.session_id,
+                &call.name,
+                call.actions.as_deref(),
+            )
+            .await
+            .map_err(persist_err(
+                "approve_tool_for_session",
+                &ctx.assistant_turn_id,
+            ))?;
+        }
+    }
+    let mut settled = Vec::new();
+    let mut again: Option<Pause> = None;
+    for (index, pending) in suspension.calls().enumerate() {
+        let child_result = if index == 0 {
+            resume.child_result.as_ref()
+        } else {
+            None
+        };
+        match settle_waiting(
+            d,
+            ctx,
+            tools,
+            tool_ctx,
+            resume,
+            pending,
+            child_result,
+            budget,
+        )
+        .await?
+        {
+            Settled::Answered(message) => settled.push(message),
+            Settled::AskedAgain(call, request) => match again.as_mut() {
+                None => again = Some(Pause::single(call, *request)),
+                Some(again) if again.takes(&request) => {
+                    again.bundled.push(pending_call(&call, &request))
+                }
+                Some(_) => {
+                    let body = json!({ "error": ONE_DECISION_AT_A_TIME });
+                    let output = serde_json::to_string_pretty(&body).unwrap_or_default();
+                    settle_call(d, ctx, &call.id, &output, ToolCallStatus::Errored).await?;
+                    settled.push(json!({
+                        "role": "tool",
+                        "tool_call_id": &call.id,
+                        "content": output,
+                    }));
+                }
+            },
+        }
+    }
+    if let Some(again) = again {
+        let tail: Vec<Value> = suspension.tail.iter().chain(&settled).cloned().collect();
+        pause(d, ctx, again, &tail, suspension.budget_used).await?;
+        return Ok(Resumed::Paused);
+    }
+    messages.extend(settled);
+    budget.resync(runner::tool_output_bytes(messages));
+    Ok(Resumed::Continue {
+        start_round: suspension.budget_used.rounds,
+    })
+}
+
+/// How one waiting call came out of a resume.
+enum Settled {
+    /// Its `tool` message for the model.
+    Answered(Value),
+    /// Running it again asked for another decision.
+    AskedAgain(ToolCallRef, Box<SuspendRequest>),
+}
+
+/// Answer one of the calls a resumed pause waited on: refuse it on a denial,
+/// take the resumed sub-agent's result, or run it again with the decision.
+#[allow(clippy::too_many_arguments)]
+async fn settle_waiting(
+    d: &OpenAiDriver,
+    ctx: &SessionContext,
+    tools: &dyn ToolSource,
+    tool_ctx: &ToolContext,
+    resume: &ResumeFrom,
+    pending: &PendingCall,
+    child_result: Option<&Value>,
+    budget: &mut ToolResultBudget,
+) -> Result<Settled, TurnError> {
+    let suspension = &resume.suspension;
     let call = ToolCallRef {
-        id: suspension.tool_call.id.clone(),
-        name: suspension.tool_call.name.clone(),
-        arguments_raw: suspension.tool_call.arguments.clone(),
+        id: pending.id.clone(),
+        name: pending.name.clone(),
+        arguments_raw: pending.arguments.clone(),
     };
 
     if let Some(run) = d.agent()
@@ -389,7 +539,7 @@ pub(super) async fn resume_into(
         call_id: Some(call.id.clone()),
         ..tool_ctx.clone()
     };
-    let content = match (&resume.child_result, &resume.decision) {
+    let content = match (child_result, &resume.decision) {
         (None, Decision::Deny { reason }) => {
             let refusal = denial(*reason, &call.name);
             settle_call(d, ctx, &call.id, &refusal, ToolCallStatus::Errored).await?;
@@ -425,11 +575,11 @@ pub(super) async fn resume_into(
                         suspend: Suspend::Decided(suspension.kind, decided.clone()),
                         pending_execution_facts: Some(
                             crate::server::tools::PendingExecutionFacts {
-                                execution_facts: suspension.tool_call.execution_facts.clone(),
+                                execution_facts: pending.execution_facts.clone(),
                             },
                         ),
                         pending_actions: Some(crate::server::tools::PendingActionFacts {
-                            actions: suspension.tool_call.actions.clone(),
+                            actions: pending.actions.clone(),
                         }),
                         ..tool_ctx.clone()
                     };
@@ -466,16 +616,7 @@ pub(super) async fn resume_into(
                 }
             };
             if let Some(request) = extract_suspend(&body) {
-                pause(
-                    d,
-                    ctx,
-                    &call,
-                    request,
-                    &suspension.tail,
-                    suspension.budget_used,
-                )
-                .await?;
-                return Ok(Resumed::Paused);
+                return Ok(Settled::AskedAgain(call, Box::new(request)));
             }
             let output = serde_json::to_string_pretty(&body).unwrap_or_else(|_| "{}".into());
             settle_call(d, ctx, &call.id, &output, status).await?;
@@ -483,20 +624,18 @@ pub(super) async fn resume_into(
                 Some(parts) => Value::Array(parts.clone()),
                 None => {
                     let (cap, reason) = budget.cap();
-                    Value::String(cap_tool_result(output, cap, reason))
+                    let capped = cap_tool_result(output, cap, reason);
+                    budget.spend(capped.len());
+                    Value::String(capped)
                 }
             }
         }
     };
-    messages.push(json!({
+    Ok(Settled::Answered(json!({
         "role": "tool",
         "tool_call_id": &call.id,
         "content": content,
-    }));
-    budget.resync(runner::tool_output_bytes(messages));
-    Ok(Resumed::Continue {
-        start_round: suspension.budget_used.rounds,
-    })
+    })))
 }
 
 /// The `tool_result` event of a waiting call a resume settles without
@@ -596,11 +735,13 @@ mod tests {
     use crate::server::tools::ToolRegistry;
     use crate::server::tools::ask_first::AskFirst;
     use crate::server::tools::echo::Echo;
-    use crate::suspend::{ResumeFrom, claim_for_resume};
+    use crate::suspend::Suspend;
+    use crate::suspend::{ResumeFrom, SuspendRequest, claim_for_resume};
     use aiplane_core::server::upstreams::{
         self,
         config::{BackendConfig, PickerStrategy, PoolKind, UpstreamPoolConfig},
     };
+    use session_core::db::SuspensionKind;
 
     const MODEL: &str = "model-a";
 
@@ -726,7 +867,7 @@ mod tests {
     }
 
     fn gated() -> ToolRegistry {
-        ToolRegistry::new().with(AskFirst::new(Echo, Duration::from_secs(3600)))
+        ToolRegistry::new().with(AskFirst::new(Echo, Duration::from_secs(3600)).rememberable())
     }
 
     async fn open_turn(state: &Arc<RamaState>) -> (String, String) {
@@ -879,6 +1020,276 @@ mod tests {
         );
         assert_eq!(assistant + 2, messages.len());
         assert_eq!(messages[0]["role"], "system");
+    }
+
+    fn echo_calls(ids: &[&str]) -> Value {
+        let calls: Vec<Value> = ids
+            .iter()
+            .enumerate()
+            .map(|(index, id)| {
+                json!({"index": index, "id": id, "type": "function",
+                    "function": {"name": "company_echo",
+                        "arguments": format!("{{\"message\":\"{id}\"}}")}})
+            })
+            .collect();
+        json!({ "tool_calls": calls })
+    }
+
+    /// The `tool` messages the model was sent after the replayed round, by
+    /// call id.
+    fn tool_results(request: &Value) -> HashMap<String, String> {
+        request["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m["role"] == "tool")
+            .map(|m| {
+                (
+                    m["tool_call_id"].as_str().unwrap().to_string(),
+                    m["content"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_rounds_approvals_wait_on_one_decision_that_runs_them_all() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = upstream(vec![
+            echo_calls(&["call-1", "call-2", "call-3"]),
+            json!({"content": "all three ran"}),
+        ])
+        .await;
+        let state = boot(&dir.path().join("gateway.db"), &server.uri(), gated()).await;
+        let (session_id, turn_id) = open_turn(&state).await;
+        drive(&state, &session_id, None).await;
+
+        let suspension = chat::get_suspension(&state.db, &turn_id)
+            .await
+            .unwrap()
+            .expect("one pause for the round");
+        assert_eq!(
+            suspension
+                .calls()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+            ["call-1", "call-2", "call-3"]
+        );
+        assert!(
+            suspension
+                .options()
+                .contains(&chat::DecisionKind::AllowConversation)
+        );
+        let paused = the_turn(&state, &session_id).await;
+        assert!(
+            paused
+                .tool_calls
+                .iter()
+                .all(|c| c.status == ToolCallStatus::Running)
+        );
+
+        let resume = claim_for_resume(&state.db, &turn_id, None, Decision::AllowOnce)
+            .await
+            .unwrap();
+        drive(&state, &session_id, Some(resume)).await;
+
+        let done = the_turn(&state, &session_id).await;
+        assert_eq!(done.turn.status, TurnStatus::Completed);
+        assert_eq!(done.tool_calls.len(), 3);
+        assert!(
+            done.tool_calls
+                .iter()
+                .all(|c| c.status == ToolCallStatus::Completed)
+        );
+        let sent = requests(&server).await;
+        assert_eq!(sent.len(), 2);
+        let results = tool_results(&sent[1]);
+        for id in ["call-1", "call-2", "call-3"] {
+            assert!(results[id].contains(id), "{id} ran with its own arguments");
+        }
+    }
+
+    #[tokio::test]
+    async fn denying_a_rounds_approvals_refuses_every_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = upstream(vec![
+            echo_calls(&["call-1", "call-2"]),
+            json!({"content": "nothing ran"}),
+        ])
+        .await;
+        let state = boot(&dir.path().join("gateway.db"), &server.uri(), gated()).await;
+        let (session_id, turn_id) = open_turn(&state).await;
+        drive(&state, &session_id, None).await;
+
+        let resume = claim_for_resume(
+            &state.db,
+            &turn_id,
+            None,
+            Decision::Deny {
+                reason: DenyReason::User,
+            },
+        )
+        .await
+        .unwrap();
+        drive(&state, &session_id, Some(resume)).await;
+
+        let done = the_turn(&state, &session_id).await;
+        assert_eq!(done.turn.status, TurnStatus::Completed);
+        assert!(
+            done.tool_calls
+                .iter()
+                .all(|c| c.status == ToolCallStatus::Errored)
+        );
+        let results = tool_results(&requests(&server).await[1]);
+        assert_eq!(results.len(), 2);
+        assert!(results.values().all(|r| r.contains("declined")));
+    }
+
+    #[tokio::test]
+    async fn allowing_for_the_conversation_stops_asking_about_that_tool_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = upstream(vec![
+            echo_calls(&["call-1"]),
+            echo_calls(&["call-2"]),
+            json!({"content": "asked once"}),
+        ])
+        .await;
+        let state = boot(&dir.path().join("gateway.db"), &server.uri(), gated()).await;
+        let (session_id, turn_id) = open_turn(&state).await;
+        drive(&state, &session_id, None).await;
+
+        let resume = claim_for_resume(&state.db, &turn_id, None, Decision::AllowConversation)
+            .await
+            .unwrap();
+        drive(&state, &session_id, Some(resume)).await;
+
+        let done = the_turn(&state, &session_id).await;
+        assert_eq!(done.turn.status, TurnStatus::Completed, "no second pause");
+        assert_eq!(done.turn.content.as_deref(), Some("asked once"));
+        assert!(
+            done.tool_calls
+                .iter()
+                .all(|c| c.status == ToolCallStatus::Completed)
+        );
+        assert!(
+            chat::tool_approved_for_session(&state.db, &session_id, "company_echo", None)
+                .await
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn only_approvals_share_a_pause() {
+        let hour = Duration::from_secs(3600);
+        let call = crate::server::tools::runner::ToolCallRef {
+            id: "call-1".into(),
+            name: "company_echo".into(),
+            arguments_raw: "{}".into(),
+        };
+        let approval = super::Pause::single(call.clone(), SuspendRequest::approval(hour));
+        assert!(approval.takes(&SuspendRequest::approval(hour)));
+        assert!(!approval.takes(&SuspendRequest::secure_input("code", hour)));
+        let mut waits_on_a_child = SuspendRequest::approval(hour);
+        waits_on_a_child.child = Some(crate::suspend::ChildPause {
+            turn_id: "child".into(),
+            expires_at: jiff::Timestamp::now(),
+        });
+        assert!(!approval.takes(&waits_on_a_child));
+        let value = super::Pause::single(call, SuspendRequest::secure_input("code", hour));
+        assert!(!value.takes(&SuspendRequest::approval(hour)));
+        let mut explained = SuspendRequest::approval(hour);
+        explained.message = Some("Sends the invoice".into());
+        assert!(!approval.takes(&explained));
+        assert!(!approval.takes(&SuspendRequest::approval(hour * 2)));
+        let mut rememberable = SuspendRequest::approval(hour);
+        rememberable.rememberable = true;
+        assert!(!approval.takes(&rememberable));
+    }
+
+    /// Asks for approval, and once approved asks for a code as well — except
+    /// for `call-3`, which then just echoes.
+    struct AsksAgain;
+
+    impl crate::server::tools::Tool for AsksAgain {
+        fn id(&self) -> &str {
+            "company_echo"
+        }
+
+        fn schema(&self) -> shared::api::ToolDef {
+            Echo.schema()
+        }
+
+        fn run<'a>(
+            &'a self,
+            ctx: crate::server::tools::ToolContext,
+            args: Value,
+        ) -> crate::server::tools::ToolFuture<'a> {
+            Box::pin(async move {
+                let hour = Duration::from_secs(3600);
+                Ok(match &ctx.suspend {
+                    Suspend::Decided(SuspensionKind::Approval, _)
+                        if args["message"] != "call-3" =>
+                    {
+                        crate::suspend::tool_suspend(SuspendRequest::secure_input("code", hour))
+                    }
+                    Suspend::Decided(..) => Echo.run(ctx, args).await?,
+                    _ => crate::suspend::tool_suspend(SuspendRequest::approval(hour)),
+                })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_resumed_round_waits_on_the_first_new_question_and_refuses_the_rest() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = upstream(vec![echo_calls(&["call-1", "call-2", "call-3"])]).await;
+        let state = boot(
+            &dir.path().join("gateway.db"),
+            &server.uri(),
+            ToolRegistry::new().with(AsksAgain),
+        )
+        .await;
+        let (session_id, turn_id) = open_turn(&state).await;
+        drive(&state, &session_id, None).await;
+        let resume = claim_for_resume(&state.db, &turn_id, None, Decision::AllowOnce)
+            .await
+            .unwrap();
+        drive(&state, &session_id, Some(resume)).await;
+
+        let again = chat::get_suspension(&state.db, &turn_id)
+            .await
+            .unwrap()
+            .expect("the code request pauses the turn again");
+        assert_eq!(again.kind, SuspensionKind::SecureInput);
+        assert_eq!(again.tool_call.id, "call-1");
+        assert!(again.bundled_calls.is_empty());
+        let paused = the_turn(&state, &session_id).await;
+        let status = |id: &str| {
+            paused
+                .tool_calls
+                .iter()
+                .find(|c| c.id == id)
+                .unwrap()
+                .status
+        };
+        assert_eq!(status("call-1"), ToolCallStatus::Running);
+        assert_eq!(status("call-2"), ToolCallStatus::Errored);
+        assert_eq!(status("call-3"), ToolCallStatus::Completed);
+        let answered: Vec<&str> = again
+            .tail
+            .iter()
+            .filter_map(|m| m["tool_call_id"].as_str())
+            .collect();
+        assert_eq!(answered, ["call-2", "call-3"]);
+        assert!(
+            again
+                .tail
+                .iter()
+                .find(|m| m["tool_call_id"] == "call-2")
+                .and_then(|m| m["content"].as_str())
+                .unwrap()
+                .contains("another call in the same")
+        );
     }
 
     struct ActionEcho;
@@ -1205,6 +1616,7 @@ mod tests {
                     id: "c".into(),
                     name: "n".into(),
                     arguments: "{}".into(),
+                    rememberable: false,
                 },
                 tail: Vec::new(),
                 budget_used: chat::BudgetUsed {
@@ -1218,6 +1630,7 @@ mod tests {
                 expires_at: jiff::Timestamp::now(),
                 created_at: jiff::Timestamp::now(),
                 run_context: None,
+                bundled_calls: Vec::new(),
             },
             decision: Decision::AllowOnce,
             child_result: None,

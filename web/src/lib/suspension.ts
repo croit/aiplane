@@ -8,7 +8,7 @@
 import { slotTitle } from './agent-setup.ts';
 
 export type SuspensionKind = 'approval' | 'secure_input' | 'human_answer' | 'browser_handover';
-export type DecisionKind = 'allow_once' | 'deny' | 'value';
+export type DecisionKind = 'allow_once' | 'allow_conversation' | 'deny' | 'value';
 
 /** A slot of a hand-off's context: its value, or who vouched for it when the model may not see it. */
 export interface HandoffSlot {
@@ -38,6 +38,8 @@ export interface SuspensionView {
 	message?: string;
 	tool_call_id?: string;
 	tool?: string;
+	/** The round's other calls the same decision settles. */
+	bundled?: { tool_call_id: string; tool: string }[];
 	options: DecisionKind[];
 	expires_at: string;
 }
@@ -51,6 +53,8 @@ export interface Waiting {
 	detail?: string | null;
 	/** An approval's call, with its raw arguments. */
 	call?: { name: string; arguments: string } | null;
+	/** The round's other calls the same decision settles. */
+	bundled?: { name: string; arguments: string }[];
 	context?: HandoffContext | null;
 	/** The decisions the viewer may send, as the server offered them. */
 	options: DecisionKind[];
@@ -75,12 +79,16 @@ export function waitingFrom(
 	calls: { id: string; name: string; arguments_json: string }[] = [],
 	context: HandoffContext | null = null
 ): Waiting {
-	const call = calls.find((c) => c.id === view.tool_call_id);
+	const known = (id: string | undefined, tool: string | undefined) => {
+		const call = calls.find((c) => c.id === id);
+		return call ? { name: call.name, arguments: call.arguments_json } : tool ? { name: tool, arguments: '' } : null;
+	};
 	return {
 		kind: view.kind,
 		question: view.kind === 'human_answer' ? (view.message ?? null) : null,
 		detail: view.kind === 'human_answer' ? null : (view.message ?? null),
-		call: call ? { name: call.name, arguments: call.arguments_json } : view.tool ? { name: view.tool, arguments: '' } : null,
+		call: known(view.tool_call_id, view.tool),
+		bundled: (view.bundled ?? []).flatMap((b) => known(b.tool_call_id, b.tool) ?? []),
 		context,
 		options: view.options,
 		expires_at: view.expires_at
@@ -112,12 +120,29 @@ export function pausedTurn(turns: { turn: { id: string; status: string } }[]): s
 	return turns.find((live) => live.turn.status === 'suspended')?.turn.id ?? null;
 }
 
-/** The buttons a card offers, exactly the decisions it was offered; `value` is the answer form's own button. */
-export function decisionButtons(waiting: Pick<Waiting, 'kind' | 'options' | 'call'>): { decision: DecisionKind; key: string; primary: boolean }[] {
-	const buttons: { decision: DecisionKind; key: string; primary: boolean }[] = [];
+/** A card's button: the decision it sends and its label's key and arguments. */
+export interface DecisionButton {
+	decision: DecisionKind;
+	key: string;
+	args?: Record<string, number>;
+	primary: boolean;
+}
+
+/**
+ * The buttons a card offers, exactly the decisions it was offered; `value` is
+ * the answer form's own button. An approval of several calls says so: one
+ * decision settles them all.
+ */
+export function decisionButtons(waiting: Pick<Waiting, 'kind' | 'options' | 'call' | 'bundled'>): DecisionButton[] {
+	const buttons: DecisionButton[] = [];
 	const content = isContentConfirmation(waiting);
+	const count = 1 + (waiting.bundled?.length ?? 0);
 	if (waiting.options.includes('allow_once')) {
-		buttons.push({ decision: 'allow_once', key: content ? 'content-guard-confirm-approve' : 'suspension-approve', primary: true });
+		const key = content ? 'content-guard-confirm-approve' : count > 1 ? 'suspension-approve-all' : 'suspension-approve';
+		buttons.push({ decision: 'allow_once', key, ...(count > 1 && !content ? { args: { count } } : {}), primary: true });
+	}
+	if (waiting.options.includes('allow_conversation')) {
+		buttons.push({ decision: 'allow_conversation', key: 'suspension-approve-conversation', primary: false });
 	}
 	if (waiting.options.includes('deny')) {
 		const key = content ? 'content-guard-confirm-deny' : waiting.kind === 'approval' ? 'suspension-deny' : 'suspension-decline';

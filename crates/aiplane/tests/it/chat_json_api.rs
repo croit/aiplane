@@ -5460,7 +5460,8 @@ async fn delegated_child_lifecycle_changes_cancel_the_exact_original_chain() {
                                 id: "forward".into(),
                                 name: "forward_request".into(),
                                 arguments: "{}".into(),
-                                actions: None
+                                actions: None,
+                                rememberable: false,
                             },
                             tail: vec![],
                             budget_used: Default::default(),
@@ -5469,6 +5470,7 @@ async fn delegated_child_lifecycle_changes_cancel_the_exact_original_chain() {
                             expires_at: now,
                             created_at: now,
                             run_context: None,
+                            bundled_calls: Vec::new(),
                         }
                     )
                     .await

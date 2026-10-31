@@ -625,6 +625,7 @@ impl Tool for BrowsePage {
                     context: Some(json!({ "browser_handover": binding })),
                     actions: None,
                     execution_facts: None,
+                    rememberable: false,
                 }));
             }
 

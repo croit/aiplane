@@ -792,15 +792,18 @@ call only while the turn lives in memory; this pause is durable.
   fresh `request_id`, and the deadline. The turn becomes `suspended` in the
   same transaction, the worker ends without finalizing, and the stream emits
   `suspended` (see [`ui.md`](ui.md#chat-streaming-the-json-event-protocol)).
-  One decision at a time: a second suspend request in the same round is
-  answered with an error. Where the run cannot pause (`ToolContext::suspend`
+  One decision per round: further approvals in the same round (no sub-agent
+  run behind them) join the first one's pause as `bundled_calls`, their rows
+  stay `running` too, and one answer settles them all. Any other second
+  suspend request in the round is answered with an error. Where the run cannot pause (`ToolContext::suspend`
   is `Unavailable`: `/v1`), the envelope is
   answered with an error too, and a well-behaved tool refuses on its own
   first. The timeout fallback is the kind's (`SuspensionKind::timeout_fallback`),
   whatever the tool asked: an approval always falls back to deny.
 - **Resuming.** `suspend::claim_for_resume` checks the decision against the
-  kind's options (`approval`: allow once / deny; `secure_input`,
-  `human_answer`: value / deny) and the optional `request_id`, then deletes the
+  suspension's options (`TurnSuspension::options`: `approval`: allow once /
+  deny, plus allow for the conversation when every waiting call may stand
+  approved; `secure_input`, `human_answer`: value / deny) and the optional `request_id`, then deletes the
   exact request row and flips a suspended turn back to `in_progress` in
   the same transaction. A stale request cannot consume a newer pause, and a
   failed status transition rolls back the deletion. The connection-capable
@@ -814,7 +817,16 @@ call only while the turn lives in memory; this pause is durable.
     user, or the request `expired`); the tool does not run;
   - **allow once** / **value** run the same call again with
     `ToolContext::suspend = Decided(decision)`, and its result is the call's
-    result. Asking again re-suspends the turn.
+    result. Asking again re-suspends the turn, with the calls not yet
+    settled bundled behind it;
+  - **allow for the conversation** does what allow once does and first
+    records each waiting call's tool and actions in
+    `chat_session_tool_approvals`. Only an `AskFirst` built `rememberable()`
+    offers it (a person's connector tools in `ask` mode); in that conversation
+    it then runs a recorded call without pausing. An agent's `always_ask`, the
+    classification gate and `schedule_action` ask every time.
+
+  Every waiting call of a bundle is settled in order with the one decision.
 - **Expiry.** `pages::chat::spawn_suspension_sweeper` looks every 30 s (and at
   boot) for suspensions past `expires_at` and resumes them with their
   `on_timeout` fallback, which is deny for every kind today (see

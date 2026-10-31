@@ -213,6 +213,7 @@ mod tests {
                         id: "call-1".into(),
                         name: "company_echo".into(),
                         arguments: "{}".into(),
+                        rememberable: false,
                     },
                     tail: Vec::new(),
                     budget_used: db::BudgetUsed::default(),
@@ -221,6 +222,7 @@ mod tests {
                     expires_at: now,
                     created_at: now,
                     run_context: None,
+                    bundled_calls: Vec::new(),
                 },
             )
             .await

@@ -2980,6 +2980,7 @@ mod tests {
                 arguments: "{}".into(),
                 actions: request.actions,
                 execution_facts: request.execution_facts,
+                rememberable: false,
             },
             tail: vec![],
             budget_used: Default::default(),
@@ -2988,6 +2989,7 @@ mod tests {
             expires_at: now + jiff::SignedDuration::from_secs(300),
             created_at: now,
             run_context: Some(authority.attach_to(request.context).unwrap()),
+            bundled_calls: Vec::new(),
         };
         assert!(chat::suspend_turn(&state.db, &pause).await.unwrap());
         let stored = chat::get_suspension(&state.db, &pause.turn_id)

@@ -1283,6 +1283,82 @@ async fn a_connector_tool_in_ask_mode_waits_in_chat_and_runs_only_once_approved(
     }
 }
 
+/// Two connector calls in one round wait on one decision; approving them for
+/// the conversation runs both, and the next turn there runs the tool without
+/// asking.
+#[tokio::test]
+async fn a_connector_tool_approved_for_the_conversation_is_not_asked_about_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let delete = |id: &str, contact: u32| {
+        json!({"index": contact - 7, "id": id, "type": "function",
+            "function": {"name": "mcp__crm__delete_contact",
+                "arguments": json!({"id": contact}).to_string()}})
+    };
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(Scripted {
+            deltas: vec![
+                json!({"tool_calls": [delete("call-1", 7), delete("call-2", 8)]}),
+                json!({"content": "Handled."}),
+                json!({"tool_calls": [delete("call-3", 7)]}),
+                json!({"content": "Again."}),
+            ],
+            served: AtomicUsize::new(0),
+            delay: Duration::ZERO,
+        })
+        .mount(&server)
+        .await;
+    let state = boot_with(
+        &dir.path().join("gateway.db"),
+        &server.uri(),
+        ToolRegistry::new(),
+        &["mcp__crm"],
+    )
+    .await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let _crm = crm_connector(&state, calls.clone()).await;
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let session_id = conversation(&state).await;
+    db::chat_session_tools::set(&state.db, &session_id, "mcp__crm", true, "user")
+        .await
+        .unwrap();
+
+    let turn_id = submit(&state, &cookie, &session_id).await;
+    let paused = wait_for_status(&state, &session_id, &turn_id, TurnStatus::Suspended).await;
+    let waiting = paused.suspension.expect("both calls wait for alice");
+    assert_eq!(waiting.bundled.len(), 1);
+    assert_eq!(
+        waiting.options,
+        [
+            chat::DecisionKind::AllowOnce,
+            chat::DecisionKind::AllowConversation,
+            chat::DecisionKind::Deny
+        ]
+    );
+    let (status, body) = resume(
+        &state,
+        &cookie,
+        &session_id,
+        &turn_id,
+        json!({"decision": "allow_conversation", "request_id": waiting.request_id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let done = wait_for_status(&state, &session_id, &turn_id, TurnStatus::Completed).await;
+    assert_eq!(done.turn.content.as_deref(), Some("Handled."));
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "one decision ran both calls"
+    );
+
+    let next = submit(&state, &cookie, &session_id).await;
+    let done = wait_for_status(&state, &session_id, &next, TurnStatus::Completed).await;
+    assert_eq!(done.turn.content.as_deref(), Some("Again."));
+    assert_eq!(calls.load(Ordering::SeqCst), 3, "ran without asking again");
+}
+
 #[tokio::test]
 async fn scheduling_waits_for_an_approval_that_survives_a_restart() {
     use aiplane_runtime::server::scheduled;

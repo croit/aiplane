@@ -1943,6 +1943,7 @@ mod tests {
                         name: "company_echo".into(),
                         arguments: "{}".into(),
                         actions: None,
+                        rememberable: false,
                     },
                     tail: Vec::new(),
                     budget_used: BudgetUsed::default(),
@@ -1951,6 +1952,7 @@ mod tests {
                     expires_at: now,
                     created_at: now,
                     run_context: None,
+                    bundled_calls: Vec::new(),
                 },
             )
             .await
@@ -2398,6 +2400,7 @@ mod private_cancel_tests {
                 arguments: "{}".into(),
                 actions: None,
                 execution_facts: None,
+                rememberable: false,
             },
             tail: vec![],
             budget_used: chat::BudgetUsed::default(),
@@ -2411,6 +2414,7 @@ mod private_cancel_tests {
                     .attach_to(None)
                     .unwrap(),
             ),
+            bundled_calls: Vec::new(),
         };
         assert!(chat::suspend_turn(&state.db, &pause).await.unwrap());
         crate::server::background::reconcile_turn(&state.db, &action.owner, &turn)
