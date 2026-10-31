@@ -502,6 +502,15 @@ fn parse_matches(answer: &Value, questions: &[Question]) -> Result<Detection, St
     Ok(Detection { matches })
 }
 
+/// The catalog key of the refusal when the detector could not be reached.
+pub const UNAVAILABLE_KEY: &str = "cls-detector-unavailable";
+
+/// Whether `error` is the refusal [`settle`] returns for an unreachable
+/// detector, rather than a failure of the check itself.
+pub fn is_unavailable(error: &str) -> bool {
+    error == t(Lang::En, UNAVAILABLE_KEY)
+}
+
 /// A detector failure refuses the request in enforce mode and is only logged
 /// in monitor mode, where `None` stands for "nothing was evaluated".
 fn settle(
@@ -516,7 +525,7 @@ fn settle(
         }
         (ClassificationMode::Enforce, Err(error)) => {
             tracing::warn!(error = %error, "data classification could not evaluate the request; refusing it");
-            Err(t(Lang::En, "cls-detector-unavailable"))
+            Err(t(Lang::En, UNAVAILABLE_KEY))
         }
     }
 }

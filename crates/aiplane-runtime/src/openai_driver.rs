@@ -1340,8 +1340,7 @@ async fn run_one_turn(
             &classification_payer,
             &d.tool_ctx,
         )
-        .await
-        .map_err(upstream_err)?,
+        .await,
         &[],
         turn_start_budget(),
     )
@@ -1401,8 +1400,7 @@ async fn run_one_turn(
             &access,
             &tool_ctx,
         )
-        .await
-        .map_err(upstream_err)?,
+        .await,
         &[],
         turn_start_budget(),
     )
@@ -1429,7 +1427,7 @@ async fn run_one_turn(
     let mut approved_rank = if approved_by_user && d.state.config().classification.user_override {
         Some(conversation_rank(d, &ctx.session_id).await)
     } else {
-        ensure_model_cleared(d, &ctx.session_id, &real_model, &access).await?;
+        ensure_model_cleared(d, &ctx, &real_model, &access).await?;
         None
     };
 
@@ -1650,8 +1648,7 @@ async fn run_one_turn(
                     &access,
                     &tool_ctx,
                 )
-                .await
-                .map_err(upstream_err)?,
+                .await,
                 &messages[prefix_len..messages.len() - folded.len()],
                 session_core::db::BudgetUsed {
                     rounds: round,
@@ -1722,9 +1719,9 @@ async fn run_one_turn(
         }
         if round > start_round || notes_checked {
             match approved_rank {
-                None => ensure_model_cleared(d, &ctx.session_id, &real_model, &access).await?,
+                None => ensure_model_cleared(d, &ctx, &real_model, &access).await?,
                 Some(approved) if conversation_rank(d, &ctx.session_id).await > approved => {
-                    ensure_model_cleared(d, &ctx.session_id, &real_model, &access).await?;
+                    ensure_model_cleared(d, &ctx, &real_model, &access).await?;
                 }
                 Some(_) => {}
             }
@@ -3677,27 +3674,66 @@ async fn conversation_rank(d: &OpenAiDriver, session_id: &str) -> u32 {
 /// more than the first message did.
 async fn ensure_model_cleared(
     d: &OpenAiDriver,
-    session_id: &str,
+    ctx: &SessionContext,
     model: &str,
     access: &aiplane_core::server::upstreams::PoolAccess,
 ) -> Result<(), TurnError> {
     if d.state
-        .model_cleared_for_session(session_id, model, access)
+        .model_cleared_for_session(&ctx.session_id, model, access)
         .await
     {
         return Ok(());
     }
     let scheme = d.state.scheme();
-    let conversation =
-        aiplane_core::server::classification::level_or_highest(&d.state.db, &scheme, session_id)
-            .await;
-    Err(TurnError::Upstream {
-        message: t_args(
+    let conversation = aiplane_core::server::classification::level_or_highest(
+        &d.state.db,
+        &scheme,
+        &ctx.session_id,
+    )
+    .await;
+    Err(classification_refusal(
+        d,
+        &ctx.assistant_turn_id,
+        "cls-turn-model-not-cleared",
+        t_args(
             Lang::En,
             "cls-turn-model-not-cleared",
             &args([("level", conversation.name.clone().into())]),
         ),
-    })
+    )
+    .await)
+}
+
+/// A turn the classification policy refused. The message is a catalog key the
+/// SPA renders in the reader's language from `chat_turns.error_code`, like
+/// [`LOOP_EXHAUSTED_CODE`]; `message` is the English text every other reader
+/// gets. Neither names an upstream, so it carries no "upstream:" prefix.
+async fn classification_refusal(
+    d: &OpenAiDriver,
+    turn_id: &str,
+    key: &str,
+    message: String,
+) -> TurnError {
+    if let Err(error) = chat::set_error_code(&d.state.db, turn_id, key).await {
+        tracing::warn!(%error, turn_id, "could not record the classification refusal's code");
+    }
+    TurnError::Aborted { message }
+}
+
+/// A classification check that could not run; an unreachable detector is a
+/// refusal the person reads in their language, anything else an upstream fault.
+async fn classification_err(d: &OpenAiDriver, turn_id: &str, error: String) -> TurnError {
+    if crate::classification_detector::is_unavailable(&error) {
+        classification_refusal(
+            d,
+            turn_id,
+            crate::classification_detector::UNAVAILABLE_KEY,
+            error,
+        )
+        .await
+    } else {
+        upstream_err(error)
+    }
 }
 
 fn turn_start_budget() -> session_core::db::BudgetUsed {
@@ -3713,7 +3749,7 @@ fn turn_start_budget() -> session_core::db::BudgetUsed {
 /// `Some(true)` when the person approved sending the content, `Some(false)`
 /// when nothing needed approving, `None` when the turn paused to ask (the
 /// caller returns; the person's answer resumes it), an error when it is
-/// refused.
+/// refused or could not be checked.
 ///
 /// A confirmation pauses the turn like a tool approval does, so it frees the
 /// person's turn slot and survives a reload. The conversation's level is
@@ -3724,19 +3760,21 @@ fn turn_start_budget() -> session_core::db::BudgetUsed {
 async fn settle_classification_decision(
     d: &OpenAiDriver,
     ctx: &SessionContext,
-    decision: crate::classification_detector::Decision,
+    decision: Result<crate::classification_detector::Decision, String>,
     tail: &[serde_json::Value],
     budget_used: session_core::db::BudgetUsed,
 ) -> Result<Option<bool>, TurnError> {
     use crate::classification_detector::{CONFIRM_CALL, Decision};
     use session_core::db::Decision as Answer;
-    let not_approved = || TurnError::Upstream {
-        message: t(Lang::En, "cls-turn-not-approved"),
+    let refuse = |key: &'static str| {
+        classification_refusal(d, &ctx.assistant_turn_id, key, t(Lang::En, key))
+    };
+    let decision = match decision {
+        Ok(decision) => decision,
+        Err(error) => return Err(classification_err(d, &ctx.assistant_turn_id, error).await),
     };
     if decision == Decision::Deny {
-        return Err(TurnError::Upstream {
-            message: t(Lang::En, "cls-turn-blocked"),
-        });
+        return Err(refuse("cls-turn-blocked").await);
     }
     let answered = d
         .resume
@@ -3745,7 +3783,7 @@ async fn settle_classification_decision(
     if let Some(from) = answered {
         return match from.decision {
             Answer::AllowOnce => Ok(Some(true)),
-            _ => Err(not_approved()),
+            _ => Err(refuse("cls-turn-not-approved").await),
         };
     }
     if decision == Decision::Allow {
@@ -3753,7 +3791,7 @@ async fn settle_classification_decision(
     }
     let person_chat = d.tool_ctx.agent.is_none() && d.persona.is_none();
     if !person_chat || d.tool_ctx.suspend != crate::suspend::Suspend::Available {
-        return Err(not_approved());
+        return Err(refuse("cls-turn-not-approved").await);
     }
     if ctx.cancel.load(Ordering::SeqCst) {
         return Ok(None);

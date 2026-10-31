@@ -277,6 +277,13 @@ async fn last_turn_status(state: &RamaState, session_id: &str) -> (chat::TurnSta
     )
 }
 
+/// The catalog key the SPA renders a refused turn's message from, in the
+/// reader's language.
+async fn last_turn_code(state: &RamaState, session_id: &str) -> Option<String> {
+    let turns = chat::list_turns(&state.db, session_id).await.unwrap();
+    turns.last().unwrap().turn.error_code.clone()
+}
+
 #[tokio::test]
 async fn a_labelled_upload_raises_the_conversation_and_an_uncleared_model_is_refused() {
     let upstream = chat_upstream().await;
@@ -1218,6 +1225,11 @@ async fn an_unreachable_system_one_model_still_raises_what_a_pattern_found_and_r
     assert_eq!(status, chat::TurnStatus::Errored);
     assert!(error.contains("could not be reached"), "{error}");
     assert!(!error.contains("http"), "no upstream address: {error}");
+    assert!(!error.starts_with("upstream:"), "{error}");
+    assert_eq!(
+        last_turn_code(&state, &session).await.as_deref(),
+        Some("cls-detector-unavailable")
+    );
     assert_eq!(
         events(&state, &session).await,
         vec![(
@@ -1294,7 +1306,7 @@ async fn a_declined_confirm_stops_typed_text_and_uploads_alike() {
         (format!("pay {IBAN}"), None),
         ("read this".to_owned(), Some(("iban.txt", "text/plain"))),
     ] {
-        let (upstream, _state, _session, (status, error)) = send_with_person(
+        let (upstream, state, session, (status, error)) = send_with_person(
             &iban_class("confirm"),
             Enforce,
             "low-model",
@@ -1305,7 +1317,11 @@ async fn a_declined_confirm_stops_typed_text_and_uploads_alike() {
         )
         .await;
         assert_eq!(status, chat::TurnStatus::Errored);
-        assert!(error.contains("not approved"), "{error}");
+        assert!(error.starts_with("Content was not approved"), "{error}");
+        assert_eq!(
+            last_turn_code(&state, &session).await.as_deref(),
+            Some("cls-turn-not-approved")
+        );
         assert_eq!(chat_requests(&upstream).await, 0);
     }
 }
@@ -1415,7 +1431,7 @@ async fn an_approved_confirm_sends_to_an_uncleared_model_while_users_may_overrid
 #[tokio::test]
 async fn an_approved_confirm_still_refuses_an_uncleared_model_when_users_may_not_override() {
     use aiplane_core::server::classification::ClassificationMode::Enforce;
-    let (upstream, _state, _session, (status, error)) = send_with_person(
+    let (upstream, state, session, (status, error)) = send_with_person(
         &iban_class("confirm"),
         Enforce,
         "low-model",
@@ -1427,6 +1443,11 @@ async fn an_approved_confirm_still_refuses_an_uncleared_model_when_users_may_not
     .await;
     assert_eq!(status, chat::TurnStatus::Errored);
     assert!(error.contains("not cleared"), "{error}");
+    assert!(!error.starts_with("upstream:"), "{error}");
+    assert_eq!(
+        last_turn_code(&state, &session).await.as_deref(),
+        Some("cls-turn-model-not-cleared")
+    );
     assert_eq!(chat_requests(&upstream).await, 0);
 }
 
@@ -1454,10 +1475,15 @@ async fn a_block_class_refuses_typed_text_and_uploads_alike() {
         (format!("pay {IBAN}"), None),
         ("read this".to_owned(), Some(("iban.txt", "text/plain"))),
     ] {
-        let (upstream, _state, _session, (status, error)) =
+        let (upstream, state, session, (status, error)) =
             send_to_low_model("block", Enforce, &message, file).await;
         assert_eq!(status, chat::TurnStatus::Errored);
         assert!(error.contains("prevents sending"), "{error}");
+        assert!(!error.starts_with("upstream:"), "{error}");
+        assert_eq!(
+            last_turn_code(&state, &session).await.as_deref(),
+            Some("cls-turn-blocked")
+        );
         assert_eq!(chat_requests(&upstream).await, 0);
     }
 }

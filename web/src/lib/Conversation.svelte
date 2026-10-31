@@ -1189,6 +1189,8 @@
 
 						{#if entry.turn.status === 'errored' && entry.turn.error_code === 'loop_exhausted'}
 							<div class="alert alert-warning py-2"><span>{t('chat-loop-exhausted', { attempts: entry.attempts.length })}</span></div>
+						{:else if entry.turn.status === 'errored' && entry.turn.error_code?.startsWith('cls-')}
+							<div class="alert alert-error py-2"><span>{t(entry.turn.error_code, { level: classification?.level?.name ?? '' })}</span></div>
 						{:else if entry.turn.status === 'errored'}
 							<div class="alert alert-error py-2"><span>{entry.turn.error_message}</span></div>
 						{:else if entry.turn.status === 'cancelled'}
