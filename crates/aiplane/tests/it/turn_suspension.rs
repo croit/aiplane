@@ -866,6 +866,68 @@ async fn the_live_stream_announces_the_pause_and_ends_without_finalizing() {
     );
 }
 
+/// A client that attaches after answering a pause already holds the text
+/// written before it, from the snapshot; the stream must carry on from there
+/// rather than send that text a second time.
+#[tokio::test]
+async fn attaching_after_a_resume_does_not_repeat_the_text_before_the_pause() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut call = echo_call();
+    call["content"] = json!("Found it.");
+    let server = upstream_calling(call, " Echoed.", Duration::from_millis(300)).await;
+    let (state, cookie, session_id, turn_id) =
+        paused(&dir.path().join("gateway.db"), &server.uri(), AN_HOUR).await;
+
+    let pause = chat::get_suspension(&state.db, &turn_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let (status, _) = resume(
+        &state,
+        &cookie,
+        &session_id,
+        &turn_id,
+        json!({"decision": "allow_once", "request_id": pause.request_id}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let resp = router(state.clone())
+        .serve(get(
+            format!("/api/v0/chat/sessions/{session_id}/events"),
+            &cookie,
+        ))
+        .await
+        .unwrap();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let frames = sse_frames(&String::from_utf8_lossy(&bytes));
+
+    let mut shown = String::new();
+    for (name, data) in &frames {
+        match name.as_str() {
+            "snapshot" => {
+                shown = data["turns"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|row| row["turn"]["id"] == turn_id)
+                    .and_then(|row| row["turn"]["content"].as_str())
+                    .unwrap_or_default()
+                    .to_string();
+            }
+            "turn_delta" => {
+                if data["full"] == true {
+                    shown.clear();
+                }
+                shown.push_str(data["text_delta"].as_str().unwrap());
+            }
+            _ => {}
+        }
+    }
+    let done = wait_for_status(&state, &session_id, &turn_id, TurnStatus::Completed).await;
+    assert_eq!(Some(shown.as_str()), done.turn.content.as_deref());
+    assert_eq!(shown.matches("Found it.").count(), 1, "{shown:?}");
+}
+
 #[tokio::test]
 async fn a_paused_turn_survives_a_restart_and_resumes_to_completion() {
     let dir = tempfile::tempdir().unwrap();
