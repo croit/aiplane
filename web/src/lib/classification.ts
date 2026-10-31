@@ -85,7 +85,7 @@ export interface Policy {
 	link_share_max_level: string;
 	unknown_label_level: string;
 	unreadable_level: string;
-	system_one_model: string;
+	detector_model: string;
 	mode: 'monitor' | 'enforce';
 	mip_tenant_id: string;
 	output: { visible: boolean; metadata: boolean; filename: boolean };
@@ -102,8 +102,12 @@ export interface Template {
 	policy: Partial<Policy>;
 }
 
-export interface SystemOneModel {
+/** What serves a detector model: System One (recommended), or a chat completion as the fallback. */
+export type DetectorKind = 'system_one' | 'chat';
+
+export interface DetectorModel {
 	id: string;
+	kind: DetectorKind;
 	level_id: string | null;
 	cleared_for_highest: boolean;
 	pools: string[];
@@ -118,7 +122,7 @@ export interface ClassificationState {
 	destinations: Destination[];
 	policy: Policy;
 	templates: Template[];
-	system_one_models: SystemOneModel[];
+	detector_models: DetectorModel[];
 }
 
 export interface Assignment {
@@ -547,24 +551,33 @@ export function prefillPools(draft: Draft): Draft {
 }
 
 /** Whether every pool serving the model is rated at the draft's highest level. */
-export function modelCleared(draft: Draft, model: Pick<SystemOneModel, 'pools'>): boolean {
+export function modelCleared(draft: Draft, model: Pick<DetectorModel, 'pools'>): boolean {
 	const top = highestLevel(draft).id;
 	return model.pools.length > 0 && model.pools.every((pool) => draft.destinations.some((d) => d.kind === 'pool' && d.id === pool && d.level_id === top));
 }
 
-/** The one model cleared for the highest level in the draft; none when there are none or several to choose from. */
-export function pickSystemOneModel(draft: Draft, models: readonly SystemOneModel[]): string {
-	const cleared = models.filter((m) => modelCleared(draft, m));
-	return cleared.length === 1 ? cleared[0]!.id : '';
+/**
+ * The model the assistant preselects. System One stays the default: its one
+ * cleared model, none when there are several to choose from. Only when no
+ * System One model exists at all is a cleared chat model chosen (the first by
+ * id when several are cleared).
+ */
+export function pickDetectorModel(draft: Draft, models: readonly DetectorModel[]): string {
+	const cleared = (kind: DetectorKind) => models.filter((m) => m.kind === kind && modelCleared(draft, m));
+	if (models.some((m) => m.kind === 'system_one')) {
+		const systemOne = cleared('system_one');
+		return systemOne.length === 1 ? systemOne[0]!.id : '';
+	}
+	return cleared('chat').map((m) => m.id).sort((a, b) => a.localeCompare(b))[0] ?? '';
 }
 
 /** The draft the assistant saves: the chosen model set; the questions stay either way and are inactive until a model is chosen. */
 export function finalizeDraft(draft: Draft, model: string): Draft {
-	return { ...draft, policy: { ...draft.policy, system_one_model: model } };
+	return { ...draft, policy: { ...draft.policy, detector_model: model } };
 }
 
 /** Activating is refused while the chosen model is not cleared for the highest level, or one is needed and none is chosen. */
-export function modelBlocksActivation(draft: Draft, models: readonly SystemOneModel[], model: string): boolean {
+export function modelBlocksActivation(draft: Draft, models: readonly DetectorModel[], model: string): boolean {
 	if (model === '') return needsClearedModel(draft);
 	const chosen = models.find((m) => m.id === model);
 	return !chosen || !modelCleared(draft, chosen);

@@ -32,8 +32,8 @@ fn invalid<T>(field: impl Into<String>, message: impl Into<String>) -> Result<T,
 pub struct Context<'a> {
     /// Every destination that exists, as `(kind, id)`; `None` skips the check.
     pub destinations: Option<&'a HashSet<(String, String)>>,
-    /// For each System One model, the pools serving it.
-    pub system_one_pools: &'a HashMap<String, Vec<String>>,
+    /// For each detector model (System One or chat), the pools serving it.
+    pub detector_pools: &'a HashMap<String, Vec<String>>,
 }
 
 const COLORS: &[&str] = &["neutral", "info", "success", "warning", "error"];
@@ -327,7 +327,7 @@ pub fn validate(body: &SaveBody, context: &Context<'_>) -> Result<Replacement, I
     one_of("policy.gate_on_match", &policy.gate_on_match, GATE_ON_MATCH)?;
     one_of("policy.mode", &policy.mode, MODES)?;
 
-    let model = policy.system_one_model.trim();
+    let model = policy.detector_model.trim();
     let needs_model = body
         .classes
         .iter()
@@ -336,8 +336,8 @@ pub fn validate(body: &SaveBody, context: &Context<'_>) -> Result<Replacement, I
     if model.is_empty() {
         if uses_gate {
             return invalid(
-                "policy.system_one_model",
-                "policy.system_one_model: a destination is set to gate, which asks the System One model about what is sent; choose a model, or set the destination to hide",
+                "policy.detector_model",
+                "policy.detector_model: a destination is set to gate, which asks the detector model about what is sent; choose a model, or set the destination to hide",
             );
         }
     } else if needs_model || uses_gate {
@@ -346,11 +346,11 @@ pub fn validate(body: &SaveBody, context: &Context<'_>) -> Result<Replacement, I
             .max_by_key(|l| l.rank)
             .map(|l| l.rank)
             .unwrap_or(0);
-        let Some(pools) = context.system_one_pools.get(model) else {
+        let Some(pools) = context.detector_pools.get(model) else {
             return invalid(
-                "policy.system_one_model",
+                "policy.detector_model",
                 format!(
-                    "policy.system_one_model: no System One pool serves `{model}`; choose one of the listed models"
+                    "policy.detector_model: no System One or chat pool serves `{model}`; choose one of the listed models"
                 ),
             );
         };
@@ -363,9 +363,9 @@ pub fn validate(body: &SaveBody, context: &Context<'_>) -> Result<Replacement, I
         };
         if pools.iter().map(|p| rank_of(p)).min().unwrap_or(0) < highest {
             return invalid(
-                "policy.system_one_model",
+                "policy.detector_model",
                 format!(
-                    "policy.system_one_model: `{model}` is not cleared for the highest level, yet it reads the text it classifies; rate its pool at the highest level or choose another model"
+                    "policy.detector_model: `{model}` is not cleared for the highest level, yet it reads the text it classifies; rate its pool at the highest level or choose another model"
                 ),
             );
         }
@@ -404,7 +404,7 @@ pub fn validate(body: &SaveBody, context: &Context<'_>) -> Result<Replacement, I
                 "classification.unreadable_level".into(),
                 policy.unreadable_level.clone(),
             ),
-            ("classification.system_one_model".into(), model.to_owned()),
+            ("classification.detector_model".into(), model.to_owned()),
             ("classification.mode".into(), policy.mode.clone()),
             (
                 "classification.mip_tenant_id".into(),
@@ -454,7 +454,7 @@ mod tests {
                 link_share_max_level: policy.link_share_max_level.clone().unwrap_or(first),
                 unknown_label_level: policy.unknown_label_level.clone().unwrap_or(last.clone()),
                 unreadable_level: policy.unreadable_level.clone().unwrap_or(last),
-                system_one_model: String::new(),
+                detector_model: String::new(),
                 mode: "enforce".into(),
                 mip_tenant_id: String::new(),
                 output: policy.output.clone().unwrap_or(OutputBody {
@@ -472,7 +472,7 @@ mod tests {
             body,
             &Context {
                 destinations: None,
-                system_one_pools: &pools,
+                detector_pools: &pools,
             },
         )
     }
@@ -620,7 +620,7 @@ mod tests {
             &body,
             &Context {
                 destinations: Some(&known),
-                system_one_pools: &pools,
+                detector_pools: &pools,
             },
         )
         .unwrap_err();
@@ -630,9 +630,9 @@ mod tests {
     #[test]
     fn the_system_one_model_must_be_cleared_for_the_highest_level() {
         let mut body = iso();
-        body.policy.system_one_model = "guard".into();
+        body.policy.detector_model = "guard".into();
         let error = refused(&body);
-        assert_eq!(error.field, "policy.system_one_model");
+        assert_eq!(error.field, "policy.detector_model");
         assert!(error.message.contains("not cleared"), "{}", error.message);
         body.assignments.push(AssignmentBody {
             kind: "pool".into(),
@@ -641,8 +641,12 @@ mod tests {
             over: "hide".into(),
         });
         assert!(check(&body).is_ok());
-        body.policy.system_one_model = "elsewhere".into();
-        assert!(refused(&body).message.contains("no System One pool"));
+        body.policy.detector_model = "elsewhere".into();
+        assert!(
+            refused(&body)
+                .message
+                .contains("no System One or chat pool")
+        );
     }
 
     #[test]
@@ -656,7 +660,7 @@ mod tests {
             over: "gate".into(),
         });
         assert!(refused(&body).message.contains("gate"));
-        body.policy.system_one_model = "guard".into();
+        body.policy.detector_model = "guard".into();
         assert!(refused(&body).message.contains("not cleared"));
     }
 

@@ -44,6 +44,7 @@ use aiplane_features::server::vad;
 use aiplane_runtime::classification_detector::{self, Decision};
 use aiplane_runtime::rama_server::auth::require_bearer;
 use aiplane_runtime::rama_server::state::RamaState;
+use aiplane_runtime::server::side_call::Payer;
 use aiplane_runtime::server::tools::ToolContext;
 use aiplane_runtime::server::tools::ToolSource;
 use aiplane_runtime::server::tools::injection::InjectionScan;
@@ -907,7 +908,7 @@ pub async fn chat_completions(State(state): State<Arc<RamaState>>, req: Request)
         return with_automatic_route_headers(resp, automatic_decision.as_ref());
     }
     if let Some(response) =
-        enforce_content_guard(&state, &request_value, &routing_model, &route_access).await
+        enforce_content_guard(&state, &user, &request_value, &routing_model, &route_access).await
     {
         return with_automatic_route_headers(response, automatic_decision.as_ref());
     }
@@ -1011,11 +1012,25 @@ pub async fn chat_completions(State(state): State<Arc<RamaState>>, req: Request)
 
 pub async fn enforce_content_guard(
     state: &RamaState,
+    user: &UserCtx,
     request: &Value,
     model: &str,
     access: &PoolAccess,
 ) -> Option<Response> {
-    match classification_detector::evaluate_for_model(state, request, model, access).await {
+    match classification_detector::evaluate_for_model(
+        state,
+        &Payer::of_turn(
+            &user.principal,
+            None,
+            Some(user.user_email.clone()).filter(|email| !email.is_empty()),
+            UsageSource::V1Api,
+        ),
+        request,
+        model,
+        access,
+    )
+    .await
+    {
         Ok(Decision::Allow) => None,
         Ok(Decision::Confirm) => Some(error_response(
             StatusCode::CONFLICT,

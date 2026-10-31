@@ -53,7 +53,7 @@
 		{:else if selected === 'markings'}<MarkingsStep bind:draft />
 		{:else if selected === 'destinations'}<DestinationsStep bind:draft />
 		{:else if selected === 'output'}<OutputStep bind:draft />
-		{:else}<PolicyStep bind:draft models={saved.system_one_models} />{/if}
+		{:else}<PolicyStep bind:draft models={saved.detector_models} />{/if}
 	</div>
 	{#if error}<div class="alert alert-error text-sm" role="alert"><span>{error}</span></div>{/if}
 	{#if done}<div class="alert alert-success text-sm" role="status"><span>{t('cls-saved')}</span></div>{/if}

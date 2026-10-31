@@ -120,7 +120,7 @@ async fn state_full(
     common::seed_pool_models(&registry, "high", 0, &["high-model"]);
     let mut config = common::test_config();
     config.chat.s3 = Some(s3_config(s3));
-    config.classification.system_one_model = "guard-model".into();
+    config.classification.detector_model = "guard-model".into();
     configure(&mut config);
     if active {
         sqlx::raw_sql(&format!(
@@ -604,7 +604,7 @@ fn probe_schema(id: &str) -> shared::api::ToolDef {
 }
 
 struct Gate {
-    source_state: Arc<aiplane_runtime::server::AppState>,
+    source_state: Arc<aiplane_runtime::rama_server::state::RamaState>,
     context: ToolContext,
 }
 
@@ -630,7 +630,9 @@ async fn gate(
             suspend: aiplane_runtime::suspend::Suspend::Available,
             ..ToolContext::for_test(state.db.clone())
         },
-        source_state: Arc::new(aiplane_runtime::server::AppState::clone(&state)),
+        source_state: Arc::new(aiplane_runtime::rama_server::state::RamaState::clone(
+            &state,
+        )),
     }
 }
 
@@ -653,6 +655,12 @@ async fn call_with(
     let source = aiplane_runtime::classification_gate::ClassifiedToolSource::new(
         &registry,
         gate.source_state.clone(),
+        aiplane_runtime::server::side_call::Payer::person(
+            "alice",
+            &[],
+            Some("alice@example.com".into()),
+            aiplane_core::server::db::usage::UsageSource::Chat,
+        ),
     );
     let tool = source.get(tool).expect("the tool is registered");
     tool.run(context.clone(), args)
@@ -888,6 +896,12 @@ async fn a_hidden_tool_above_its_level_is_refused_when_called() {
     let source = aiplane_runtime::classification_gate::ClassifiedToolSource::new(
         &registry,
         gate.source_state.clone(),
+        aiplane_runtime::server::side_call::Payer::person(
+            "alice",
+            &[],
+            Some("alice@example.com".into()),
+            aiplane_core::server::db::usage::UsageSource::Chat,
+        ),
     );
     let error = source
         .get("get_current_timestamp")
@@ -1147,7 +1161,7 @@ async fn rule_questions_stay_dormant_without_a_system_one_model_while_a_pattern_
         &s3.uri(),
         true,
         &iban_and_rule_classes(),
-        |config| config.classification.system_one_model = String::new(),
+        |config| config.classification.detector_model = String::new(),
     )
     .await;
     let cookie = common::seed_session(&state, "alice", "alice@example.com").await;

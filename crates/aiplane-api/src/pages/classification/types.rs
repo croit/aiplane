@@ -174,7 +174,7 @@ pub struct PolicyBody {
     pub unknown_label_level: String,
     pub unreadable_level: String,
     #[serde(default)]
-    pub system_one_model: String,
+    pub detector_model: String,
     /// `monitor` or `enforce`.
     pub mode: String,
     #[serde(default)]
@@ -235,13 +235,23 @@ pub struct DestinationView {
     pub hosts: Vec<String>,
 }
 
+/// What serves a detector model: the System One protocol (recommended), or a
+/// chat completion as the fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DetectorKind {
+    SystemOne,
+    Chat,
+}
+
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
-pub struct SystemOneModelView {
+pub struct DetectorModelView {
     pub id: String,
+    pub kind: DetectorKind,
     /// `null` while no pool serving it is rated.
     pub level_id: Option<String>,
     pub cleared_for_highest: bool,
-    /// The System One pools serving the model.
+    /// The pools of that kind serving the model.
     pub pools: Vec<String>,
 }
 
@@ -255,7 +265,7 @@ pub struct ClassificationState {
     pub destinations: Vec<DestinationView>,
     pub policy: PolicyBody,
     pub templates: Vec<TemplateView>,
-    pub system_one_models: Vec<SystemOneModelView>,
+    pub detector_models: Vec<DetectorModelView>,
 }
 
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]

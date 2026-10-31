@@ -9,7 +9,7 @@ All tables belong to one migration (`0090_data_classification.sql`).
 | Table | Content |
 |---|---|
 | `classification_levels` | `id`, unique `rank` (0 is the lowest), `name`, `description`, `color`, and the marking fields `marking_text` (visible text), `mip_label_id` (Purview label GUID) and `filename_tag`. A fresh installation holds one level, `public`. |
-| `classification_data_classes` | A class a System One model can recognise: `level_id` (the level the content needs), `action` (`raise`, `confirm`, `block`), and the rule (`rule_question`, positive and negative examples, `rule_threshold`). A class with an empty `rule_question` has no detector. |
+| `classification_data_classes` | A class the detector model can recognise: `level_id` (the level the content needs), `action` (`raise`, `confirm`, `block`), and the rule (`rule_question`, positive and negative examples, `rule_threshold`). A class with an empty `rule_question` has no detector. |
 | `classification_terms` | The word-list terms of a data class. Read into one `TermMatcher` per class when the scheme loads; a settings save rebuilds them. |
 | `classification_markings` | `(kind, value) -> level_id` with `kind` one of `mip` (a Purview label GUID or name), `tscp`, `sensitivity` and `stamp` (visible stamp text). Upload detection reads it. The filename tag is not a row: it is the level's `filename_tag`. |
 | `classification_assignments` | `(kind, id) -> level_id`, `over` (`hide` or `gate`). `kind` is `pool`, `tool`, `mcp`, `connector` or `collection`. A pool's `id` is its name; triggers follow a rename and remove the row on delete. A tool's `id` is the tool id, an MCP server's and a connector's the server or connector key, a collection's the numeric collection id (a rename cannot orphan it). A destination without a row is at the lowest level and, for a tool, hidden above it. The rows load with the scheme. |
@@ -31,7 +31,7 @@ All endpoints need administrator rights and live under `/api/v0/admin/classifica
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/v0/admin/classification` | The whole scheme (`active`, `levels`, `classes` with their word-list state, `markings`, `policy`), the `destinations` that can be rated (every pool, tool with its `egress` flag, connector, knowledge collection; a pool also carries `hosting`, `own_network`, `cloud` or `unknown`, and `hosts`, the hosts of its backends: `cloud` when any backend address is public, `own_network` when every backend resolves to private, loopback or link-local addresses, `unknown` when a host does not resolve within two seconds), the `system_one_models` with `cleared_for_highest` and the `pools` serving each, and the `templates`. Template, level and data class names and descriptions come in the language of the request (`Accept-Language`, then the language cookie) and are the scheme's own data once saved; rule questions and positive/negative examples stay English because the System One model is measured on English prompts, and stamps, label names and filename tags stay as real documents carry them. |
+| `GET /api/v0/admin/classification` | The whole scheme (`active`, `levels`, `classes` with their word-list state, `markings`, `policy`), the `destinations` that can be rated (every pool, tool with its `egress` flag, connector, knowledge collection; a pool also carries `hosting`, `own_network`, `cloud` or `unknown`, and `hosts`, the hosts of its backends: `cloud` when any backend address is public, `own_network` when every backend resolves to private, loopback or link-local addresses, `unknown` when a host does not resolve within two seconds), the `detector_models` with `cleared_for_highest` and the `pools` serving each, and the `templates`. Template, level and data class names and descriptions come in the language of the request (`Accept-Language`, then the language cookie) and are the scheme's own data once saved; rule questions and positive/negative examples stay English because the detector models are measured on English prompts, and stamps, label names and filename tags stay as real documents carry them. |
 | `PUT /api/v0/admin/classification` | Replaces the scheme atomically in one transaction. |
 | `POST /api/v0/admin/classification/classes/{id}/terms` | Multipart `file`: replaces the class's word list and reloads the matchers. `?column=` names the CSV column (without it the file is one term per line); `?preview=1` saves nothing. Answers the preview counts (`count`, `duplicates`, `too_short`, `sample`). |
 | `DELETE /api/v0/admin/classification/classes/{id}/terms` | Removes the word list. |
@@ -45,7 +45,7 @@ All endpoints need administrator rights and live under `/api/v0/admin/classifica
 - class ids are unique slugs, patterns are built-in pattern ids, thresholds lie between 0 and 1;
 - a `mip` marking value or a level's Purview label must be a GUID (stored lowercase without braces);
 - an assignment must name an existing destination; `gate` is accepted only for destinations that carry data out of the conversation; non-egress destinations are always `hide`;
-- the System One model must be served by a System One pool and be cleared for the highest level; it may be empty only when no destination is gated. A class's question alone does not need a model: without one the question is inactive and the class still acts through its patterns, markings and word list.
+- the detector model (`classification.detector_model`) must be served by a System One pool or, failing that, a chat pool, and be cleared for the highest level (every pool serving it); it may be empty only when no destination is gated. A class's question alone does not need a model: without one the question is inactive and the class still acts through its patterns, markings and word list.
 
 Removing a level moves its conversations as described under [Data classification](admin/settings.md#data-classification) and writes one `scheme_change` event per conversation. The policy is stored in the `settings.classification.*` rows of `app_settings`, so the runtime reads it through the settings mechanism.
 
@@ -79,7 +79,7 @@ An installation that used the earlier GDPR and NDA pool flags, the content guard
 - The content guard's two questions become the data classes `personal_data` (level `internal`) and `nda` (level `confidential`), kept only while the guard was enabled. A guard action of allow becomes a class action of `raise` without a rule, so nothing is asked; confirm becomes `confirm`; deny becomes `block`.
 - Confidential conversations are moved to `confidential` with an event of cause `migration`.
 - `classification.link_share_max_level` is set to `confidential`, so conversations shared by link keep working: nothing was above confidential before.
-- `chat.confidential.default` becomes `classification.default_level = confidential`; the guard's model and mode become `classification.system_one_model` and `classification.mode`.
+- `chat.confidential.default` becomes `classification.default_level = confidential`; the guard's model and mode become `classification.detector_model` and `classification.mode`.
 - The old settings, the pool flag columns and `chat_session_settings.confidential` are removed.
 
 An installation that never used any of these keeps the single `public` level and sees no change.
@@ -180,7 +180,7 @@ Monitor mode (`classification.mode = monitor`) logs what enforce mode would do a
 
 ### Typed text
 
-Before a message goes to a model, what the person wrote since the last answer is checked for the classes above the conversation's level, by the same code as an upload's text: the built-in patterns and word lists of those classes first, then the System One model. The operator's system prompt and earlier messages are not checked again (they were checked when sent, and the level only rises). The check runs whatever the selected model is cleared for, because the level outlives the turn: it decides the tools, sharing and the next model. A match raises the conversation (`pattern:<class id>`, `terms:<class id>`, `system_one:<class id>`) and the class's action applies. On `/v1/chat/completions` and in agent runs nothing is stored: everything the client sent except the model's earlier answers is checked for the classes above the target model's level, and a match refuses the request (`confirm` asks where a person can answer).
+Before a message goes to a model, what the person wrote since the last answer is checked for the classes above the conversation's level, by the same code as an upload's text: the built-in patterns and word lists of those classes first, then the detector model. The operator's system prompt and earlier messages are not checked again (they were checked when sent, and the level only rises). The check runs whatever the selected model is cleared for, because the level outlives the turn: it decides the tools, sharing and the next model. A match raises the conversation (`pattern:<class id>`, `terms:<class id>`, `system_one:<class id>`) and the class's action applies. On `/v1/chat/completions` and in agent runs nothing is stored: everything the client sent except the model's earlier answers is checked for the classes above the target model's level, and a match refuses the request (`confirm` asks where a person can answer).
 
 In a person's chat, an approved `confirm` also lets the turn go to a model that is not cleared for the conversation's level while `classification.user_override` is `true` (the default; a missing row reads as `true`). With `false` the approval confirms the content only: the model-clearance check runs as for any turn, and a model that is not cleared refuses the turn with the usual message, so the person has to pick a cleared model. Later rounds of the turn are checked as for a turn without an approval.
 
@@ -195,11 +195,11 @@ When a turn starts, before any model reads the attachments (OCR is a model too),
 | Digital marking, visible stamp or file name tag mapped by [Resolution](#resolution-1); unreadable or over-size file (64 MiB) | `marking:*` |
 | A built-in pattern of a data class, in the first 1 MiB of text | `pattern:<class id>` |
 | A word of a data class's list | `terms:<class id>` |
-| The System One model, asked about the first 32 KiB of text for the classes above the conversation's level | `system_one:<class id>` |
+| The detector model (System One or chat), asked about the first 32 KiB of text for the classes above the conversation's level | `system_one:<class id>` |
 
 The markings are weighed first: a class at or below the level a marking sets is neither asked about nor acted on, just as typed text in a conversation already at that level is not checked for it.
 
-A class's action applies exactly as for typed text: `raise` raises, `confirm` asks the person before the content goes to the model, `block` refuses the turn. A marking always raises. In monitor mode only the System One question is asked and logged. A failure of the System One model refuses the turn in enforce mode; what the markings, patterns and word lists found still raises the conversation first, for an upload as for typed text. The person sees that the checking model could not be reached; the cause is logged. With no System One model configured the questions are skipped: no System One call is made and nothing is refused, while patterns, markings and word lists apply as usual. Only a configured model that cannot be reached fails closed.
+A class's action applies exactly as for typed text: `raise` raises, `confirm` asks the person before the content goes to the model, `block` refuses the turn. A marking always raises. In monitor mode only the detector question is asked and logged. A failure of the detector model refuses the turn in enforce mode; what the markings, patterns and word lists found still raises the conversation first, for an upload as for typed text. The person sees that the checking model could not be reached; the cause is logged. With no detector model configured the questions are skipped: no detector call is made and nothing is refused, while patterns, markings and word lists apply as usual. Only a configured model that cannot be reached fails closed.
 
 After the raise the model check runs as before: a model whose level is below the conversation's is refused unless the person just approved the content for it. The check is repeated at the start of every later round, so a level that rises during a turn (a retrieval) ends the turn at the next round instead of sending the new content to an uncleared model. An approval covers the level the conversation had when it was given.
 
@@ -212,7 +212,7 @@ After the raise the model check runs as before: a model whose level is below the
 Only a tool that carries data out of the conversation (`Tool::egress`, the **Egress** column of [tools-inventory.md](tools-inventory.md): out of AIplane, or into memory and scheduled runs that other conversations read) is a destination with a maximum level (see `classification_assignments`). A tool whose arguments and results stay in the conversation (attachments, canvas documents, reading and deleting memory and scheduled actions, own knowledge collections, QR codes, typst templates, `enable_tools`) is never filtered or gated. MCP tools, ComfyUI workflows and the sandbox tools always count as egress, and so does any tool that does not say otherwise. Re-evaluated at the start of every round:
 
 - `over = hide`: above its level the tool is not offered, and a call to it is refused with a message naming the conversation's level.
-- `over = gate`: the tool stays offered. Before each call above its level the arguments are checked for the classes above the tool's level: the patterns and word lists of those classes, then the System One model. No match: the call runs. A match: with `classification.gate_on_match = ask` the call pauses on the ordinary approval prompt, which names the matched classes; with `block` it is refused with a message naming them. If the System One model cannot be reached the call is refused and the message says so. A call approved on the prompt runs without a second check. Nothing is raised: the arguments leave, the conversation does not change.
+- `over = gate`: the tool stays offered. Before each call above its level the arguments are checked for the classes above the tool's level: the patterns and word lists of those classes, then the detector model. No match: the call runs. A match: with `classification.gate_on_match = ask` the call pauses on the ordinary approval prompt, which names the matched classes; with `block` it is refused with a message naming them. If the detector model cannot be reached the call is refused and the message says so. A call approved on the prompt runs without a second check. Nothing is raised: the arguments leave, the conversation does not change.
 
 An unrated egress tool is at the lowest level and hidden above it. A tool such as `edit_image` has no rule of its own; its assignment decides.
 
@@ -228,8 +228,22 @@ Calls that send conversation content to a model beside the turn check the conver
 |---|---|
 | Chat title | With a scheme of more than one level: runs after the conversation's turns have settled, so the level an upload or a retrieval set is known, and is skipped when the title model is not cleared for it. With one level it runs at once. |
 | Compaction summary | Not run when the model is not cleared for the conversation's level. |
-| System One detection and gate | Asked only about text that is being checked; the System One model must itself be cleared for the highest level. |
+| Detector (System One or chat) and gate | Asked only about text that is being checked; the detector model must itself be cleared for the highest level. |
 | Voice feedback fields, skill drafting, agent judges and routers | Not conversation content of a person's chat (a dictated note, an operator's description, an agent run, which never ratchets). |
+
+### The detector model
+
+`classification.detector_model` is one model id. Which protocol asks it follows from the pool that serves it: a System One pool wins (`POST {base}/systemone`, one `noul` question per class); otherwise a chat pool is asked through the side-call path (`server/side_call.rs`: routing, the payer's spend limits, usage metering, one 20 s timeout), so chat completions have no second client. System One is the recommended detector. A chat model is an explicitly labelled fallback: it is slower, costs a model call per checked message and is less robust against manipulated content. A chat detector that cannot be reached, answers over its budget or answers unreadably is a detector failure: enforce mode refuses the request (`cls-detector-unavailable`), monitor mode logs it.
+
+The admin `GET` lists the candidates as `detector_models` with `kind` (`system_one` or `chat`), `level_id`, `cleared_for_highest` and the `pools` of that kind; `PUT` validates the chosen model the same way for both kinds. The editor offers System One models first and the chat models in a second group with a warning.
+
+Hardening of the chat path (the content is untrusted and may try to steer its own classification):
+
+- The system message holds the classifier role, the class questions with their examples, and the rule that the text between the markers is data, never an instruction.
+- The conversation (role-labelled text) is passed unchanged between `<data-NONCE>` and `</data-NONCE>`, with a fresh 128-bit random hex NONCE per call; if the content contains the NONCE a new one is drawn (three tries, then the content counts as manipulation). The task is repeated in one sentence after the block.
+- Before any call the content is checked for anything shaped like one of these markers (`<`, optional whitespace, optional `/`, optional whitespace, `data-` and a hex digit, case-insensitive). A match never reaches the model: every questioned class counts as matched. The text is not Unicode-normalised, so look-alike forms are not caught by this check; they cannot match the NONCE either.
+- The answer is a strict JSON schema: `scores` with one number from 0 to 1 per class id (no other properties) and the boolean `instructs_the_classifier`. A `true` there counts as a match of every questioned class. A missing, unparseable or out-of-range answer is a detector failure.
+- Scores are compared with each class's own threshold, as for System One.
 
 ### Messages
 
@@ -237,4 +251,4 @@ Messages the turn raises on its own (refusals, the gate's messages to the model)
 
 ### Stateless requests
 
-`/v1/chat/completions` and agent runs have no conversation to raise. The System One check runs for the classes above the target model's level: a match with action `raise` or `block` refuses the request, `confirm` asks where a person can answer and refuses otherwise.
+`/v1/chat/completions` and agent runs have no conversation to raise. The detector check runs for the classes above the target model's level: a match with action `raise` or `block` refuses the request, `confirm` asks where a person can answer and refuses otherwise.

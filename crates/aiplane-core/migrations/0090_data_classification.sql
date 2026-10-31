@@ -189,7 +189,7 @@ WHERE used = 1 AND key = 'settings.chat.confidential.default'
   AND trim(value) IN ('true', '1', 'yes', 'on');
 
 INSERT INTO app_settings (key, value, updated_at)
-SELECT 'settings.classification.system_one_model', value, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+SELECT 'settings.classification.detector_model', value, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 FROM app_settings
 WHERE key = 'settings.content_guard.model' AND trim(value) <> '';
 

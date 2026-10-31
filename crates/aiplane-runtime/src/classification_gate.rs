@@ -19,7 +19,8 @@ use session_core::i18n::{Lang, args, t_args};
 use shared::api::ToolDef;
 
 use crate::classification_detector::{Finding, text_findings};
-use crate::server::AppState;
+use crate::rama_server::state::RamaState;
+use crate::server::side_call::Payer;
 use crate::server::tools::ask_first::{Approval, DEFAULT_APPROVAL_TIMEOUT, approval};
 use crate::server::tools::mcp::MCP_ID_PREFIX;
 use crate::server::tools::{
@@ -76,12 +77,17 @@ pub fn retain_visible(
 /// resolves. Without an active scheme it is the source it wraps.
 pub struct ClassifiedToolSource<'a> {
     inner: &'a dyn ToolSource,
-    state: Arc<AppState>,
+    state: Arc<RamaState>,
+    payer: Payer,
 }
 
 impl<'a> ClassifiedToolSource<'a> {
-    pub fn new(inner: &'a dyn ToolSource, state: Arc<AppState>) -> Self {
-        Self { inner, state }
+    pub fn new(inner: &'a dyn ToolSource, state: Arc<RamaState>, payer: Payer) -> Self {
+        Self {
+            inner,
+            state,
+            payer,
+        }
     }
 }
 
@@ -100,6 +106,7 @@ impl ToolSource for ClassifiedToolSource<'_> {
             clearance: clearance(&scheme, id),
             scheme,
             state: self.state.clone(),
+            payer: self.payer.clone(),
             inner: tool,
         }))
     }
@@ -127,7 +134,8 @@ impl ToolSource for ClassifiedToolSource<'_> {
 
 struct ClassifiedTool {
     inner: Arc<dyn Tool>,
-    state: Arc<AppState>,
+    state: Arc<RamaState>,
+    payer: Payer,
     scheme: Arc<Scheme>,
     clearance: ToolClearance,
 }
@@ -143,7 +151,7 @@ impl ClassifiedTool {
 
     async fn checked(&self, ctx: &ToolContext, call: &Value) -> Result<Gate, ToolError> {
         let id = self.inner.id();
-        let findings = text_findings(&self.state, &call.to_string(), self.clearance.rank)
+        let findings = text_findings(&self.state, &self.payer, &call.to_string(), self.clearance.rank)
             .await
             .map_err(|error| {
                 tracing::warn!(tool = id, error = %error, "the gate could not check a tool call; blocking it");

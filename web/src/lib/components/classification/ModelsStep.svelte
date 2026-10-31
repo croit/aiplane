@@ -1,18 +1,19 @@
 <script lang="ts">
-	import { egressSummary, modelCleared, sortedLevels, type Draft, type SystemOneModel } from '#lib/classification.js';
+	import { egressSummary, modelCleared, sortedLevels, type Draft, type DetectorModel } from '#lib/classification.js';
 	import LevelSelect from './LevelSelect.svelte';
+	import DetectorModelSelect from './DetectorModelSelect.svelte';
 	import LevelsStep from './LevelsStep.svelte';
 	import { t } from '#lib/i18n.svelte.js';
 
 	/**
 	 * The assistant's second step: which model pool may see which level,
-	 * prefilled from where its backends run, and the System One model that
+	 * prefilled from where its backends run, and the detector model that
 	 * reads content. Tools, connectors and collections are rated on the
 	 * Destinations tab afterwards.
 	 */
 	let { draft = $bindable(), models, model = $bindable(), customLevels }: {
 		draft: Draft;
-		models: readonly SystemOneModel[];
+		models: readonly DetectorModel[];
 		model: string;
 		customLevels: boolean;
 	} = $props();
@@ -44,12 +45,7 @@
 	{/if}
 	<label class="flex flex-col gap-1">
 		<span class="text-sm font-medium">{t('cls-assist-model')}</span>
-		<select class="select select-sm w-full sm:w-80" bind:value={model}>
-			<option value="">{t('cls-policy-model-none')}</option>
-			{#each models as m (m.id)}
-				<option value={m.id}>{modelCleared(draft, m) ? m.id : t('cls-policy-model-not-cleared', { model: m.id })}</option>
-			{/each}
-		</select>
+		<DetectorModelSelect {models} bind:value={model} cleared={(m) => modelCleared(draft, m)} class="sm:w-80" />
 		<span class="text-xs text-base-content/60">{t('cls-assist-model-help')}</span>
 		{#if model === ''}<span class="text-xs text-warning">{t('cls-assist-questions-inactive')}</span>{/if}
 		{#if unclearedPicked}<span class="text-xs text-error">{t('cls-policy-model-uncleared-picked')}</span>{/if}

@@ -205,7 +205,7 @@ async fn an_installation_that_used_the_old_mechanism_is_mapped_into_the_iso_sche
     assert_eq!(events[0].get::<String, _>("cause"), "migration");
 
     assert_eq!(
-        setting(&pool, "classification.system_one_model")
+        setting(&pool, "classification.detector_model")
             .await
             .as_deref(),
         Some("guard-1")

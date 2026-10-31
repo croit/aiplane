@@ -325,7 +325,7 @@ pub async fn state_with_classification_pools_in_mode(
     let registry = upstreams::UpstreamRegistry::new(&pools).unwrap();
     seed_pool_models(&registry, "chat", 0, &["model-a"]);
     let mut config = test_config();
-    config.classification.system_one_model = "guard-model".into();
+    config.classification.detector_model = "guard-model".into();
     config.classification.mode = mode;
     seed_classification_scheme(&db_pool).await;
     let state = state_from_registry_with_config(db_pool, registry, config);

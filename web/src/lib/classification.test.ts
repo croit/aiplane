@@ -13,7 +13,7 @@ import {
 	finalizeDraft,
 	modelBlocksActivation,
 	modelCleared,
-	pickSystemOneModel,
+	pickDetectorModel,
 	prefillPools,
 	groupDestinations,
 	levelOptions,
@@ -44,7 +44,7 @@ const policy: Policy = {
 	link_share_max_level: 'internal',
 	unknown_label_level: 'secret',
 	unreadable_level: 'secret',
-	system_one_model: '',
+	detector_model: '',
 	mode: 'monitor',
 	mip_tenant_id: '',
 	output: { visible: false, metadata: false, filename: false }
@@ -61,7 +61,7 @@ const state = (): ClassificationState => ({
 	destinations: [dest('pool', 'p1', 'internal'), dest('pool', 'p2', null), dest('tool', 't1', null, { egress: true })],
 	policy,
 	templates: [],
-	system_one_models: []
+	detector_models: []
 });
 
 test('moving a level keeps ranks contiguous from zero', () => {
@@ -234,8 +234,8 @@ const modelStep = (): ClassificationState => {
 	return s;
 };
 const models = [
-	{ id: 'qwen-big', level_id: null, cleared_for_highest: false, pools: ['qwen'] },
-	{ id: 'glm', level_id: null, cleared_for_highest: false, pools: ['zai'] }
+	{ id: 'qwen-big', kind: 'system_one' as const, level_id: null, cleared_for_highest: false, pools: ['qwen'] },
+	{ id: 'glm', kind: 'system_one' as const, level_id: null, cleared_for_highest: false, pools: ['zai'] }
 ];
 const rate = (draft: ReturnType<typeof draftFrom>, id: string, level: string | null) => ({ ...draft, destinations: draft.destinations.map((d) => (d.id === id ? { ...d, level_id: level } : d)) });
 
@@ -255,10 +255,21 @@ test('a pool the operator already rated keeps its rating', () => {
 
 test('the System One model is preselected only when exactly one is cleared in the draft', () => {
 	const draft = prefillPools(draftFrom(modelStep()));
-	assert.equal(pickSystemOneModel(draft, models), 'qwen-big');
-	assert.equal(pickSystemOneModel(rate(draft, 'zai', 'secret'), models), '');
-	assert.equal(pickSystemOneModel(rate(draft, 'qwen', null), models), '');
-	assert.equal(pickSystemOneModel(draft, []), '');
+	assert.equal(pickDetectorModel(draft, models), 'qwen-big');
+	assert.equal(pickDetectorModel(rate(draft, 'zai', 'secret'), models), '');
+	assert.equal(pickDetectorModel(rate(draft, 'qwen', null), models), '');
+	assert.equal(pickDetectorModel(draft, []), '');
+});
+
+const chat = (id: string, pools: string[]) => ({ id, kind: 'chat' as const, level_id: null, cleared_for_highest: false, pools });
+
+test('a cleared chat model is preselected only when no System One model exists', () => {
+	const draft = prefillPools(draftFrom(modelStep()));
+	assert.equal(pickDetectorModel(draft, [...models, chat('chat-a', ['qwen'])]), 'qwen-big');
+	assert.equal(pickDetectorModel(rate(draft, 'zai', 'secret'), [...models, chat('chat-a', ['qwen'])]), '');
+	assert.equal(pickDetectorModel(draft, [chat('chat-a', ['qwen'])]), 'chat-a');
+	assert.equal(pickDetectorModel(draft, [chat('zeta', ['qwen']), chat('alpha', ['qwen']), chat('glm-chat', ['zai'])]), 'alpha');
+	assert.equal(pickDetectorModel(draft, [chat('glm-chat', ['zai'])]), '');
 });
 
 test('a model is cleared only when all its pools are at the highest level', () => {
@@ -270,9 +281,9 @@ test('a model is cleared only when all its pools are at the highest level', () =
 
 test('finalizing sets the model and keeps the questions with or without one', () => {
 	const draft = prefillPools(draftFrom(modelStep()));
-	assert.equal(finalizeDraft(draft, 'qwen-big').policy.system_one_model, 'qwen-big');
+	assert.equal(finalizeDraft(draft, 'qwen-big').policy.detector_model, 'qwen-big');
 	assert.equal(finalizeDraft(draft, 'qwen-big').classes[0]!.rule_question, 'Is it personal?');
-	assert.equal(finalizeDraft(draft, '').policy.system_one_model, '');
+	assert.equal(finalizeDraft(draft, '').policy.detector_model, '');
 	assert.equal(finalizeDraft(draft, '').classes[0]!.rule_question, 'Is it personal?');
 });
 

@@ -1,11 +1,12 @@
 <script lang="ts">
-	import { needsClearedModel, type Draft, type SystemOneModel } from '#lib/classification.js';
+	import { needsClearedModel, type Draft, type DetectorModel } from '#lib/classification.js';
 	import LevelSelect from './LevelSelect.svelte';
+	import DetectorModelSelect from './DetectorModelSelect.svelte';
 	import { t } from '#lib/i18n.svelte.js';
 
-	let { draft = $bindable(), models }: { draft: Draft; models: readonly SystemOneModel[] } = $props();
+	let { draft = $bindable(), models }: { draft: Draft; models: readonly DetectorModel[] } = $props();
 	const needed = $derived(needsClearedModel(draft));
-	const unclearedPicked = $derived(models.some((m) => m.id === draft.policy.system_one_model && !m.cleared_for_highest));
+	const unclearedPicked = $derived(models.some((m) => m.id === draft.policy.detector_model && !m.cleared_for_highest));
 </script>
 
 <div class="space-y-5">
@@ -51,14 +52,9 @@
 		</label>
 		<label class="flex flex-col gap-1">
 			<span class="text-sm font-medium">{t('cls-policy-model')}</span>
-			<select class="select select-sm w-full" bind:value={draft.policy.system_one_model}>
-				<option value="">{t('cls-policy-model-none')}</option>
-				{#each models as m (m.id)}
-					<option value={m.id} disabled={!m.cleared_for_highest}>{m.cleared_for_highest ? m.id : t('cls-policy-model-not-cleared', { model: m.id })}</option>
-				{/each}
-			</select>
+			<DetectorModelSelect {models} bind:value={draft.policy.detector_model} cleared={(m) => m.cleared_for_highest} lockUncleared />
 			<span class="text-xs text-base-content/60">{t('cls-policy-model-help')}</span>
-			{#if needed && draft.policy.system_one_model === ''}<span class="text-xs text-warning">{t('cls-policy-model-needed')}</span>{/if}
+			{#if needed && draft.policy.detector_model === ''}<span class="text-xs text-warning">{t('cls-policy-model-needed')}</span>{/if}
 			{#if unclearedPicked}<span class="text-xs text-error">{t('cls-policy-model-uncleared-picked')}</span>{/if}
 		</label>
 	</div>

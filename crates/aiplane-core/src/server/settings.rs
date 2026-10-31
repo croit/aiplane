@@ -741,7 +741,7 @@ pub static STORED_SECTIONS: &[SectionSpec] = &[SectionSpec {
         f("classification.unknown_label_level", Kind::Text),
         f("classification.unreadable_level", Kind::Text),
         f(
-            "classification.system_one_model",
+            "classification.detector_model",
             Kind::Model(PoolKind::SystemOne),
         ),
         f("classification.mode", Kind::Choice(&["monitor", "enforce"])),
@@ -1061,7 +1061,7 @@ pub fn apply(settings: &Settings, config: &mut Config) {
         link_share_max_level: settings.text_or("classification.link_share_max_level", ""),
         unknown_label_level: settings.text_or("classification.unknown_label_level", ""),
         unreadable_level: settings.text_or("classification.unreadable_level", ""),
-        system_one_model: settings.text_or("classification.system_one_model", ""),
+        detector_model: settings.text_or("classification.detector_model", ""),
         mode: ClassificationMode::parse(&settings.text_or("classification.mode", "enforce")),
         mip_tenant_id: settings.text_or("classification.mip_tenant_id", ""),
         output: OutputMarking {
@@ -1580,10 +1580,7 @@ pub fn snapshot(c: &Config) -> Vec<(String, String)> {
         "classification.unreadable_level",
         cl.unreadable_level.clone(),
     );
-    put(
-        "classification.system_one_model",
-        cl.system_one_model.clone(),
-    );
+    put("classification.detector_model", cl.detector_model.clone());
     put("classification.mode", cl.mode.as_str().to_string());
     put(
         "classification.output.visible",
@@ -1817,7 +1814,7 @@ mod tests {
                 ("classification.lowering", "with_reason"),
                 ("classification.gate_on_match", "block"),
                 ("classification.user_override", "false"),
-                ("classification.system_one_model", "guard"),
+                ("classification.detector_model", "guard"),
                 ("classification.mode", "monitor"),
                 ("classification.output.filename", "true"),
                 (
@@ -1839,7 +1836,7 @@ mod tests {
             ("classification.lowering", "with_reason"),
             ("classification.gate_on_match", "block"),
             ("classification.user_override", "false"),
-            ("classification.system_one_model", "guard"),
+            ("classification.detector_model", "guard"),
             ("classification.mode", "monitor"),
             ("classification.output.filename", "true"),
         ] {

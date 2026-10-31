@@ -19,9 +19,11 @@ use aiplane_features::server::classification::{
 };
 
 use crate::classification_detector::{
-    Decision, Finding, apply_findings, static_findings, system_one_findings,
+    Decision, Finding, apply_findings, detector_findings, static_findings,
 };
+use crate::rama_server::state::RamaState;
 use crate::server::AppState;
+use crate::server::side_call::Payer;
 use crate::server::tools::ToolContext;
 
 /// A file larger than this is not downloaded to be read; it counts as a file
@@ -174,7 +176,8 @@ fn system_one_text(texts: &[(String, String)]) -> String {
 /// `Ok(Decision::Allow)` when the scheme is inactive, the turn is an agent's,
 /// or the message carries no file.
 pub(crate) async fn evaluate_attachments(
-    state: &AppState,
+    state: &RamaState,
+    payer: &Payer,
     context: &ToolContext,
 ) -> Result<Decision, String> {
     let scheme = state.scheme();
@@ -225,7 +228,7 @@ pub(crate) async fn evaluate_attachments(
         .collect();
     let text = system_one_text(&inspected.texts);
     if !text.trim().is_empty() {
-        match system_one_findings(state, &text, marked).await {
+        match detector_findings(state, payer, &text, marked).await {
             Ok(found) => findings.extend(found),
             Err(error) => {
                 if !findings.is_empty() {
@@ -261,7 +264,8 @@ pub struct DryRun {
 /// level so every class counts. Nothing is stored. The System One model is
 /// asked only when one is configured.
 pub async fn dry_run(
-    state: &AppState,
+    state: &RamaState,
+    payer: &Payer,
     file: Option<(&str, &str, &[u8])>,
     text: Option<&str>,
 ) -> Result<DryRun, String> {
@@ -289,13 +293,13 @@ pub async fn dry_run(
         texts.push(text.to_owned());
     }
     let joined = texts.join("\n\n");
-    if !config.classification.system_one_model.trim().is_empty() && !joined.trim().is_empty() {
+    if !config.classification.detector_model.trim().is_empty() && !joined.trim().is_empty() {
         let bounded: String = joined
             .char_indices()
             .take_while(|(at, _)| *at < SYSTEM_ONE_TEXT_BYTES)
             .map(|(_, ch)| ch)
             .collect();
-        findings.extend(system_one_findings(state, &bounded, 0).await?);
+        findings.extend(detector_findings(state, payer, &bounded, 0).await?);
     }
     let level_id = findings
         .iter()

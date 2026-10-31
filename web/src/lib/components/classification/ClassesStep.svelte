@@ -8,7 +8,7 @@
 
 	let { draft = $bindable(), saved }: { draft: Draft; saved: ClassificationState } = $props();
 	const isSaved = (id: string) => saved.classes.some((c) => c.id === id);
-	const hasModel = $derived(draft.policy.system_one_model !== '');
+	const hasModel = $derived(draft.policy.detector_model !== '');
 	let expanded = $state<Record<string, boolean>>({});
 	const levelOf = (id: string) => draft.levels.find((l) => l.id === id);
 

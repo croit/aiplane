@@ -17,12 +17,14 @@ use std::sync::Arc;
 use aiplane_core::server::classification::admin;
 use aiplane_core::server::classification::{self, DestinationKind, Over, Scheme, marking_rules};
 use aiplane_core::server::db;
+use aiplane_core::server::db::usage::UsageSource;
 use aiplane_core::server::upstreams::PoolKind;
 use aiplane_features::server::classification::{
     TermError, TermMatcher, TermUpload, parse_term_upload, read_markings,
 };
 use aiplane_runtime::classification_upload::dry_run;
 use aiplane_runtime::rama_server::state::RamaState;
+use aiplane_runtime::server::side_call::Payer;
 use rama::http::service::web::extract::{Path, State};
 use rama::http::{Request, Response, StatusCode, header};
 use session_core::chrome::{CappedBodyError, read_body_capped};
@@ -161,30 +163,48 @@ async fn with_hosting(state: &RamaState, mut views: Vec<DestinationView>) -> Vec
     views
 }
 
-/// For each System One model, the pools serving it.
-fn system_one_pools(state: &RamaState) -> HashMap<String, Vec<String>> {
-    let mut out: HashMap<String, Vec<String>> = HashMap::new();
-    for pool in state.upstreams.pools() {
-        if pool.kind != PoolKind::SystemOne {
-            continue;
-        }
-        for backend in &pool.backends {
-            for model in backend.listed_models() {
-                let pools = out.entry(model).or_default();
-                if !pools.contains(&pool.name) {
-                    pools.push(pool.name.clone());
+/// For each model that can detect, the kind of pool that serves it and those
+/// pools. A System One pool wins over a chat pool for the same id, as it does
+/// when the detector routes the call.
+fn detector_candidates(state: &RamaState) -> HashMap<String, (DetectorKind, Vec<String>)> {
+    let mut out: HashMap<String, (DetectorKind, Vec<String>)> = HashMap::new();
+    for (pool_kind, kind) in [
+        (PoolKind::Chat, DetectorKind::Chat),
+        (PoolKind::SystemOne, DetectorKind::SystemOne),
+    ] {
+        let mut of_kind: HashMap<String, Vec<String>> = HashMap::new();
+        for pool in state.upstreams.pools() {
+            if pool.kind != pool_kind {
+                continue;
+            }
+            for backend in &pool.backends {
+                for model in backend.listed_models() {
+                    let pools = of_kind.entry(model).or_default();
+                    if !pools.contains(&pool.name) {
+                        pools.push(pool.name.clone());
+                    }
                 }
             }
+        }
+        for (model, pools) in of_kind {
+            out.insert(model, (kind, pools));
         }
     }
     out
 }
 
-fn system_one_models(state: &RamaState, scheme: &Scheme) -> Vec<SystemOneModelView> {
-    let highest = scheme.highest().rank;
-    let mut out: Vec<SystemOneModelView> = system_one_pools(state)
+fn detector_pools(state: &RamaState) -> HashMap<String, Vec<String>> {
+    detector_candidates(state)
         .into_iter()
-        .map(|(id, pools)| {
+        .map(|(model, (_, pools))| (model, pools))
+        .collect()
+}
+
+fn detector_models(state: &RamaState, scheme: &Scheme) -> Vec<DetectorModelView> {
+    let highest = scheme.highest().rank;
+    let mut out: Vec<DetectorModelView> = detector_candidates(state)
+        .into_iter()
+        .map(|(id, (kind, pools))| {
             let assignments: Vec<_> = pools
                 .iter()
                 .map(|pool| scheme.assignment(DestinationKind::Pool, pool))
@@ -203,8 +223,9 @@ fn system_one_models(state: &RamaState, scheme: &Scheme) -> Vec<SystemOneModelVi
                     .find(|l| l.rank == rank)
                     .map(|l| l.id.clone())
             };
-            SystemOneModelView {
+            DetectorModelView {
                 id,
+                kind,
                 level_id,
                 cleared_for_highest: rank >= highest,
                 pools,
@@ -226,7 +247,7 @@ fn policy_view(state: &RamaState, scheme: &Scheme) -> PolicyBody {
         link_share_max_level: scheme.resolve(&policy.link_share_max_level).id.clone(),
         unknown_label_level: scheme.resolve(&policy.unknown_label_level).id.clone(),
         unreadable_level: scheme.resolve(&policy.unreadable_level).id.clone(),
-        system_one_model: policy.system_one_model.clone(),
+        detector_model: policy.detector_model.clone(),
         mode: policy.mode.as_str().to_owned(),
         mip_tenant_id: policy.mip_tenant_id.clone(),
         output: OutputBody {
@@ -258,12 +279,12 @@ async fn current_state(state: &RamaState, lang: Lang) -> Result<ClassificationSt
         destinations: with_hosting(state, destinations(state, &scheme).await?.views).await,
         policy: policy_view(state, &scheme),
         templates: templates::all(lang),
-        system_one_models: system_one_models(state, &scheme),
+        detector_models: detector_models(state, &scheme),
     })
 }
 
 /// GET /api/v0/admin/classification — the scheme, every destination that can
-/// be rated, the templates and the System One models.
+/// be rated, the templates and the models that can detect (System One and chat).
 pub async fn get(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = require_admin_json!(state, req);
     let lang = Lang::from_request(req.headers());
@@ -283,12 +304,12 @@ pub async fn save(State(state): State<Arc<RamaState>>, req: Request) -> Response
     let parsed: SaveBody = or_return!(read_json(body, "the classification body").await);
     let scheme = state.scheme();
     let known = or_return!(destinations(&state, &scheme).await).known();
-    let pools = system_one_pools(&state);
+    let pools = detector_pools(&state);
     let replacement = match validate(
         &parsed,
         &Context {
             destinations: Some(&known),
-            system_one_pools: &pools,
+            detector_pools: &pools,
         },
     ) {
         Ok(replacement) => replacement,
@@ -529,7 +550,7 @@ pub async fn inspect(State(state): State<Arc<RamaState>>, req: Request) -> Respo
 /// POST /api/v0/admin/classification/test — what the saved scheme makes of a
 /// file and/or a text. Nothing is stored.
 pub async fn test(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = require_admin_json!(state, req);
+    let (_session, admin_user) = require_admin_json!(state, req);
     let parts = or_return!(multipart(req, SAMPLE_UPLOAD_MAX_BYTES).await);
     let file = file_part(&parts).filter(|p| !p.bytes.is_empty());
     let text = parts
@@ -540,8 +561,15 @@ pub async fn test(State(state): State<Arc<RamaState>>, req: Request) -> Response
         return bad_request("send a `file` part, a `text` part, or both; there is nothing to test");
     }
     let name = file.and_then(|f| f.filename.clone()).unwrap_or_default();
+    let payer = Payer::person(
+        &admin_user.id,
+        &admin_user.roles,
+        Some(admin_user.email.clone()),
+        UsageSource::Chat,
+    );
     let outcome = dry_run(
         &state,
+        &payer,
         file.map(|f| (name.as_str(), f.mime.as_str(), f.bytes.as_slice())),
         text.as_deref(),
     )

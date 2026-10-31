@@ -723,18 +723,7 @@ impl SessionDriver for OpenAiDriver {
             )
             .await;
             let log = crate::agents::audit::RunLog::of(&self.tool_ctx);
-            let email = if self.state.usage.is_enabled() {
-                Some(policy.usage_name(self).await).filter(|name| !name.is_empty())
-            } else {
-                None
-            };
-            let mut payer = crate::server::side_call::Payer::of_turn(
-                &self.tool_ctx.principal,
-                self.agent().map(|run| run.chain().clone()),
-                email,
-                self.source,
-            )
-            .with_model_context(&self.tool_ctx);
+            let mut payer = policy.payer(self).await;
             if let Some(run) = self
                 .tool_ctx
                 .agent
@@ -1287,8 +1276,12 @@ async fn run_one_turn(
     // An agent run's synthetic tools are no grant: they sit over the
     // grant-narrowed source, never inside it.
     let live_state = Arc::new((**d.state).clone());
-    let classified_source =
-        crate::classification_gate::ClassifiedToolSource::new(&granted_source, live_state.clone());
+    let classification_payer = policy.payer(d).await;
+    let classified_source = crate::classification_gate::ClassifiedToolSource::new(
+        &granted_source,
+        d.state.clone(),
+        classification_payer.clone(),
+    );
     let person_chat =
         d.tool_ctx.agent.is_none() && d.persona.is_none() && d.tool_ctx.session_id.is_some();
     let tool_source = if person_chat {
@@ -1341,9 +1334,13 @@ async fn run_one_turn(
     );
     let mut approved_by_user = settle_classification_decision(
         d,
-        crate::classification_upload::evaluate_attachments(&d.state, &d.tool_ctx)
-            .await
-            .map_err(upstream_err)?,
+        crate::classification_upload::evaluate_attachments(
+            &d.state,
+            &classification_payer,
+            &d.tool_ctx,
+        )
+        .await
+        .map_err(upstream_err)?,
     )
     .await?;
     enrich_current_message_with_ocr(d, &ctx, &mut messages).await;
@@ -1391,6 +1388,7 @@ async fn run_one_turn(
         d,
         crate::classification_detector::evaluate_for_turn(
             &d.state,
+            &classification_payer,
             &routing_state,
             routing_model,
             &access,
@@ -1632,6 +1630,7 @@ async fn run_one_turn(
                 d,
                 crate::classification_detector::evaluate_for_turn(
                     &d.state,
+                    &classification_payer,
                     &notes,
                     routing_model,
                     &access,

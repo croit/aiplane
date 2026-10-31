@@ -147,7 +147,7 @@ fn template_body(current: &Value, template_id: &str) -> Value {
     policy["link_share_max_level"] = first;
     policy["unknown_label_level"] = last.clone();
     policy["unreadable_level"] = last;
-    policy["system_one_model"] = json!("");
+    policy["detector_model"] = json!("");
     for (key, value) in template["policy"].as_object().unwrap() {
         policy[key] = value.clone();
     }
@@ -648,4 +648,82 @@ async fn a_pool_on_a_loopback_backend_is_in_the_own_network() {
         .unwrap();
     assert_eq!(pool["hosting"], "own_network");
     assert_eq!(pool["hosts"], json!(["127.0.0.1"]));
+}
+
+fn the_pool_serves(state: &Arc<RamaState>, model: &str) {
+    state.upstreams.pools()[0].backends[0].set_models([model.to_owned()].into());
+}
+
+fn chat_detector_body(current: &Value, level: Option<&str>) -> Value {
+    let mut body = template_body(current, "iso");
+    let highest = body["levels"].as_array().unwrap().last().unwrap()["id"].clone();
+    body["policy"]["detector_model"] = json!("judge");
+    body["classes"][0]["rule_question"] = json!("Does this contain personal data?");
+    if let Some(level) = level {
+        let level = if level == "highest" {
+            highest
+        } else {
+            json!(level)
+        };
+        body["assignments"] =
+            json!([{"kind": "pool", "id": "pool", "level_id": level, "over": "hide"}]);
+    }
+    body
+}
+
+#[tokio::test]
+async fn a_chat_model_is_listed_as_a_detector_candidate_with_its_kind() {
+    let (state, cookie) = setup().await;
+    the_pool_serves(&state, "judge");
+
+    let (status, view) = get(&state, &cookie, "/api/v0/admin/classification").await;
+
+    assert_eq!(status, StatusCode::OK, "{view}");
+    let judge = view["detector_models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == "judge")
+        .expect("the chat model is a candidate");
+    assert_eq!(judge["kind"], "chat");
+    assert_eq!(judge["pools"], json!(["pool"]));
+}
+
+#[tokio::test]
+async fn a_chat_model_cleared_for_the_highest_level_is_accepted_as_detector() {
+    let (state, cookie) = setup().await;
+    the_pool_serves(&state, "judge");
+    let (_, current) = get(&state, &cookie, "/api/v0/admin/classification").await;
+
+    let (status, saved) = put(
+        &state,
+        &cookie,
+        &chat_detector_body(&current, Some("highest")),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["policy"]["detector_model"], "judge");
+    let judge = saved["detector_models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == "judge")
+        .unwrap();
+    assert_eq!(judge["cleared_for_highest"], true);
+}
+
+#[tokio::test]
+async fn a_chat_model_below_the_highest_level_is_refused_as_detector() {
+    let (state, cookie) = setup().await;
+    the_pool_serves(&state, "judge");
+    let (_, current) = get(&state, &cookie, "/api/v0/admin/classification").await;
+
+    let (status, refused) = put(&state, &cookie, &chat_detector_body(&current, None)).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert!(
+        refused.to_string().contains("policy.detector_model"),
+        "{refused}"
+    );
 }

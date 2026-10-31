@@ -1,7 +1,7 @@
 <script lang="ts">
 	import StepIndicator from '#lib/components/ui/StepIndicator.svelte';
 	import ChoiceCard from '#lib/components/ui/ChoiceCard.svelte';
-	import { applyTemplate, classificationApi, draftFrom, failure, buildBody, finalizeDraft, modelBlocksActivation, pickSystemOneModel, prefillPools, type ClassificationState, type Draft } from '#lib/classification.js';
+	import { applyTemplate, classificationApi, draftFrom, failure, buildBody, finalizeDraft, modelBlocksActivation, pickDetectorModel, prefillPools, type ClassificationState, type Draft } from '#lib/classification.js';
 	import ModelsStep from './ModelsStep.svelte';
 	import ReviewStep from './ReviewStep.svelte';
 	import { untrack } from 'svelte';
@@ -23,14 +23,14 @@
 	let draft = $state<Draft>(untrack(() => prefillPools(draftFrom(saved))));
 	let step = $state(0);
 	let chosen = $state<string>('custom');
-	let chosenModel = $state<string | null>(untrack(() => saved.policy.system_one_model || null));
+	let chosenModel = $state<string | null>(untrack(() => saved.policy.detector_model || null));
 	let visited = $state<number[]>([]);
 	let error = $state<string | null>(null);
 	let busy = $state(false);
 
-	const model = $derived(chosenModel ?? pickSystemOneModel(draft, saved.system_one_models));
+	const model = $derived(chosenModel ?? pickDetectorModel(draft, saved.detector_models));
 	const final = $derived(finalizeDraft(draft, model));
-	const blocked = $derived(modelBlocksActivation(draft, saved.system_one_models, model));
+	const blocked = $derived(modelBlocksActivation(draft, saved.detector_models, model));
 
 	function go(next: number) {
 		if (!visited.includes(step)) visited = [...visited, step];
@@ -40,7 +40,7 @@
 
 	function pick(id: string) {
 		chosen = id;
-		chosenModel = id === 'custom' ? saved.policy.system_one_model || null : null;
+		chosenModel = id === 'custom' ? saved.policy.detector_model || null : null;
 		const template = saved.templates.find((tpl) => tpl.id === id);
 		const base = draftFrom(saved);
 		draft = prefillPools(template ? applyTemplate(base, template) : base);
@@ -74,7 +74,7 @@
 				</div>
 			</div>
 		{:else if STEPS[step] === 'models'}
-			<ModelsStep bind:draft models={saved.system_one_models} bind:model={() => model, (v) => (chosenModel = v)} customLevels={chosen === 'custom'} />
+			<ModelsStep bind:draft models={saved.detector_models} bind:model={() => model, (v) => (chosenModel = v)} customLevels={chosen === 'custom'} />
 		{:else}
 			<ReviewStep before={saved} draft={final} {error} />
 		{/if}
