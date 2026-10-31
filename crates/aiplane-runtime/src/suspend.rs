@@ -16,9 +16,15 @@
 //!
 //! - **deny** (by the user, or by a timeout whose fallback is deny) answers
 //!   the call with a tool error the model reads; the tool never runs;
-//! - **allow once** and **value** run the same call again, with
+//! - **allow once**, **allow for this conversation** and **value** run the
+//!   same call again, with
 //!   [`ToolContext::suspend`](crate::server::tools::ToolContext) set to
 //!   [`Suspend::Decided`], and its result is the call's result.
+//!
+//! Approvals asked by several calls of one round wait on one pause, and the
+//! one decision settles every call. Allowing for the conversation also records
+//! each call's tool and actions (`chat_session_tool_approvals`), and
+//! `AskFirst` runs a recorded call there without asking again.
 //!
 //! Then the round loop continues where it stopped, against the rounds already
 //! spent.
@@ -57,6 +63,12 @@ pub struct SuspendRequest {
     /// the slots the model may see. Never anything a resume relies on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<Value>,
+    /// Whether the person may approve this call for the rest of the
+    /// conversation. Only [`AskFirst`](crate::server::tools::ask_first::AskFirst)'s
+    /// plain approvals are: a gate that checks each call's content asks every
+    /// time.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rememberable: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actions: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -85,6 +97,7 @@ impl SuspendRequest {
             execution_facts: None,
             child: None,
             context: None,
+            rememberable: false,
         }
     }
 
@@ -101,6 +114,7 @@ impl SuspendRequest {
             execution_facts: None,
             child: None,
             context: Some(context),
+            rememberable: false,
         }
     }
 
@@ -117,6 +131,7 @@ impl SuspendRequest {
             execution_facts: None,
             child: None,
             context: None,
+            rememberable: false,
         }
     }
 }
@@ -261,7 +276,7 @@ pub async fn claim_for_resume_in(
             current: current.request_id,
         });
     }
-    let offered = current.kind.options();
+    let offered = current.options();
     if !offered.contains(&decision.kind()) {
         return Err(ResumeRefused::NotOffered {
             kind: current.kind,
@@ -372,6 +387,7 @@ mod tests {
                     id: "call-1".into(),
                     name: "company_echo".into(),
                     arguments: "{}".into(),
+                    rememberable: false,
                 },
                 tail: Vec::new(),
                 budget_used: BudgetUsed::default(),
@@ -380,6 +396,7 @@ mod tests {
                 expires_at: now,
                 created_at: now,
                 run_context: None,
+                bundled_calls: Vec::new(),
             },
         )
         .await

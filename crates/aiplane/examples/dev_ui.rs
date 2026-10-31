@@ -222,6 +222,46 @@ async fn main() -> anyhow::Result<()> {
         })
         .mount(&chat_mock)
         .await;
+    // Two writes to the seeded Workspace connector in one round: with the
+    // tool set to `ask` on the Tools page, both wait on one approval card.
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(|request: &wiremock::Request| {
+            serde_json::from_slice::<serde_json::Value>(&request.body).is_ok_and(|body| {
+                body["messages"].as_array().is_some_and(|messages| {
+                    messages
+                        .iter()
+                        .rev()
+                        .find(|message| message["role"] == "user")
+                        .and_then(|message| message["content"].as_str())
+                        .is_some_and(|content| content.starts_with("Workspace approval probe"))
+                })
+            })
+        })
+        .respond_with(|request: &wiremock::Request| {
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap_or_default();
+            let answered = body["messages"]
+                .as_array()
+                .and_then(|messages| messages.last())
+                .is_some_and(|message| message["role"] == "tool");
+            let delta = if answered {
+                serde_json::json!({"content": "Both workspace notes are written."})
+            } else {
+                calls(&[
+                    (
+                        "mcp__agent-workspace__write_workspace",
+                        serde_json::json!({"note": "Order 48217 shipped"}),
+                    ),
+                    (
+                        "mcp__agent-workspace__write_workspace",
+                        serde_json::json!({"note": "Order 48218 on hold"}),
+                    ),
+                ])
+            };
+            completion(&body, delta)
+        })
+        .mount(&chat_mock)
+        .await;
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .respond_with(

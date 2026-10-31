@@ -3109,6 +3109,8 @@ export const en: Catalog = {
  "suspension-answer-label": "Your answer",
  "suspension-answer-required": "Write an answer first.",
  "suspension-approve": "Approve once",
+ "suspension-approve-all": "Approve all {count} once",
+ "suspension-approve-conversation": "Always allow in this chat",
  "suspension-browser-error": "The browser connection was interrupted. Try again or return control to the agent.",
  "suspension-browser-frame-alt": "Current view of the agent browser",
  "suspension-browser-instructions": "The agent is paused. Click or scroll the browser view, then type into the focused field below. Your actions go only to this browser session.",

@@ -53,7 +53,7 @@ impl SuspensionKind {
     /// them: whoever is asked can always refuse.
     pub fn options(self) -> &'static [DecisionKind] {
         match self {
-            Self::Approval => &[DecisionKind::AllowOnce, DecisionKind::Deny],
+            Self::Approval => APPROVAL,
             Self::SecureInput | Self::HumanAnswer => &[DecisionKind::Value, DecisionKind::Deny],
             Self::BrowserHandover => &[],
         }
@@ -83,6 +83,16 @@ impl SuspensionKind {
     }
 }
 
+const APPROVAL: &[DecisionKind] = &[DecisionKind::AllowOnce, DecisionKind::Deny];
+
+/// An approval whose every waiting call may stand approved for the rest of
+/// its conversation.
+const APPROVAL_FOR_CONVERSATION: &[DecisionKind] = &[
+    DecisionKind::AllowOnce,
+    DecisionKind::AllowConversation,
+    DecisionKind::Deny,
+];
+
 /// Who answers a suspension in a conversation the participant does not own.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -100,6 +110,8 @@ pub enum Answerer {
 #[serde(rename_all = "snake_case")]
 pub enum DecisionKind {
     AllowOnce,
+    /// Allow, and stop asking about the same calls in this conversation.
+    AllowConversation,
     Deny,
     Value,
     BrowserReturned,
@@ -122,6 +134,7 @@ pub enum DenyReason {
 #[serde(tag = "decision", rename_all = "snake_case")]
 pub enum Decision {
     AllowOnce,
+    AllowConversation,
     Deny { reason: DenyReason },
     Value { value: serde_json::Value },
     BrowserReturned,
@@ -131,6 +144,7 @@ impl std::fmt::Debug for Decision {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::AllowOnce => f.write_str("AllowOnce"),
+            Self::AllowConversation => f.write_str("AllowConversation"),
             Self::Deny { reason } => f.debug_struct("Deny").field("reason", reason).finish(),
             Self::Value { .. } => f.write_str("Value { value: <redacted> }"),
             Self::BrowserReturned => f.write_str("BrowserReturned"),
@@ -139,9 +153,15 @@ impl std::fmt::Debug for Decision {
 }
 
 impl Decision {
+    /// Whether the waiting calls run.
+    pub fn allows(&self) -> bool {
+        matches!(self, Self::AllowOnce | Self::AllowConversation)
+    }
+
     pub fn kind(&self) -> DecisionKind {
         match self {
             Self::AllowOnce => DecisionKind::AllowOnce,
+            Self::AllowConversation => DecisionKind::AllowConversation,
             Self::Deny { .. } => DecisionKind::Deny,
             Self::Value { .. } => DecisionKind::Value,
             Self::BrowserReturned => DecisionKind::BrowserReturned,
@@ -202,6 +222,10 @@ pub struct PendingCall {
     pub actions: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_facts: Option<serde_json::Value>,
+    /// Whether an approval of this call may stand for the rest of the
+    /// conversation ([`DecisionKind::AllowConversation`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rememberable: bool,
 }
 
 #[derive(
@@ -247,7 +271,10 @@ pub struct TurnSuspension {
     /// Shown next to the decision, when the tool has something to say.
     pub message: Option<String>,
     pub tool_call: PendingCall,
-    /// This turn's round messages so far, without the waiting call's result.
+    /// The round's other calls waiting for the same kind of decision; one
+    /// answer settles them all.
+    pub bundled_calls: Vec<PendingCall>,
+    /// This turn's round messages so far, without the waiting calls' results.
     /// The history and system message before them are rebuilt on resume.
     pub tail: Vec<serde_json::Value>,
     pub budget_used: BudgetUsed,
@@ -263,6 +290,21 @@ pub struct TurnSuspension {
 }
 
 impl TurnSuspension {
+    /// Every call waiting on this decision, the first one first.
+    pub fn calls(&self) -> impl Iterator<Item = &PendingCall> {
+        std::iter::once(&self.tool_call).chain(&self.bundled_calls)
+    }
+
+    /// The decisions a resume may carry: the kind's, and for an approval of
+    /// calls that may all stand approved, approving them for the conversation.
+    pub fn options(&self) -> &'static [DecisionKind] {
+        if self.kind == SuspensionKind::Approval && self.calls().all(|call| call.rememberable) {
+            APPROVAL_FOR_CONVERSATION
+        } else {
+            self.kind.options()
+        }
+    }
+
     /// The part a client may see: enough to render the decision, none of the
     /// run state.
     pub fn view(&self) -> SuspensionView {
@@ -272,10 +314,25 @@ impl TurnSuspension {
             message: self.message.clone(),
             tool_call_id: Some(self.tool_call.id.clone()),
             tool: Some(self.tool_call.name.clone()),
-            options: self.kind.options().to_vec(),
+            bundled: self
+                .bundled_calls
+                .iter()
+                .map(|call| BundledCallView {
+                    tool_call_id: call.id.clone(),
+                    tool: call.name.clone(),
+                })
+                .collect(),
+            options: self.options().to_vec(),
             expires_at: self.expires_at,
         }
     }
+}
+
+/// A further call one decision settles, as a client sees it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BundledCallView {
+    pub tool_call_id: String,
+    pub tool: String,
 }
 
 /// A suspension as the client sees it, on the turn and in the `suspended`
@@ -291,6 +348,10 @@ pub struct SuspensionView {
     pub tool_call_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool: Option<String>,
+    /// The round's other calls the same decision settles. Absent from a
+    /// participant's view.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bundled: Vec<BundledCallView>,
     /// The decisions the viewer may send; empty when someone else answers.
     pub options: Vec<DecisionKind>,
     pub expires_at: Timestamp,
@@ -305,6 +366,7 @@ impl SuspensionView {
         SuspensionView {
             tool_call_id: None,
             tool: None,
+            bundled: Vec::new(),
             options: if theirs {
                 self.options.clone()
             } else {
@@ -324,9 +386,9 @@ pub struct ExpiredSuspension {
     pub on_timeout: TimeoutFallback,
 }
 
-const SUSPENSION_COLUMNS: &str = "turn_id, request_id, kind, message, tool_call, tail, \
-                                  budget_used, child_turn, on_timeout, expires_at, created_at, \
-                                  run_context";
+const SUSPENSION_COLUMNS: &str = "turn_id, request_id, kind, message, tool_call, \
+                                  bundled_calls, tail, budget_used, child_turn, on_timeout, \
+                                  expires_at, created_at, run_context";
 
 fn json_column<T: serde::de::DeserializeOwned>(
     row: &SqliteRow,
@@ -351,6 +413,7 @@ pub fn map_suspension(row: &SqliteRow) -> Result<TurnSuspension, DbError> {
         kind: SuspensionKind::parse(&kind)?,
         message: row.try_get("message")?,
         tool_call: json_column(row, "tool_call")?,
+        bundled_calls: json_column(row, "bundled_calls")?,
         tail: json_column(row, "tail")?,
         budget_used: json_column(row, "budget_used")?,
         child_turn: row.try_get("child_turn")?,
@@ -392,15 +455,16 @@ pub async fn suspend_turn(pool: &Pool, suspension: &TurnSuspension) -> Result<bo
     }
     sqlx::query(
         r#"INSERT INTO chat_turn_suspensions
-              (turn_id, request_id, kind, message, tool_call, tail, budget_used,
-               child_turn, on_timeout, expires_at, created_at, run_context)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+              (turn_id, request_id, kind, message, tool_call, bundled_calls, tail,
+               budget_used, child_turn, on_timeout, expires_at, created_at, run_context)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(&suspension.turn_id)
     .bind(&suspension.request_id)
     .bind(suspension.kind.as_str())
     .bind(&suspension.message)
     .bind(to_json(&suspension.tool_call))
+    .bind(to_json(&suspension.bundled_calls))
     .bind(to_json(&suspension.tail))
     .bind(to_json(&suspension.budget_used))
     .bind(&suspension.child_turn)
@@ -681,6 +745,7 @@ mod tests {
             name: "browser".into(),
             arguments: "{}".into(),
             actions: Some(vec!["fill".into()]),
+            rememberable: false,
         };
         let encoded = serde_json::to_value(&pending).unwrap();
         assert_eq!(encoded["actions"], serde_json::json!(["fill"]));
@@ -707,6 +772,7 @@ mod tests {
                 id: "call-1".into(),
                 name: "company_echo".into(),
                 arguments: r#"{"message":"hi"}"#.into(),
+                rememberable: false,
             },
             tail: vec![serde_json::json!({"role": "assistant", "content": null})],
             budget_used: BudgetUsed {
@@ -720,6 +786,7 @@ mod tests {
             expires_at,
             created_at: Timestamp::now(),
             run_context: None,
+            bundled_calls: Vec::new(),
         }
     }
 
@@ -872,6 +939,66 @@ mod tests {
             .unwrap();
         assert_eq!(one.suspension, Some(row.view()));
         assert_eq!(get_suspension(&pool, "a1").await.unwrap(), Some(row));
+    }
+
+    fn call(id: &str, rememberable: bool) -> PendingCall {
+        PendingCall {
+            id: id.into(),
+            name: "erp_invoke".into(),
+            arguments: "{}".into(),
+            actions: None,
+            execution_facts: None,
+            rememberable,
+        }
+    }
+
+    #[tokio::test]
+    async fn one_approval_carries_the_rounds_other_waiting_calls() {
+        let pool = pool().await;
+        running_turn(&pool, "a1").await;
+        let mut row = suspension("a1", in_an_hour());
+        row.tool_call = call("call-1", true);
+        row.bundled_calls = vec![call("call-2", true), call("call-3", true)];
+        assert!(suspend_turn(&pool, &row).await.unwrap());
+
+        let stored = get_suspension(&pool, "a1").await.unwrap().unwrap();
+        assert_eq!(stored, row);
+        assert_eq!(
+            stored.calls().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            ["call-1", "call-2", "call-3"]
+        );
+        let view = stored.view();
+        assert_eq!(
+            view.bundled
+                .iter()
+                .map(|c| c.tool_call_id.as_str())
+                .collect::<Vec<_>>(),
+            ["call-2", "call-3"]
+        );
+        assert!(view.for_participant().bundled.is_empty());
+    }
+
+    #[test]
+    fn approving_for_the_conversation_is_offered_only_when_every_waiting_call_may_stand() {
+        let mut row = suspension("a1", in_an_hour());
+        assert_eq!(row.options(), [DecisionKind::AllowOnce, DecisionKind::Deny]);
+
+        row.tool_call = call("call-1", true);
+        assert_eq!(
+            row.view().options,
+            [
+                DecisionKind::AllowOnce,
+                DecisionKind::AllowConversation,
+                DecisionKind::Deny
+            ]
+        );
+
+        row.bundled_calls = vec![call("call-2", false)];
+        assert_eq!(row.options(), [DecisionKind::AllowOnce, DecisionKind::Deny]);
+
+        row.bundled_calls.clear();
+        row.kind = SuspensionKind::SecureInput;
+        assert_eq!(row.options(), [DecisionKind::Value, DecisionKind::Deny]);
     }
 
     #[tokio::test]

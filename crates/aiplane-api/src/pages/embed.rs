@@ -1070,6 +1070,7 @@ mod tests {
             tool: Some("erp_refund".into()),
             options: vec![chat::DecisionKind::AllowOnce, chat::DecisionKind::Deny],
             expires_at: Timestamp::now(),
+            bundled: Vec::new(),
         };
         let mut paused = assistant(TurnStatus::Suspended);
         paused.suspension = Some(view.clone());

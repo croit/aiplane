@@ -1264,7 +1264,7 @@ impl UserMcpLayer {
     /// `tool`, behind an approval when `id` asks first.
     fn gated(&self, id: &str, tool: Arc<dyn Tool>) -> Arc<dyn Tool> {
         if self.ask_first.contains(id) {
-            Arc::new(AskFirst::wrap(tool, DEFAULT_APPROVAL_TIMEOUT))
+            Arc::new(AskFirst::wrap(tool, DEFAULT_APPROVAL_TIMEOUT).rememberable())
         } else {
             tool
         }

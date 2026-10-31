@@ -3109,6 +3109,8 @@ export const fr: Catalog = {
  "suspension-answer-label": "Votre réponse",
  "suspension-answer-required": "Rédigez d'abord une réponse.",
  "suspension-approve": "Valider une fois",
+ "suspension-approve-all": "Valider les {count} une fois",
+ "suspension-approve-conversation": "Toujours autoriser dans cette conversation",
  "suspension-browser-error": "La connexion au navigateur a été interrompue. Réessayez ou rendez le contrôle à l’agent.",
  "suspension-browser-frame-alt": "Vue actuelle du navigateur de l’agent",
  "suspension-browser-instructions": "L’agent est en pause. Cliquez ou faites défiler la vue du navigateur, puis saisissez du texte dans le champ actif ci-dessous. Vos actions restent dans cette session du navigateur.",

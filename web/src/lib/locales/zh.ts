@@ -3088,6 +3088,8 @@ export const zh: Catalog = {
  "suspension-answer-label": "您的回答",
  "suspension-answer-required": "请先填写回答。",
  "suspension-approve": "批准一次",
+ "suspension-approve-all": "一次批准全部 {count} 项",
+ "suspension-approve-conversation": "在此对话中始终允许",
  "suspension-browser-error": "浏览器连接已中断。请重试，或将控制权交还给智能体。",
  "suspension-browser-frame-alt": "智能体浏览器的当前画面",
  "suspension-browser-instructions": "智能体已暂停。点击或滚动浏览器画面，然后在下方的焦点字段中输入文本。您的操作只会发送到此浏览器会话。",

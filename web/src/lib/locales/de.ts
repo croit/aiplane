@@ -3109,6 +3109,8 @@ export const de: Catalog = {
  "suspension-answer-label": "Ihre Antwort",
  "suspension-answer-required": "Schreiben Sie zuerst eine Antwort.",
  "suspension-approve": "Einmal freigeben",
+ "suspension-approve-all": "Alle {count} einmal freigeben",
+ "suspension-approve-conversation": "In diesem Chat immer erlauben",
  "suspension-browser-error": "Die Browserverbindung wurde unterbrochen. Versuche es erneut oder gib die Steuerung an den Agenten zurück.",
  "suspension-browser-frame-alt": "Aktuelle Ansicht des Agenten-Browsers",
  "suspension-browser-instructions": "Der Agent wartet. Klicke oder scrolle in der Browseransicht und gib Text unten in das fokussierte Feld ein. Deine Aktionen gehen nur an diese Browser-Sitzung.",

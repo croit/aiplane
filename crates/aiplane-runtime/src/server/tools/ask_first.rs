@@ -20,7 +20,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::Value;
-use session_core::db::Decision;
 use shared::api::ToolDef;
 
 use super::{Tool, ToolAction, ToolActionFuture, ToolContext, ToolError, ToolFuture};
@@ -33,6 +32,7 @@ pub const DEFAULT_APPROVAL_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 pub struct AskFirst {
     inner: Arc<dyn Tool>,
     timeout: Duration,
+    rememberable: bool,
 }
 
 impl AskFirst {
@@ -45,7 +45,19 @@ impl AskFirst {
     /// [`Self::new`] for a tool already behind an `Arc`, as a tool source
     /// hands it out.
     pub fn wrap(inner: Arc<dyn Tool>, timeout: Duration) -> Self {
-        Self { inner, timeout }
+        Self {
+            inner,
+            timeout,
+            rememberable: false,
+        }
+    }
+
+    /// Let the person approve this tool for the rest of a conversation, after
+    /// which it runs there without asking. For a person's own connector tools
+    /// in `ask` mode; an agent's `always_ask` asks every time.
+    pub fn rememberable(mut self) -> Self {
+        self.rememberable = true;
+        self
     }
 }
 
@@ -67,7 +79,7 @@ pub fn approval(
     request: SuspendRequest,
 ) -> Result<Approval, ToolError> {
     match &ctx.suspend {
-        Suspend::Decided(_, Decision::AllowOnce) => Ok(Approval::Granted),
+        Suspend::Decided(_, decision) if decision.allows() => Ok(Approval::Granted),
         Suspend::Decided(_, other) => Err(ToolError::Failed(format!(
             "`{id}` was not approved (decision: {:?}), so it did not run.",
             other.kind()
@@ -78,6 +90,26 @@ pub fn approval(
              pause to ask. Do not retry it here."
         ))),
     }
+}
+
+/// Whether the person approved tool `id` with `actions` for the rest of this
+/// conversation.
+async fn approved_for_conversation(
+    ctx: &ToolContext,
+    id: &str,
+    actions: Option<&[String]>,
+) -> Result<bool, ToolError> {
+    let Some(session_id) = ctx.session_id.as_deref() else {
+        return Ok(false);
+    };
+    session_core::db::tool_approved_for_session(&ctx.db, session_id, id, actions)
+        .await
+        .map_err(|error| {
+            ToolError::Failed(format!(
+                "Could not read whether `{id}` is approved in this conversation ({error}), so \
+                 it did not run. Try again."
+            ))
+        })
 }
 
 pub(crate) fn validate_actions(
@@ -150,9 +182,16 @@ impl Tool for AskFirst {
             validate_actions(&ctx, self.id(), self.inner.action_catalogue(), &actions)?;
             let facts = self.inner.execution_facts();
             validate_execution_facts(&ctx, self.id(), &facts)?;
+            if self.rememberable
+                && ctx.suspend == Suspend::Available
+                && approved_for_conversation(&ctx, self.id(), actions.as_deref()).await?
+            {
+                return self.inner.run(ctx, args).await;
+            }
             let mut request = SuspendRequest::approval(self.timeout);
             request.execution_facts = facts;
             request.actions = actions;
+            request.rememberable = self.rememberable;
             match approval(&ctx, self.id(), request)? {
                 Approval::Granted => self.inner.run(ctx, args).await,
                 Approval::Ask(pause) => Ok(pause),
@@ -206,7 +245,7 @@ mod tests {
     use crate::server::tools::echo::Echo;
     use crate::suspend::extract_suspend;
     use serde_json::json;
-    use session_core::db::{DenyReason, SuspensionKind, TimeoutFallback};
+    use session_core::db::{Decision, DenyReason, SuspensionKind, TimeoutFallback};
 
     async fn ctx(suspend: Suspend) -> ToolContext {
         let db = aiplane_core::server::db::open(std::path::Path::new(":memory:"))
@@ -219,7 +258,7 @@ mod tests {
     }
 
     fn gated() -> AskFirst {
-        AskFirst::new(Echo, Duration::from_secs(90))
+        AskFirst::new(Echo, Duration::from_secs(90)).rememberable()
     }
 
     struct IdentityWrite(Value);
@@ -410,6 +449,84 @@ mod tests {
         assert_eq!(request.kind, SuspensionKind::Approval);
         assert_eq!(request.timeout_secs, 90);
         assert_eq!(request.on_timeout, TimeoutFallback::Deny);
+    }
+
+    #[tokio::test]
+    async fn only_a_rememberable_approval_may_stand_for_the_conversation() {
+        let asks = |tool: AskFirst| async move {
+            let body = tool
+                .run(ctx(Suspend::Available).await, json!({"message": "hi"}))
+                .await
+                .unwrap();
+            extract_suspend(&body).unwrap().rememberable
+        };
+        assert!(asks(gated()).await);
+        assert!(!asks(AskFirst::new(Echo, Duration::from_secs(90))).await);
+    }
+
+    #[tokio::test]
+    async fn a_call_approved_for_the_conversation_runs_there_without_asking() {
+        let fresh = ctx(Suspend::Available).await;
+        sqlx::query(
+            "INSERT INTO users (id, email, roles_json, created_at, updated_at) \
+             VALUES ('u', 'u@example.test', '[]', '2026-01-01', '2026-01-01')",
+        )
+        .execute(&fresh.db)
+        .await
+        .unwrap();
+        let session = session_core::db::create_session(&fresh.db, "u")
+            .await
+            .unwrap();
+        let other = session_core::db::create_session(&fresh.db, "u")
+            .await
+            .unwrap();
+        session_core::db::approve_tool_for_session(&fresh.db, &session.id, Echo.id(), None)
+            .await
+            .unwrap();
+        let in_session = |id: &str| ToolContext {
+            session_id: Some(id.to_string()),
+            ..fresh.clone()
+        };
+
+        let ran = gated()
+            .run(in_session(&session.id), json!({"message": "hi"}))
+            .await
+            .unwrap();
+        assert_eq!(extract_suspend(&ran), None);
+        assert_eq!(ran["message"], "hi");
+
+        let elsewhere = gated()
+            .run(in_session(&other.id), json!({"message": "hi"}))
+            .await
+            .unwrap();
+        assert!(extract_suspend(&elsewhere).is_some());
+
+        let unpausable = gated()
+            .run(
+                ToolContext {
+                    suspend: Suspend::Unavailable,
+                    ..in_session(&session.id)
+                },
+                json!({"message": "hi"}),
+            )
+            .await;
+        assert!(unpausable.is_err(), "only a pausable run uses the approval");
+    }
+
+    #[tokio::test]
+    async fn approving_for_the_conversation_runs_the_waiting_call() {
+        let body = gated()
+            .run(
+                ctx(Suspend::Decided(
+                    SuspensionKind::Approval,
+                    Decision::AllowConversation,
+                ))
+                .await,
+                json!({"message": "hi"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(body["message"], "hi");
     }
 
     #[tokio::test]

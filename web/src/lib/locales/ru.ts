@@ -3131,6 +3131,8 @@ export const ru: Catalog = {
  "suspension-answer-label": "Ваш ответ",
  "suspension-answer-required": "Сначала напишите ответ.",
  "suspension-approve": "Одобрить один раз",
+ "suspension-approve-all": "Одобрить все ({count}) один раз",
+ "suspension-approve-conversation": "Всегда разрешать в этом чате",
  "suspension-browser-error": "Соединение с браузером прервано. Повторите попытку или верните управление агенту.",
  "suspension-browser-frame-alt": "Текущий вид браузера агента",
  "suspension-browser-instructions": "Агент приостановлен. Нажимайте или прокручивайте изображение браузера, затем вводите текст в активное поле ниже. Действия отправляются только в этот сеанс браузера.",

@@ -126,7 +126,11 @@ anyone can answer a pause (`McpConnectionManager::layer_for_user`):
 - **In chat** (and a person's scheduled or webhook run) the tool is offered
   behind [`AskFirst`](tools-rbac.md): each call pauses the turn as an
   `approval`, the person answers it in the chat (or the inbox), and the call
-  runs only on *Approve once*. A denial, or no answer within an hour, reaches
+  runs only on *Approve once* or *Always allow in this chat*. Several calls
+  of one round wait on one approval, and the answer settles them all. *Always
+  allow in this chat* records the tool for that conversation, which then runs
+  its later calls without asking; a new or forked conversation asks again,
+  and the Tools page's `always` is the standing setting. A denial, or no answer within an hour, reaches
   the model as a tool error; the tool never runs. The pause is the durable
   suspension every approval uses, so it survives a restart.
 - **Over `/v1`** nothing can pause, so the token's policy decides instead

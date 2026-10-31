@@ -103,6 +103,9 @@ pub struct InboxItem {
     /// An approval's call — the innermost one, inside a sub-agent run too.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub call: Option<WaitingCall>,
+    /// The round's other calls the same decision settles.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub bundled: Vec<WaitingCall>,
     /// What an approved call would do, in the tool's own words (the
     /// request's `message`, e.g. `schedule_action`'s preview).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -328,6 +331,18 @@ async fn item(
         name: waiting.tool_call.name.clone(),
         arguments: waiting.tool_call.arguments.clone(),
     });
+    let bundled = if approval {
+        waiting
+            .bundled_calls
+            .iter()
+            .map(|call| WaitingCall {
+                name: call.name.clone(),
+                arguments: call.arguments.clone(),
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let detail = approval.then(|| waiting.message.clone()).flatten();
     let context = handoff_of(p.suspension.run_context.as_ref()).cloned();
     Ok(InboxItem {
@@ -344,9 +359,10 @@ async fn item(
             .then(|| p.suspension.message.clone())
             .flatten(),
         call,
+        bundled,
         detail,
         context,
-        options: p.suspension.kind.options().to_vec(),
+        options: p.suspension.options().to_vec(),
         created_at: p.suspension.created_at,
         expires_at: p.suspension.expires_at,
     })
@@ -757,6 +773,7 @@ mod tests {
                     name: "forward_request".into(),
                     arguments: format!("{{\"private_owner\":\"{owner}\"}}"),
                     actions: None,
+                    rememberable: false,
                 },
                 tail: Vec::new(),
                 budget_used: Default::default(),
@@ -765,6 +782,7 @@ mod tests {
                 expires_at: now,
                 created_at: now,
                 run_context: None,
+                bundled_calls: Vec::new(),
             };
             session_core::db::suspend_turn(&db, &row).await.unwrap();
             rows.push(row);

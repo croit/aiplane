@@ -1045,6 +1045,7 @@ mod tests {
                 crate::db::DecisionKind::Deny,
             ],
             expires_at: Timestamp::now(),
+            bundled: Vec::new(),
         }
     }
 

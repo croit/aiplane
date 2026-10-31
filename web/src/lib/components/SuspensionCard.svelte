@@ -99,12 +99,14 @@
 			</details>
 		{/if}
 		{#if waiting.kind === 'approval' && waiting.call && !isContentConfirmation(waiting)}
-			<div>
-				<p class="text-xs font-semibold text-base-content/60">{t('suspension-tool', { tool: waiting.call.name })}</p>
-				{#if waiting.call.arguments}
-					<pre class="mt-1 overflow-x-auto rounded-box bg-base-200 p-2 text-xs">{prettyArguments(waiting.call.arguments)}</pre>
-				{/if}
-			</div>
+			{#each [waiting.call, ...(waiting.bundled ?? [])] as call, i (i)}
+				<div>
+					<p class="text-xs font-semibold text-base-content/60">{t('suspension-tool', { tool: call.name })}</p>
+					{#if call.arguments}
+						<pre class="mt-1 overflow-x-auto rounded-box bg-base-200 p-2 text-xs">{prettyArguments(call.arguments)}</pre>
+					{/if}
+				</div>
+			{/each}
 		{/if}
 		{#if note}<p class="text-xs text-base-content/60">{note}</p>{/if}
 		{#if left !== null}<p class="text-xs text-base-content/60">{t('suspension-expires-in', { minutes: left })}</p>{/if}
@@ -125,7 +127,7 @@
 		{#if buttons.length}
 			<div class="flex flex-wrap gap-2">
 				{#each buttons as button (button.decision)}
-					<button class="btn btn-sm {button.primary ? 'btn-primary' : 'btn-ghost'}" type="button" disabled={busy} onclick={() => void decide(button.decision)}>{t(button.key)}</button>
+					<button class="btn btn-sm {button.primary ? 'btn-primary' : 'btn-ghost'}" type="button" disabled={busy} onclick={() => void decide(button.decision)}>{t(button.key, button.args)}</button>
 				{/each}
 			</div>
 		{/if}

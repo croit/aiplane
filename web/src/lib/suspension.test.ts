@@ -33,6 +33,15 @@ test('a card offers exactly the decisions it was offered', () => {
 	assert.deepEqual(decisionButtons({ kind: 'secure_input', options: ['value'] }), []);
 });
 
+test('one approval of several calls says how many it settles, and may stand for the conversation', () => {
+	const bundled = [{ name: 'erp_invoke', arguments: '{}' }];
+	assert.deepEqual(decisionButtons({ kind: 'approval', options: ['allow_once', 'allow_conversation', 'deny'], bundled }), [
+		{ decision: 'allow_once', key: 'suspension-approve-all', args: { count: 2 }, primary: true },
+		{ decision: 'allow_conversation', key: 'suspension-approve-conversation', primary: false },
+		{ decision: 'deny', key: 'suspension-deny', primary: false }
+	]);
+});
+
 test('a content confirmation words its lead and buttons as sending, not as running a tool', () => {
 	const waiting = { kind: 'approval' as const, options: ['allow_once' as const, 'deny' as const], call: { name: 'data_classification_confirm', arguments: '' } };
 	assert.deepEqual(decisionButtons(waiting), [
@@ -100,6 +109,12 @@ test('a card from a suspended turn finds its call in the transcript', () => {
 	];
 	assert.deepEqual(waitingFrom(view, calls).call, { name: 'mcp__crm__delete_contact', arguments: '{"id":7}' });
 	assert.deepEqual(waitingFrom(view).call, { name: 'mcp__crm__delete_contact', arguments: '' });
+	const bundle = waitingFrom({ ...view, bundled: [{ tool_call_id: 'c3', tool: 'mcp__crm__delete_contact' }] }, [
+		...calls,
+		{ id: 'c3', name: 'mcp__crm__delete_contact', arguments_json: '{"id":8}' }
+	]);
+	assert.deepEqual(bundle.bundled, [{ name: 'mcp__crm__delete_contact', arguments: '{"id":8}' }]);
+	assert.deepEqual(waitingFrom(view).bundled, []);
 	assert.equal(waitingFrom({ ...view, message: '“Weekly”: At 08:00, on Mon.' }).detail, '“Weekly”: At 08:00, on Mon.');
 	const handoff = waitingFrom({ ...view, kind: 'human_answer', message: 'May we refund?', tool: undefined, tool_call_id: undefined }, [], {
 		visitor_message: 'hi'

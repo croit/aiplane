@@ -2660,11 +2660,8 @@ async fn run_one_turn(
             }));
         }
         for (call, result) in call_refs.iter().zip(results.iter()) {
-            // The waiting call has no result yet; its row stays `running`.
-            if pause
-                .as_ref()
-                .is_some_and(|(waiting, _)| waiting.id == call.id)
-            {
+            // The waiting calls have no result yet; their rows stay `running`.
+            if pause.as_ref().is_some_and(|p| p.waits_on(&call.id)) {
                 continue;
             }
             // For the operator UI / DB log we always store a
@@ -2767,12 +2764,11 @@ async fn run_one_turn(
             ));
         }
 
-        if let Some((call, request)) = pause {
+        if let Some(pause) = pause {
             resume::pause(
                 d,
                 &ctx,
-                &call,
-                request,
+                pause,
                 &messages[prefix_len..],
                 session_core::db::BudgetUsed {
                     rounds: round + 1,
@@ -3804,9 +3800,11 @@ async fn settle_classification_decision(
     resume::pause(
         d,
         ctx,
-        &call,
-        crate::suspend::SuspendRequest::approval(
-            crate::server::tools::ask_first::DEFAULT_APPROVAL_TIMEOUT,
+        resume::Pause::single(
+            call,
+            crate::suspend::SuspendRequest::approval(
+                crate::server::tools::ask_first::DEFAULT_APPROVAL_TIMEOUT,
+            ),
         ),
         tail,
         budget_used,
