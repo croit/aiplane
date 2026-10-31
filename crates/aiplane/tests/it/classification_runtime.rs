@@ -1039,8 +1039,8 @@ async fn send_with(
     send_with_person(classes_sql, mode, model, message, file, None, true).await
 }
 
-/// `approval`: the person's answer to the content guard prompt, given as
-/// soon as it is shown; `None` leaves nobody listening.
+/// `approval`: the decision the person sends to the suspended turn
+/// (`allow_once` or `deny`); `None` leaves the turn suspended.
 async fn send_with_person(
     classes_sql: &str,
     mode: aiplane_core::server::classification::ClassificationMode,
@@ -1071,42 +1071,50 @@ async fn send_with_person(
     let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
     let state = Arc::new(state);
     let session = chat::create_session(&state.db, "alice").await.unwrap();
-    if let Some(label) = approval {
-        let mut starts = state.chats.subscribe_starts();
-        let state = state.clone();
-        tokio::spawn(async move {
-            let Ok(started) = starts.recv().await else {
-                return;
-            };
-            let Some((turn_id, mut updates)) =
-                state.chats.subscribe(&started.user_id, &started.session_id)
-            else {
-                return;
-            };
-            while let Ok(update) = updates.recv().await {
-                if matches!(update, session_core::workers::TurnUpdate::Prompt(_)) {
-                    while !state.ask_feedback.resolve(
-                        &turn_id,
-                        aiplane_runtime::server::tools::feedback::AskReply::Answered {
-                            choices: vec![label.to_owned()],
-                            text: None,
-                        },
-                    ) {
-                        tokio::task::yield_now().await;
-                    }
-                    return;
-                }
-            }
-        });
-    }
     let resp = router(state.clone())
         .serve(submit_message(&session.id, &cookie, model, message, file))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
     wait_settled(&state, &session.id).await;
+    if let Some(decision) = approval {
+        let turn = chat::list_turns(&state.db, &session.id)
+            .await
+            .unwrap()
+            .pop()
+            .unwrap()
+            .turn;
+        assert_eq!(turn.status, chat::TurnStatus::Suspended);
+        let (status, body) = crate::turn_suspension::resume(
+            &state,
+            &cookie,
+            &session.id,
+            &turn.id,
+            serde_json::json!({"decision": decision}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+        wait_resumed(&state, &session.id).await;
+    }
     let status = last_turn_status(&state, &session.id).await;
     (upstream, state, session.id, status)
+}
+
+async fn wait_resumed(state: &RamaState, session_id: &str) {
+    for _ in 0..200 {
+        let last = chat::list_turns(&state.db, session_id)
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        if last.turn.status != chat::TurnStatus::InProgress
+            && last.turn.status != chat::TurnStatus::Suspended
+        {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("resumed turn never settled");
 }
 
 /// The chat mock serves no `/systemone`, so the System One model fails.
@@ -1280,18 +1288,111 @@ async fn typed_text_raises_the_conversation_even_when_the_model_is_cleared_for_e
 }
 
 #[tokio::test]
-async fn a_confirm_class_without_an_approval_stops_typed_text_and_uploads_alike() {
+async fn a_declined_confirm_stops_typed_text_and_uploads_alike() {
     use aiplane_core::server::classification::ClassificationMode::Enforce;
     for (message, file) in [
         (format!("pay {IBAN}"), None),
         ("read this".to_owned(), Some(("iban.txt", "text/plain"))),
     ] {
-        let (upstream, _state, _session, (status, error)) =
-            send_to_low_model("confirm", Enforce, &message, file).await;
+        let (upstream, _state, _session, (status, error)) = send_with_person(
+            &iban_class("confirm"),
+            Enforce,
+            "low-model",
+            &message,
+            file,
+            Some("deny"),
+            true,
+        )
+        .await;
         assert_eq!(status, chat::TurnStatus::Errored);
         assert!(error.contains("not approved"), "{error}");
         assert_eq!(chat_requests(&upstream).await, 0);
     }
+}
+
+#[tokio::test]
+async fn a_confirm_suspends_the_turn_and_leaves_the_persons_other_chats_running() {
+    use aiplane_core::server::classification::ClassificationMode::Enforce;
+    let (upstream, state, session, (status, _)) = send_with_person(
+        &iban_class("confirm"),
+        Enforce,
+        "low-model",
+        &format!("pay {IBAN}"),
+        None,
+        None,
+        true,
+    )
+    .await;
+    assert_eq!(status, chat::TurnStatus::Suspended);
+    let waiting = chat::list_turns(&state.db, &session)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    let suspension = waiting
+        .suspension
+        .expect("the pending decision is on the turn");
+    assert_eq!(suspension.kind, chat::SuspensionKind::Approval);
+    assert_eq!(
+        suspension.tool.as_deref(),
+        Some(aiplane_runtime::classification_detector::CONFIRM_CALL)
+    );
+    assert_eq!(chat_requests(&upstream).await, 0);
+
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let other = chat::create_session(&state.db, "alice").await.unwrap();
+    let resp = router(state.clone())
+        .serve(submit_message(
+            &other.id,
+            &cookie,
+            "low-model",
+            "hello",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    wait_resumed(&state, &other.id).await;
+    assert_eq!(
+        last_turn_status(&state, &other.id).await.0,
+        chat::TurnStatus::Completed
+    );
+    assert_eq!(chat_requests(&upstream).await, 1);
+    assert_eq!(
+        last_turn_status(&state, &session).await.0,
+        chat::TurnStatus::Suspended
+    );
+}
+
+#[tokio::test]
+async fn an_approved_confirm_resumes_the_turn_and_keeps_the_raised_level() {
+    use aiplane_core::server::classification::ClassificationMode::Enforce;
+    let (upstream, state, session, (status, error)) = send_with_person(
+        &iban_class("confirm"),
+        Enforce,
+        "low-model",
+        &format!("pay {IBAN}"),
+        None,
+        Some("allow_once"),
+        true,
+    )
+    .await;
+    assert_eq!(status, chat::TurnStatus::Completed, "{error}");
+    assert_eq!(chat_requests(&upstream).await, 1);
+    assert_eq!(
+        classification::level_id(&state.db, &session)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("confidential")
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM chat_turn_suspensions")
+            .fetch_one(&state.db)
+            .await
+            .unwrap(),
+        0
+    );
 }
 
 #[tokio::test]
@@ -1303,7 +1404,7 @@ async fn an_approved_confirm_sends_to_an_uncleared_model_while_users_may_overrid
         "low-model",
         &format!("pay {IBAN}"),
         None,
-        Some("approve"),
+        Some("allow_once"),
         true,
     )
     .await;
@@ -1320,7 +1421,7 @@ async fn an_approved_confirm_still_refuses_an_uncleared_model_when_users_may_not
         "low-model",
         &format!("pay {IBAN}"),
         None,
-        Some("approve"),
+        Some("allow_once"),
         false,
     )
     .await;
@@ -1338,7 +1439,7 @@ async fn an_approved_confirm_reaches_a_cleared_model_when_users_may_not_override
         "high-model",
         &format!("pay {IBAN}"),
         None,
-        Some("approve"),
+        Some("allow_once"),
         false,
     )
     .await;

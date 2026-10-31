@@ -55,7 +55,6 @@ settings-s-limits = 速率限制与配额
 settings-s-limits-blurb = /admin/limits 中所配规则的总开关。
 settings-s-agents = 个人智能体
 settings-s-agents-blurb = 个人智能体 的数量上限。
-content-guard-confirm-heading = 内容保护
 content-guard-confirm-question = 此内容被识别为受保护内容。仍要将其发送给所选模型吗？
 content-guard-confirm-approve = 仍要发送
 content-guard-confirm-deny = 不发送

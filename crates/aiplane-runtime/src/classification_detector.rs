@@ -18,8 +18,6 @@ use session_core::i18n::{Lang, t};
 use crate::rama_server::state::RamaState;
 use crate::server::AppState;
 use crate::server::side_call::{JsonShape, Payer, SideCall, ask_json};
-use crate::server::tools::ChatFeedback;
-use crate::server::tools::feedback::AskReply;
 
 /// What the caller of a request does with it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,53 +150,10 @@ impl Detection {
     }
 }
 
-pub async fn confirm_in_chat(feedback: Option<&ChatFeedback>, turn_id: Option<&str>) -> bool {
-    let (Some(feedback), Some(turn_id)) = (feedback, turn_id) else {
-        return false;
-    };
-    if feedback.broadcast.receiver_count() == 0 {
-        return false;
-    }
-    let reply = feedback.ask_hub.register(turn_id);
-    let _ = feedback
-        .broadcast
-        .send(session_core::workers::TurnUpdate::Prompt(
-            std::sync::Arc::new(session_core::workers::ToolPromptEvent::Show(
-                session_core::workers::ToolPrompt {
-                    turn_id: turn_id.to_string(),
-                    kind: session_core::workers::ToolPromptKind::ContentGuard,
-                    question: String::new(),
-                    options: vec![
-                        session_core::workers::PromptOption {
-                            label: "approve".into(),
-                            description: None,
-                            preview: None,
-                        },
-                        session_core::workers::PromptOption {
-                            label: "deny".into(),
-                            description: None,
-                            preview: None,
-                        },
-                    ],
-                    header: None,
-                    multi_select: false,
-                },
-            )),
-        ));
-    let approved = matches!(
-        tokio::time::timeout(Duration::from_secs(180), reply).await,
-        Ok(Ok(AskReply::Answered { choices, .. })) if choices.iter().any(|choice| choice == "approve")
-    );
-    feedback.ask_hub.cancel(turn_id);
-    let _ = feedback
-        .broadcast
-        .send(session_core::workers::TurnUpdate::Prompt(
-            std::sync::Arc::new(session_core::workers::ToolPromptEvent::Hide {
-                turn_id: turn_id.to_string(),
-            }),
-        ));
-    approved
-}
+/// The name a turn paused for the person's confirmation carries as its
+/// waiting call. No tool is behind it: the suspension reuses the approval
+/// mechanism, and the chat page words this one as a content confirmation.
+pub const CONFIRM_CALL: &str = "data_classification_confirm";
 
 struct Question {
     class_id: String,
@@ -1122,32 +1077,6 @@ mod tests {
     #[test]
     fn a_single_level_scheme_asks_no_questions() {
         assert!(questions_for(&Scheme::default(), 0).is_empty());
-    }
-
-    #[tokio::test]
-    async fn chat_confirmation_accepts_only_the_approve_choice() {
-        let (broadcast, mut events) = tokio::sync::broadcast::channel(4);
-        let feedback = ChatFeedback::for_test(broadcast);
-        let hub = feedback.ask_hub.clone();
-        let confirmation = confirm_in_chat(Some(&feedback), Some("turn-1"));
-        let answer = async {
-            let event = events.recv().await.unwrap();
-            assert!(matches!(
-                event,
-                session_core::workers::TurnUpdate::Prompt(_)
-            ));
-            while !hub.resolve(
-                "turn-1",
-                AskReply::Answered {
-                    choices: vec!["approve".into()],
-                    text: None,
-                },
-            ) {
-                tokio::task::yield_now().await;
-            }
-        };
-        let (approved, ()) = tokio::join!(confirmation, answer);
-        assert!(approved);
     }
 
     fn person() -> Payer {

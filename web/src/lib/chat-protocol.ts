@@ -163,7 +163,7 @@ export type ChatEvent =
 			type: 'tool_prompt';
 			action: 'show';
 			turn_id: string;
-			kind: 'ask_user' | 'content_guard' | 'location';
+			kind: 'ask_user' | 'location';
 			question: string;
 			options: PromptOption[];
 			/** Optional heading naming what is being decided. */

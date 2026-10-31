@@ -66,7 +66,6 @@ settings-s-metrics-blurb = Der Scrape-Endpunkt GET /metrics. Er antwortet nur, w
 
 # ─── Felder ──────────────────────────────────────────────────────────────────
 
-content-guard-confirm-heading = Inhaltsschutz
 content-guard-confirm-question = Dieser Inhalt wurde als geschützt erkannt. Möchten Sie ihn dennoch an das ausgewählte Modell senden?
 content-guard-confirm-approve = Trotzdem senden
 content-guard-confirm-deny = Nicht senden

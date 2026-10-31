@@ -1171,7 +1171,7 @@
 			{:else}
 				<SuspensionCard
 					waiting={waitingFrom({ ...waiting, options: canWrite ? waiting.options : [] }, entry.tool_calls)}
-					lead={t(waitingLead(waiting.kind, 'chat'), { tool: waiting.tool ?? '' })}
+					lead={t(waitingLead(waiting.kind, 'chat', waiting.tool), { tool: waiting.tool ?? '' })}
 					busy={answering === entry.turn.id}
 					error={answerErrors[entry.turn.id] ?? null}
 					onanswer={(answer) => answerSuspension(entry.turn.id, waiting, answer)}
@@ -1235,10 +1235,10 @@
 		<div class="flex flex-col gap-2 p-3">
 			<div>
 				<div class="text-xs font-semibold uppercase tracking-wide text-warning">
-					{shown.kind === 'content_guard' ? t('content-guard-confirm-heading') : (shown.header ?? t('chat-prompt-heading'))}
+					{shown.header ?? t('chat-prompt-heading')}
 				</div>
 				<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitised in renderPromptMarkdown -->
-				<div class="prose prose-sm mt-0.5 max-w-none">{@html renderPromptMarkdown(shown.kind === 'content_guard' ? t('content-guard-confirm-question') : shown.question)}</div>
+				<div class="prose prose-sm mt-0.5 max-w-none">{@html renderPromptMarkdown(shown.question)}</div>
 			</div>
 			{#if shown.kind === 'location'}
 				<div class="flex flex-wrap gap-2">
@@ -1258,7 +1258,7 @@
 								aria-pressed={shown.multi_select ? promptChoices.includes(option.label) : undefined}
 								onclick={() => (shown.multi_select ? togglePromptChoice(option.label) : answerPrompt(option.label))}
 							>
-								<span class="font-semibold">{shown.kind === 'content_guard' ? t(`content-guard-confirm-${option.label}`) : option.label}</span>
+								<span class="font-semibold">{option.label}</span>
 								{#if option.description}
 									<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitised in renderPromptMarkdown -->
 									<span class="prose prose-sm max-w-none text-xs font-normal opacity-70">{@html renderPromptMarkdown(option.description)}</span>

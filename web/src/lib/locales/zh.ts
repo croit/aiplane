@@ -1907,7 +1907,6 @@ export const zh: Catalog = {
  "connectors-token-help-user": "每位用户在“集成”中提供自己的 API 令牌，无需 OAuth 客户端。",
  "content-guard-confirm-approve": "仍要发送",
  "content-guard-confirm-deny": "不发送",
- "content-guard-confirm-heading": "内容保护",
  "content-guard-confirm-question": "此内容被识别为受保护内容。仍要将其发送给所选模型吗？",
  "embed-code-cancel": "取消",
  "embed-code-hint": "只有您能看到此字段。助手永远看不到验证码。",

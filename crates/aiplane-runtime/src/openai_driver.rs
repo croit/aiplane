@@ -1332,8 +1332,9 @@ async fn run_one_turn(
         compaction.as_ref(),
         d.history_limit,
     );
-    let mut approved_by_user = settle_classification_decision(
+    let Some(mut approved_by_user) = settle_classification_decision(
         d,
+        &ctx,
         crate::classification_upload::evaluate_attachments(
             &d.state,
             &classification_payer,
@@ -1341,8 +1342,13 @@ async fn run_one_turn(
         )
         .await
         .map_err(upstream_err)?,
+        &[],
+        turn_start_budget(),
     )
-    .await?;
+    .await?
+    else {
+        return Ok(TurnOutcome::default().into());
+    };
     enrich_current_message_with_ocr(d, &ctx, &mut messages).await;
 
     // One leading system message, from the turn's policy — see
@@ -1384,8 +1390,9 @@ async fn run_one_turn(
     let target = target.map_err(upstream_err)?;
     let (routing_model, access, automatic_decision) =
         (target.model.as_str(), target.access, target.decision);
-    approved_by_user |= settle_classification_decision(
+    let Some(approved) = settle_classification_decision(
         d,
+        &ctx,
         crate::classification_detector::evaluate_for_turn(
             &d.state,
             &classification_payer,
@@ -1396,8 +1403,14 @@ async fn run_one_turn(
         )
         .await
         .map_err(upstream_err)?,
+        &[],
+        turn_start_budget(),
     )
-    .await?;
+    .await?
+    else {
+        return Ok(TurnOutcome::default().into());
+    };
+    approved_by_user |= approved;
     let real_model = d
         .state
         .upstreams
@@ -1626,8 +1639,9 @@ async fn run_one_turn(
                     .map(|note| serde_json::json!({"role": "user", "content": note.text}))
                     .collect::<Vec<_>>(),
             });
-            let approved = settle_classification_decision(
+            let Some(approved) = settle_classification_decision(
                 d,
+                &ctx,
                 crate::classification_detector::evaluate_for_turn(
                     &d.state,
                     &classification_payer,
@@ -1638,8 +1652,19 @@ async fn run_one_turn(
                 )
                 .await
                 .map_err(upstream_err)?,
+                &messages[prefix_len..messages.len() - folded.len()],
+                session_core::db::BudgetUsed {
+                    rounds: round,
+                    seconds: (d.clock)().duration_since(run_started).as_secs(),
+                    tokens: tokens_used,
+                    tree: personal_execution
+                        .map(|execution| execution.meter().snapshot(execution.local_budget())),
+                },
             )
-            .await?;
+            .await?
+            else {
+                return Ok(TurnOutcome::default().into());
+            };
             if approved && d.state.config().classification.user_override {
                 approved_rank = Some(conversation_rank(d, &ctx.session_id).await);
             }
@@ -3675,33 +3700,81 @@ async fn ensure_model_cleared(
     })
 }
 
-/// Turn what the classification check decided into the turn's course: `true`
-/// when the person approved sending the content, an error when it is refused.
+fn turn_start_budget() -> session_core::db::BudgetUsed {
+    session_core::db::BudgetUsed {
+        rounds: 0,
+        seconds: 0,
+        tokens: 0,
+        tree: None,
+    }
+}
+
+/// Turn what the classification check decided into the turn's course:
+/// `Some(true)` when the person approved sending the content, `Some(false)`
+/// when nothing needed approving, `None` when the turn paused to ask (the
+/// caller returns; the person's answer resumes it), an error when it is
+/// refused.
+///
+/// A confirmation pauses the turn like a tool approval does, so it frees the
+/// person's turn slot and survives a reload. The conversation's level is
+/// already raised by then, so the check that runs again on resume finds
+/// nothing new to ask about; a resume carrying the person's answer is the
+/// approval for the whole turn. `tail` is what the turn had gathered before
+/// the check, replayed on resume.
 async fn settle_classification_decision(
     d: &OpenAiDriver,
+    ctx: &SessionContext,
     decision: crate::classification_detector::Decision,
-) -> Result<bool, TurnError> {
-    use crate::classification_detector::{Decision, confirm_in_chat};
-    match decision {
-        Decision::Allow => Ok(false),
-        Decision::Confirm => {
-            if confirm_in_chat(
-                d.tool_ctx.chat_feedback.as_ref(),
-                d.tool_ctx.assistant_turn_id.as_deref(),
-            )
-            .await
-            {
-                Ok(true)
-            } else {
-                Err(TurnError::Upstream {
-                    message: t(Lang::En, "cls-turn-not-approved"),
-                })
-            }
-        }
-        Decision::Deny => Err(TurnError::Upstream {
+    tail: &[serde_json::Value],
+    budget_used: session_core::db::BudgetUsed,
+) -> Result<Option<bool>, TurnError> {
+    use crate::classification_detector::{CONFIRM_CALL, Decision};
+    use session_core::db::Decision as Answer;
+    let not_approved = || TurnError::Upstream {
+        message: t(Lang::En, "cls-turn-not-approved"),
+    };
+    if decision == Decision::Deny {
+        return Err(TurnError::Upstream {
             message: t(Lang::En, "cls-turn-blocked"),
-        }),
+        });
     }
+    let answered = d
+        .resume
+        .as_ref()
+        .filter(|from| from.suspension.tool_call.name == CONFIRM_CALL);
+    if let Some(from) = answered {
+        return match from.decision {
+            Answer::AllowOnce => Ok(Some(true)),
+            _ => Err(not_approved()),
+        };
+    }
+    if decision == Decision::Allow {
+        return Ok(Some(false));
+    }
+    let person_chat = d.tool_ctx.agent.is_none() && d.persona.is_none();
+    if !person_chat || d.tool_ctx.suspend != crate::suspend::Suspend::Available {
+        return Err(not_approved());
+    }
+    if ctx.cancel.load(Ordering::SeqCst) {
+        return Ok(None);
+    }
+    let call = runner::ToolCallRef {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: CONFIRM_CALL.to_string(),
+        arguments_raw: "{}".to_string(),
+    };
+    resume::pause(
+        d,
+        ctx,
+        &call,
+        crate::suspend::SuspendRequest::approval(
+            crate::server::tools::ask_first::DEFAULT_APPROVAL_TIMEOUT,
+        ),
+        tail,
+        budget_used,
+    )
+    .await?;
+    Ok(None)
 }
 
 /// Build the prior-history message list replayed upstream: every turn before

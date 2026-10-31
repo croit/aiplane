@@ -73,7 +73,6 @@ settings-s-metrics-blurb = The GET /metrics scrape endpoint. It answers only wit
 
 # ─── Fields ──────────────────────────────────────────────────────────────────
 
-content-guard-confirm-heading = Content protection
 content-guard-confirm-question = This content was identified as protected. Do you want to send it to the selected model anyway?
 content-guard-confirm-approve = Send anyway
 content-guard-confirm-deny = Do not send

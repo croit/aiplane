@@ -1175,6 +1175,13 @@ agent builder's test chat and a person's own chat. Its pure half is
   (`waitingLead`: the chat's `chat-waiting-*`, the test chat's
   `agents-test-waiting-*`), a `note`, a heading snippet (the inbox's), the
   answer callback, and the error to show.
+- **A content confirmation** is an approval whose waiting call is
+  `data_classification_confirm`, not a tool: the data classification paused
+  the turn before sending content of a `confirm` class
+  ([data classification](classification.md)). The card leads with
+  `content-guard-confirm-question`, hides the tool block and labels its
+  buttons `content-guard-confirm-approve` / `-deny`
+  (`isContentConfirmation`).
 - **Strings** are `suspension-*` in `suspension.ftl`.
 ## Data classification
 

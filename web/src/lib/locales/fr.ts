@@ -1922,7 +1922,6 @@ export const fr: Catalog = {
  "connectors-token-help-user": "Chaque utilisateur fournit son propre jeton API dans Intégrations. Aucun client OAuth n'est nécessaire.",
  "content-guard-confirm-approve": "Envoyer quand même",
  "content-guard-confirm-deny": "Ne pas envoyer",
- "content-guard-confirm-heading": "Protection du contenu",
  "content-guard-confirm-question": "Ce contenu a été identifié comme protégé. Voulez-vous tout de même l’envoyer au modèle sélectionné ?",
  "embed-code-cancel": "Annuler",
  "embed-code-hint": "Vous seul voyez ce champ. L'assistant ne voit jamais le code.",

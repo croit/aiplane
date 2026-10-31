@@ -4,6 +4,7 @@
 	import {
 		answerField,
 		decisionButtons,
+		isContentConfirmation,
 		minutesLeft,
 		prettyArguments,
 		slotLine,
@@ -97,7 +98,7 @@
 				</div>
 			</details>
 		{/if}
-		{#if waiting.kind === 'approval' && waiting.call}
+		{#if waiting.kind === 'approval' && waiting.call && !isContentConfirmation(waiting)}
 			<div>
 				<p class="text-xs font-semibold text-base-content/60">{t('suspension-tool', { tool: waiting.call.name })}</p>
 				{#if waiting.call.arguments}

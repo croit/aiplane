@@ -1938,7 +1938,6 @@ export const ru: Catalog = {
  "connectors-token-help-user": "Каждый пользователь вводит собственный API-токен в разделе интеграций. OAuth-клиент не нужен.",
  "content-guard-confirm-approve": "Всё равно отправить",
  "content-guard-confirm-deny": "Не отправлять",
- "content-guard-confirm-heading": "Защита содержимого",
  "content-guard-confirm-question": "Это содержимое определено как защищённое. Всё равно отправить его выбранной модели?",
  "embed-code-cancel": "Отмена",
  "embed-code-hint": "Это поле видите только вы. Ассистент никогда не видит код.",

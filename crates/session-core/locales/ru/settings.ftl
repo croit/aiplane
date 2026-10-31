@@ -55,7 +55,6 @@ settings-s-limits = Ограничения и квоты
 settings-s-limits-blurb = Главный переключатель правил, настроенных на /admin/limits.
 settings-s-agents = Личные агенты
 settings-s-agents-blurb = Лимит личных агентов.
-content-guard-confirm-heading = Защита содержимого
 content-guard-confirm-question = Это содержимое определено как защищённое. Всё равно отправить его выбранной модели?
 content-guard-confirm-approve = Всё равно отправить
 content-guard-confirm-deny = Не отправлять

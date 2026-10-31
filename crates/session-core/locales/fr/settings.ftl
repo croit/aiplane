@@ -56,7 +56,6 @@ settings-s-limits-blurb = Interrupteur principal des règles configurées dans /
 settings-s-agents = Agents personnels
 settings-s-agents-blurb = Capacité des agents personnels.
 
-content-guard-confirm-heading = Protection du contenu
 content-guard-confirm-question = Ce contenu a été identifié comme protégé. Voulez-vous tout de même l’envoyer au modèle sélectionné ?
 content-guard-confirm-approve = Envoyer quand même
 content-guard-confirm-deny = Ne pas envoyer

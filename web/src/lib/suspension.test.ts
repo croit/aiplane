@@ -33,6 +33,15 @@ test('a card offers exactly the decisions it was offered', () => {
 	assert.deepEqual(decisionButtons({ kind: 'secure_input', options: ['value'] }), []);
 });
 
+test('a content confirmation words its lead and buttons as sending, not as running a tool', () => {
+	const waiting = { kind: 'approval' as const, options: ['allow_once' as const, 'deny' as const], call: { name: 'data_classification_confirm', arguments: '' } };
+	assert.deepEqual(decisionButtons(waiting), [
+		{ decision: 'allow_once', key: 'content-guard-confirm-approve', primary: true },
+		{ decision: 'deny', key: 'content-guard-confirm-deny', primary: false }
+	]);
+	assert.equal(waitingLead('approval', 'chat', 'data_classification_confirm'), 'content-guard-confirm-question');
+});
+
 test('the lead says what the conversation waits for, in the chat and in the test chat', () => {
 	assert.equal(waitingLead('approval', 'chat'), 'chat-waiting-approval');
 	assert.equal(waitingLead('secure_input', 'chat'), 'chat-waiting-value');

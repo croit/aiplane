@@ -1922,7 +1922,6 @@ export const de: Catalog = {
  "connectors-token-help-user": "Jeder Benutzer hinterlegt unter Integrationen sein eigenes API-Token. Ein OAuth-Client ist nicht nötig.",
  "content-guard-confirm-approve": "Trotzdem senden",
  "content-guard-confirm-deny": "Nicht senden",
- "content-guard-confirm-heading": "Inhaltsschutz",
  "content-guard-confirm-question": "Dieser Inhalt wurde als geschützt erkannt. Möchten Sie ihn dennoch an das ausgewählte Modell senden?",
  "embed-code-cancel": "Abbrechen",
  "embed-code-hint": "Nur Sie sehen dieses Feld. Der Assistent sieht den Code nie.",
