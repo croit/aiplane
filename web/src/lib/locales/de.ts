@@ -1547,7 +1547,6 @@ export const de: Catalog = {
  "cls-cause-terms": "Angehoben, weil der Text die Wortliste von {class} traf",
  "cls-cause-user": "Vom Besitzer festgelegt",
  "cls-chat-level-aria": "Stufe der Unterhaltung",
- "cls-chat-level-prefix": "Stufe:",
  "cls-chat-level-title": "Die Stufe dieser Unterhaltung anheben; nur dafür freigegebene Modelle bleiben verfügbar.",
  "cls-chat-no-model": "Für diese Stufe ist kein Modell freigegeben. Senken Sie die Stufe oder bitten Sie eine Administration, ein Modell dafür freizugeben.",
  "cls-chat-observed": "Klassifizierung erfordert „{required}“ ({classes}), dieser Chat ist „{current}“. Im Beobachtungsmodus wird nichts durchgesetzt – prüfe Stufe und Modell dieses Chats.",

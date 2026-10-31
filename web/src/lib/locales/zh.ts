@@ -1532,7 +1532,6 @@ export const zh: Catalog = {
  "cls-cause-terms": "因文本匹配 {class} 的词表而被提升",
  "cls-cause-user": "由所有者设置",
  "cls-chat-level-aria": "对话级别",
- "cls-chat-level-prefix": "级别：",
  "cls-chat-level-title": "提升此对话的级别；只有获准处理该级别的模型仍可用。",
  "cls-chat-no-model": "没有模型获准处理此级别。请降低级别，或请管理员为其授权一个模型。",
  "cls-chat-observed": "分类要求“{required}”（{classes}），此对话为“{current}”。监控模式不会强制执行任何操作：请检查此对话的级别和模型。",

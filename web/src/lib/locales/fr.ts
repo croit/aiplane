@@ -1547,7 +1547,6 @@ export const fr: Catalog = {
  "cls-cause-terms": "Relevé parce que le texte correspondait à la liste de mots de {class}",
  "cls-cause-user": "Défini par le propriétaire",
  "cls-chat-level-aria": "Niveau de la conversation",
- "cls-chat-level-prefix": "Niveau :",
  "cls-chat-level-title": "Relever le niveau de cette conversation ; seuls les modèles habilités restent disponibles.",
  "cls-chat-no-model": "Aucun modèle n'est habilité pour ce niveau. Abaissez le niveau ou demandez à un administrateur d'en habiliter un.",
  "cls-chat-observed": "La classification exige « {required} » ({classes}) ; cette conversation est « {current} ». Le mode observation n’applique rien : vérifiez le niveau et le modèle de cette conversation.",

@@ -209,7 +209,6 @@ cls-issue-level-name = Chaque niveau a besoin d'un nom.
 cls-issue-class-name = Chaque classe de données a besoin d'un nom.
 cls-chat-level-aria = Niveau de la conversation
 cls-chat-level-title = Relever le niveau de cette conversation ; seuls les modèles habilités restent disponibles.
-cls-chat-level-prefix = Niveau :
 cls-chat-no-model = Aucun modèle n'est habilité pour ce niveau. Abaissez le niveau ou demandez à un administrateur d'en habiliter un.
 cls-chat-observed = La classification exige « { $required } » ({ $classes }) ; cette conversation est « { $current } ». Le mode observation n’applique rien : vérifiez le niveau et le modèle de cette conversation.
 cls-chat-observed-unnamed = La classification exige « { $required } » ; cette conversation est « { $current } ». Le mode observation n’applique rien : vérifiez le niveau et le modèle de cette conversation.

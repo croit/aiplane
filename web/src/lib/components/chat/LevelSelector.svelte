@@ -1,12 +1,13 @@
 <script lang="ts">
 	import Modal from '#lib/components/ui/Modal.svelte';
-	import { chatClassificationApi, failure, levelOptions, type ChatClassification } from '#lib/classification.js';
+	import { causeMessage, chatClassificationApi, failure, levelBadgeClass, levelOptions, type ChatClassification } from '#lib/classification.js';
 	import { t } from '#lib/i18n.svelte.js';
 
 	/**
-	 * Move the conversation to another level. Higher levels are always offered;
-	 * lower ones only when the operator allows lowering with a reason, which
-	 * this asks for before sending. The server decides what is accepted.
+	 * The conversation's level as its coloured badge, opening the levels it
+	 * can move to. Higher levels are always offered; lower ones only when the
+	 * operator allows lowering with a reason, which this asks for before
+	 * sending. The server decides what is accepted.
 	 */
 	let { sessionId, classification, onchanged, onerror }: {
 		sessionId: string;
@@ -34,20 +35,40 @@
 		}
 	}
 
-	function choose(event: Event & { currentTarget: HTMLSelectElement }) {
-		const level = event.currentTarget.value;
-		event.currentTarget.value = classification.level?.id ?? '';
-		const option = options.find((o) => o.level.id === level);
-		if (!option) return;
-		if (option.needsReason) pending = level;
+	const cause = $derived(causeMessage(classification.cause));
+	let menu = $state<HTMLElement | null>(null);
+
+	function choose(level: string, needsReason: boolean) {
+		menu?.hidePopover();
+		if (needsReason) pending = level;
 		else void apply(level);
 	}
 </script>
 
-<select class="select select-xs w-auto max-w-48" aria-label={t('cls-chat-level-aria')} title={t('cls-chat-level-title')} disabled={busy || options.length === 0} onchange={choose}>
-	<option value={classification.level?.id ?? ''} selected>{t('cls-chat-level-prefix')} {classification.level?.name}</option>
-	{#each options as option (option.level.id)}<option value={option.level.id}>{option.level.name}</option>{/each}
-</select>
+{#if classification.level}
+	{@const current = classification.level}
+	{#if options.length === 0}
+		<span class={levelBadgeClass(current.color)} title={cause ? t(cause.key, cause.args) : undefined} data-classification-badge>{current.name}</span>
+	{:else}
+		<button
+			type="button"
+			class="{levelBadgeClass(current.color)} cursor-pointer gap-1"
+			popovertarget="level-menu"
+			style="anchor-name:--level"
+			disabled={busy}
+			aria-label="{t('cls-chat-level-aria')}: {current.name}"
+			title={cause ? `${t(cause.key, cause.args)} · ${t('cls-chat-level-title')}` : t('cls-chat-level-title')}
+			data-classification-badge
+		>
+			{current.name}<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+		</button>
+		<ul class="dropdown menu z-10 w-56 rounded-box bg-base-200 p-2 shadow" popover id="level-menu" style="position-anchor:--level" bind:this={menu}>
+			{#each options as option (option.level.id)}
+				<li><button type="button" onclick={() => choose(option.level.id, option.needsReason)}><span class={levelBadgeClass(option.level.color)}>{option.level.name}</span></button></li>
+			{/each}
+		</ul>
+	{/if}
+{/if}
 
 <Modal open={pending !== null} title={t('cls-chat-reason-title')} description={t('cls-chat-reason-lead')} size="sm" onclose={() => (pending = null)}>
 	<textarea class="textarea w-full" rows="3" aria-label={t('cls-chat-reason-label')} bind:value={reason}></textarea>

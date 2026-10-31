@@ -19,7 +19,6 @@
 	import { renderWelcome } from '#lib/welcome.js';
 	import { locale, t, time, n } from '#lib/i18n.svelte.js';
 	import { chatClassificationApi, type ChatClassification } from '#lib/classification.js';
-	import LevelSelector from '#lib/components/chat/LevelSelector.svelte';
 	import ShareDialog from '#lib/components/sharing/ShareDialog.svelte';
 	import ConversationHeader from '#lib/components/chat/ConversationHeader.svelte';
 	import DictationButton from '#lib/components/chat/DictationButton.svelte';
@@ -963,6 +962,8 @@
 		onshare={() => (shareDialogOpen = true)}
 		onfork={fork}
 		onspeechvoice={saveSpeechVoice}
+		onlevelchanged={levelChanged}
+		onerror={(message) => (notice = message)}
 	/>
 
 	{#if permissions?.delegation}
@@ -1266,9 +1267,6 @@
 		<div class="flex flex-wrap items-center gap-2">
 			<CapabilityPicker capabilities={tools} onset={setCapability} />
 			<span class="flex-1"></span>
-			{#if classification?.active && classification.level}
-				<LevelSelector sessionId={id} {classification} onchanged={levelChanged} onerror={(message) => (notice = message)} />
-			{/if}
 			<select
 				class="select select-xs w-auto max-w-48"
 				aria-label={t('chat-render-effort-title')}
