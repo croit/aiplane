@@ -1550,6 +1550,8 @@ export const fr: Catalog = {
  "cls-chat-level-prefix": "Niveau :",
  "cls-chat-level-title": "Relever le niveau de cette conversation ; seuls les modèles habilités restent disponibles.",
  "cls-chat-no-model": "Aucun modèle n'est habilité pour ce niveau. Abaissez le niveau ou demandez à un administrateur d'en habiliter un.",
+ "cls-chat-observed": "La classification exige « {required} » ({classes}) ; cette conversation est « {current} ». Le mode observation n’applique rien : vérifiez le niveau et le modèle de cette conversation.",
+ "cls-chat-observed-unnamed": "La classification exige « {required} » ; cette conversation est « {current} ». Le mode observation n’applique rien : vérifiez le niveau et le modèle de cette conversation.",
  "cls-chat-reason-apply": "Abaisser le niveau",
  "cls-chat-reason-label": "Motif",
  "cls-chat-reason-lead": "L'abaissement est enregistré avec votre motif.",

@@ -775,16 +775,58 @@ pub(crate) async fn evaluate_for_turn(
             return Err(error);
         }
     };
-    if mode == ClassificationMode::Monitor || findings.is_empty() {
-        if !findings.is_empty() {
-            tracing::info!(
-                causes = ?findings.iter().map(|finding| finding.cause.as_str()).collect::<Vec<_>>(),
-                "data classification would act on this request in enforce mode"
-            );
-        }
+    if findings.is_empty() {
+        return Ok(Decision::Allow);
+    }
+    if mode == ClassificationMode::Monitor {
+        observe_findings(state, &scheme, context, &findings).await;
         return Ok(Decision::Allow);
     }
     Ok(apply_findings(state, &scheme, context, &findings).await)
+}
+
+/// Monitor mode: record in a person's chat what each finding would have
+/// raised the conversation to, without raising it, so the chat can say so.
+pub(crate) async fn observe_findings(
+    state: &AppState,
+    scheme: &Scheme,
+    context: &crate::server::tools::ToolContext,
+    findings: &[Finding],
+) {
+    tracing::info!(
+        causes = ?findings.iter().map(|finding| finding.cause.as_str()).collect::<Vec<_>>(),
+        "data classification would act on this request in enforce mode"
+    );
+    let (None, Some(session_id)) = (&context.agent, context.session_id.as_deref()) else {
+        return;
+    };
+    let actor = context.principal.subject_id();
+    let mut recorded = false;
+    for finding in findings {
+        match classification::observe(
+            &state.db,
+            scheme,
+            session_id,
+            &finding.level_id,
+            &finding.cause,
+            actor,
+        )
+        .await
+        {
+            Ok(written) => recorded |= written,
+            Err(error) => tracing::warn!(
+                session_id,
+                cause = %finding.cause,
+                error = %error,
+                "could not record a classification match in monitor mode"
+            ),
+        }
+    }
+    if recorded && let Some(feedback) = context.chat_feedback.as_ref() {
+        let _ = feedback
+            .broadcast
+            .send(session_core::workers::TurnUpdate::SidebarChanged);
+    }
 }
 
 /// What the findings do to a turn. In a person's chat each one raises the

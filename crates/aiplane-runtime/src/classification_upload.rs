@@ -19,7 +19,7 @@ use aiplane_features::server::classification::{
 };
 
 use crate::classification_detector::{
-    Decision, Finding, apply_findings, detector_findings, static_findings,
+    Decision, Finding, apply_findings, detector_findings, observe_findings, static_findings,
 };
 use crate::rama_server::state::RamaState;
 use crate::server::AppState;
@@ -245,7 +245,11 @@ pub(crate) async fn evaluate_attachments(
         mode = mode.as_str(),
         "data classification inspected the message's attachments"
     );
-    if mode == ClassificationMode::Monitor || findings.is_empty() {
+    if findings.is_empty() {
+        return Ok(Decision::Allow);
+    }
+    if mode == ClassificationMode::Monitor {
+        observe_findings(state, &scheme, context, &findings).await;
         return Ok(Decision::Allow);
     }
     Ok(apply_findings(state, &scheme, context, &findings).await)

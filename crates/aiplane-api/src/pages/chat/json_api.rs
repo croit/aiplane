@@ -1970,6 +1970,43 @@ pub struct ClassificationView {
     /// Why the conversation is at its level: the cause of its latest level
     /// change; `null` while it has none or the scheme is not active.
     pub cause: Option<String>,
+    /// In monitor mode: the level this conversation's content would require,
+    /// above its current one; `null` when nothing was found above it.
+    pub observed: Option<ObservedView>,
+}
+
+/// What monitor mode found above a conversation's level.
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct ObservedView {
+    pub level: LevelView,
+    /// The names of the data classes that matched; a match by a document's
+    /// marking names no class.
+    pub classes: Vec<String>,
+}
+
+fn observed_view(
+    scheme: &aiplane_core::server::classification::Scheme,
+    observed: aiplane_core::server::classification::Observed,
+) -> Option<ObservedView> {
+    let level = scheme.level(&observed.level_id)?;
+    let mut classes: Vec<String> = Vec::new();
+    for cause in &observed.causes {
+        let Some((_, class_id)) = cause
+            .split_once(':')
+            .filter(|(kind, _)| matches!(*kind, "system_one" | "pattern" | "terms"))
+        else {
+            continue;
+        };
+        if let Some(class) = scheme.classes().iter().find(|class| class.id == class_id)
+            && !classes.contains(&class.name)
+        {
+            classes.push(class.name.clone());
+        }
+    }
+    Some(ObservedView {
+        level: level.into(),
+        classes,
+    })
 }
 
 async fn classification_view(
@@ -1985,6 +2022,7 @@ async fn classification_view(
             levels: Vec::new(),
             lowering: lowering.as_str(),
             cause: None,
+            observed: None,
         });
     }
     let stored = aiplane_core::server::classification::level_id(&state.db, session_id).await?;
@@ -1995,6 +2033,9 @@ async fn classification_view(
         lowering: lowering.as_str(),
         cause: aiplane_core::server::classification::admin::latest_cause(&state.db, session_id)
             .await?,
+        observed: aiplane_core::server::classification::observed(&state.db, &scheme, session_id)
+            .await?
+            .and_then(|observed| observed_view(&scheme, observed)),
     })
 }
 

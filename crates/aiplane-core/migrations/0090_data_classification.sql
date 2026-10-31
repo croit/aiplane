@@ -83,7 +83,8 @@ CREATE TABLE chat_classification_events (
     to_level   TEXT NOT NULL,
     cause      TEXT NOT NULL,
     actor      TEXT NOT NULL,
-    reason     TEXT NOT NULL DEFAULT ''
+    reason     TEXT NOT NULL DEFAULT '',
+    monitored  INTEGER NOT NULL DEFAULT 0 CHECK (monitored IN (0, 1))
 ) STRICT;
 
 CREATE INDEX idx_chat_classification_events_session ON chat_classification_events (session_id, at);

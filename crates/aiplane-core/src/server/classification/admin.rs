@@ -73,6 +73,9 @@ pub struct EventRecord {
     pub cause: String,
     pub actor: String,
     pub reason: String,
+    /// Recorded in monitor mode: what a raise would have done; the level did
+    /// not change.
+    pub monitored: bool,
 }
 
 const RANK_PARKING: i64 = 1_000_000;
@@ -373,7 +376,7 @@ pub async fn events(
     limit: u32,
 ) -> Result<Vec<EventRecord>, DbError> {
     let rows = sqlx::query(
-        "SELECT session_id, at, from_level, to_level, cause, actor, reason
+        "SELECT session_id, at, from_level, to_level, cause, actor, reason, monitored
            FROM chat_classification_events
           WHERE (?1 IS NULL OR session_id = ?1)
           ORDER BY at DESC, rowid DESC LIMIT ?2",
@@ -392,19 +395,24 @@ pub async fn events(
                 cause: row.try_get("cause")?,
                 actor: row.try_get("actor")?,
                 reason: row.try_get("reason")?,
+                monitored: row.try_get("monitored")?,
             })
         })
         .collect::<Result<_, sqlx::Error>>()
         .map_err(DbError::from)
 }
 
-/// The cause of a conversation's latest level change, if it ever changed.
+/// The cause of a conversation's latest level change, if it ever changed. A
+/// monitor-mode observation changed nothing and is not one.
 pub async fn latest_cause(db: &Pool, session_id: &str) -> Result<Option<String>, DbError> {
-    Ok(events(db, Some(session_id), 1)
-        .await?
-        .into_iter()
-        .next()
-        .map(|event| event.cause))
+    Ok(sqlx::query_scalar(
+        "SELECT cause FROM chat_classification_events
+          WHERE session_id = ? AND monitored = 0
+          ORDER BY at DESC, rowid DESC LIMIT 1",
+    )
+    .bind(session_id)
+    .fetch_optional(db)
+    .await?)
 }
 
 #[cfg(test)]

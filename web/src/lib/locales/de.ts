@@ -1550,6 +1550,8 @@ export const de: Catalog = {
  "cls-chat-level-prefix": "Stufe:",
  "cls-chat-level-title": "Die Stufe dieser Unterhaltung anheben; nur dafür freigegebene Modelle bleiben verfügbar.",
  "cls-chat-no-model": "Für diese Stufe ist kein Modell freigegeben. Senken Sie die Stufe oder bitten Sie eine Administration, ein Modell dafür freizugeben.",
+ "cls-chat-observed": "Klassifizierung erfordert „{required}“ ({classes}), dieser Chat ist „{current}“. Im Beobachtungsmodus wird nichts durchgesetzt – prüfe Stufe und Modell dieses Chats.",
+ "cls-chat-observed-unnamed": "Klassifizierung erfordert „{required}“, dieser Chat ist „{current}“. Im Beobachtungsmodus wird nichts durchgesetzt – prüfe Stufe und Modell dieses Chats.",
  "cls-chat-reason-apply": "Stufe senken",
  "cls-chat-reason-label": "Begründung",
  "cls-chat-reason-lead": "Das Senken wird zusammen mit Ihrer Begründung protokolliert.",

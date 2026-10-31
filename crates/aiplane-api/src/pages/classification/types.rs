@@ -325,6 +325,9 @@ pub struct EventView {
     pub cause: String,
     pub actor: String,
     pub reason: String,
+    /// Recorded in monitor mode: what would have happened; the level did not
+    /// change.
+    pub monitored: bool,
 }
 
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]

@@ -1498,9 +1498,51 @@ async fn in_monitor_mode_typed_text_and_uploads_are_recorded_only() {
         let (upstream, state, session, (status, _)) =
             send_to_low_model("block", Monitor, &message, file).await;
         assert_eq!(status, chat::TurnStatus::Completed);
-        assert!(events(&state, &session).await.is_empty());
         assert_eq!(chat_requests(&upstream).await, 1);
+        assert_eq!(
+            events(&state, &session).await,
+            vec![(
+                "public".into(),
+                "confidential".into(),
+                "pattern:iban".into()
+            )],
+            "recorded, as an observation"
+        );
+        let classification = &session_json(&state, &session).await["classification"];
+        assert_eq!(classification["level"]["id"], "public", "not raised");
+        assert_eq!(classification["cause"], serde_json::Value::Null);
+        assert_eq!(classification["observed"]["level"]["id"], "confidential");
+        assert_eq!(
+            classification["observed"]["classes"],
+            serde_json::json!(["Bank account"])
+        );
     }
+}
+
+#[tokio::test]
+async fn in_enforce_mode_nothing_is_observed() {
+    use aiplane_core::server::classification::ClassificationMode::Enforce;
+    let (_upstream, state, session, _) =
+        send_to_low_model("raise", Enforce, &format!("pay {IBAN}"), None).await;
+    let classification = &session_json(&state, &session).await["classification"];
+    assert_eq!(classification["level"]["id"], "confidential");
+    assert_eq!(classification["observed"], serde_json::Value::Null);
+}
+
+async fn session_json(state: &Arc<RamaState>, session_id: &str) -> serde_json::Value {
+    let cookie = common::seed_session(state, "alice", "alice@example.com").await;
+    let resp = router(state.clone())
+        .serve(
+            Request::builder()
+                .uri(format!("/api/v0/chat/sessions/{session_id}"))
+                .header(header::COOKIE, format!("id={cookie}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    serde_json::from_slice(&common::read_body(resp).await).unwrap()
 }
 
 /// A granted tool whose call raises the conversation as a retrieval does.

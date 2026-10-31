@@ -1304,6 +1304,11 @@
 		{#if classification?.active && models.length === 0}
 			<div class="alert alert-warning alert-soft mx-2 py-2 text-xs" role="alert"><span>{t('cls-chat-no-model')}</span></div>
 		{/if}
+		{#if classification?.active && classification.level && classification.observed}
+			<div class="alert alert-info alert-soft mx-2 py-2 text-xs" role="status">
+				<span>{t(classification.observed.classes.length > 0 ? 'cls-chat-observed' : 'cls-chat-observed-unnamed', { required: classification.observed.level.name, classes: classification.observed.classes.join(', '), current: classification.level.name })}</span>
+			</div>
+		{/if}
 		<div class="flex flex-wrap items-center gap-2">
 			<CapabilityPicker capabilities={tools} onset={setCapability} />
 			<span class="flex-1"></span>

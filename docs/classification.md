@@ -15,7 +15,7 @@ All tables belong to one migration (`0090_data_classification.sql`).
 | `classification_assignments` | `(kind, id) -> level_id`, `over` (`hide` or `gate`). `kind` is `pool`, `tool`, `mcp`, `connector` or `collection`. A pool's `id` is its name; triggers follow a rename and remove the row on delete. A tool's `id` is the tool id, an MCP server's and a connector's the server or connector key, a collection's the numeric collection id (a rename cannot orphan it). A destination without a row is at the lowest level and, for a tool, hidden above it. The rows load with the scheme. |
 | `chat_session_settings.level_id` | The conversation's level. `NULL` means the lowest level. |
 | `chat_session_shares` | `(session_id, subject_kind, subject_id)`: the people (`user`) and groups (`group`) a conversation is shared with; removed with the conversation. See [Sharing](#sharing). |
-| `chat_classification_events` | One row per raise or lowering: `from_level`, `to_level`, `cause` (`default`, `migration`, `user`, `system_one:<class id>`, `pattern:<class id>`, `terms:<class id>`, `marking:*` as in [Resolution](#resolution-1), `retrieval`, `fork`, `scheme_change`), `actor`, `reason`. |
+| `chat_classification_events` | One row per raise or lowering: `from_level`, `to_level`, `cause` (`default`, `migration`, `user`, `system_one:<class id>`, `pattern:<class id>`, `terms:<class id>`, `marking:*` as in [Resolution](#resolution-1), `retrieval`, `fork`, `scheme_change`), `actor`, `reason`, `monitored`. A `monitored` row records what monitor mode would have raised; the level did not change, and it is never a conversation's cause. |
 
 ## Resolution
 
@@ -176,7 +176,7 @@ Images and unknown binaries have no text. `stamp_matches(text, rules)` returns t
 
 Everything below applies to a person's conversation. With one level none of it runs: no file is parsed, no model is asked, no file is marked.
 
-Monitor mode (`classification.mode = monitor`) logs what enforce mode would do and takes no action: nothing is raised, asked or refused by a detector, a collection or the gate. The model filter, the tool filter and the levels a conversation already holds apply in both modes.
+Monitor mode (`classification.mode = monitor`) logs what enforce mode would do and takes no action: nothing is raised, asked or refused by a detector, a collection or the gate. In a person's chat, each finding of typed text or an upload above the conversation's level is recorded as a `monitored` event (once per level and cause), and the chat shows an info box above the composer naming the level the content would require, the matched classes and the chat's own level, until the chat is at that level. The model filter, the tool filter and the levels a conversation already holds apply in both modes.
 
 ### Typed text
 

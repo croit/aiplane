@@ -617,6 +617,7 @@ pub async fn events(State(state): State<Arc<RamaState>>, req: Request) -> Respon
                         cause: e.cause,
                         actor: e.actor,
                         reason: e.reason,
+                        monitored: e.monitored,
                     })
                     .collect(),
             },

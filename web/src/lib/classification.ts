@@ -176,6 +176,8 @@ export interface ChatClassification {
 	lowering?: 'never' | 'with_reason';
 	/** The latest event's cause, content-free. */
 	cause?: string | null;
+	/** Monitor mode: the level this conversation's content would require, above its own; the names of the classes that matched. */
+	observed?: { level: ChatLevel; classes: string[] } | null;
 }
 
 export interface ChatShares {

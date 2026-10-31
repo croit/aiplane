@@ -101,10 +101,24 @@ pub(super) async fn write_event(
     actor: &str,
     reason: &str,
 ) -> Result<(), DbError> {
+    insert_event(conn, session_id, from, to, cause, actor, reason, false).await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn insert_event(
+    conn: &mut sqlx::SqliteConnection,
+    session_id: &str,
+    from: &str,
+    to: &str,
+    cause: &str,
+    actor: &str,
+    reason: &str,
+    monitored: bool,
+) -> Result<(), DbError> {
     sqlx::query(
         "INSERT INTO chat_classification_events
-             (id, session_id, at, from_level, to_level, cause, actor, reason)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+             (id, session_id, at, from_level, to_level, cause, actor, reason, monitored)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(uuid::Uuid::new_v4().to_string())
     .bind(session_id)
@@ -114,9 +128,100 @@ pub(super) async fn write_event(
     .bind(cause)
     .bind(actor)
     .bind(reason)
+    .bind(monitored)
     .execute(conn)
     .await?;
     Ok(())
+}
+
+/// Record what [`raise`] would have done in monitor mode, without changing the
+/// level. Only a level above the conversation's is recorded, and the same
+/// level and cause once per conversation, so a repeated message does not grow
+/// the audit. Returns whether a row was written.
+pub async fn observe(
+    db: &Pool,
+    scheme: &Scheme,
+    session_id: &str,
+    to: &str,
+    cause: &str,
+    actor: &str,
+) -> Result<bool, ClassificationError> {
+    let target = scheme
+        .level(to)
+        .ok_or_else(|| ClassificationError::UnknownLevel(to.to_owned()))?;
+    let mut tx = WriteTx::begin(db).await?;
+    let stored = stored_level(&mut tx, session_id).await?;
+    let current = scheme.level_or_lowest(stored.as_deref());
+    if target.rank <= current.rank {
+        return Ok(false);
+    }
+    let seen: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM chat_classification_events
+                         WHERE session_id = ? AND monitored = 1 AND to_level = ? AND cause = ?)",
+    )
+    .bind(session_id)
+    .bind(&target.id)
+    .bind(cause)
+    .fetch_one(&mut *tx)
+    .await?;
+    if seen {
+        return Ok(false);
+    }
+    insert_event(
+        &mut tx,
+        session_id,
+        &current.id,
+        &target.id,
+        cause,
+        actor,
+        "",
+        true,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
+/// What monitor mode found above the conversation's current level: the highest
+/// such level and the causes that reached above the current level, oldest first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Observed {
+    pub level_id: String,
+    pub causes: Vec<String>,
+}
+
+/// The monitor-mode findings that still lie above the conversation's level;
+/// `None` once the conversation is at or above all of them.
+pub async fn observed(
+    db: &Pool,
+    scheme: &Scheme,
+    session_id: &str,
+) -> Result<Option<Observed>, DbError> {
+    let current = scheme.level_or_lowest(level_id(db, session_id).await?.as_deref());
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT to_level, cause FROM chat_classification_events
+          WHERE session_id = ? AND monitored = 1 ORDER BY at, rowid",
+    )
+    .bind(session_id)
+    .fetch_all(db)
+    .await?;
+    let mut highest: Option<&Level> = None;
+    let mut causes = Vec::new();
+    for (to, cause) in rows {
+        let Some(level) = scheme.level(&to).filter(|level| level.rank > current.rank) else {
+            continue;
+        };
+        if highest.is_none_or(|top| level.rank > top.rank) {
+            highest = Some(level);
+        }
+        if !causes.contains(&cause) {
+            causes.push(cause);
+        }
+    }
+    Ok(highest.map(|level| Observed {
+        level_id: level.id.clone(),
+        causes,
+    }))
 }
 
 /// Record a level that was set outside [`raise`] and [`lower`], such as at
@@ -282,6 +387,95 @@ mod tests {
         .fetch_all(db)
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn monitor_mode_records_what_a_raise_would_do_without_raising() {
+        let (db, scheme) = conversation().await;
+        assert!(
+            observe(&db, &scheme, "s1", "secret", "pattern:iban", "u1")
+                .await
+                .unwrap()
+        );
+        assert_eq!(level_id(&db, "s1").await.unwrap(), None);
+        assert_eq!(
+            observed(&db, &scheme, "s1").await.unwrap(),
+            Some(Observed {
+                level_id: "secret".into(),
+                causes: vec!["pattern:iban".into()],
+            })
+        );
+        let monitored: Vec<(String, String, bool)> = sqlx::query_as(
+            "SELECT from_level, to_level, monitored FROM chat_classification_events",
+        )
+        .fetch_all(&db)
+        .await
+        .unwrap();
+        assert_eq!(monitored, vec![("public".into(), "secret".into(), true)]);
+        assert_eq!(
+            crate::server::classification::admin::latest_cause(&db, "s1")
+                .await
+                .unwrap(),
+            None,
+            "an observation is not a level change"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_same_observation_is_recorded_once_and_not_at_or_below_the_level() {
+        let (db, scheme) = conversation().await;
+        assert!(
+            observe(&db, &scheme, "s1", "internal", "pattern:email", "u1")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !observe(&db, &scheme, "s1", "internal", "pattern:email", "u1")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !observe(&db, &scheme, "s1", "public", "pattern:x", "u1")
+                .await
+                .unwrap()
+        );
+        assert!(
+            observe(&db, &scheme, "s1", "secret", "system_one:health", "u1")
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            observed(&db, &scheme, "s1").await.unwrap(),
+            Some(Observed {
+                level_id: "secret".into(),
+                causes: vec!["pattern:email".into(), "system_one:health".into()],
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn an_observation_fades_once_the_conversation_reaches_its_level() {
+        let (db, scheme) = conversation().await;
+        observe(&db, &scheme, "s1", "internal", "pattern:email", "u1")
+            .await
+            .unwrap();
+        observe(&db, &scheme, "s1", "secret", "system_one:health", "u1")
+            .await
+            .unwrap();
+        raise(&db, &scheme, "s1", "internal", "user", "u1")
+            .await
+            .unwrap();
+        assert_eq!(
+            observed(&db, &scheme, "s1").await.unwrap(),
+            Some(Observed {
+                level_id: "secret".into(),
+                causes: vec!["system_one:health".into()],
+            })
+        );
+        raise(&db, &scheme, "s1", "secret", "user", "u1")
+            .await
+            .unwrap();
+        assert_eq!(observed(&db, &scheme, "s1").await.unwrap(), None);
     }
 
     #[tokio::test]

@@ -1550,6 +1550,8 @@ export const en: Catalog = {
  "cls-chat-level-prefix": "Level:",
  "cls-chat-level-title": "Raise the level of this conversation; only models cleared for it stay available.",
  "cls-chat-no-model": "No model is cleared for this level. Lower the level or ask an administrator to clear a model for it.",
+ "cls-chat-observed": "Classification requires “{required}” ({classes}); this chat is “{current}”. Monitor mode enforces nothing: review this chat’s level and model.",
+ "cls-chat-observed-unnamed": "Classification requires “{required}”; this chat is “{current}”. Monitor mode enforces nothing: review this chat’s level and model.",
  "cls-chat-reason-apply": "Lower the level",
  "cls-chat-reason-label": "Reason",
  "cls-chat-reason-lead": "Lowering is recorded together with your reason.",
