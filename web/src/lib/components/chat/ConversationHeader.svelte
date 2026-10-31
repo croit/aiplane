@@ -4,6 +4,7 @@
 	import { modelSelectOptions, type ChatModelOption } from '#lib/model-option.js';
 	import { formatModelPrice } from '#lib/model-price.js';
 	import { causeMessage, levelBadgeClass, type ChatClassification } from '#lib/classification.js';
+	import LevelSelector from '#lib/components/chat/LevelSelector.svelte';
 
 	let {
 		id,
@@ -26,7 +27,9 @@
 		oncanvas,
 		onshare,
 		onfork,
-		onspeechvoice
+		onspeechvoice,
+		onlevelchanged,
+		onerror
 	}: {
 		id: string;
 		title: string | null | undefined;
@@ -49,6 +52,8 @@
 		onshare: () => void;
 		onfork: () => void;
 		onspeechvoice: () => void;
+		onlevelchanged: () => void | Promise<void>;
+		onerror: (message: string) => void;
 	} = $props();
 
 	const cause = $derived(causeMessage(classification?.cause));
@@ -69,7 +74,11 @@
 		{title?.trim() || t('chat-render-new-conversation-fallback')}
 	</h1>
 	{#if classification?.active && classification.level}
-		<span class={levelBadgeClass(classification.level.color)} title={cause ? t(cause.key, cause.args) : undefined} data-classification-badge>{classification.level.name}</span>
+		{#if canWrite}
+			<LevelSelector sessionId={id} {classification} onchanged={onlevelchanged} {onerror} />
+		{:else}
+			<span class={levelBadgeClass(classification.level.color)} title={cause ? t(cause.key, cause.args) : undefined} data-classification-badge>{classification.level.name}</span>
+		{/if}
 	{/if}
 	{#if canWrite}
 		<div class="order-last flex w-full min-w-0 items-center gap-2 sm:order-none sm:w-auto">

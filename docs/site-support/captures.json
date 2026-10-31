@@ -1,7 +1,7 @@
 [
   {
     "file": "docs/img/guide/chat-overview.png",
-    "route": "/chat/881af952-2889-4c07-b7b2-d1d0b7e766bc",
+    "route": "/chat/6f0af2c8-eb90-49e4-b5f5-848c3693f817",
     "selector": "[data-chat-composer]",
     "viewport": {
       "width": 1400,
@@ -14,7 +14,7 @@
   },
   {
     "file": "docs/img/guide/chat-composer.png",
-    "route": "/chat/881af952-2889-4c07-b7b2-d1d0b7e766bc",
+    "route": "/chat/6f0af2c8-eb90-49e4-b5f5-848c3693f817",
     "selector": "[data-chat-composer]",
     "viewport": {
       "width": 1400,
@@ -111,7 +111,7 @@
   },
   {
     "file": "docs/img/guide/agent-checklist.png",
-    "route": "/agents/f19f72d4-6c21-41fe-a623-d200505a22fa",
+    "route": "/agents/f660783c-eb45-4978-814d-5186f245f0f4",
     "selector": "[data-agent-tab] aside section.card",
     "viewport": {
       "width": 1400,
@@ -124,7 +124,7 @@
   },
   {
     "file": "docs/img/guide/document-canvas.png",
-    "route": "/chat/5db96985-c538-4d9b-b2b8-66a1b0d55f65",
+    "route": "/chat/ab31e0a0-2d42-4a11-b230-d6aa5e39956c",
     "selector": "aside[aria-label=\"Canvas\"]",
     "viewport": {
       "width": 1400,
@@ -137,7 +137,7 @@
   },
   {
     "file": "docs/img/guide/agent-scheduled-work.png",
-    "route": "/scheduled/new?personal_agent_id=ead7e093-fc54-4e40-a473-99d9360f0bb9",
+    "route": "/scheduled/new?personal_agent_id=b0bdd7af-3f12-4e9f-a884-9d637a114d9a",
     "selector": "fieldset",
     "matchingText": "Run as",
     "viewport": {
@@ -151,7 +151,7 @@
   },
   {
     "file": "docs/img/guide/agent-action-rules.png",
-    "route": "/agents/ead7e093-fc54-4e40-a473-99d9360f0bb9?tab=tools",
+    "route": "/agents/b0bdd7af-3f12-4e9f-a884-9d637a114d9a?tab=tools",
     "selector": "[role=\"tabpanel\"] li details",
     "matchingText": "Actions",
     "viewport": {
@@ -179,7 +179,7 @@
   },
   {
     "file": "docs/img/guide/agent-communication.png",
-    "route": "/agents/ead7e093-fc54-4e40-a473-99d9360f0bb9?tab=communication",
+    "route": "/agents/b0bdd7af-3f12-4e9f-a884-9d637a114d9a?tab=communication",
     "selector": "[role=\"tabpanel\"]:visible",
     "matchingText": "Can ask",
     "viewport": {
@@ -232,7 +232,7 @@
   },
   {
     "file": "docs/img/guide/agent-organization-schedule.png",
-    "route": "/scheduled/new?principal_id=054bf60d-2f81-4618-993c-76a06c63937f",
+    "route": "/scheduled/new?principal_id=2f474854-14ef-4443-ad54-ead017fa60b9",
     "selector": "body",
     "viewport": {
       "width": 1400,
@@ -297,7 +297,7 @@
   },
   {
     "file": "docs/img/guide/organization-agents.png",
-    "route": "/organizations/2e02754b-85b1-4dba-823e-9fa36364c6a8",
+    "route": "/organizations/8d1d445f-e6fe-4b44-bdca-2b8c7f6992e0",
     "selector": "body",
     "viewport": {
       "width": 1400,
@@ -401,7 +401,7 @@
   },
   {
     "file": "docs/img/guide/chat-share-dialog.png",
-    "route": "/chat/881af952-2889-4c07-b7b2-d1d0b7e766bc",
+    "route": "/chat/6f0af2c8-eb90-49e4-b5f5-848c3693f817",
     "selector": "dialog[open] .modal-box",
     "viewport": {
       "width": 1400,

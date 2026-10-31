@@ -1547,7 +1547,6 @@ export const en: Catalog = {
  "cls-cause-terms": "Raised because the text matched the word list of {class}",
  "cls-cause-user": "Set by the owner",
  "cls-chat-level-aria": "Conversation level",
- "cls-chat-level-prefix": "Level:",
  "cls-chat-level-title": "Raise the level of this conversation; only models cleared for it stay available.",
  "cls-chat-no-model": "No model is cleared for this level. Lower the level or ask an administrator to clear a model for it.",
  "cls-chat-observed": "Classification requires “{required}” ({classes}); this chat is “{current}”. Monitor mode enforces nothing: review this chat’s level and model.",
