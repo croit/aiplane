@@ -125,15 +125,24 @@ fn classes(lang: Lang, at: &ClassLevels) -> Vec<ClassBody> {
             0.6,
             "raise",
         ),
-        class("tax_id", at.tax, &["de_tax_id"], "", "", "", 0.5, "raise"),
+        class(
+            "tax_id",
+            at.tax,
+            &["de_tax_id"],
+            "Does this text contain a tax identification number or a social security number?",
+            "A payslip with the employee's tax ID.",
+            "An article about tax law.",
+            0.6,
+            "raise",
+        ),
         class(
             "credentials",
             at.credentials,
             &["credentials"],
-            "",
-            "",
-            "",
-            0.5,
+            "Does this text contain a password, an API key, an access token or a private key?",
+            "A config file with the database password.",
+            "Instructions on how to reset a password.",
+            0.6,
             "confirm",
         ),
     ]
@@ -389,7 +398,7 @@ mod tests {
     }
 
     #[test]
-    fn every_template_has_a_credentials_class_at_its_highest_level_without_a_question() {
+    fn every_template_has_a_credentials_class_at_its_highest_level() {
         for template in all(Lang::En) {
             let top = template.levels.last().unwrap();
             let class = template
@@ -400,7 +409,22 @@ mod tests {
             assert_eq!(class.level_id, top.id, "{}", template.id);
             assert_eq!(class.patterns, ["credentials"]);
             assert_eq!(class.action, "confirm");
-            assert!(class.rule_question.is_empty());
+        }
+    }
+
+    #[test]
+    fn every_template_class_brings_a_rule_question() {
+        for template in all(Lang::En) {
+            for class in &template.classes {
+                assert!(
+                    !class.rule_question.is_empty()
+                        && !class.rule_positive.is_empty()
+                        && !class.rule_negative.is_empty(),
+                    "{}/{} has no rule question",
+                    template.id,
+                    class.id
+                );
+            }
         }
     }
 
