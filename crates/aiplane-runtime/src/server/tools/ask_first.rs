@@ -182,6 +182,10 @@ impl Tool for AskFirst {
     fn read_only(&self) -> bool {
         self.inner.read_only()
     }
+
+    fn egress(&self) -> bool {
+        self.inner.egress()
+    }
 }
 
 #[cfg(test)]
@@ -223,6 +227,10 @@ mod tests {
     impl Tool for IdentityWrite {
         fn id(&self) -> &str {
             "company_echo"
+        }
+
+        fn egress(&self) -> bool {
+            false
         }
         fn schema(&self) -> shared::api::ToolDef {
             Echo.schema()

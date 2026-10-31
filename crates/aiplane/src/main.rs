@@ -381,6 +381,7 @@ async fn main() -> anyhow::Result<()> {
         // The same closure the boot path just used, so a settings save
         // rebuilds the typst family exactly the way boot built it.
         .with_tool_family_builder(typst_family);
+    state.reload_scheme().await;
     // Share the sandbox client with the per-turn code so it can build a
     // `SandboxLease` (the container kept alive across a turn's tool rounds).
     // `None` leaves leasing off — every sandbox call stays single-use.

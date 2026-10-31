@@ -369,6 +369,11 @@ pub(super) async fn resume_into(
         }
     }
     messages.extend(suspension.tail.iter().cloned());
+    if suspension.tool_call.name == crate::classification_detector::CONFIRM_CALL {
+        return Ok(Resumed::Continue {
+            start_round: suspension.budget_used.rounds,
+        });
+    }
     let call = ToolCallRef {
         id: suspension.tool_call.id.clone(),
         name: suspension.tool_call.name.clone(),
@@ -674,7 +679,7 @@ mod tests {
                 offer_voices: Vec::new(),
                 allowed_groups: Vec::new(),
                 fallback_offline: None,
-                compliance: Default::default(),
+                level_rank: 0,
                 enforce_limits: true,
                 kind: PoolKind::Chat,
                 strategy: PickerStrategy::RoundRobin,

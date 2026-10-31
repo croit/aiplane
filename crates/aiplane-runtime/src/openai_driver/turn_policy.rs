@@ -197,6 +197,22 @@ impl<'a> TurnPolicy<'a> {
         }
     }
 
+    /// Who a model call made beside this turn is billed to and limited as.
+    pub(super) async fn payer(self, d: &OpenAiDriver) -> crate::server::side_call::Payer {
+        let email = if d.state.usage.is_enabled() {
+            Some(self.usage_name(d).await).filter(|name| !name.is_empty())
+        } else {
+            None
+        };
+        crate::server::side_call::Payer::of_turn(
+            &d.tool_ctx.principal,
+            d.agent().map(|run| run.chain().clone()),
+            email,
+            d.source,
+        )
+        .with_model_context(&d.tool_ctx)
+    }
+
     /// Count `tokens` against the allowance the run spends inside, if any.
     pub(super) fn record_spend(self, tokens: u64) {
         if let Some(surface) = self.surface() {

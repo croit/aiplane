@@ -137,7 +137,7 @@ pub(crate) async fn run(
         ));
     }
     if let Some(response) =
-        proxy::enforce_content_guard(&state, &turn.body, &routing_model, &access).await
+        proxy::enforce_content_guard(&state, &user, &turn.body, &routing_model, &access).await
     {
         return Err(proxy::with_automatic_route_headers(
             response,

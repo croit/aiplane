@@ -79,8 +79,6 @@ export interface Pool {
 	kind: string;
 	strategy: string;
 	fallback_offline: string | null;
-	compliance_gdpr: boolean;
-	compliance_nda: boolean;
 	enforce_limits: boolean;
 	sort_order: number;
 	allowed_groups: string[];

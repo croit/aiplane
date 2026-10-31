@@ -11,6 +11,7 @@
 		| 'message'
 		| 'plug'
 		| 'send'
+		| 'shield'
 		| 'sliders'
 		| 'sparkles'
 		| 'users';
@@ -52,6 +53,8 @@
 		<path d="M12 22v-5M9 8V2M15 8V2M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>
 	{:else if name === 'send'}
 		<path d="M12 19V5M5 12l7-7 7 7"/>
+	{:else if name === 'shield'}
+		<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
 	{:else if name === 'sliders'}
 		<path d="M4 6h7M15 6h5M4 12h2M10 12h10M4 18h9M17 18h3"/><circle cx="13" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="15" cy="18" r="2"/>
 	{:else if name === 'sparkles'}

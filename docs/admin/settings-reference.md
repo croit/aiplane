@@ -6,30 +6,7 @@ Model fields use the catalog for the pool kind named in the table. Paths refer t
 
 ## Field catalog
 
-### content_guard
-
-Category: **Access**.
-
-| Key | Input / choices | Meaning | Restart |
-|---|---|---|---|
-| `content_guard.enabled` | Boolean | Check only the compliance area the selected model pool does not cover. | No |
-| `content_guard.model` | Model (SystemOne pool) | System One model used for GDPR and NDA decisions. | No |
-| `content_guard.mode` | monitor, enforce | Monitor logs decisions; enforce applies the selected action. | No |
-| `content_guard.gdpr_action` | allow, confirm, deny | Independent action when the System One model classifies request content as personal data and the destination pool is not declared GDPR-covered. | No |
-| `content_guard.nda_action` | allow, confirm, deny | Independent action when the System One model classifies request content as confidential or NDA-protected and the destination pool is not declared NDA-covered. | No |
-
-The checks run only for compliance areas not declared covered by the destination chat pool. When both areas are uncovered, both questions are sent to the selected System One model. The model also receives the request messages, so assess its own pool declarations before selecting it. See [content guard setup and behavior](settings.md#access-and-content-guard).
-
-### chat.confidential
-
-Category: **Access**.
-
-| Key | Input / choices | Meaning | Restart |
-|---|---|---|---|
-| `chat.confidential.default` | Boolean | Mark every newly created conversation confidential. Materialised at creation, so turning this off later does not reopen existing conversations. Ships off. | No |
-| `chat.confidential.requires` | both, gdpr, nda | Compliance a model must carry to remain selectable in a confidential conversation. Both requires GDPR and NDA coverage; a cloud model with both stays selectable. Ships as both. | No |
-
-A confidential conversation can only be routed to models whose pools satisfy the requirement, and the mark never clears. The content guard sets it automatically when it matches sensitive content; people can also set it from the chat composer. See [confidential conversations](settings.md#confidential-conversations).
+The data classification policy is not a settings card: it is edited at `/admin/classification` and described in [data classification](settings.md#data-classification). Its values are stored as `settings.classification.*` rows.
 
 ### chat.welcome
 

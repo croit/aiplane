@@ -60,6 +60,10 @@ impl Tool for RagListCollections {
         "rag_list_collections"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),
@@ -231,6 +235,10 @@ impl Tool for RagSearch {
         "rag_search"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),
@@ -355,6 +363,9 @@ impl Tool for RagSearch {
             .await
             .map_err(|e| ToolError::Failed(format!("searching index: {e}")))?;
             let empty = hits.is_empty();
+            if !empty {
+                raise_for_retrieval(&ctx, collection.id).await?;
+            }
             let results: Vec<Value> = hits.into_iter().map(hit_json).collect();
             let mut out = json!({
                 "collection": collection.name,
@@ -446,6 +457,10 @@ impl Tool for RagGrep {
 
     fn id(&self) -> &str {
         "rag_grep"
+    }
+
+    fn egress(&self) -> bool {
+        false
     }
 
     fn schema(&self) -> ToolDef {
@@ -590,6 +605,9 @@ impl Tool for RagGrep {
                 context_lines,
             )
             .await?;
+            if !scan.matches.is_empty() {
+                raise_for_retrieval(&ctx, collection.id).await?;
+            }
 
             let mut out = json!({
                 "collection": collection.name,
@@ -766,6 +784,17 @@ pub(crate) async fn resolve_collection(
         })
 }
 
+/// Hand retrieved chunks to the model only after the conversation carries the
+/// collection's level.
+pub(crate) async fn raise_for_retrieval(
+    ctx: &ToolContext,
+    collection_id: i64,
+) -> Result<(), ToolError> {
+    aiplane_runtime::classification_retrieval::raise_for_collection(ctx, collection_id)
+        .await
+        .map_err(ToolError::Failed)
+}
+
 /// Bound and normalise a caller-supplied path glob.
 ///
 /// Only a length cap and an emptiness check: GLOB has no injection surface
@@ -923,7 +952,7 @@ mod tests {
                 voices: Default::default(),
                 offer_voices: Vec::new(),
                 allowed_groups: Vec::new(),
-                compliance: Default::default(),
+                level_rank: 0,
                 enforce_limits: true,
                 kind: PoolKind::Embedding,
                 strategy: PickerStrategy::RoundRobin,
@@ -981,6 +1010,7 @@ mod tests {
             agent: None,
             personal_agent: None,
             personal_execution: None,
+            classification: None,
             pending_actions: None,
             pending_execution_facts: None,
             call_id: None,

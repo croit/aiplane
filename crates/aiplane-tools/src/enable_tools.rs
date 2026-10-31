@@ -158,6 +158,10 @@ impl Tool for EnableTools {
         "enable_tools"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         let catalog = self.full_catalog();
         let mut description = String::from(
@@ -517,6 +521,7 @@ mod tests {
             agent: None,
             personal_agent: None,
             personal_execution: None,
+            classification: None,
             pending_actions: None,
             pending_execution_facts: None,
             call_id: None,

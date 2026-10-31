@@ -49,36 +49,6 @@ pub async fn set_effort(pool: &Pool, session_id: &str, effort: &str) -> Result<(
     Ok(())
 }
 
-/// Whether the conversation is marked confidential. A missing row means "no".
-pub async fn get_confidential(pool: &Pool, session_id: &str) -> Result<bool, DbError> {
-    let row = sqlx::query("SELECT confidential FROM chat_session_settings WHERE session_id = ?")
-        .bind(session_id)
-        .fetch_optional(pool)
-        .await?;
-    match row {
-        Some(r) => Ok(r.try_get::<i64, _>("confidential")? != 0),
-        None => Ok(false),
-    }
-}
-
-/// Mark the conversation confidential. Sticky by construction: the upsert
-/// only ever writes `1`, and there is no call that writes `0`.
-pub async fn set_confidential(pool: &Pool, session_id: &str) -> Result<(), DbError> {
-    let now = Timestamp::now().to_string();
-    sqlx::query(
-        r#"INSERT INTO chat_session_settings (session_id, confidential, updated_at)
-           VALUES (?, 1, ?)
-           ON CONFLICT(session_id) DO UPDATE SET
-             confidential = 1,
-             updated_at   = excluded.updated_at"#,
-    )
-    .bind(session_id)
-    .bind(now)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,25 +105,5 @@ mod tests {
         seed_session(&pool, "s2").await;
         set_effort(&pool, "s1", "max").await.unwrap();
         assert_eq!(get_effort(&pool, "s2").await.unwrap(), None);
-    }
-
-    #[tokio::test]
-    async fn confidential_starts_off_and_is_sticky() {
-        let pool = open(Path::new(":memory:")).await.unwrap();
-        seed_session(&pool, "s1").await;
-        assert!(!get_confidential(&pool, "s1").await.unwrap());
-        set_confidential(&pool, "s1").await.unwrap();
-        assert!(get_confidential(&pool, "s1").await.unwrap());
-        // Writing the effort afterwards keeps the mark, and the mark keeps the
-        // effort.
-        set_effort(&pool, "s1", "high").await.unwrap();
-        assert!(get_confidential(&pool, "s1").await.unwrap());
-        assert_eq!(
-            get_effort(&pool, "s1").await.unwrap().as_deref(),
-            Some("high")
-        );
-        set_confidential(&pool, "s1").await.unwrap();
-        assert!(get_confidential(&pool, "s1").await.unwrap());
-        assert!(!get_confidential(&pool, "s2").await.unwrap());
     }
 }

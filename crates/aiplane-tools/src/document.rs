@@ -193,6 +193,10 @@ impl Tool for CreateDocument {
         "create_document"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),
@@ -345,6 +349,10 @@ impl Tool for EditDocument {
         "edit_document"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),
@@ -470,6 +478,10 @@ pub struct ReadDocument;
 impl Tool for ReadDocument {
     fn id(&self) -> &str {
         "read_document"
+    }
+
+    fn egress(&self) -> bool {
+        false
     }
 
     fn schema(&self) -> ToolDef {
@@ -624,6 +636,10 @@ impl Tool for ListDocuments {
         "list_documents"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),
@@ -704,6 +720,10 @@ impl Tool for ListDocumentVersions {
         "list_document_versions"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),
@@ -772,6 +792,10 @@ pub struct RestoreDocumentVersion;
 impl Tool for RestoreDocumentVersion {
     fn id(&self) -> &str {
         "restore_document_version"
+    }
+
+    fn egress(&self) -> bool {
+        false
     }
 
     fn schema(&self) -> ToolDef {
@@ -862,6 +886,10 @@ pub struct EditDocumentSection;
 impl Tool for EditDocumentSection {
     fn id(&self) -> &str {
         "edit_document_section"
+    }
+
+    fn egress(&self) -> bool {
+        false
     }
 
     fn schema(&self) -> ToolDef {
@@ -978,6 +1006,10 @@ impl Tool for DeleteDocument {
         "delete_document"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),
@@ -1063,6 +1095,10 @@ impl Tool for UndeleteDocument {
         // tools differing by a suffix invite the model to pick the wrong one,
         // whereas `undelete_document` can only pair with `delete_document`.
         "undelete_document"
+    }
+
+    fn egress(&self) -> bool {
+        false
     }
 
     fn schema(&self) -> ToolDef {
@@ -1717,6 +1753,7 @@ mod tests {
             agent: None,
             personal_agent: None,
             personal_execution: None,
+            classification: None,
             pending_actions: None,
             pending_execution_facts: None,
             call_id: None,

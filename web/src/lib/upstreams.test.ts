@@ -101,8 +101,6 @@ const pool: Pool = {
 	kind: 'chat',
 	strategy: 'prefix_affinity',
 	fallback_offline: null,
-	compliance_gdpr: true,
-	compliance_nda: true,
 	enforce_limits: true,
 	sort_order: 0,
 	allowed_groups: [],

@@ -121,12 +121,12 @@ test('free-written response instructions stay as they are', () => {
 	assert.equal((spec as Spec).main.instructions.response, 'Friendly, short, in the visitor’s language.');
 });
 
-const labels3 = { empty: 'Default (qwen)', gdpr: 'GDPR', nda: 'NDA' };
+const labels3 = { empty: 'Default (qwen)' };
 
 test('the model picker offers the default, what the manager may grant, and what the agent already uses', () => {
 	const r: AgentResources = {
 		...resources,
-		models: { chat: [{ id: 'qwen', gdpr: true, nda: false }, { id: 'auto', gdpr: false, nda: false }], transcription: [{ id: 'whisper', gdpr: true, nda: true }], speech: [] },
+		models: { chat: [{ id: 'qwen' }, { id: 'auto' }], transcription: [{ id: 'whisper' }], speech: [] },
 		defaults: { chat: 'qwen', transcription: 'whisper', speech: null }
 	};
 	const options = modelPickerOptions('chat', 'legacy', ['admin-only', 'whisper'], r, labels3);
@@ -134,8 +134,8 @@ test('the model picker offers the default, what the manager may grant, and what 
 		options.map((o) => [o.value, o.label, (o.badges ?? []).map((b) => `${b.label}:${b.tone}`).join(',')]),
 		[
 			['', 'Default (qwen)', ''],
-			['qwen', 'qwen', 'GDPR:success,NDA:error'],
-			['auto', 'auto', 'GDPR:error,NDA:error'],
+			['qwen', 'qwen', ''],
+			['auto', 'auto', ''],
 			['admin-only', 'admin-only', ''],
 			['legacy', 'legacy', '']
 		],
@@ -151,7 +151,7 @@ test('the model picker offers the default, what the manager may grant, and what 
 test('a model choice stages the grant of what the agent will run on', () => {
 	const r: AgentResources = {
 		...resources,
-		models: { chat: [{ id: 'qwen', gdpr: true, nda: true }], transcription: [], speech: [] },
+		models: { chat: [{ id: 'qwen' }], transcription: [], speech: [] },
 		defaults: { chat: 'qwen', transcription: 'whisper', speech: null }
 	};
 	assert.equal(modelGrantFor('chat', 'big', r), 'big');
@@ -444,7 +444,7 @@ const item = (kind: GrantableKind, key: string, title: string, refs: string[], t
 	config_url: null
 });
 const resources: AgentResources = {
-	models: { chat: [{ id: 'mid', gdpr: true, nda: true }], transcription: [], speech: [] },
+	models: { chat: [{ id: 'mid' }], transcription: [], speech: [] },
 	items: [
 		item('rag_collection', '7', 'croit docs', ['7'], []),
 		item('tool', 'search_web', 'Web search', ['search_web'], ['search_web'], 'Searches the web'),
@@ -707,7 +707,7 @@ test('details keep the order they were given, and unordered slots follow by name
 });
 
 test('a voice direction is offered when the manager may grant a model of its kind, or one is named', () => {
-	const r: AgentResources = { ...resources, models: { chat: [], transcription: [{ id: 'whisper', gdpr: true, nda: true }], speech: [] } };
+	const r: AgentResources = { ...resources, models: { chat: [], transcription: [{ id: 'whisper' }], speech: [] } };
 	assert.equal(voiceOffered('speech', '', r), false);
 	assert.equal(voiceOffered('speech', 'tts-old', r), true, 'a model already named can still be switched off');
 	assert.equal(voiceOffered('transcription', '', r), true);
@@ -766,7 +766,7 @@ test('publishState tells blocked, recommended-only and ready apart', () => {
 test('the voice picker lists the speech model\'s own voices', () => {
 	const r: AgentResources = {
 		...resources,
-		models: { chat: [], transcription: [], speech: [{ id: 'tts-1', gdpr: true, nda: true, voices: ['alloy', 'onyx'] }, { id: 'kokoro', gdpr: true, nda: true, voices: ['af_heart'] }] },
+		models: { chat: [], transcription: [], speech: [{ id: 'tts-1', voices: ['alloy', 'onyx'] }, { id: 'kokoro', voices: ['af_heart'] }] },
 		defaults: { chat: null, transcription: null, speech: 'kokoro' }
 	};
 	const voice = { input: false, output: true, voice: '', transcriptionModel: '', speechModel: 'tts-1' };

@@ -50,6 +50,10 @@ impl Tool for ReadSandboxOutput {
         "read_sandbox_output"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),

@@ -90,7 +90,7 @@ fn system_one_pool(upstream_url: &str, allowed_groups: &[&str]) -> UpstreamPoolC
             .map(|group| (*group).to_string())
             .collect(),
         fallback_offline: None,
-        compliance: Default::default(),
+        level_rank: 0,
         enforce_limits: true,
         kind: PoolKind::SystemOne,
         strategy: PickerStrategy::RoundRobin,
@@ -107,7 +107,7 @@ fn chat_pool(upstream_url: &str) -> UpstreamPoolConfig {
         offer_voices: Vec::new(),
         allowed_groups: Vec::new(),
         fallback_offline: None,
-        compliance: Default::default(),
+        level_rank: 0,
         enforce_limits: true,
         kind: PoolKind::Chat,
         strategy: PickerStrategy::RoundRobin,

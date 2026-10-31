@@ -204,7 +204,7 @@ fn parse_one(raw: &[u8]) -> Option<Message> {
 }
 
 /// Crude tag strip, for the rare message with no `text/plain` part.
-fn strip_html(html: &str) -> String {
+pub fn strip_html(html: &str) -> String {
     let mut out = String::with_capacity(html.len());
     let mut in_tag = false;
     for c in html.chars() {

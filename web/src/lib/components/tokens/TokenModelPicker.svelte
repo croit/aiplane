@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { n, t } from '#lib/i18n.svelte.js';
-	import { filterTokenModels, groupTokenModels, isCompliant, selectionSummary, type TokenModel } from '#lib/token-models.js';
+	import { filterTokenModels, groupTokenModels, selectionSummary, type TokenModel } from '#lib/token-models.js';
 	import { formatModelPrice } from '#lib/model-price.js';
 
 	/**
@@ -20,11 +20,9 @@
 	} = $props();
 
 	let query = $state('');
-	let gdpr = $state(false);
-	let nda = $state(false);
 	let free = $state(false);
 
-	const shown = $derived(filterTokenModels(models, { query, gdpr, nda, free }));
+	const shown = $derived(filterTokenModels(models, { query, free }));
 	const groups = $derived(groupTokenModels(shown));
 	const summary = $derived(selectionSummary(models, restrict ? selected : null));
 
@@ -43,9 +41,6 @@
 		selected = checked ? [...selected, id] : selected.filter((entry) => entry !== id);
 	}
 
-	function selectCompliant() {
-		selected = models.filter(isCompliant).map((model) => model.id);
-	}
 </script>
 
 <div class="flex flex-col gap-3">
@@ -55,12 +50,9 @@
 	{#if restrict}
 		<div class="flex flex-wrap items-center gap-2">
 			<label class="input input-sm min-w-48 flex-1"><span aria-hidden="true">⌕</span><input bind:value={query} placeholder={t('tokens-models-search')} aria-label={t('tokens-models-search')} /></label>
-			<input type="checkbox" class="btn btn-sm" aria-label={t('tokens-models-filter-gdpr')} bind:checked={gdpr} />
-			<input type="checkbox" class="btn btn-sm" aria-label={t('tokens-models-filter-nda')} bind:checked={nda} />
 			<input type="checkbox" class="btn btn-sm" aria-label={t('tokens-models-filter-free')} bind:checked={free} />
 		</div>
 		<div class="flex flex-wrap gap-2">
-			<button type="button" class="btn btn-outline btn-xs" onclick={selectCompliant}>{t('tokens-models-select-compliant')}</button>
 			<button type="button" class="btn btn-ghost btn-xs" onclick={() => (selected = [])}>{t('tokens-models-select-none')}</button>
 		</div>
 
@@ -76,8 +68,6 @@
 								{#if model.alias_of}<div class="text-xs text-base-content/60">{t('tokens-models-alias', { target: model.alias_of })}</div>{/if}
 							</div>
 							<div class="flex flex-wrap items-center justify-end gap-1">
-								<span class="badge badge-sm {model.gdpr ? 'badge-success badge-soft' : 'badge-error'}" title={model.gdpr ? t('tokens-models-gdpr-ok') : t('chat-render-gdpr-banner')}>{model.gdpr ? '✓' : '✕'} {t('searchable-select-model-gdpr')}</span>
-								<span class="badge badge-sm {model.nda ? 'badge-success badge-soft' : 'badge-error'}" title={model.nda ? t('tokens-models-nda-ok') : t('chat-render-nda-banner')}>{model.nda ? '✓' : '✕'} {t('searchable-select-model-nda')}</span>
 								<span class="w-full text-right font-mono text-xs tabular-nums text-base-content/60 sm:w-auto sm:min-w-40">{price(model)}</span>
 							</div>
 						</li>
@@ -93,8 +83,5 @@
 		<span class="font-medium">{restrict ? t('tokens-models-summary-restricted', { count: summary.count }) : allLabel}</span>
 		{#if summary.maxOutputPerMillion !== null}<span class="text-base-content/60">{t('tokens-models-max-price', { price: money(summary.maxOutputPerMillion) })}</span>{/if}
 	</div>
-	{#if summary.nonCompliant > 0}
-		<div role="alert" class="alert alert-warning alert-soft text-sm"><span>{t('tokens-models-noncompliant-warning', { count: summary.nonCompliant })}</span></div>
-	{/if}
 	{#if restrict && selected.length === 0}<p class="m-0 text-sm text-error">{t('tokens-models-none-picked')}</p>{/if}
 </div>

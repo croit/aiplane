@@ -19,7 +19,5 @@ upstreams-empty = Пулы и бэкенды ещё не настроены. Д�
 upstreams-delete-confirm = Точно удалить?
 upstreams-cancel = Отмена
 upstreams-edit-backend = Изменить бэкенд
-upstreams-comp-gdpr = GDPR
-upstreams-comp-nda = NDA
 upstreams-comp-limits = лимиты
 upstreams-edit-pool = Изменить пул

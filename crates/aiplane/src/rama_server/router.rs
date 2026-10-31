@@ -615,6 +615,16 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
             "/api/v0/admin/limits/{id}",
             pages::json_admin::limits_delete,
         )
+        .with_get("/api/v0/admin/classification", pages::classification::get)
+        .with_put("/api/v0/admin/classification", pages::classification::save)
+        .with_delete(
+            "/api/v0/admin/classification/classes/{id}/terms",
+            pages::classification::terms_clear,
+        )
+        .with_get(
+            "/api/v0/admin/classification/events",
+            pages::classification::events,
+        )
         .with_get("/api/v0/admin/settings", pages::json_admin::settings_list)
         .with_post("/api/v0/admin/settings", pages::json_admin::settings_save)
         .with_post(
@@ -675,6 +685,18 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         .with_post("/api/v0/skills", pages::json_skills::skills_upload)
         // The logo upload rides the same upload layer as the skills bundles.
         .with_post("/api/v0/admin/branding", pages::branding::upload)
+        .with_post(
+            "/api/v0/admin/classification/classes/{id}/terms",
+            pages::classification::terms_upload,
+        )
+        .with_post(
+            "/api/v0/admin/classification/inspect",
+            pages::classification::inspect,
+        )
+        .with_post(
+            "/api/v0/admin/classification/test",
+            pages::classification::test,
+        )
         .with_post("/api/v0/skills/draft", pages::json_skills::skills_draft)
         .with_get("/api/v0/skills/{name}/body", pages::json_skills::skill_body)
         .with_get(
@@ -871,13 +893,25 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
             "/api/v0/chat/sessions/{id}/share",
             pages::chat::json_api::session_share,
         )
+        .with_get(
+            "/api/v0/chat/sessions/{id}/shares",
+            pages::chat::json_api::session_shares,
+        )
+        .with_put(
+            "/api/v0/chat/sessions/{id}/shares",
+            pages::chat::json_api::session_shares_put,
+        )
+        .with_get(
+            "/api/v0/chat/sessions/{id}/share-subjects",
+            pages::chat::json_api::session_share_subjects,
+        )
         .with_post(
             "/api/v0/chat/sessions/{id}/effort",
             pages::chat::json_api::session_effort,
         )
         .with_post(
-            "/api/v0/chat/sessions/{id}/confidential",
-            pages::chat::json_api::session_confidential,
+            "/api/v0/chat/sessions/{id}/classification",
+            pages::chat::json_api::session_classification,
         )
         .with_get(
             "/api/v0/chat/sessions/{id}/capabilities",

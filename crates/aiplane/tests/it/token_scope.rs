@@ -322,12 +322,12 @@ async fn token_management_details_return_saved_scopes_quotas_policy_and_account(
     assert_eq!(
         parsed["models"],
         json!([
-            {"id": "model-a", "kind": "chat", "gdpr": true, "nda": true, "alias_of": null,
+            {"id": "model-a", "kind": "chat", "alias_of": null,
              "price": {"input": 1.5, "output": 2.0, "unit": "tokens"}},
-            {"id": "model-b", "kind": "chat", "gdpr": true, "nda": true, "alias_of": null,
+            {"id": "model-b", "kind": "chat", "alias_of": null,
              "price": null},
         ]),
-        "the token editor shows where each model's data goes and what it costs"
+        "the token editor shows what each model costs"
     );
     assert_eq!(parsed["owner_limits"][0]["dimension"], "cost");
     assert_eq!(parsed["owner_limits"][0]["limit"], 50.0);

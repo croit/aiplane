@@ -149,6 +149,10 @@ impl Tool for ActionPolicy {
     fn read_only(&self) -> bool {
         self.inner.read_only()
     }
+
+    fn egress(&self) -> bool {
+        self.inner.egress()
+    }
     fn run<'a>(&'a self, ctx: ToolContext, args: Value) -> ToolFuture<'a> {
         Box::pin(async move {
             let catalogue = self.inner.action_catalogue();
@@ -217,6 +221,10 @@ mod tests {
         fn id(&self) -> &str {
             "company_echo"
         }
+
+        fn egress(&self) -> bool {
+            false
+        }
         fn schema(&self) -> ToolDef {
             Echo.schema()
         }
@@ -252,6 +260,10 @@ mod tests {
     impl Tool for Actions {
         fn id(&self) -> &str {
             "company_echo"
+        }
+
+        fn egress(&self) -> bool {
+            false
         }
         fn schema(&self) -> ToolDef {
             Echo.schema()

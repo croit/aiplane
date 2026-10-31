@@ -6,7 +6,7 @@ Use a conversation for a continuing task: its messages, attachments, generated a
 
 ![The conversation composer with tools, effort selection, attachment, dictation and send controls.](../img/guide/chat-composer.png)
 
-Choose the model from the header before sending a message. The available list is filtered by permissions. Configuration can also expose automatic routes or aliases through the shared model list. Compliance indicators in the picker describe the installation's configured model metadata; they are not a certification produced by AIplane. Reopening a conversation selects the model its last answer came from; a new conversation starts on the first model in the list. If that model is not in your list, the first available model is selected and a notice names the one that was replaced.
+Choose the model from the header before sending a message. The available list is filtered by permissions. Configuration can also expose automatic routes or aliases through the shared model list. When the administrator has defined data classification levels, the picker lists only the models cleared for the conversation's level and shows the level each model is cleared for. Reopening a conversation selects the model its last answer came from; a new conversation starts on the first model in the list. If that model is not in your list, the first available model is selected and a notice names the one that was replaced.
 
 The composer offers the effort levels **off**, **low**, **medium**, **high** and **xhigh**. A new conversation starts at **low**, which is enough for most questions; choose a higher level for hard multi-step problems. Higher levels also allow more tool rounds per answer (off 8, low and medium 16, high 32, xhigh 64). The picker lists only the levels the selected model can express — a model that always reasons offers no **off** — and is disabled when the model has no supported reasoning parameter. It is a model request setting, not a guaranteed response time or quality level.
 
@@ -49,11 +49,25 @@ Both operations are destructive to the later transcript:
 
 Read the confirmation before proceeding. If you need to retain the original, export it first.
 
+## Data classification
+
+When the administrator has set up [data classification](../admin/settings.md#data-classification), the header shows the conversation's level, and the composer offers the levels it can move to. A level only rises on its own: a message or upload that the classification recognises — a document label or stamp, a pattern such as an IBAN, a term from a word list, or content the detector model matches — raises the conversation to that data's level, and the model picker then lists only the models cleared for it. Raising it yourself is always possible; lowering needs a reason and is allowed only when the administrator permits it.
+
+Depending on the data class, the conversation asks you to confirm before the content goes to the model, or refuses the message; the refusal says why in your language. When the detector model cannot be reached, a message that needs it is refused rather than sent unchecked. While the administrator is still trying a scheme in monitor mode, nothing changes and an info box above the composer names the level and data classes the content would require.
+
 ## Share and fork
 
-Select the sharing button in the header to enable sharing; where the browser allows clipboard access, the conversation URL is copied and the button briefly shows **Link copied**; without that label nothing was copied. Give that URL to another signed-in user. Sharing makes the conversation readable by **any signed-in user on the installation**, not a selected recipient list. It is not an anonymous public link.
+Select **Share** in the header to open the share dialog and choose one of three options:
 
-A reader sees a read-only conversation and can select **Fork** to copy it into their own conversations and continue there. Attachment copying is best effort; if the storage copy fails, a fork can retain text with unavailable attachment references. Turning sharing off removes access through the original shared conversation; it does not remove copies already made through Fork.
+![The share dialog: not shared, by link for every signed-in user, or only named people and groups.](../img/guide/chat-share-dialog.png)
+
+- **Not shared**: only you can read the conversation.
+- **By link**: **any signed-in user on the installation** who has the link can read it; it is not an anonymous public link. When you save, the conversation URL is copied where the browser allows clipboard access, and the button briefly shows **Link copied**; without that label nothing was copied. Give that URL to another signed-in user.
+- **Only the following people and groups**: only the people and groups you add can read it. Searching for a person or group needs at least two characters.
+
+While the conversation is shared either way, the button reads **Shared**. When the administrator has defined [data classification levels](../admin/settings.md#data-classification), the link option works only up to the highest level the administrator allows for link sharing; above it the option is unavailable and says why. Raising a link-shared conversation above the limit closes the link at once.
+
+A reader sees a read-only conversation and can select **Fork** to copy it into their own conversations and continue there. Attachment copying is best effort; if the storage copy fails, a fork can retain text with unavailable attachment references. A fork keeps the conversation's level, starts unshared and needs read access to the original. Turning sharing off removes access through the original shared conversation; it does not remove copies already made through Fork.
 
 ## Export
 

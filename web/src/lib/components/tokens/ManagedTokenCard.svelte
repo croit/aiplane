@@ -157,11 +157,6 @@
 
 {#snippet modelsBody()}
 	<div class="font-medium">{token.owner_models === null ? t('tokens-models-tile-all', { count: modelSummary.count }) : t('tokens-models-tile-some', { count: modelSummary.count, total: models.length })}</div>
-	{#if modelSummary.nonCompliant > 0}
-		<div class="text-sm text-warning">⚠ {t('tokens-models-tile-noncompliant', { count: modelSummary.nonCompliant })}</div>
-	{:else if modelSummary.count > 0}
-		<div class="text-sm text-success">✓ {t('tokens-models-tile-compliant')}</div>
-	{/if}
 	{#if modelSummary.maxOutputPerMillion !== null}<div class="text-xs text-base-content/60">{t('tokens-models-max-price', { price: `${n(modelSummary.maxOutputPerMillion, { maximumFractionDigits: 4 })} ${currency}` })}</div>{/if}
 	{#if token.admin_models}<div class="text-xs text-base-content/60">{t('tokens-models-tile-admin', { count: token.admin_models.length })}</div>{/if}
 {/snippet}

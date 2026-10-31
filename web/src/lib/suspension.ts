@@ -62,6 +62,13 @@ export interface Answer {
 	value?: string;
 }
 
+/** The waiting call of a turn paused to confirm sending content the data classification recognised (`classification_detector::CONFIRM_CALL`). */
+export const CONTENT_CONFIRMATION_CALL = 'data_classification_confirm';
+
+export function isContentConfirmation(waiting: Pick<Waiting, 'call'>): boolean {
+	return waiting.call?.name === CONTENT_CONFIRMATION_CALL;
+}
+
 /** A card from a suspension view, with the call it waits on when the transcript has it. */
 export function waitingFrom(
 	view: SuspensionView,
@@ -85,7 +92,8 @@ export function waitingFrom(
  * their conversation waits for; in the test chat, what the agent waits for
  * and from whom.
  */
-export function waitingLead(kind: SuspensionKind, where: 'chat' | 'test'): string {
+export function waitingLead(kind: SuspensionKind, where: 'chat' | 'test', tool?: string): string {
+	if (tool === CONTENT_CONFIRMATION_CALL) return 'content-guard-confirm-question';
 	const keys: Record<SuspensionKind, [string, string]> = {
 		approval: ['chat-waiting-approval', 'agents-test-waiting-approval'],
 		secure_input: ['chat-waiting-value', 'agents-test-waiting-secure-input'],
@@ -105,11 +113,15 @@ export function pausedTurn(turns: { turn: { id: string; status: string } }[]): s
 }
 
 /** The buttons a card offers, exactly the decisions it was offered; `value` is the answer form's own button. */
-export function decisionButtons(waiting: Pick<Waiting, 'kind' | 'options'>): { decision: DecisionKind; key: string; primary: boolean }[] {
+export function decisionButtons(waiting: Pick<Waiting, 'kind' | 'options' | 'call'>): { decision: DecisionKind; key: string; primary: boolean }[] {
 	const buttons: { decision: DecisionKind; key: string; primary: boolean }[] = [];
-	if (waiting.options.includes('allow_once')) buttons.push({ decision: 'allow_once', key: 'suspension-approve', primary: true });
+	const content = isContentConfirmation(waiting);
+	if (waiting.options.includes('allow_once')) {
+		buttons.push({ decision: 'allow_once', key: content ? 'content-guard-confirm-approve' : 'suspension-approve', primary: true });
+	}
 	if (waiting.options.includes('deny')) {
-		buttons.push({ decision: 'deny', key: waiting.kind === 'approval' ? 'suspension-deny' : 'suspension-decline', primary: false });
+		const key = content ? 'content-guard-confirm-deny' : waiting.kind === 'approval' ? 'suspension-deny' : 'suspension-decline';
+		buttons.push({ decision: 'deny', key, primary: false });
 	}
 	return buttons;
 }

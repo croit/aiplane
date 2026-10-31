@@ -32,13 +32,13 @@ pub async fn child_of_turn_in(
     if let Some(session) = run_sessions::run_session_of_turn_in(connection, child_turn_id).await? {
         return Ok(Some(LocalChild::Principal(session)));
     }
-    let row = sqlx::query("SELECT p.session_id, p.owner_user_id, p.agent_id, COALESCE(d.active, 0) AS active,
+    let row = sqlx::query(concat!("SELECT p.session_id, p.owner_user_id, p.agent_id, COALESCE(d.active, 0) AS active,
         p.parent_turn_id, p.parent_tool_call_id, p.caller_agent_id, p.edge_generation
         FROM personal_agent_sessions p JOIN chat_sessions s ON s.id = p.session_id
         JOIN chat_turns t ON t.session_id = s.id AND t.id = ?
         LEFT JOIN agent_owners d ON d.principal_id = p.agent_id AND d.owner_user_id = p.owner_user_id
-        WHERE s.user_id = p.owner_user_id AND s.principal_id IS NULL AND s.shared = 0
-          AND p.parent_turn_id IS NOT NULL AND s.parent_turn_id = p.parent_turn_id AND t.role = 'assistant'")
+        WHERE s.user_id = p.owner_user_id AND s.principal_id IS NULL AND ", aiplane_core::unshared_sql!("s"), "
+          AND p.parent_turn_id IS NOT NULL AND s.parent_turn_id = p.parent_turn_id AND t.role = 'assistant'"))
         .bind(child_turn_id).fetch_optional(connection).await?;
     row.map(|row| {
         Ok(LocalChild::Personal(PersonalChildSession {
@@ -78,14 +78,14 @@ pub async fn validate_child_in(
     {
         return Ok(false);
     }
-    let parent_valid: bool = sqlx::query_scalar("SELECT EXISTS(
+    let parent_valid: bool = sqlx::query_scalar(concat!("SELECT EXISTS(
         SELECT 1 FROM chat_turns t JOIN chat_sessions s ON s.id = t.session_id
         JOIN personal_agent_sessions p ON p.session_id = s.id
         JOIN chat_tool_calls c ON c.turn_id = t.id AND c.id = ?
         WHERE t.id = ? AND t.role = 'assistant' AND t.status IN ('in_progress', 'suspended')
-          AND s.user_id = ? AND s.principal_id IS NULL AND s.shared = 0
+          AND s.user_id = ? AND s.principal_id IS NULL AND ", aiplane_core::unshared_sql!("s"), "
           AND p.owner_user_id = ? AND p.agent_id = ? AND c.name = 'forward_request' AND c.status = 'running'
-    )")
+    )"))
         .bind(parent_tool_call_id).bind(parent_turn_id).bind(owner_user_id).bind(owner_user_id).bind(&child.link.caller_agent_id)
         .fetch_one(&mut *connection).await?;
     if !parent_valid {
@@ -111,9 +111,9 @@ pub async fn root_session_id(
     let mut current = session_id.to_string();
     for _ in 0..aiplane_core::server::run_chain::MAX_DEPTH {
         let parents: Option<(Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT s.parent_turn_id, p.parent_turn_id FROM chat_sessions s
+            concat!("SELECT s.parent_turn_id, p.parent_turn_id FROM chat_sessions s
              LEFT JOIN personal_agent_sessions p ON p.session_id = s.id AND p.owner_user_id = s.user_id
-             WHERE s.id = ? AND s.user_id = ? AND s.principal_id IS NULL AND s.shared = 0",
+             WHERE s.id = ? AND s.user_id = ? AND s.principal_id IS NULL AND ", aiplane_core::unshared_sql!("s")),
         ).bind(&current).bind(owner_user_id).fetch_optional(&mut *connection).await?;
         let Some((parent, stored_parent)) = parents else {
             return Ok(None);
@@ -139,17 +139,17 @@ async fn personal_parent_in(
     session_id: &str,
 ) -> Result<Option<(String, String)>, DbError> {
     Ok(sqlx::query_as(
-            "SELECT t.id, parent.id FROM personal_agent_sessions child
+            concat!("SELECT t.id, parent.id FROM personal_agent_sessions child
              JOIN chat_sessions s ON s.id = child.session_id AND s.parent_turn_id = child.parent_turn_id
              JOIN chat_turns t ON t.id = child.parent_turn_id AND t.role = 'assistant'
              JOIN chat_tool_calls c ON c.turn_id = t.id AND c.id = child.parent_tool_call_id AND c.name = 'forward_request'
              JOIN chat_sessions parent ON parent.id = t.session_id
              JOIN personal_agent_sessions caller ON caller.session_id = parent.id
              WHERE child.session_id = ? AND child.owner_user_id = ?
-               AND s.user_id = ? AND s.principal_id IS NULL AND s.shared = 0
+               AND s.user_id = ? AND s.principal_id IS NULL AND ", aiplane_core::unshared_sql!("s"), "
                AND parent.user_id = ? AND parent.principal_id IS NULL
-               AND (parent.shared = 0 OR parent.parent_turn_id IS NULL)
-               AND caller.owner_user_id = ? AND caller.agent_id = child.caller_agent_id",
+               AND (", aiplane_core::unshared_sql!("parent"), " OR parent.parent_turn_id IS NULL)
+               AND caller.owner_user_id = ? AND caller.agent_id = child.caller_agent_id"),
         ).bind(session_id).bind(owner_user_id).bind(owner_user_id).bind(owner_user_id).bind(owner_user_id)
             .fetch_optional(connection).await?)
 }
@@ -162,10 +162,10 @@ async fn root_turn_in(
     let mut current = turn_id.to_string();
     for _ in 0..aiplane_core::server::run_chain::MAX_DEPTH {
         let row: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT s.id, s.parent_turn_id, p.parent_turn_id FROM chat_turns t
+            concat!("SELECT s.id, s.parent_turn_id, p.parent_turn_id FROM chat_turns t
              JOIN chat_sessions s ON s.id = t.session_id
              JOIN personal_agent_sessions p ON p.session_id = s.id AND p.owner_user_id = s.user_id
-             WHERE t.id = ? AND t.role = 'assistant' AND s.user_id = ? AND s.principal_id IS NULL AND (s.shared = 0 OR s.parent_turn_id IS NULL)",
+             WHERE t.id = ? AND t.role = 'assistant' AND s.user_id = ? AND s.principal_id IS NULL AND (", aiplane_core::unshared_sql!("s"), " OR s.parent_turn_id IS NULL)"),
         ).bind(&current).bind(owner_user_id).fetch_optional(&mut *connection).await?;
         let Some((session, parent, stored_parent)) = row else {
             return Ok(None);
@@ -202,12 +202,14 @@ pub async fn child_turns(
     parent_turn_id: &str,
 ) -> Result<Vec<PersonalChildTurn>, DbError> {
     let mut connection = pool.acquire().await?;
-    let ids: Vec<String> = sqlx::query_scalar(
+    let ids: Vec<String> = sqlx::query_scalar(concat!(
         "SELECT t.id FROM personal_agent_sessions p JOIN chat_sessions s ON s.id = p.session_id
          JOIN chat_turns t ON t.session_id = s.id
-         WHERE p.owner_user_id = ? AND s.user_id = ? AND s.principal_id IS NULL AND s.shared = 0
-           AND p.parent_turn_id = ? AND t.role = 'assistant' ORDER BY t.id",
-    )
+         WHERE p.owner_user_id = ? AND s.user_id = ? AND s.principal_id IS NULL AND ",
+        aiplane_core::unshared_sql!("s"),
+        "
+           AND p.parent_turn_id = ? AND t.role = 'assistant' ORDER BY t.id"
+    ))
     .bind(owner_user_id)
     .bind(owner_user_id)
     .bind(parent_turn_id)
@@ -241,11 +243,11 @@ pub async fn child_turns(
     Ok(children)
 }
 
-const ACTIVE_PERSONAL_PATHS: &str = "WITH RECURSIVE paths(leaf_turn_id, turn_id, depth) AS (
+const ACTIVE_PERSONAL_PATHS: &str = concat!("WITH RECURSIVE paths(leaf_turn_id, turn_id, depth) AS (
  SELECT t.id, t.id, 0 FROM personal_agent_sessions p
  JOIN chat_sessions s ON s.id = p.session_id JOIN chat_turns t ON t.session_id = s.id
  WHERE p.owner_user_id = ? AND s.user_id = ? AND s.principal_id IS NULL
- AND (s.shared = 0 OR s.parent_turn_id IS NULL)
+ AND (", aiplane_core::unshared_sql!("s"), " OR s.parent_turn_id IS NULL)
  AND t.role = 'assistant' AND t.status IN ('in_progress', 'suspended')
  UNION ALL
  SELECT path.leaf_turn_id, p.parent_turn_id, path.depth + 1 FROM paths path
@@ -253,7 +255,7 @@ const ACTIVE_PERSONAL_PATHS: &str = "WITH RECURSIVE paths(leaf_turn_id, turn_id,
  WHERE p.owner_user_id = ? AND p.parent_turn_id IS NOT NULL AND path.depth < ?
  ) SELECT DISTINCT path.leaf_turn_id FROM paths path
  JOIN chat_turns t ON t.id = path.turn_id JOIN personal_agent_sessions p ON p.session_id = t.session_id
- WHERE p.owner_user_id = ?";
+ WHERE p.owner_user_id = ?");
 
 async fn roots_for_turns(
     pool: &Pool,

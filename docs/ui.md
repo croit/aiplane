@@ -132,13 +132,7 @@ and escaped for Markdown, so a name cannot inject markup. Text wrapped in
 `<prompt>…</prompt>` becomes a chip that sends exactly that text in one click —
 what the person had already typed is put back into the composer afterwards.
 The tag is rendered on this card only, so a model's answer can never grow
-buttons of its own. The composer also carries the
-**Confidential** checkbox once write access is known: ticking it marks the
-conversation sticky-confidential (`POST …/confidential`), refetches the model
-list, and switches away from a model the new mark does not allow. The box then
-stays checked and disabled, because the server refuses to clear the mark. A
-confidential conversation whose policy leaves no model cleared shows a warning
-instead of an unusable picker; the server enforces the same rule on the turn.
+buttons of its own. The model picker lists only the models cleared for the conversation's classification level (`GET /api/v0/models?session=`); the server enforces the same rule on the turn. Each model of that list carries `level_id`, the highest level it is cleared for (`null` while the scheme is inactive), shown as a chip in the picker. The session detail carries `classification: {active, level, levels, lowering, cause, observed}` for a level control: `lowering` says whether the level may be lowered, `cause` is the cause of the latest level change, shown as the reason beside the level, and `observed` (`{level, classes}` or `null`) is what monitor mode found above the conversation's level.
 
 ### Bounded viewport
 
@@ -248,14 +242,13 @@ page.
 Within `/settings/tokens`, `?tab=tokens` manages tokens and `?tab=guides`
 contains client setup guides. Each token is a card (`ManagedTokenCard`) with
 four tiles — **Models**, **Tools**, **Budget**, **Priority** — that show the current state
-(GDPR/NDA exposure and the dearest token price; tool use and the MCP ask
+(the model count and the dearest token price; tool use and the MCP ask
 policy; the tightest quota with its spend; the saved priority or inheritance) and open one dialog each. Every
 dialog edits a draft and commits on Save; nothing on the card saves on a
 click. Rotate and Revoke sit in the card's ⋯ menu. The model dialog is
 `TokenModelPicker`, shared with the operator restriction on `/admin/tokens`:
-models grouped by kind, each with its GDPR/NDA badges and price (an alias is
-priced as its target), filters for compliance and price, and a warning when
-the selection reaches a model without GDPR or NDA cover. The data comes from
+models grouped by kind, each with its price (an alias is
+priced as its target) and a filter for price. The data comes from
 `/api/v0/tokens/details`: `models` is the catalog
 (`UpstreamRegistry::model_catalog_for` plus `model_defaults` prices),
 `owner_limits` the owner's own in-force limits, and each token's
@@ -280,17 +273,14 @@ uses the owner's groups and system default. Administrators can choose any class.
 Long or data-driven choices use the shared `SearchableSelect` combobox instead
 of a native select. It searches labels, stored values, descriptions, keywords and
 badges; supports arrow keys, Enter and Escape; and bounds long result lists to
-their own scroll region. Model choices render the model id left-aligned and show
-compact GDPR and NDA status badges right-aligned on every row. Green check badges
-mean the model is cleared; red crossed-out badges mean it is restricted. An
-operator description (`model_defaults.description` for a model or backend
+their own scroll region. Model choices render the model id left-aligned; an operator description (`model_defaults.description` for a model or backend
 alias, `automatic_routes.description` for a route alias) renders as the row's
 subtext and is searchable. The chat
 model picker additionally shows a neutral price badge: the model's configured
 price in the deployment's currency (an alias is priced as the model it resolves
 to), or "free" when unpriced. An automatic route reaches several models and has
 no single price, so it shows no price badge. The price badge is an outline badge
-(no check/cross), distinct from the compliance badges. The
+(no check/cross). The
 trigger looks and focuses like any other field (field border, primary focus
 ring), and keyboard-active options use a subtle surface change. In forms it takes
 the default size like the fields around it; `size="sm"` is for toolbars and filter bars. Small
@@ -441,7 +431,7 @@ Each frame is `event: <name>` plus one JSON `data:` line carrying `{type, …}`.
 | `reasoning_delta` | `turn_id`, `text_delta`, `full?` | Same, for the reasoning trace. |
 | `tool_call_started` | `turn_id`, `tool_call_id`, `name`, `arguments` | The model invoked a tool. `arguments` is the model's raw JSON string. |
 | `tool_call_done` | `turn_id`, `tool_call_id`, `status`, `output?` | A tool call reached a terminal status. The output is the **full** payload — truncating is a display decision and belongs to the client. The chat transcript's tool-call row reads `provider` out of a completed `search_web` result and shows it as a badge, so a call that ran on a fallback engine says so without expanding the row. |
-| `turn_finalized` | `turn_id`, `status`, `error_message?`, `error_code?`, `model?`, `duration_ms` | Terminal: no further deltas for this turn. `error_code: loop_exhausted` means every retry of a looping call looped too; the SPA shows `chat-loop-exhausted` in the reader's language instead of the English `error_message`. |
+| `turn_finalized` | `turn_id`, `status`, `error_message?`, `error_code?`, `model?`, `duration_ms` | Terminal: no further deltas for this turn. `error_code: loop_exhausted` means every retry of a looping call looped too; the SPA shows `chat-loop-exhausted` in the reader's language instead of the English `error_message`. A data-classification refusal carries its catalog key (`cls-turn-not-approved`, `cls-turn-blocked`, `cls-turn-model-not-cleared`, `cls-detector-unavailable`) as `error_code`, which the SPA renders the same way. |
 | `attempt` | `turn_id`, `attempt` (`seq`, `effort`, `retry_effort`, `stop_reason`, `reasoning`, `content`) | A model call of the turn looped and is retried at `retry_effort`; its partial output left the answer. Sent before the `full` deltas that rewind the answer. A snapshot's rows carry the same list as `attempts`. Never sent to embed visitors. |
 | `suspended` | `turn_id`, `request_id`, `kind`, `message?`, `tool_call_id?`, `tool?`, `options[]`, `expires_at` | The turn paused at a tool call that waits for a decision, and its worker is gone. Ends the stream, but the turn is **not** over. `kind` is `approval`, `secure_input` or `human_answer`; `options` lists the decisions a resume may carry (`allow_once` / `deny` / `value`). The same object rides on the turn in a snapshot as `suspension`, with the turn's `status` `suspended`. A visitor of an agent conversation gets it without `tool_call_id` and `tool`, and with `options` narrowed to the decisions that are theirs (empty for an approval, which staff give). |
 | `steer` | `turn_id`, `id`, `text`, `status` | A mid-turn interjection appeared or reached its outcome. One event for both, merged on `id`, so a client attaching late ends up in the same state as one that watched from the start. |
@@ -1028,7 +1018,7 @@ catalog strings.
   someone else").
 - **Model choice.** One `ModelPicker` (`components/agents/ModelPicker.svelte`):
   the chat picker's `SearchableSelect` with the options `modelSelectOptions`
-  builds (`#lib/model-option`, the GDPR / NDA badges included), led by
+  builds (`#lib/model-option`), led by
   *Default (<model>)* for the gateway's default model of that kind
   (`defaults.<kind>` of `GET /api/v0/agent-resources`, Models & routing →
   Default models). The list is `models.<kind>` — what the manager may use and
@@ -1185,7 +1175,28 @@ agent builder's test chat and a person's own chat. Its pure half is
   (`waitingLead`: the chat's `chat-waiting-*`, the test chat's
   `agents-test-waiting-*`), a `note`, a heading snippet (the inbox's), the
   answer callback, and the error to show.
+- **A content confirmation** is an approval whose waiting call is
+  `data_classification_confirm`, not a tool: the data classification paused
+  the turn before sending content of a `confirm` class
+  ([data classification](classification.md)). The card leads with
+  `content-guard-confirm-question`, hides the tool block and labels its
+  buttons `content-guard-confirm-approve` / `-deny`
+  (`isContentConfirmation`).
 - **Strings** are `suspension-*` in `suspension.ftl`.
+## Data classification
+
+`/admin/classification` (an admin sidebar entry) edits the classification scheme described in [`classification.md`](classification.md). `lib/classification.ts` holds the types of `GET`/`PUT /api/v0/admin/classification`, the upload calls and the pure logic (template application, level reordering into contiguous ranks, unrated counts, name-based marking suggestion, the diff, the request body); `components/classification/` holds the steps.
+
+- **One scheme, two views.** With a single level the page shows an intro card and *Set up*. With several it shows the overview: every section of the assistant as a collapsible, one *Save*, and *Run assistant again*.
+- **The assistant** is three steps (`StepIndicator`) over one client-side draft: the standard (a template, or a custom scheme that also shows the levels editor in the next step), the model pools (`ModelsStep`: each pool's level prefilled from the `hosting` fact of its destination, the egress tools only summarised, the System One model preselected when exactly one is cleared for the highest level in the draft, and with none the rule questions of the classes removed from the saved body), and the review. Activate is disabled while the chosen model's pools are not all at the highest level. Nothing is sent before *Activate*, which is one `PUT`; the server's validation message is shown on the review step. The review lists what differs from the saved scheme and how many destinations stay unrated (they get the lowest level).
+- **Word lists** upload per saved class: a preview (`?preview=1`, with a column picker for a CSV) shows the count, duplicates and entries that are too short before the list replaces the old one. A new class shows a "save first" hint. *Test with a sample file* runs the saved scheme, not the draft.
+- **Destinations** are rated one kind at a time with a progress bar per kind; rows that were unrated when the step opened come first and stay in place. A pool offers four guidance questions that suggest a level; the rating is the operator's own declaration and the suggestion is applied only on request. A tool, MCP server or connector with `egress` also chooses between hiding and gating.
+- **The System One model** list disables models that are not cleared for the highest level.
+
+In a conversation, `classification.active` shows the level as a daisyUI badge in the header (colour from the level, tooltip the cause of the latest change) and a level selector in the composer toolbar. The selector offers higher levels always and lower ones only when `lowering` is `with_reason`, asking for the reason in a modal; after a change the session and the model list are reloaded, and when no model is cleared for the level the composer shows a warning. In monitor mode, `observed` shows as an info box in the composer: the level the content would require, the matched classes and the chat's level (`cls-chat-observed`). Nothing is shown while the scheme is inactive.
+
+*Share* in the conversation header opens `ShareDialog` (`components/sharing/`) with three exclusive choices saved through `PUT …/shares`: not shared, by link (disabled with the reason when the server reports `link_allowed: false`), or only the listed people and groups, added through `SubjectPicker`, the same search the agents' `SharingPanel` uses. Saving the link choice copies the conversation URL (`clipboard.ts`); the button then briefly reads *Link copied*, and *Shared* while the link or any person or group has access.
+
 ## Reactive state
 
 Shared state lives in `.svelte.ts` modules exporting `$state` objects, built as factories rather than classes — `$state` in a module closure is the documented universal-reactivity pattern, and the returned object's methods close over it directly.

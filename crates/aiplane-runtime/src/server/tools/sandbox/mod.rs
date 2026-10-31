@@ -514,9 +514,11 @@ impl SandboxClient {
         let filename = chat_attachments::reserve_filename(&ctx.db, turn, reservations, &a.name)
             .await
             .map_err(|e| e.to_string())?;
-        let outcome = chat_attachments::upload(s3, turn, &filename, &a.mime, bytes)
-            .await
-            .map_err(|e| e.to_string())?;
+        let outcome =
+            crate::classification_output::upload_stamped(ctx, s3, turn, &filename, &a.mime, bytes)
+                .await
+                .map_err(|e| e.to_string())?;
+        let filename = outcome.filename.clone();
         let marker = chat_attachments::marker_line(turn, &outcome);
         chat::append_content(&ctx.db, turn, &format!("\n\n{marker}\n\n"))
             .await
@@ -540,9 +542,11 @@ impl SandboxClient {
         let safe = sanitize_filename(&a.name).ok_or("unsafe artifact filename")?;
         let run = uuid::Uuid::new_v4().to_string();
         let scope = format!("sandbox/{}/{}", ctx.principal.subject_id(), run);
-        let outcome = chat_attachments::upload(s3, &scope, &safe, &a.mime, bytes)
-            .await
-            .map_err(|e| e.to_string())?;
+        let outcome =
+            crate::classification_output::upload_stamped(ctx, s3, &scope, &safe, &a.mime, bytes)
+                .await
+                .map_err(|e| e.to_string())?;
+        let safe = outcome.filename.clone();
         let url = format!(
             "{}/v1/sandbox/files/{}/{}",
             self.runtime.load().public_url,

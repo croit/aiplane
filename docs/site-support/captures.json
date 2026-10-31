@@ -1,7 +1,7 @@
 [
   {
     "file": "docs/img/guide/chat-overview.png",
-    "route": "/chat/d1be6270-fec4-4b7e-82af-95618f3e659f",
+    "route": "/chat/881af952-2889-4c07-b7b2-d1d0b7e766bc",
     "selector": "[data-chat-composer]",
     "viewport": {
       "width": 1400,
@@ -14,7 +14,7 @@
   },
   {
     "file": "docs/img/guide/chat-composer.png",
-    "route": "/chat/d1be6270-fec4-4b7e-82af-95618f3e659f",
+    "route": "/chat/881af952-2889-4c07-b7b2-d1d0b7e766bc",
     "selector": "[data-chat-composer]",
     "viewport": {
       "width": 1400,
@@ -64,7 +64,7 @@
     },
     "scale": 2,
     "width": 2128,
-    "height": 532,
+    "height": 474,
     "data": "Synthetic dev-ui fixture; actual application components."
   },
   {
@@ -110,21 +110,8 @@
     "data": "Synthetic dev-ui fixture; actual application components."
   },
   {
-    "file": "docs/img/guide/content-guard.png",
-    "route": "/admin/settings?tab=access",
-    "selector": "[data-testid=\"settings-section-content_guard\"]",
-    "viewport": {
-      "width": 1400,
-      "height": 950
-    },
-    "scale": 2,
-    "width": 1680,
-    "height": 492,
-    "data": "Synthetic dev-ui fixture; actual application components."
-  },
-  {
     "file": "docs/img/guide/agent-checklist.png",
-    "route": "/agents/b3ca2989-c32f-43d4-861d-1d936451dcd4",
+    "route": "/agents/f19f72d4-6c21-41fe-a623-d200505a22fa",
     "selector": "[data-agent-tab] aside section.card",
     "viewport": {
       "width": 1400,
@@ -137,7 +124,7 @@
   },
   {
     "file": "docs/img/guide/document-canvas.png",
-    "route": "/chat/20c031e8-5143-48c8-9d60-7c8f1daa4dff",
+    "route": "/chat/5db96985-c538-4d9b-b2b8-66a1b0d55f65",
     "selector": "aside[aria-label=\"Canvas\"]",
     "viewport": {
       "width": 1400,
@@ -145,12 +132,12 @@
     },
     "scale": 2,
     "width": 808,
-    "height": 1262,
+    "height": 1510,
     "data": "Synthetic dev-ui fixture; actual application components."
   },
   {
     "file": "docs/img/guide/agent-scheduled-work.png",
-    "route": "/scheduled/new?personal_agent_id=57714e86-7f9c-49ac-a72e-bb4ff3317240",
+    "route": "/scheduled/new?personal_agent_id=ead7e093-fc54-4e40-a473-99d9360f0bb9",
     "selector": "fieldset",
     "matchingText": "Run as",
     "viewport": {
@@ -164,7 +151,7 @@
   },
   {
     "file": "docs/img/guide/agent-action-rules.png",
-    "route": "/agents/57714e86-7f9c-49ac-a72e-bb4ff3317240?tab=tools",
+    "route": "/agents/ead7e093-fc54-4e40-a473-99d9360f0bb9?tab=tools",
     "selector": "[role=\"tabpanel\"] li details",
     "matchingText": "Actions",
     "viewport": {
@@ -192,7 +179,7 @@
   },
   {
     "file": "docs/img/guide/agent-communication.png",
-    "route": "/agents/57714e86-7f9c-49ac-a72e-bb4ff3317240?tab=communication",
+    "route": "/agents/ead7e093-fc54-4e40-a473-99d9360f0bb9?tab=communication",
     "selector": "[role=\"tabpanel\"]:visible",
     "matchingText": "Can ask",
     "viewport": {
@@ -245,7 +232,7 @@
   },
   {
     "file": "docs/img/guide/agent-organization-schedule.png",
-    "route": "/scheduled/new?principal_id=f26cdf54-1a80-40b9-8188-c2dc7a836902",
+    "route": "/scheduled/new?principal_id=054bf60d-2f81-4618-993c-76a06c63937f",
     "selector": "body",
     "viewport": {
       "width": 1400,
@@ -310,7 +297,7 @@
   },
   {
     "file": "docs/img/guide/organization-agents.png",
-    "route": "/organizations/27faeca6-9dbf-4f7a-b5a9-6ea678c8611b",
+    "route": "/organizations/2e02754b-85b1-4dba-823e-9fa36364c6a8",
     "selector": "body",
     "viewport": {
       "width": 1400,
@@ -385,5 +372,44 @@
     "width": 2128,
     "height": 816,
     "data": "Synthetic dev-ui fixture; actual organization member writer without personal OwnedAgent management. Real OAuth round trip and explicit selection of Harald Support's own Workspace credential. No employee identity or invented account label. Captured by spa-agents-organization-identities.test.mjs with DOCS_ORG_AGENT_IDENTITY_CAPTURE."
+  },
+  {
+    "file": "docs/img/guide/classification-assistant.png",
+    "route": "/admin/classification",
+    "selector": "body",
+    "viewport": {
+      "width": 1400,
+      "height": 950
+    },
+    "scale": 2,
+    "width": 2800,
+    "height": 1900,
+    "data": "Synthetic dev-ui fixture; actual application components."
+  },
+  {
+    "file": "docs/img/guide/classification-classes.png",
+    "route": "/admin/classification?tab=classes",
+    "selector": "body",
+    "viewport": {
+      "width": 1400,
+      "height": 950
+    },
+    "scale": 2,
+    "width": 2800,
+    "height": 1900,
+    "data": "Synthetic dev-ui fixture; actual application components."
+  },
+  {
+    "file": "docs/img/guide/chat-share-dialog.png",
+    "route": "/chat/881af952-2889-4c07-b7b2-d1d0b7e766bc",
+    "selector": "dialog[open] .modal-box",
+    "viewport": {
+      "width": 1400,
+      "height": 950
+    },
+    "scale": 2,
+    "width": 1024,
+    "height": 514,
+    "data": "Synthetic dev-ui fixture; actual application components."
   }
 ]

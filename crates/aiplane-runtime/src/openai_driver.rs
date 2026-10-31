@@ -25,6 +25,7 @@ use async_trait::async_trait;
 use rama::futures::StreamExt;
 use session_core::db::{self as chat, ToolCallStatus, Turn, TurnRole, TurnStatus};
 use session_core::driver::{SessionContext, SessionDriver, TurnError, TurnOutcome};
+use session_core::i18n::{Lang, args, t, t_args};
 use session_core::workers::{SteerNote, TurnUpdate};
 
 use crate::agent_run::{Actor, AgentRun};
@@ -568,6 +569,10 @@ pub fn build_tool_context(state: &Arc<RamaState>, facts: TurnFacts) -> ToolConte
         agent,
         personal_agent,
         personal_execution,
+        classification: Some(crate::classification_output::TurnClassification {
+            scheme: state.scheme(),
+            config: Arc::new(state.config().classification.clone()),
+        }),
         call_id: None,
         token_id: None,
         pool_access,
@@ -718,18 +723,7 @@ impl SessionDriver for OpenAiDriver {
             )
             .await;
             let log = crate::agents::audit::RunLog::of(&self.tool_ctx);
-            let email = if self.state.usage.is_enabled() {
-                Some(policy.usage_name(self).await).filter(|name| !name.is_empty())
-            } else {
-                None
-            };
-            let mut payer = crate::server::side_call::Payer::of_turn(
-                &self.tool_ctx.principal,
-                self.agent().map(|run| run.chain().clone()),
-                email,
-                self.source,
-            )
-            .with_model_context(&self.tool_ctx);
+            let mut payer = policy.payer(self).await;
             if let Some(run) = self
                 .tool_ctx
                 .agent
@@ -1282,7 +1276,19 @@ async fn run_one_turn(
     // An agent run's synthetic tools are no grant: they sit over the
     // grant-narrowed source, never inside it.
     let live_state = Arc::new((**d.state).clone());
-    let tool_source = policy.tool_source(&granted_source, &live_state);
+    let classification_payer = policy.payer(d).await;
+    let classified_source = crate::classification_gate::ClassifiedToolSource::new(
+        &granted_source,
+        d.state.clone(),
+        classification_payer.clone(),
+    );
+    let person_chat =
+        d.tool_ctx.agent.is_none() && d.persona.is_none() && d.tool_ctx.session_id.is_some();
+    let tool_source = if person_chat {
+        policy.tool_source(&classified_source, &live_state)
+    } else {
+        policy.tool_source(&granted_source, &live_state)
+    };
     let context_grants = if d.tool_ctx.personal_agent.is_some() {
         tool_source.ids()
     } else {
@@ -1326,6 +1332,22 @@ async fn run_one_turn(
         compaction.as_ref(),
         d.history_limit,
     );
+    let Some(mut approved_by_user) = settle_classification_decision(
+        d,
+        &ctx,
+        crate::classification_upload::evaluate_attachments(
+            &d.state,
+            &classification_payer,
+            &d.tool_ctx,
+        )
+        .await,
+        &[],
+        turn_start_budget(),
+    )
+    .await?
+    else {
+        return Ok(TurnOutcome::default().into());
+    };
     enrich_current_message_with_ocr(d, &ctx, &mut messages).await;
 
     // One leading system message, from the turn's policy — see
@@ -1367,36 +1389,26 @@ async fn run_one_turn(
     let target = target.map_err(upstream_err)?;
     let (routing_model, access, automatic_decision) =
         (target.model.as_str(), target.access, target.decision);
-    match crate::content_guard::evaluate_for_turn(
-        &d.state,
-        &routing_state,
-        routing_model,
-        &access,
-        &tool_ctx,
+    let Some(approved) = settle_classification_decision(
+        d,
+        &ctx,
+        crate::classification_detector::evaluate_for_turn(
+            &d.state,
+            &classification_payer,
+            &routing_state,
+            routing_model,
+            &access,
+            &tool_ctx,
+        )
+        .await,
+        &[],
+        turn_start_budget(),
     )
-    .await
-    .map_err(upstream_err)?
-    {
-        crate::content_guard::Action::Allow => {}
-        crate::content_guard::Action::Confirm => {
-            if !crate::content_guard::confirm_in_chat(
-                d.tool_ctx.chat_feedback.as_ref(),
-                d.tool_ctx.assistant_turn_id.as_deref(),
-            )
-            .await
-            {
-                return Err(TurnError::Upstream {
-                    message: "Content was not approved for sending to the selected model.".into(),
-                });
-            }
-        }
-        crate::content_guard::Action::Deny => {
-            return Err(TurnError::Upstream {
-                message: "Content policy prevents sending this request to the selected model."
-                    .into(),
-            });
-        }
-    }
+    .await?
+    else {
+        return Ok(TurnOutcome::default().into());
+    };
+    approved_by_user |= approved;
     let real_model = d
         .state
         .upstreams
@@ -1407,35 +1419,17 @@ async fn run_one_turn(
         )
         .unwrap_or_else(|| routing_model.to_string());
 
-    // A confidential conversation never reaches a model the operator did not
-    // clear for it — even when the client asked for one directly, and even
-    // after the picker filtered the list. The check runs on the resolved model
-    // so an automatic route is judged by the target it actually picked.
-    if aiplane_core::server::db::chat_session_settings::get_confidential(
-        &d.state.db,
-        &ctx.session_id,
-    )
-    .await
-    .unwrap_or(false)
-    {
-        let requires = d.state.config().chat.confidential.requires;
-        let compliance = d
-            .state
-            .upstreams
-            .models_with_compliance_for_kind_for(
-                aiplane_core::server::upstreams::PoolKind::Chat,
-                &access,
-            )
-            .into_iter()
-            .find_map(|(id, compliance)| (id == real_model).then_some(compliance));
-        if !compliance.is_some_and(|compliance| requires.satisfied_by(compliance)) {
-            return Err(TurnError::Upstream {
-                message: "This conversation is confidential; the selected model is not cleared \
-                          for it. Choose a model without a GDPR or NDA warning."
-                    .into(),
-            });
-        }
-    }
+    // A conversation never reaches a model the operator did not clear for its
+    // level — even when the client asked for one directly, and even after the
+    // picker filtered the list. The check runs on the resolved model so an
+    // automatic route is judged by the target it actually picked. A user who
+    // just approved this turn's content for the model has overridden it.
+    let mut approved_rank = if approved_by_user && d.state.config().classification.user_override {
+        Some(conversation_rank(d, &ctx.session_id).await)
+    } else {
+        ensure_model_cleared(d, &ctx, &real_model, &access).await?;
+        None
+    };
 
     let effort = Effort::from_db(
         aiplane_core::server::db::chat_session_settings::get_effort(&d.state.db, &ctx.session_id)
@@ -1632,7 +1626,47 @@ async fn run_one_turn(
         // Notes from a round that never reached a backend stay in this vec and
         // are settled by whichever later round does, so a retryable failure
         // does not cost the user their interjection.
-        unsettled_steers.extend(fold_in_steers(&ctx, &mut messages));
+        let folded = fold_in_steers(&ctx, &mut messages);
+        let notes_checked = person_chat && !folded.is_empty() && live_state.scheme().is_active();
+        if notes_checked {
+            // A note is new input like the message that started the turn: what
+            // it reveals raises the conversation before this round is sent.
+            let notes = serde_json::json!({
+                "messages": folded
+                    .iter()
+                    .map(|note| serde_json::json!({"role": "user", "content": note.text}))
+                    .collect::<Vec<_>>(),
+            });
+            let Some(approved) = settle_classification_decision(
+                d,
+                &ctx,
+                crate::classification_detector::evaluate_for_turn(
+                    &d.state,
+                    &classification_payer,
+                    &notes,
+                    routing_model,
+                    &access,
+                    &tool_ctx,
+                )
+                .await,
+                &messages[prefix_len..messages.len() - folded.len()],
+                session_core::db::BudgetUsed {
+                    rounds: round,
+                    seconds: (d.clock)().duration_since(run_started).as_secs(),
+                    tokens: tokens_used,
+                    tree: personal_execution
+                        .map(|execution| execution.meter().snapshot(execution.local_budget())),
+                },
+            )
+            .await?
+            else {
+                return Ok(TurnOutcome::default().into());
+            };
+            if approved && d.state.config().classification.user_override {
+                approved_rank = Some(conversation_rank(d, &ctx.session_id).await);
+            }
+        }
+        unsettled_steers.extend(folded);
 
         // State set last round must show in this round's system message, or
         // the model would ask for it again. So must state the resumed call
@@ -1683,6 +1717,15 @@ async fn run_one_turn(
                 limit_hit = Some(limit);
             }
         }
+        if round > start_round || notes_checked {
+            match approved_rank {
+                None => ensure_model_cleared(d, &ctx, &real_model, &access).await?,
+                Some(approved) if conversation_rank(d, &ctx.session_id).await > approved => {
+                    ensure_model_cleared(d, &ctx, &real_model, &access).await?;
+                }
+                Some(_) => {}
+            }
+        }
         let final_round = round + 1 == max_rounds || limit_hit.is_some();
 
         // Build the request. `stream: true` so we can forward
@@ -1720,6 +1763,15 @@ async fn run_one_turn(
         // Resolved every round: a person's mid-turn `enable_tools` call
         // surfaces the newly-enabled schemas on the next one.
         let mut allowed_tools = policy.offer(d, &ctx.session_id, &user_mcp, &granted).await;
+        if person_chat && live_state.scheme().is_active() {
+            let rank = conversation_rank(d, &ctx.session_id).await;
+            crate::classification_gate::retain_visible(
+                &live_state.scheme(),
+                rank,
+                &mut allowed_tools,
+                &tool_source,
+            );
+        }
         if final_round && !closing {
             policy.narrow_final_offer(&mut allowed_tools, &tool_source);
         }
@@ -3605,6 +3657,162 @@ fn inject_ocr_blocks(messages: &mut [serde_json::Value], blocks: &[String]) -> b
         blocks.join("\n\n")
     ));
     true
+}
+
+async fn conversation_rank(d: &OpenAiDriver, session_id: &str) -> u32 {
+    aiplane_core::server::classification::level_or_highest(
+        &d.state.db,
+        &d.state.scheme(),
+        session_id,
+    )
+    .await
+    .rank
+}
+
+/// Refuse the turn when the conversation's level has outgrown the model: the
+/// level can rise while a turn runs, when a retrieval or an upload reveals
+/// more than the first message did.
+async fn ensure_model_cleared(
+    d: &OpenAiDriver,
+    ctx: &SessionContext,
+    model: &str,
+    access: &aiplane_core::server::upstreams::PoolAccess,
+) -> Result<(), TurnError> {
+    if d.state
+        .model_cleared_for_session(&ctx.session_id, model, access)
+        .await
+    {
+        return Ok(());
+    }
+    let scheme = d.state.scheme();
+    let conversation = aiplane_core::server::classification::level_or_highest(
+        &d.state.db,
+        &scheme,
+        &ctx.session_id,
+    )
+    .await;
+    Err(classification_refusal(
+        d,
+        &ctx.assistant_turn_id,
+        "cls-turn-model-not-cleared",
+        t_args(
+            Lang::En,
+            "cls-turn-model-not-cleared",
+            &args([("level", conversation.name.clone().into())]),
+        ),
+    )
+    .await)
+}
+
+/// A turn the classification policy refused. The message is a catalog key the
+/// SPA renders in the reader's language from `chat_turns.error_code`, like
+/// [`LOOP_EXHAUSTED_CODE`]; `message` is the English text every other reader
+/// gets. Neither names an upstream, so it carries no "upstream:" prefix.
+async fn classification_refusal(
+    d: &OpenAiDriver,
+    turn_id: &str,
+    key: &str,
+    message: String,
+) -> TurnError {
+    if let Err(error) = chat::set_error_code(&d.state.db, turn_id, key).await {
+        tracing::warn!(%error, turn_id, "could not record the classification refusal's code");
+    }
+    TurnError::Aborted { message }
+}
+
+/// A classification check that could not run; an unreachable detector is a
+/// refusal the person reads in their language, anything else an upstream fault.
+async fn classification_err(d: &OpenAiDriver, turn_id: &str, error: String) -> TurnError {
+    if crate::classification_detector::is_unavailable(&error) {
+        classification_refusal(
+            d,
+            turn_id,
+            crate::classification_detector::UNAVAILABLE_KEY,
+            error,
+        )
+        .await
+    } else {
+        upstream_err(error)
+    }
+}
+
+fn turn_start_budget() -> session_core::db::BudgetUsed {
+    session_core::db::BudgetUsed {
+        rounds: 0,
+        seconds: 0,
+        tokens: 0,
+        tree: None,
+    }
+}
+
+/// Turn what the classification check decided into the turn's course:
+/// `Some(true)` when the person approved sending the content, `Some(false)`
+/// when nothing needed approving, `None` when the turn paused to ask (the
+/// caller returns; the person's answer resumes it), an error when it is
+/// refused or could not be checked.
+///
+/// A confirmation pauses the turn like a tool approval does, so it frees the
+/// person's turn slot and survives a reload. The conversation's level is
+/// already raised by then, so the check that runs again on resume finds
+/// nothing new to ask about; a resume carrying the person's answer is the
+/// approval for the whole turn. `tail` is what the turn had gathered before
+/// the check, replayed on resume.
+async fn settle_classification_decision(
+    d: &OpenAiDriver,
+    ctx: &SessionContext,
+    decision: Result<crate::classification_detector::Decision, String>,
+    tail: &[serde_json::Value],
+    budget_used: session_core::db::BudgetUsed,
+) -> Result<Option<bool>, TurnError> {
+    use crate::classification_detector::{CONFIRM_CALL, Decision};
+    use session_core::db::Decision as Answer;
+    let refuse = |key: &'static str| {
+        classification_refusal(d, &ctx.assistant_turn_id, key, t(Lang::En, key))
+    };
+    let decision = match decision {
+        Ok(decision) => decision,
+        Err(error) => return Err(classification_err(d, &ctx.assistant_turn_id, error).await),
+    };
+    if decision == Decision::Deny {
+        return Err(refuse("cls-turn-blocked").await);
+    }
+    let answered = d
+        .resume
+        .as_ref()
+        .filter(|from| from.suspension.tool_call.name == CONFIRM_CALL);
+    if let Some(from) = answered {
+        return match from.decision {
+            Answer::AllowOnce => Ok(Some(true)),
+            _ => Err(refuse("cls-turn-not-approved").await),
+        };
+    }
+    if decision == Decision::Allow {
+        return Ok(Some(false));
+    }
+    let person_chat = d.tool_ctx.agent.is_none() && d.persona.is_none();
+    if !person_chat || d.tool_ctx.suspend != crate::suspend::Suspend::Available {
+        return Err(refuse("cls-turn-not-approved").await);
+    }
+    if ctx.cancel.load(Ordering::SeqCst) {
+        return Ok(None);
+    }
+    let call = runner::ToolCallRef {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: CONFIRM_CALL.to_string(),
+        arguments_raw: "{}".to_string(),
+    };
+    resume::pause(
+        d,
+        ctx,
+        &call,
+        crate::suspend::SuspendRequest::approval(
+            crate::server::tools::ask_first::DEFAULT_APPROVAL_TIMEOUT,
+        ),
+        tail,
+        budget_used,
+    )
+    .await?;
+    Ok(None)
 }
 
 /// Build the prior-history message list replayed upstream: every turn before

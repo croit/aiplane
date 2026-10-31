@@ -64,6 +64,8 @@ try {
     const seeded = await seed(context);
     const fullPage = 'body';
     const captures = [
+        { name: 'classification-assistant', route: '/admin/classification', selector: fullPage, full: true, prepare: 'classification-assistant' },
+        { name: 'classification-classes', route: '/admin/classification?tab=classes', selector: fullPage, full: true, prepare: 'classification-active', englishFileInput: true },
         { name: 'chat-overview', route: `/chat/${conversation.id}`, selector: '[data-chat-composer]', full: true },
         { name: 'chat-composer', route: `/chat/${conversation.id}`, selector: '[data-chat-composer]' },
         { name: 'upstream-pool', route: '/admin/models?tab=upstreams', selector: 'article.card', text: 'wiremock-chat' },
@@ -72,7 +74,7 @@ try {
         { name: 'browser-status', route: '/tools/browser', selector: 'section.card', text: 'Status' },
         { name: 'knowledge-collection', route: '/rag', selector: 'article.card', text: 'acme-api' },
         { name: 'scheduled-action', route: '/scheduled', selector: 'article.card', text: 'Weekly dependency report' },
-        { name: 'content-guard', route: '/admin/settings?tab=access', selector: '[data-testid="settings-section-content_guard"]' },
+        { name: 'chat-share-dialog', route: `/chat/${conversation.id}`, selector: 'dialog[open] .modal-box', prepare: 'share-dialog' },
         { name: 'agent-checklist', route: agentPath, selector: '[data-agent-tab] aside section.card' },
         { name: 'document-canvas', route: `/chat/${documentConversation.id}`, selector: 'aside[aria-label="Canvas"]', prepare: 'canvas' },
         { name: 'request-priority', route: '/admin/tokens', selector: fullPage, full: true },
@@ -103,9 +105,13 @@ try {
                 await page.getByTitle('Show / hide the document canvas').click();
             }
         }
+        if (capture.prepare === 'classification-assistant') await openClassificationAssistant(page);
+        if (capture.prepare === 'classification-active') await activateClassification(page, origin + capture.route);
+        if (capture.prepare === 'share-dialog') await page.getByTitle('Share this conversation by link or with named people and groups').click();
         if (capture.prepare === 'priority-error') await showPriorityError(page);
         if (capture.prepare === 'action-rules') await showActionRules(page);
         if (capture.prepare === 'organization-schedule') await fillOrganizationSchedule(page);
+        if (capture.englishFileInput) await englishFileInputs(page);
         let target = page.locator(capture.selector);
         if (capture.text) target = target.filter({ hasText: capture.text });
         if (capture.has) target = target.filter({ has: page.locator(capture.has) });
@@ -183,6 +189,41 @@ async function seed(context) {
     await api('PUT', `/api/v0/agents/${clara}/communication`,
         { peer_id: harald, direction: 'inbound', enabled: true, expected_generation: generation });
     return { organization, team, harald, clara };
+}
+
+/** The set-up assistant on its models step, with the ISO 27001 standard chosen. */
+async function openClassificationAssistant(page) {
+    const setUp = page.getByRole('button', { name: 'Set up', exact: true });
+    const again = page.getByRole('button', { name: 'Run assistant again', exact: true });
+    await setUp.or(again).first().click();
+    await page.getByRole('radio', { name: /ISO\/IEC 27001/ }).click();
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+}
+
+/** The ISO 27001 scheme activated through the assistant, unless one already is. */
+async function activateClassification(page, url) {
+    const setUp = page.getByRole('button', { name: 'Set up', exact: true });
+    await setUp.or(page.getByRole('button', { name: 'Run assistant again', exact: true })).first().waitFor();
+    if (!(await setUp.isVisible())) return;
+    await openClassificationAssistant(page);
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await page.getByRole('button', { name: 'Activate', exact: true }).last().click();
+    await page.getByRole('button', { name: 'Run assistant again', exact: true }).waitFor();
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+}
+
+/** macOS labels a native file input in the system language; show an English stand-in. */
+async function englishFileInputs(page) {
+    await page.locator('input[type="file"]').first().waitFor({ state: 'attached' });
+    await page.evaluate(() => {
+        for (const input of document.querySelectorAll('input[type="file"]')) {
+            const stand = document.createElement('div');
+            stand.className = input.className;
+            stand.style.cssText = 'display:flex;align-items:center;gap:.7rem;padding:0;overflow:hidden';
+            stand.innerHTML = '<span class="btn btn-sm rounded-none">Choose File</span><span class="text-base-content/60">No file chosen</span>';
+            input.replaceWith(stand);
+        }
+    });
 }
 
 /** The backend form refusing a priority mapping whose values are not strictly ordered. */

@@ -24,8 +24,6 @@ searchable-select-search-placeholder = Rechercher des options…
 searchable-select-search-aria = Rechercher dans { $field }
 searchable-select-clear-search = Effacer la recherche
 searchable-select-no-results = Aucune option correspondante.
-searchable-select-model-gdpr = GDPR
-searchable-select-model-nda = NDA
 
 # Affiché à la place d'une page dont la fonctionnalité optionnelle a été
 # désactivée dans /admin/settings. L'entrée de navigation disparaît alors ;

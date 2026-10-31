@@ -799,8 +799,13 @@ pub(crate) async fn validate_execution(
         let session = session_core::db::get_session(&state.db, owner, &current_session)
             .await
             .map_err(|error| ToolError::Failed(error.to_string()))?
-            .filter(|session| !session.shared)
             .ok_or_else(unavailable)?;
+        if aiplane_core::server::db::chat_shares::is_shared(&state.db, &session.id)
+            .await
+            .map_err(|error| ToolError::Failed(error.to_string()))?
+        {
+            return Err(unavailable());
+        }
         let turn = session_core::db::get_turn(&state.db, &session.id, &current_turn)
             .await
             .map_err(|error| ToolError::Failed(error.to_string()))?

@@ -83,6 +83,7 @@ async fn open(
         .collection_store(rref.id, &rref.data_uuid)
         .await
         .map_err(|e| ToolError::Failed(format!("opening collection store: {e}")))?;
+    crate::rag::raise_for_retrieval(ctx, collection.id).await?;
     Ok((collection, store, profile))
 }
 
@@ -188,6 +189,10 @@ impl Tool for RagQueryDocuments {
 
     fn id(&self) -> &str {
         "rag_query_documents"
+    }
+
+    fn egress(&self) -> bool {
+        false
     }
 
     fn schema(&self) -> ToolDef {
@@ -433,6 +438,10 @@ impl Tool for RagListDocuments {
         "rag_list_documents"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),
@@ -536,6 +545,10 @@ impl Tool for RagFetchDocument {
 
     fn id(&self) -> &str {
         "rag_fetch_document"
+    }
+
+    fn egress(&self) -> bool {
+        false
     }
 
     fn schema(&self) -> ToolDef {
@@ -675,7 +688,7 @@ mod tests {
                 voices: Default::default(),
                 offer_voices: Vec::new(),
                 allowed_groups: Vec::new(),
-                compliance: Default::default(),
+                level_rank: 0,
                 enforce_limits: true,
                 kind: PoolKind::Embedding,
                 strategy: PickerStrategy::RoundRobin,

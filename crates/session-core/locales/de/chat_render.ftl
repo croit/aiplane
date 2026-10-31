@@ -14,8 +14,6 @@ chat-render-tts-voice-aria = Stimme der Sprachausgabe
 chat-render-tts-voice-default = Standardstimme
 chat-render-new-conversation-fallback = Neue Unterhaltung
 
-chat-render-gdpr-banner = Du sendest Daten an ein nicht DSGVO-konformes Modell. Gib keine personenbezogenen Daten ein (Namen, E-Mail-Adressen, Adressen, Kunden- oder Mitarbeiterdaten).
-chat-render-nda-banner = Dieses Modell ist nicht durch eine Vertraulichkeitsvereinbarung abgedeckt. Sende keine NDA-geschützten oder vertraulichen Inhalte.
 chat-render-shared-readonly-banner = Freigegebener Chat — nur lesbar. Nur der Ersteller kann antworten.
 
 chat-render-composer-placeholder = Nachricht an das Modell…
@@ -64,7 +62,7 @@ chat-render-close = Schließen
 chat-render-share-label-on = Freigegeben ✓
 chat-render-share-link-copied = Link kopiert ✓
 chat-render-share-label-off = Freigeben
-chat-render-share-tooltip = Freigegebene Chats können von jedem angemeldeten Benutzer mit dem Link gelesen werden
+chat-render-share-tooltip = Diese Unterhaltung per Link oder mit benannten Personen und Gruppen teilen
 
 chat-render-fork-tooltip = Diese Unterhaltung in deine eigenen Chats kopieren, um weiterzuchatten
 chat-render-fork-label = In meinen Chats fortsetzen
@@ -101,11 +99,4 @@ chat-render-delegated-readonly-banner = Delegierte Unterhaltung — schreibgesch
 chat-render-delegated-root-link = Hauptunterhaltung öffnen
 chat-render-delegated-root-unavailable = Die Hauptunterhaltung ist nicht verfügbar. Dieser Verlauf bleibt schreibgeschützt.
 
-chat-render-confidential = Vertraulich
-chat-render-confidential-title = Markiert diese Unterhaltung als vertraulich. Nur Modelle mit { $requires } bleiben wählbar; das lässt sich nicht rückgängig machen.
-chat-render-confidential-requires-both = GDPR- und NDA-Abdeckung
-chat-render-confidential-requires-gdpr = GDPR-Abdeckung
-chat-render-confidential-requires-nda = NDA-Abdeckung
-chat-render-confidential-no-model = Kein Modell ist für vertrauliche Daten freigegeben. Bitte einen Administrator, eines freizugeben.
-chat-render-confidential-model-switched = Diese Unterhaltung ist jetzt vertraulich; das gewählte Modell war dafür nicht freigegeben.
 chat-render-last-model-unavailable = Das zuletzt in dieser Unterhaltung genutzte Modell { $model } ist hier nicht verfügbar; stattdessen ist das erste verfügbare Modell ausgewählt.

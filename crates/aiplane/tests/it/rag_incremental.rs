@@ -149,7 +149,7 @@ fn registry(embed: &str) -> Arc<UpstreamRegistry> {
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
             fallback_offline: None,
-            compliance: Default::default(),
+            level_rank: 0,
             enforce_limits: true,
             kind: PoolKind::Embedding,
             strategy: PickerStrategy::RoundRobin,

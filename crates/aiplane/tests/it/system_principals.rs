@@ -234,7 +234,7 @@ fn chat_pool(url: &str, allowed_groups: Vec<String>) -> UpstreamPoolConfig {
         offer_voices: Vec::new(),
         allowed_groups,
         fallback_offline: None,
-        compliance: Default::default(),
+        level_rank: 0,
         enforce_limits: true,
         kind: PoolKind::Chat,
         strategy: PickerStrategy::RoundRobin,

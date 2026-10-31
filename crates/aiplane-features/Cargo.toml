@@ -71,6 +71,8 @@ earshot = "1"
 symphonia = { workspace = true }
 # PROPFIND multistatus parsing for the WebDAV source provider.
 quick-xml = { workspace = true }
+# Classification: word-list matching and pattern candidates.
+regex = { workspace = true }
 
 [dev-dependencies]
 wiremock = { workspace = true }

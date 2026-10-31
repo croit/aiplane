@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { api, ApiError, EFFORTS } from '#lib/api.js';
+	import { api, ApiError, EFFORTS, responseError } from '#lib/api.js';
 	import type { CanvasDocument, ChatAsset, ChatCapability, ChatModelChoice, Effort } from '#lib/api.js';
 	import { createConversationController } from '#lib/chat.svelte.js';
 	import { extensionStatus, onExtensionState, requestActivation } from '#lib/browser-bridge.js';
@@ -18,6 +18,9 @@
 	import { me } from '#lib/session.svelte.js';
 	import { renderWelcome } from '#lib/welcome.js';
 	import { locale, t, time, n } from '#lib/i18n.svelte.js';
+	import { chatClassificationApi, type ChatClassification } from '#lib/classification.js';
+	import LevelSelector from '#lib/components/chat/LevelSelector.svelte';
+	import ShareDialog from '#lib/components/sharing/ShareDialog.svelte';
 	import ConversationHeader from '#lib/components/chat/ConversationHeader.svelte';
 	import DictationButton from '#lib/components/chat/DictationButton.svelte';
 	import CapabilityPicker from '#lib/components/chat/CapabilityPicker.svelte';
@@ -40,6 +43,10 @@
 
 	let controller = $state<ReturnType<typeof createConversationController> | null>(null);
 	let session = $state<ChatSession | null>(null);
+	let classification = $state<ChatClassification | null>(null);
+	// A link is the default until the server says the level forbids one.
+	let sharedWithPeople = $state(false);
+	let shareDialogOpen = $state(false);
 	let model = $state('');
 	let lastModel: string | null = null;
 	let models = $state<ChatModelChoice[]>([]);
@@ -54,12 +61,7 @@
 	let tools = $state<ChatCapability[]>([]);
 	// Until the snapshot says otherwise; `low` is also the server's default.
 	let effort = $state<Effort>('low');
-	// Sticky once true: the server refuses to clear it, so there is no path
-	// back and the checkbox stays disabled.
-	let confidential = $state(false);
-	let confidentialRequires = $state<'both' | 'gdpr' | 'nda'>('both');
 	let welcome = $state('');
-	let confidentialSaving = $state(false);
 	let sending = $state(false);
 	/**
 	 * The composer's textarea, so the actions that empty it can hand the
@@ -263,8 +265,7 @@
 			permissions = { can_write: snap.can_write, can_delete: snap.can_delete, delegation: snap.delegation };
 			compactedUpToSeq = snap.compacted_up_to_seq;
 			effort = snap.effort;
-			confidential = snap.confidential;
-			confidentialRequires = snap.confidential_requires;
+			classification = snap.classification ?? null;
 			welcome = snap.welcome;
 			assets = snap.assets;
 			if (snap.assets.length > 0 && window.innerWidth >= 768) canvasOpen = true;
@@ -278,6 +279,21 @@
 		}
 	}
 
+	async function loadShares() {
+		if (!canWrite) return;
+		try {
+			sharedWithPeople = (await chatClassificationApi.shares(id)).subjects.length > 0;
+		} catch {
+			sharedWithPeople = false;
+		}
+	}
+
+	/** A level change refreshes what depends on it: the badge, the share rule and the models cleared for it. */
+	async function levelChanged() {
+		await Promise.all([loadMeta(), loadModels()]);
+		await loadShares();
+	}
+
 	async function refreshConversationMeta() {
 		await Promise.all([loadMeta(), refreshSidebar()]);
 		const sidebarSession = sidebar.sessions.find((candidate) => candidate.id === id);
@@ -287,12 +303,11 @@
 	}
 
 	/** The picker prefers the offered models; free text stays as the
-	 * fallback for gateways without pools (or models the grant filters out).
-	 * The compliance flags ride along as the option's title tooltip. */
+	 * fallback for gateways without pools (or models the grant filters out). */
 	async function loadModels() {
 		try {
-			// The session id lets the server narrow the list to what a
-			// confidential conversation may reach; the client never decides.
+			// The session id lets the server narrow the list to the models
+			// cleared for the conversation's level; the client never decides.
 			const list = await api.listChatModels(id);
 			models = list.models;
 			modelCurrency = list.currency;
@@ -370,33 +385,16 @@
 		}
 	}
 
-	async function markConfidential() {
-		// The checkbox is one-way: `confidential` only leaves `false` here, and
-		// the input is disabled once it is true. A failed request puts it back.
-		if (!canWrite || !confidential || confidentialSaving) return;
-		confidentialSaving = true;
-		try {
-			await api.setChatConfidential(id);
-			await loadModels();
-			if (model && !models.some((candidate) => candidate.id === model)) {
-				model = models[0]?.id ?? '';
-				notice = t('chat-render-confidential-model-switched');
-			}
-		} catch (caught) {
-			confidential = false;
-			notice = String(caught);
-		} finally {
-			confidentialSaving = false;
-		}
-	}
-
 	onMount(() => {
 		void loadTools();
 		void loadVoiceConfig();
 		let mounted = true;
 		const c = createConversationController(id, api.chatEventsUrl(id), () => canWrite);
 		c.onSidebarChanged = () => {
-			void refreshConversationMeta();
+			// A raised classification level arrives as this cue too.
+			void refreshConversationMeta().then(() => {
+				if (classification?.active) void levelChanged();
+			});
 			// A turn that wrote to the canvas bumps the sidebar too, so this is
 			// also the cue to re-read the document list.
 			void loadDocuments();
@@ -406,11 +404,13 @@
 		// the end of a turn re-reads the documents as well.
 		c.onTurnFinalized = () => {
 			void refreshConversationMeta();
+			if (classification?.active) void loadModels();
 			void loadDocuments();
 		};
 		controller = c;
 		const meta = loadMeta();
 		void meta.then((loaded) => { if (mounted && loaded) c.attach(); });
+		void meta.then(() => loadShares());
 		void Promise.all([meta, loadModels()]).then(() => { if (mounted) chooseOpeningModel(); });
 		void loadDocuments();
 		// Follow the end as the transcript grows. A ResizeObserver rather than
@@ -697,7 +697,7 @@
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify(body)
 		});
-		if (!res.ok) throw new Error((await res.text()).slice(0, 200) || res.statusText);
+		if (!res.ok) throw await responseError(res);
 	}
 
 	async function retry(turnId: string) {
@@ -760,49 +760,10 @@
 	let shareLinkCopied = $state(false);
 	let shareLinkCopiedTimer: number | undefined;
 
-	async function toggleShare() {
-		if (!canWrite) return;
+	function shareSaved(linkCopied: boolean) {
 		window.clearTimeout(shareLinkCopiedTimer);
-		shareLinkCopied = false;
-		const shared = !(session?.shared ?? false);
-		const saved = postJson(`/api/v0/chat/sessions/${id}/share`, { shared }).then(
-			() => true,
-			(err) => {
-				notice = String(err);
-				return false;
-			}
-		);
-		const copied = shared ? copyLinkOnceShared(saved) : Promise.resolve(false);
-		if (!(await saved)) return;
-		await loadMeta();
-		if (await copied) {
-			shareLinkCopied = true;
-			shareLinkCopiedTimer = window.setTimeout(() => (shareLinkCopied = false), 1500);
-		}
-	}
-
-	/**
-	 * The clipboard write starts inside the click — the browser allows it only
-	 * with the click's user activation, which an awaited round trip can
-	 * outlive — but its content waits for the server: a refused share leaves
-	 * the clipboard as it was rather than holding a link nobody can open.
-	 */
-	async function copyLinkOnceShared(saved: Promise<boolean>): Promise<boolean> {
-		const link = window.location.href;
-		try {
-			if (typeof ClipboardItem === 'undefined') {
-				if (!(await saved)) return false;
-				await navigator.clipboard.writeText(link);
-			} else {
-				const text = saved.then((ok) =>
-					ok ? new Blob([link], { type: 'text/plain' }) : Promise.reject(new Error('the conversation was not shared'))
-				);
-				await navigator.clipboard.write([new ClipboardItem({ 'text/plain': text })]);
-			}
-			return true;
-		} catch {
-			return false;
-		}
+		shareLinkCopied = linkCopied;
+		if (linkCopied) shareLinkCopiedTimer = window.setTimeout(() => (shareLinkCopied = false), 1500);
 	}
 
 	let answering = $state<string | null>(null);
@@ -986,8 +947,9 @@
 		{isOwner}
 		{canWrite}
 		{canFork}
-		shared={session?.shared ?? false}
+		shared={(session?.shared ?? false) || sharedWithPeople}
 		linkCopied={shareLinkCopied}
+		{classification}
 		{models}
 		currency={modelCurrency}
 		bind:model
@@ -998,7 +960,7 @@
 		bind:speechVoice
 		{hasCanvas}
 		oncanvas={() => (canvasOpen = !canvasOpen)}
-		onshare={toggleShare}
+		onshare={() => (shareDialogOpen = true)}
 		onfork={fork}
 		onspeechvoice={saveSpeechVoice}
 	/>
@@ -1012,12 +974,6 @@
 		</div></div>
 	{:else if session && me.value && !isOwner}
 		<div class="alert alert-info mb-4"><span>{t('chat-render-shared-readonly-banner')}</span></div>
-	{/if}
-	{#if selectedModel && !selectedModel.gdpr}
-		<div class="alert alert-warning alert-soft mb-4"><span>{t('chat-render-gdpr-banner')}</span></div>
-	{/if}
-	{#if selectedModel && !selectedModel.nda}
-		<div class="alert alert-warning alert-soft mb-4"><span>{t('chat-render-nda-banner')}</span></div>
 	{/if}
 
 	<div class="flex min-h-0 flex-1 gap-3" data-chat-workspace>
@@ -1169,7 +1125,7 @@
 			{:else}
 				<SuspensionCard
 					waiting={waitingFrom({ ...waiting, options: canWrite ? waiting.options : [] }, entry.tool_calls)}
-					lead={t(waitingLead(waiting.kind, 'chat'), { tool: waiting.tool ?? '' })}
+					lead={t(waitingLead(waiting.kind, 'chat', waiting.tool), { tool: waiting.tool ?? '' })}
 					busy={answering === entry.turn.id}
 					error={answerErrors[entry.turn.id] ?? null}
 					onanswer={(answer) => answerSuspension(entry.turn.id, waiting, answer)}
@@ -1187,6 +1143,8 @@
 
 						{#if entry.turn.status === 'errored' && entry.turn.error_code === 'loop_exhausted'}
 							<div class="alert alert-warning py-2"><span>{t('chat-loop-exhausted', { attempts: entry.attempts.length })}</span></div>
+						{:else if entry.turn.status === 'errored' && entry.turn.error_code?.startsWith('cls-')}
+							<div class="alert alert-error py-2"><span>{t(entry.turn.error_code, { level: classification?.level?.name ?? '' })}</span></div>
 						{:else if entry.turn.status === 'errored'}
 							<div class="alert alert-error py-2"><span>{entry.turn.error_message}</span></div>
 						{:else if entry.turn.status === 'cancelled'}
@@ -1233,10 +1191,10 @@
 		<div class="flex flex-col gap-2 p-3">
 			<div>
 				<div class="text-xs font-semibold uppercase tracking-wide text-warning">
-					{shown.kind === 'content_guard' ? t('content-guard-confirm-heading') : (shown.header ?? t('chat-prompt-heading'))}
+					{shown.header ?? t('chat-prompt-heading')}
 				</div>
 				<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitised in renderPromptMarkdown -->
-				<div class="prose prose-sm mt-0.5 max-w-none">{@html renderPromptMarkdown(shown.kind === 'content_guard' ? t('content-guard-confirm-question') : shown.question)}</div>
+				<div class="prose prose-sm mt-0.5 max-w-none">{@html renderPromptMarkdown(shown.question)}</div>
 			</div>
 			{#if shown.kind === 'location'}
 				<div class="flex flex-wrap gap-2">
@@ -1256,7 +1214,7 @@
 								aria-pressed={shown.multi_select ? promptChoices.includes(option.label) : undefined}
 								onclick={() => (shown.multi_select ? togglePromptChoice(option.label) : answerPrompt(option.label))}
 							>
-								<span class="font-semibold">{shown.kind === 'content_guard' ? t(`content-guard-confirm-${option.label}`) : option.label}</span>
+								<span class="font-semibold">{option.label}</span>
 								{#if option.description}
 									<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitised in renderPromptMarkdown -->
 									<span class="prose prose-sm max-w-none text-xs font-normal opacity-70">{@html renderPromptMarkdown(option.description)}</span>
@@ -1297,24 +1255,20 @@
 <div data-chat-composer class="card mt-3 w-full shrink-0 border border-base-300 bg-base-100/85 backdrop-blur-sm">
 	<div class="flex flex-col gap-1 p-2">
 		{#if paused}<p class="m-0 px-2 text-sm text-warning" role="status">{t('chat-composer-paused')}</p>{/if}
+		{#if classification?.active && models.length === 0}
+			<div class="alert alert-warning alert-soft mx-2 py-2 text-xs" role="alert"><span>{t('cls-chat-no-model')}</span></div>
+		{/if}
+		{#if classification?.active && classification.level && classification.observed}
+			<div class="alert alert-info alert-soft mx-2 py-2 text-xs" role="status">
+				<span>{t(classification.observed.classes.length > 0 ? 'cls-chat-observed' : 'cls-chat-observed-unnamed', { required: classification.observed.level.name, classes: classification.observed.classes.join(', '), current: classification.level.name })}</span>
+			</div>
+		{/if}
 		<div class="flex flex-wrap items-center gap-2">
 			<CapabilityPicker capabilities={tools} onset={setCapability} />
 			<span class="flex-1"></span>
-			<label
-				class="label cursor-pointer items-center gap-1.5 p-0 text-xs"
-				title={t('chat-render-confidential-title', {
-					requires: t(`chat-render-confidential-requires-${confidentialRequires}`)
-				})}
-			>
-				<input
-					type="checkbox"
-					class="checkbox checkbox-xs"
-					bind:checked={confidential}
-					disabled={confidential || confidentialSaving}
-					onchange={markConfidential}
-				/>
-				<span>{t('chat-render-confidential')}</span>
-			</label>
+			{#if classification?.active && classification.level}
+				<LevelSelector sessionId={id} {classification} onchanged={levelChanged} onerror={(message) => (notice = message)} />
+			{/if}
 			<select
 				class="select select-xs w-auto max-w-48"
 				aria-label={t('chat-render-effort-title')}
@@ -1329,9 +1283,6 @@
 					</option>
 				{/each}
 			</select>
-			{#if confidential && models.length === 0}
-				<div class="alert alert-warning alert-soft mx-2 py-2 text-xs" role="alert"><span>{t('chat-render-confidential-no-model')}</span></div>
-			{/if}
 			{#if feedback.enabled}
 				<!-- The feedback entry point for conversation pages. The floating
 				     button is suppressed here (it would sit on top of send/stop),
@@ -1547,4 +1498,8 @@
 			<button onclick={closeVoice}>{t('chat-render-close')}</button>
 		</form>
 	</dialog>
+{/if}
+
+{#if canWrite}
+	<ShareDialog bind:open={shareDialogOpen} sessionId={id} onsaved={async (linkCopied) => { await Promise.all([loadMeta(), loadShares()]); shareSaved(linkCopied); }} />
 {/if}

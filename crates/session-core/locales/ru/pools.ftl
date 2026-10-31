@@ -29,8 +29,6 @@ pools-field-allowed-groups-hint = Группы AIplane, которым разр�
 pools-field-voices = Голоса (lang=voice по одному в строке)
 pools-field-offer-voices = Доступные голоса (по одному в строке, выбирает пользователь)
 pools-no-backends = Бэкенды ещё не заданы. Сначала добавьте один на странице «Бэкенды».
-pools-field-gdpr = Соответствует GDPR
-pools-field-nda = Покрыто NDA
 pools-field-enforce-limits = Применять лимиты запросов и квоты
 
 upstreams-problem-no-backends = Бэкенды не назначены — в этом пуле некому обслуживать запросы.

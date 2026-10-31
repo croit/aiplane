@@ -24,8 +24,6 @@ searchable-select-search-placeholder = 搜索选项…
 searchable-select-search-aria = 搜索{ $field }
 searchable-select-clear-search = 清除搜索
 searchable-select-no-results = 没有匹配的选项。
-searchable-select-model-gdpr = GDPR
-searchable-select-model-nda = NDA
 
 # 当某项可选功能在 /admin/settings 中被关闭时，用它代替该页面显示。此时
 # 导航项会消失；这是对旧链接或手动输入网址的回应。

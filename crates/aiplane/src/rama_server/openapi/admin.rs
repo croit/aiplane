@@ -4,6 +4,7 @@
 //! The `/api/v0/admin/*` operator surfaces.
 
 use super::*;
+use crate::rama_server::pages::classification::types as classification;
 use crate::rama_server::pages::{branding, json_admin as admin, json_tokens};
 
 /// The parts the logo upload reads from its multipart body.
@@ -20,8 +21,57 @@ const LOGO_PARTS: &[Part] = &[
     },
 ];
 
+const SAMPLE_PARTS: &[Part] = &[
+    Part {
+        name: "file",
+        kind: PartKind::File,
+        required: false,
+    },
+    Part {
+        name: "text",
+        kind: PartKind::Text,
+        required: false,
+    },
+];
+
+const CLASSIFICATION_FILE_PARTS: &[Part] = &[Part {
+    name: "file",
+    kind: PartKind::File,
+    required: true,
+}];
+
 pub(super) fn operations() -> Vec<Op> {
     vec![
+        get("/api/v0/admin/classification", Access::Admin)
+            .ok(json::<classification::ClassificationState>()),
+        put("/api/v0/admin/classification", Access::Admin)
+            .body(json::<classification::SaveBody>())
+            .ok(json::<classification::ClassificationState>())
+            .errors(&[400]),
+        post(
+            "/api/v0/admin/classification/classes/{id}/terms",
+            Access::Admin,
+        )
+        .body(Content::Multipart(CLASSIFICATION_FILE_PARTS))
+        .ok(json::<classification::TermsUploaded>())
+        .errors(&[400, 404, 413]),
+        delete(
+            "/api/v0/admin/classification/classes/{id}/terms",
+            Access::Admin,
+        )
+        .no_content()
+        .errors(&[404]),
+        post("/api/v0/admin/classification/inspect", Access::Admin)
+            .body(Content::Multipart(CLASSIFICATION_FILE_PARTS))
+            .ok(json::<classification::InspectResult>())
+            .errors(&[400, 413]),
+        post("/api/v0/admin/classification/test", Access::Admin)
+            .body(Content::Multipart(SAMPLE_PARTS))
+            .ok(json::<classification::TestResult>())
+            .errors(&[400, 413, 502]),
+        get("/api/v0/admin/classification/events", Access::Admin)
+            .ok(json::<classification::EventsView>())
+            .errors(&[400]),
         get("/api/v0/admin/groups", Access::Admin).ok(json::<admin::GroupsView>()),
         put("/api/v0/admin/groups", Access::Admin)
             .body(json::<admin::GroupSaveBody>())

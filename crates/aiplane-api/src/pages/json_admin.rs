@@ -1529,27 +1529,9 @@ pub async fn settings_list(State(state): State<Arc<RamaState>>, req: Request) ->
                 .fields
                 .iter()
                 .map(|f| {
-                    let (models, model_options) = match f.kind {
-                        settings::Kind::Model(kind) => {
-                            let models = state.upstreams.models_for_kind(kind);
-                            let model_options =
-                                if kind == aiplane_core::server::upstreams::PoolKind::SystemOne {
-                                    state
-                                        .upstreams
-                                        .models_with_compliance_for_kind(kind)
-                                        .into_iter()
-                                        .map(|(id, compliance)| SettingsModelOption {
-                                            id,
-                                            gdpr: compliance.gdpr,
-                                            nda: compliance.nda,
-                                        })
-                                        .collect::<Vec<_>>()
-                                } else {
-                                    Vec::new()
-                                };
-                            (models, model_options)
-                        }
-                        _ => (Vec::new(), Vec::new()),
+                    let models = match f.kind {
+                        settings::Kind::Model(kind) => state.upstreams.models_for_kind(kind),
+                        _ => Vec::new(),
                     };
                     SettingsFieldView {
                         key: f.key,
@@ -1560,7 +1542,6 @@ pub async fn settings_list(State(state): State<Arc<RamaState>>, req: Request) ->
                         secret_set: matches!(f.kind, settings::Kind::Secret)
                             && effective.secret_is_set(f.key),
                         models,
-                        model_options,
                         // Closed option set for a `choice` field; empty for
                         // every other kind. The SPA labels each option from
                         // its own catalog, so only the identifiers travel.
@@ -1618,22 +1599,12 @@ pub struct SettingsFieldView {
     pub secret_set: bool,
     /// The models a `model` field can name.
     pub models: Vec<String>,
-    /// The same models with their compliance flags, for a field naming a
-    /// `system_one` model; empty otherwise.
-    pub model_options: Vec<SettingsModelOption>,
     /// The allowed values of a `choice` field; empty otherwise.
     pub choices: &'static [&'static str],
     /// The built-in value the gateway uses while no value is stored; empty
     /// for a field without one. The editor shows it and its reset button
     /// restores it.
     pub default: &'static str,
-}
-
-#[derive(serde::Serialize, schemars::JsonSchema)]
-pub struct SettingsModelOption {
-    pub id: String,
-    pub gdpr: bool,
-    pub nda: bool,
 }
 
 fn settings_span(span: settings::Span) -> &'static str {
@@ -2129,8 +2100,6 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
             kind: p.kind.clone(),
             strategy: p.strategy.clone(),
             fallback_offline: p.fallback_offline.clone(),
-            compliance_gdpr: p.compliance_gdpr,
-            compliance_nda: p.compliance_nda,
             enforce_limits: p.enforce_limits,
             sort_order: p.sort_order,
             allowed_groups: p.allowed_groups.clone(),
@@ -2254,8 +2223,6 @@ pub struct PoolView {
     pub kind: String,
     pub strategy: String,
     pub fallback_offline: Option<String>,
-    pub compliance_gdpr: bool,
-    pub compliance_nda: bool,
     pub enforce_limits: bool,
     pub sort_order: i64,
     /// The groups that may use the pool; empty = everyone.
@@ -3137,10 +3104,6 @@ pub struct PoolSaveBody {
     #[serde(default)]
     pub fallback_offline: Option<String>,
     #[serde(default)]
-    pub compliance_gdpr: bool,
-    #[serde(default)]
-    pub compliance_nda: bool,
-    #[serde(default)]
     pub enforce_limits: bool,
     #[serde(default)]
     pub sort_order: i64,
@@ -3229,8 +3192,6 @@ pub async fn pools_save(State(state): State<Arc<RamaState>>, req: Request) -> Re
         kind: parsed.kind,
         strategy,
         fallback_offline: parsed.fallback_offline,
-        compliance_gdpr: parsed.compliance_gdpr,
-        compliance_nda: parsed.compliance_nda,
         enforce_limits: parsed.enforce_limits,
         sort_order: parsed.sort_order,
         allowed_groups: parsed.allowed_groups,

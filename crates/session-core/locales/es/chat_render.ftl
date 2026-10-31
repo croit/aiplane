@@ -14,8 +14,6 @@ chat-render-tts-voice-aria = Voz de las respuestas
 chat-render-tts-voice-default = Voz predeterminada
 chat-render-new-conversation-fallback = Nueva conversación
 
-chat-render-gdpr-banner = Estás enviando datos a un modelo que no cumple con el RGPD. No introduzcas información personal (nombres, correos electrónicos, direcciones, datos de clientes o empleados).
-chat-render-nda-banner = Este modelo no está cubierto por un acuerdo de confidencialidad. No envíes material protegido por un NDA ni información confidencial.
 chat-render-shared-readonly-banner = Chat compartido — solo lectura. Solo quien lo creó puede responder.
 
 chat-render-composer-placeholder = Escribe un mensaje al modelo…
@@ -64,7 +62,7 @@ chat-render-close = Cerrar
 chat-render-share-label-on = Compartido ✓
 chat-render-share-link-copied = Enlace copiado ✓
 chat-render-share-label-off = Compartir
-chat-render-share-tooltip = Los chats compartidos pueden leerlos cualquier usuario con sesión iniciada que tenga el enlace
+chat-render-share-tooltip = Compartir esta conversación por enlace o con personas y grupos concretos
 
 chat-render-fork-tooltip = Copia esta conversación en tus propios chats para seguir chateando
 chat-render-fork-label = Continuar en mis chats
@@ -101,11 +99,4 @@ chat-render-delegated-readonly-banner = Conversación delegada — historial de 
 chat-render-delegated-root-link = Abrir la conversación principal
 chat-render-delegated-root-unavailable = La conversación principal no está disponible. Este historial sigue siendo de solo lectura.
 
-chat-render-confidential = Confidencial
-chat-render-confidential-title = Marca esta conversación como confidencial. Solo los modelos con { $requires } siguen siendo seleccionables, y esto no se puede deshacer.
-chat-render-confidential-requires-both = cobertura GDPR y NDA
-chat-render-confidential-requires-gdpr = cobertura GDPR
-chat-render-confidential-requires-nda = cobertura NDA
-chat-render-confidential-no-model = Ningún modelo está autorizado para datos confidenciales. Pide a un administrador que autorice uno.
-chat-render-confidential-model-switched = Esta conversación ahora es confidencial; el modelo seleccionado no estaba autorizado para ella.
 chat-render-last-model-unavailable = El modelo usado por última vez en esta conversación, { $model }, no está disponible aquí; en su lugar se ha seleccionado el primer modelo disponible.

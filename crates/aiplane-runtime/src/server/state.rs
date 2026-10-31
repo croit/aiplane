@@ -8,6 +8,7 @@ use arc_swap::ArcSwap;
 use crate::server::tools::ToolRegistry;
 use aiplane_core::server::auth::oidc::OidcClient;
 use aiplane_core::server::automatic_routing::AutomaticRouter;
+use aiplane_core::server::classification::Scheme;
 use aiplane_core::server::config::Config;
 use aiplane_core::server::crypto::Crypto;
 use aiplane_core::server::db::Pool;
@@ -240,6 +241,14 @@ pub struct AppState {
     /// [`Self::typst_templates`], [`Self::sandbox_client`] and
     /// [`Self::comfyui`] rather than touching this field.
     surface: Arc<ArcSwap<FeatureSurface>>,
+    /// The classification scheme (levels and data classes) as one snapshot, so
+    /// the model filter, the turn check and the detector never query the
+    /// database per check. Swapped by [`Self::reload_scheme`]; read through
+    /// [`Self::scheme`].
+    scheme: Arc<ArcSwap<Scheme>>,
+    /// The classes' word lists, compiled once with the scheme and swapped with
+    /// it by [`Self::reload_scheme`]; read through [`Self::term_matchers`].
+    term_matchers: Arc<ArcSwap<crate::classification_detector::TermMatchers>>,
     /// RAG indexer + index cache. `None` when RAG is off; `rag_search` /
     /// `rag_list_collections` then surface a clear "not configured" error
     /// rather than silently misroute.
@@ -308,6 +317,8 @@ impl AppState {
             tool_family_builder: None,
             rbac,
             surface: Arc::new(ArcSwap::from_pointee(FeatureSurface::default())),
+            scheme: Arc::new(ArcSwap::from_pointee(Scheme::default())),
+            term_matchers: Arc::default(),
             indexer: None,
             crypto,
             mcp,
@@ -746,7 +757,60 @@ impl AppState {
             self.tools.store(Arc::new(rebuilt));
         }
         self.config.store(next);
+        self.reload_scheme().await;
         self.grant_caps.invalidate();
+    }
+
+    /// The classification scheme snapshot. Bind it once per request.
+    pub fn scheme(&self) -> Arc<Scheme> {
+        self.scheme.load_full()
+    }
+
+    pub fn term_matchers(&self) -> Arc<crate::classification_detector::TermMatchers> {
+        self.term_matchers.load_full()
+    }
+
+    /// Whether `model` may receive the conversation `session_id`: always true
+    /// while the scheme is inactive, otherwise the model's level must reach the
+    /// conversation's. At the lowest level every model is cleared, even one
+    /// the registry does not list (yet); above it an unknown model is not.
+    pub async fn model_cleared_for_session(
+        &self,
+        session_id: &str,
+        model: &str,
+        access: &aiplane_core::server::upstreams::PoolAccess,
+    ) -> bool {
+        let scheme = self.scheme();
+        if !scheme.is_active() {
+            return true;
+        }
+        let conversation =
+            aiplane_core::server::classification::level_or_highest(&self.db, &scheme, session_id)
+                .await;
+        if conversation.rank == scheme.lowest().rank {
+            return true;
+        }
+        self.upstreams
+            .models_with_level_for_kind_for(aiplane_core::server::upstreams::PoolKind::Chat, access)
+            .into_iter()
+            .find_map(|(id, rank)| (id == model).then_some(rank))
+            .is_some_and(|rank| rank >= conversation.rank)
+    }
+
+    /// Re-read the scheme from the database and swap it in. Called at boot,
+    /// after every settings save and after any edit of the scheme tables.
+    pub async fn reload_scheme(&self) {
+        match aiplane_core::server::classification::load_scheme(&self.db).await {
+            Ok(scheme) => {
+                self.term_matchers.store(Arc::new(
+                    crate::classification_detector::TermMatchers::load(&self.db).await,
+                ));
+                self.scheme.store(Arc::new(scheme));
+            }
+            Err(err) => {
+                tracing::error!(error = %err, "reading the classification scheme; keeping the current one");
+            }
+        }
     }
 
     /// Rebuild the feature bundle from `config` and swap it in.

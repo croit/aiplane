@@ -87,10 +87,6 @@ pub enum ImageGenError {
     /// Editing was requested but no image backend advertises edit support.
     #[error("no configured image backend supports editing")]
     EditUnsupported,
-    /// Editing was blocked because the target backend is non-GDPR-compliant —
-    /// we won't ship existing user images to it.
-    #[error("image editing is blocked for this backend (non-GDPR-compliant provider)")]
-    ComplianceBlocked,
 }
 
 /// OpenAI `/images/generations` response envelope (the subset we read). Both
@@ -268,13 +264,6 @@ impl ImageGenerator {
         if !backend.supports_edit() {
             return Err(ImageGenError::EditUnsupported);
         }
-        // Editing sends the user's *existing* image to the provider — a
-        // stronger data-egress concern than a text prompt. Block it against a
-        // non-GDPR-compliant (e.g. cloud) backend even if that backend claims
-        // edit support.
-        if !self.model_is_gdpr_compliant(&real_model) {
-            return Err(ImageGenError::ComplianceBlocked);
-        }
         let backend_name = backend.name.clone();
         let url = format!("{}/images/edits", backend.base_url);
 
@@ -399,17 +388,6 @@ impl ImageGenerator {
             units,
         );
         result
-    }
-
-    /// Whether the image model's pool is GDPR-compliant (drives the edit gate).
-    /// Unknown model → treat as non-compliant (fail safe).
-    fn model_is_gdpr_compliant(&self, model: &str) -> bool {
-        self.upstreams
-            .models_with_compliance_for_kind(PoolKind::Image)
-            .into_iter()
-            .find(|(m, _)| m == model)
-            .map(|(_, c)| c.gdpr)
-            .unwrap_or(false)
     }
 
     /// The model id the image pool advertises, if exactly one is discoverable.
@@ -602,7 +580,7 @@ mod tests {
             voices: Default::default(),
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
-            compliance: Default::default(),
+            level_rank: 0,
             enforce_limits: true,
             kind: PoolKind::Image,
             strategy: PickerStrategy::RoundRobin,
@@ -612,17 +590,15 @@ mod tests {
         }
     }
 
-    /// An image pool whose backend advertises edit support, with tunable
-    /// GDPR compliance (for the edit gate tests).
-    fn edit_pool(base_url: &str, gdpr: bool) -> UpstreamPoolConfig {
-        use aiplane_core::server::upstreams::config::Compliance;
+    /// An image pool whose backend advertises edit support.
+    fn edit_pool(base_url: &str) -> UpstreamPoolConfig {
         let mut backend = image_backend(base_url);
         backend.supports_edit = true;
         UpstreamPoolConfig {
             voices: Default::default(),
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
-            compliance: Compliance { gdpr, nda: true },
+            level_rank: 0,
             enforce_limits: true,
             kind: PoolKind::Image,
             strategy: PickerStrategy::RoundRobin,
@@ -857,7 +833,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let imggen = generator(Some(edit_pool(&server.uri(), true))).await;
+        let imggen = generator(Some(edit_pool(&server.uri()))).await;
         let img = imggen
             .edit(
                 Some("test-image"),
@@ -894,25 +870,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn edit_blocked_on_non_gdpr_backend() {
-        // Edit-capable but non-GDPR-compliant → refuse to ship user image.
-        let imggen = generator(Some(edit_pool("http://unused.invalid", false))).await;
-        let err = imggen
-            .edit(
-                Some("test-image"),
-                PNG.to_vec(),
-                "image/png",
-                "x",
-                None,
-                &PoolAccess::all(),
-                &meta(),
-            )
-            .await
-            .unwrap_err();
-        assert!(matches!(err, ImageGenError::ComplianceBlocked), "{err:?}");
-    }
-
-    #[tokio::test]
     async fn edit_available_reflects_backend_flag() {
         assert!(
             !generator(Some(image_pool("http://x")))
@@ -920,7 +877,7 @@ mod tests {
                 .edit_available()
         );
         assert!(
-            generator(Some(edit_pool("http://x", true)))
+            generator(Some(edit_pool("http://x")))
                 .await
                 .edit_available()
         );

@@ -24,6 +24,7 @@ use session_core::workers::{BrowserAction, CaptureRegion};
 use shared::api::ToolDef;
 
 use aiplane_features::server::chat_attachments;
+use aiplane_runtime::classification_output::upload_stamped;
 use aiplane_runtime::server::tools::feedback::BrowserReply;
 use aiplane_runtime::server::tools::{Tool, ToolContext, ToolError, ToolFuture};
 
@@ -47,6 +48,10 @@ struct Args {
 impl Tool for ShowScreenshot {
     fn id(&self) -> &str {
         "show_screenshot"
+    }
+
+    fn egress(&self) -> bool {
+        false
     }
 
     fn max_duration(&self) -> Option<std::time::Duration> {
@@ -154,7 +159,7 @@ impl Tool for ShowScreenshot {
             )
             .await
             .map_err(|e| ToolError::Failed(format!("reserve filename: {e}")))?;
-            let outcome = chat_attachments::upload(s3, turn_id, &filename, &mime, bytes)
+            let outcome = upload_stamped(&ctx, s3, turn_id, &filename, &mime, bytes)
                 .await
                 .map_err(|e| {
                     ToolError::Failed(format!(

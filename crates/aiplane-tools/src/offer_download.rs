@@ -38,6 +38,7 @@ use shared::api::ToolDef;
 use aiplane_core::server::db::documents::DocumentFormat;
 use aiplane_features::server::chat_attachments;
 use aiplane_features::server::file_refs::{self, FileRef};
+use aiplane_runtime::classification_output::upload_stamped;
 use aiplane_runtime::server::tools::{Tool, ToolContext, ToolError, ToolFuture, ToolResult};
 
 pub struct OfferDownload;
@@ -54,6 +55,10 @@ struct OfferArgs {
 impl Tool for OfferDownload {
     fn id(&self) -> &str {
         "offer_download"
+    }
+
+    fn egress(&self) -> bool {
+        false
     }
 
     fn schema(&self) -> ToolDef {
@@ -309,9 +314,10 @@ async fn offer_document(
     let bytes = content.as_bytes().to_vec();
     let size = bytes.len() as u64;
     let mime = file_refs::document_mime(format);
-    chat_attachments::upload(s3, turn_id, &filename, mime, bytes)
+    let outcome = upload_stamped(ctx, s3, turn_id, &filename, mime, bytes)
         .await
         .map_err(|e| ToolError::Failed(format!("storing the document as a file: {e}")))?;
+    let filename = outcome.filename;
     let marker = session_core::attachments::marker_line(
         &filename,
         mime,
@@ -446,6 +452,7 @@ mod tests {
             agent: None,
             personal_agent: None,
             personal_execution: None,
+            classification: None,
             pending_actions: None,
             pending_execution_facts: None,
             call_id: None,

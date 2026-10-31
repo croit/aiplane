@@ -204,6 +204,13 @@ generated `set_<slot>` tools of one agent's state, one per slot the model may
 write. They exist only for an agent run and need no grant
 ([`agent-spec.md`](agent-spec.md#state)).
 
+`ClassifiedToolSource` (`aiplane-runtime::classification_gate`) wraps the
+grant-narrowed source of a person's conversation and applies the
+[data classification](classification.md#tools) of the tool: above its level a
+tool is hidden or gated, per assignment. It changes what a call may do, never
+what the person is granted. Without an active scheme it passes `inner` through
+unchanged.
+
 `RunToolSource` (`aiplane-runtime::agents::profile`) is how an agent run sees
 all of them. It wraps the turn's grant-narrowed source and adds the run's
 synthetic tools (`set_<slot>`, `forward_request`) on top. It also wraps every

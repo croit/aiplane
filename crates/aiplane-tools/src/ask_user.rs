@@ -91,6 +91,10 @@ impl Tool for AskUser {
         "ask_user"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn max_duration(&self) -> Option<std::time::Duration> {
         Some(std::time::Duration::from_secs(MAX_DURATION_SECS))
     }

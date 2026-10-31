@@ -219,6 +219,17 @@ async fn run_compaction(
     tokens_before: Option<i64>,
     log: Option<RunLog>,
 ) -> Result<bool, String> {
+    // The summary carries the whole conversation: never to a model the
+    // conversation's level does not clear (a retrieval can raise it after
+    // the turn's model was chosen).
+    if !state
+        .model_cleared_for_session(session_id, model, access)
+        .await
+    {
+        return Err(format!(
+            "model `{model}` is not cleared for this conversation's classification level, so the conversation was not summarised"
+        ));
+    }
     let turns = chat::list_turns(&state.db, session_id)
         .await
         .map_err(|e| e.to_string())?;

@@ -28,6 +28,7 @@ use session_core::db as chat;
 use shared::api::ToolDef;
 
 use aiplane_features::server::chat_attachments;
+use aiplane_runtime::classification_output::upload_stamped;
 use aiplane_runtime::server::tools::sandbox::b64;
 use aiplane_runtime::server::tools::{Tool, ToolContext, ToolError, ToolFuture};
 
@@ -385,6 +386,10 @@ impl Tool for GenerateQrCode {
         "generate_qr_code"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),
@@ -554,10 +559,9 @@ impl Tool for GenerateQrCode {
                     .await
                     .map_err(|e| ToolError::Failed(format!("reserve filename: {e}")))?;
             let size = bytes.len() as u64;
-            let outcome =
-                chat_attachments::upload(s3, turn_id, &filename, args.format.mime(), bytes)
-                    .await
-                    .map_err(|e| ToolError::Failed(format!("s3 upload failed: {e}")))?;
+            let outcome = upload_stamped(&ctx, s3, turn_id, &filename, args.format.mime(), bytes)
+                .await
+                .map_err(|e| ToolError::Failed(format!("s3 upload failed: {e}")))?;
             let marker = chat_attachments::marker_line(turn_id, &outcome);
             chat::append_content(&ctx.db, turn_id, &format!("\n\n{marker}\n\n"))
                 .await

@@ -91,6 +91,20 @@ pub(super) async fn generate_session_title(
         msg_len = user_msg.len(),
         "title generation: starting"
     );
+    // The title call carries the user's message, so it must not reach a model
+    // the conversation's level does not clear. The level is read once the
+    // turn has been through its classification (an upload or the typed text
+    // can raise it), not when the message was accepted.
+    if state.scheme().is_active() {
+        wait_for_turns_to_settle(&state, &session_id).await;
+        if !state
+            .model_cleared_for_session(&session_id, &model, &PoolAccess::all())
+            .await
+        {
+            tracing::info!(%session_id, %model, "title generation: model not cleared for the conversation's level");
+            return;
+        }
+    }
     let raw = match call_upstream(&state, &payer, &model, &user_msg).await {
         Ok(r) => r,
         Err(err) => {
@@ -142,6 +156,28 @@ pub(super) async fn generate_session_title(
     // title on the user's next page interaction.
     if let Some(worker) = state.chats.get(&user_id, &session_id) {
         let _ = worker.broadcast.send(TurnUpdate::SidebarChanged);
+    }
+}
+
+const SETTLE_POLL: Duration = Duration::from_millis(500);
+const SETTLE_LIMIT: Duration = Duration::from_secs(20 * 60);
+
+/// Wait until the conversation has no unfinished work, bounded: a turn
+/// streaming, a message queued behind another turn, or one claimed from the
+/// queue that has not started yet. Each of them can still raise the level, and
+/// the title call carries the message. Work still going after the bound is not
+/// waited for further: the title is then checked against whatever level the
+/// conversation holds.
+async fn wait_for_turns_to_settle(state: &RamaState, session_id: &str) {
+    let started = std::time::Instant::now();
+    while started.elapsed() < SETTLE_LIMIT {
+        let unfinished = chat::has_unfinished_work(&state.db, session_id)
+            .await
+            .unwrap_or(false);
+        if !unfinished {
+            return;
+        }
+        tokio::time::sleep(SETTLE_POLL).await;
     }
 }
 

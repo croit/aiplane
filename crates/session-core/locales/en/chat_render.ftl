@@ -13,8 +13,6 @@ chat-render-tts-voice-aria = Spoken-reply voice
 chat-render-tts-voice-default = Default voice
 chat-render-new-conversation-fallback = New conversation
 
-chat-render-gdpr-banner = You are sending data to a non-GDPR-compliant model. Do not enter personal information (names, emails, addresses, customer or employee data).
-chat-render-nda-banner = This model is not covered by a confidentiality agreement. Do not send NDA-protected or proprietary material.
 chat-render-shared-readonly-banner = Shared chat — read-only. Only the creator can reply.
 
 chat-render-composer-placeholder = Message the model…
@@ -63,7 +61,7 @@ chat-render-close = Close
 chat-render-share-label-on = Shared ✓
 chat-render-share-link-copied = Link copied ✓
 chat-render-share-label-off = Share
-chat-render-share-tooltip = Shared chats are readable by any signed-in user who has the link
+chat-render-share-tooltip = Share this conversation by link or with named people and groups
 
 chat-render-fork-tooltip = Copy this conversation into your own chats so you can keep chatting
 chat-render-fork-label = Continue in my chats
@@ -100,11 +98,4 @@ chat-render-delegated-readonly-banner = Delegated conversation — read-only his
 chat-render-delegated-root-link = Open root conversation
 chat-render-delegated-root-unavailable = The root conversation is unavailable. This history remains read-only.
 
-chat-render-confidential = Confidential
-chat-render-confidential-title = Marks this conversation confidential. Only models with { $requires } stay selectable, and this cannot be undone.
-chat-render-confidential-requires-both = GDPR and NDA coverage
-chat-render-confidential-requires-gdpr = GDPR coverage
-chat-render-confidential-requires-nda = NDA coverage
-chat-render-confidential-no-model = No model is cleared for confidential data. Ask an administrator to clear one.
-chat-render-confidential-model-switched = This conversation is confidential now; the selected model was not cleared for it.
 chat-render-last-model-unavailable = The model this conversation last used, { $model }, is not available here; the first available model is selected instead.

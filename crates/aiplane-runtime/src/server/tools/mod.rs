@@ -44,6 +44,10 @@ pub use registry::{GrantedToolSource, ToolPhase, ToolRegistry, ToolSource};
 #[derive(Clone)]
 pub struct ToolContext {
     pub personal_execution: Option<Arc<crate::agent_run::PersonalAgentExecution>>,
+    /// What marks this turn's generated files; `None` outside a person's chat
+    /// turn, where there is no conversation level to mark with. See
+    /// [`crate::classification_output::upload_stamped`].
+    pub classification: Option<crate::classification_output::TurnClassification>,
     /// Who the tool acts for. A person on the chat page and on a `gwk_`
     /// bearer; a system principal on a `gws_` bearer. Scope rows by
     /// [`Principal::subject_id`]; a tool that acts *for a person* must go
@@ -230,6 +234,7 @@ impl ToolContext {
             agent: None,
             personal_agent: None,
             personal_execution: None,
+            classification: None,
             call_id: None,
         }
     }
@@ -579,6 +584,16 @@ pub trait Tool: Send + Sync + 'static {
     /// that is not read-only); everything else is `false` because nothing
     /// is known about it. An agent asks for approval before such a call
     /// unless its spec sets the tool's `permission` (`docs/agent-hil.md` → "Per-tool approval").
+    /// Whether data leaves this conversation through the tool: out of
+    /// AIplane (an external URL or API, an MCP server, a model backend the
+    /// tool names) or into memory and scheduled runs that other conversations
+    /// read. Data classification filters and gates only tools that do, so the
+    /// default is the safe answer; a tool overrides it only when nothing it
+    /// receives or returns leaves the conversation.
+    fn egress(&self) -> bool {
+        true
+    }
+
     fn changes_state(&self) -> bool {
         false
     }
@@ -603,6 +618,10 @@ pub(crate) mod tests {
         }
         fn id(&self) -> &str {
             "company_echo"
+        }
+
+        fn egress(&self) -> bool {
+            false
         }
         fn schema(&self) -> shared::api::ToolDef {
             echo::Echo.schema()

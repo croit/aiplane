@@ -3,6 +3,7 @@
 	import SearchableSelect from '#lib/components/SearchableSelect.svelte';
 	import { modelSelectOptions, type ChatModelOption } from '#lib/model-option.js';
 	import { formatModelPrice } from '#lib/model-price.js';
+	import { causeMessage, levelBadgeClass, type ChatClassification } from '#lib/classification.js';
 
 	let {
 		id,
@@ -12,6 +13,7 @@
 		canFork,
 		shared,
 		linkCopied,
+		classification,
 		models,
 		currency,
 		model = $bindable(),
@@ -33,6 +35,7 @@
 		canFork: boolean;
 		shared: boolean;
 		linkCopied: boolean;
+		classification: ChatClassification | null;
 		models: ChatModelOption[];
 		currency: string;
 		model: string;
@@ -48,10 +51,12 @@
 		onspeechvoice: () => void;
 	} = $props();
 
-	let modelOptions = $derived(modelSelectOptions(models, {
-		gdpr: t('searchable-select-model-gdpr'),
-		nda: t('searchable-select-model-nda')
-	}, (price) => formatModelPrice(price, currency, t, n)));
+	const cause = $derived(causeMessage(classification?.cause));
+	let modelOptions = $derived(modelSelectOptions(
+			models,
+			(price) => formatModelPrice(price, currency, t, n),
+			(levelId) => classification?.levels.find((l) => l.id === levelId)?.name ?? null
+		));
 	let transcriptionOptions = $derived(transcriptionModels.map((id) => ({ value: id, label: id })));
 	let speechOptions = $derived([
 		{ value: '', label: t('chat-render-tts-voice-default') },
@@ -63,6 +68,9 @@
 	<h1 class="hidden min-w-0 flex-1 truncate text-lg font-semibold sm:block">
 		{title?.trim() || t('chat-render-new-conversation-fallback')}
 	</h1>
+	{#if classification?.active && classification.level}
+		<span class={levelBadgeClass(classification.level.color)} title={cause ? t(cause.key, cause.args) : undefined} data-classification-badge>{classification.level.name}</span>
+	{/if}
 	{#if canWrite}
 		<div class="order-last flex w-full min-w-0 items-center gap-2 sm:order-none sm:w-auto">
 			{#if models.length > 0}

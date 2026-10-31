@@ -54,9 +54,7 @@ pub mod registry;
 mod scheduler;
 pub mod wait;
 
-pub use config::{
-    BackendConfig, Compliance, FallbackConfig, PickerStrategy, PoolKind, UpstreamPoolConfig,
-};
+pub use config::{BackendConfig, FallbackConfig, PickerStrategy, PoolKind, UpstreamPoolConfig};
 pub use prefix_index::PrefixIndex;
 pub use profile::{BackendProfile, Detected};
 pub use registry::{

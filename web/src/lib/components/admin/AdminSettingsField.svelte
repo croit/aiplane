@@ -3,7 +3,6 @@
 	import { settingsCatalogKey } from '#lib/admin-settings.js';
 	import { t } from '#lib/i18n.svelte.js';
 	import SearchableSelect from '#lib/components/SearchableSelect.svelte';
-	import { modelSelectOptions } from '#lib/model-option.js';
 
 	let { field, draft, error, onchange, onclear }: { field: AdminSettingsField; draft: string; error?: string; onchange: (key: string, value: string) => void; onclear: (key: string) => Promise<void> } = $props();
 	let labelKey = $derived(settingsCatalogKey('settings-f-', field.key));
@@ -11,19 +10,9 @@
 	let label = $derived(t(labelKey) === labelKey ? (field.key.split('.').pop() ?? field.key) : t(labelKey));
 	let help = $derived(t(helpKey) === helpKey ? '' : t(helpKey));
 	let unavailableModel = $derived(field.kind === 'model' && draft !== '' && !field.models.includes(draft));
-	let selectedModel = $derived(field.model_options.find((model) => model.id === draft));
-	let missingCompliance = $derived([
-		...(selectedModel && !selectedModel.gdpr ? [t('searchable-select-model-gdpr')] : []),
-		...(selectedModel && !selectedModel.nda ? [t('searchable-select-model-nda')] : [])
-	]);
 	let modelOptions = $derived([
 		{ value: '', label: t('settings-model-automatic') },
-		...(field.model_options.length
-			? modelSelectOptions(field.model_options, {
-				gdpr: t('searchable-select-model-gdpr'),
-				nda: t('searchable-select-model-nda')
-			})
-			: field.models.map((model) => ({ value: model, label: model }))),
+		...field.models.map((model) => ({ value: model, label: model })),
 		...(unavailableModel ? [{ value: draft, label: t('settings-model-unavailable', { model: draft }) }] : [])
 	]);
 </script>
@@ -49,6 +38,5 @@
 		<input id={field.key} class="input w-full" class:input-error={error} aria-invalid={error ? true : undefined} type={field.kind === 'int' || field.kind === 'float' ? 'number' : 'text'} step={field.kind === 'float' ? 'any' : undefined} value={draft} oninput={(event) => onchange(field.key, (event.currentTarget as HTMLInputElement).value)} />
 	{/if}
 	{#if error}<p class="m-0 text-xs text-error" role="alert">{error}</p>{/if}
-	{#if missingCompliance.length > 0}<div class="alert alert-warning alert-soft py-2 text-xs" role="alert">{t('settings-content-guard-model-warning', { requirements: missingCompliance.join(', ') })}</div>{/if}
 	<p class="m-0 break-all text-xs text-base-content/60"><code class="text-base-content/45">{field.key}</code>{#if help} · {help}{/if}</p>
 </div>

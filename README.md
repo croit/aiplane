@@ -96,10 +96,11 @@ connect company systems and define who can access models, tools and workflows.
   [Manage access](docs/admin/access.md).
 - 🔑 **Scoped tokens and usage limits.** Issue revocable API tokens, restrict
   model and tool access, set request, token or cost quotas, and review usage.
-- ⚖️ **Compliance-aware model controls.** Declare GDPR and NDA coverage for
-  model pools and configure a content guard to monitor, confirm or deny requests
-  that target a pool without the declared coverage.
-  [Review model controls](docs/admin/models.md) · [Configure the content guard](docs/admin/settings.md#access-and-content-guard).
+- ⚖️ **Data and document classification by ISO 27001, TISAX, BSI or TLP.**
+  Rank conversations, uploads and model pools by sensitivity, read document
+  labels and stamps, and let a detector raise, confirm or block content that a
+  model is not cleared for.
+  [Review model controls](docs/admin/models.md) · [Configure data classification](docs/admin/settings.md#data-classification).
 - 📊 **Agent insights and activity history.** Inspect run analytics and export
   agent activity records for review.
   [Observe agent runs](docs/agent-guide/run-observe.md).

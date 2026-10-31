@@ -59,6 +59,10 @@ impl Tool for ImportFile {
         "import_file"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),
@@ -349,6 +353,7 @@ mod tests {
             agent: None,
             personal_agent: None,
             personal_execution: None,
+            classification: None,
             pending_actions: None,
             pending_execution_facts: None,
             call_id: None,

@@ -290,7 +290,7 @@ async fn record(
 /// deleted-session case both fall back to minting a fresh session. The turn
 /// ids are always freshly minted, so reuse never PRIMARY KEY-clashes either.
 async fn open_run_session(
-    db: &aiplane_core::server::db::Pool,
+    state: &crate::server::AppState,
     action: &ScheduledAction,
 ) -> Result<(String, String), crate::server::headless::OpenError> {
     let AutomationOwner::User(user_id) = &action.owner else {
@@ -300,9 +300,9 @@ async fn open_run_session(
         .model
         .as_deref()
         .ok_or(crate::server::headless::OpenError::Unavailable)?;
-    let existing_session = reusable_session(db, action).await?;
-    crate::server::headless::open_session(
-        db,
+    let existing_session = reusable_session(&state.db, action).await?;
+    crate::server::headless::open_user_session(
+        state,
         crate::server::headless::OpenParams {
             owner: crate::server::headless::Owner::User(user_id),
             title: &action.name,
@@ -345,7 +345,7 @@ async fn try_run_action(
     user: &aiplane_core::server::db::users::User,
     run_id: Option<&str>,
 ) -> Result<(String, String), crate::server::headless::OpenError> {
-    let (session_id, assistant_turn_id) = open_run_session(&state.db, action).await?;
+    let (session_id, assistant_turn_id) = open_run_session(state, action).await?;
     let history_limit = action
         .reuse_conversation
         .then(|| (action.reuse_rounds.max(0) as usize).saturating_mul(2));
@@ -491,12 +491,6 @@ mod tests {
     use crate::server::scheduled::{NewAction, create};
     use aiplane_core::server::db::users::User;
 
-    async fn fresh_db() -> aiplane_core::server::db::Pool {
-        aiplane_core::server::db::open(std::path::Path::new(":memory:"))
-            .await
-            .unwrap()
-    }
-
     async fn seed_user(pool: &aiplane_core::server::db::Pool, id: &str) {
         let now = Timestamp::now();
         aiplane_core::server::db::users::upsert(
@@ -552,13 +546,14 @@ mod tests {
     /// so the second run PRIMARY KEY-clashed on `chat_turns.id` and never ran.
     #[tokio::test]
     async fn repeated_runs_open_distinct_sessions_and_turns() {
-        let pool = fresh_db().await;
+        let state = crate::server::headless::tests::state_for("http://127.0.0.1:1").await;
+        let pool = state.db.clone();
         seed_user(&pool, "u1").await;
         let action = create(&pool, new_action(false)).await.unwrap();
 
-        let (s1, t1) = open_run_session(&pool, &action).await.unwrap();
+        let (s1, t1) = open_run_session(&state, &action).await.unwrap();
         // Second fire of the SAME action — must not collide.
-        let (s2, t2) = open_run_session(&pool, &action).await.unwrap();
+        let (s2, t2) = open_run_session(&state, &action).await.unwrap();
 
         assert_ne!(s1, s2, "each run gets its own session");
         assert_ne!(t1, t2, "each run gets its own assistant turn");
@@ -575,17 +570,18 @@ mod tests {
     /// stamps via `mark_ran` between runs, so we simulate that here.
     #[tokio::test]
     async fn reuse_mode_second_run_reuses_session_distinct_turns() {
-        let pool = fresh_db().await;
+        let state = crate::server::headless::tests::state_for("http://127.0.0.1:1").await;
+        let pool = state.db.clone();
         seed_user(&pool, "u1").await;
         let mut action = create(&pool, new_action(true)).await.unwrap();
 
-        let (s1, t1) = open_run_session(&pool, &action).await.unwrap();
+        let (s1, t1) = open_run_session(&state, &action).await.unwrap();
         // The worker records the opened session on the action between fires.
         action.last_session_id = Some(s1.clone());
         chat::finalize_turn(&pool, &t1, TurnStatus::Completed, None)
             .await
             .unwrap();
-        let (s2, t2) = open_run_session(&pool, &action).await.unwrap();
+        let (s2, t2) = open_run_session(&state, &action).await.unwrap();
 
         assert_eq!(s1, s2, "reuse mode keeps the same session across runs");
         assert_ne!(t1, t2, "each run still gets its own assistant turn");
@@ -595,32 +591,34 @@ mod tests {
     /// deleted (a stale `last_session_id` must not error the run).
     #[tokio::test]
     async fn reuse_mode_falls_back_when_prior_session_gone() {
-        let pool = fresh_db().await;
+        let state = crate::server::headless::tests::state_for("http://127.0.0.1:1").await;
+        let pool = state.db.clone();
         seed_user(&pool, "u1").await;
         let mut action = create(&pool, new_action(true)).await.unwrap();
         action.last_session_id = Some("does-not-exist".to_string());
 
-        let (s, _t) = open_run_session(&pool, &action).await.unwrap();
+        let (s, _t) = open_run_session(&state, &action).await.unwrap();
         assert_ne!(s, "does-not-exist", "stale pointer must not be reused");
         // The freshly minted session exists and is owned by the user.
         assert!(chat::get_session(&pool, "u1", &s).await.unwrap().is_some());
     }
     #[tokio::test]
     async fn reuse_refuses_a_running_or_waiting_turn_without_adding_prompt() {
-        let pool = fresh_db().await;
+        let state = crate::server::headless::tests::state_for("http://127.0.0.1:1").await;
+        let pool = state.db.clone();
         seed_user(&pool, "u1").await;
         let mut action = create(&pool, new_action(true)).await.unwrap();
-        let (session, turn) = open_run_session(&pool, &action).await.unwrap();
+        let (session, turn) = open_run_session(&state, &action).await.unwrap();
         action.last_session_id = Some(session.clone());
         assert!(matches!(
-            open_run_session(&pool, &action).await,
+            open_run_session(&state, &action).await,
             Err(crate::server::headless::OpenError::Busy)
         ));
         chat::finalize_turn(&pool, &turn, TurnStatus::Suspended, None)
             .await
             .unwrap();
         assert!(matches!(
-            open_run_session(&pool, &action).await,
+            open_run_session(&state, &action).await,
             Err(crate::server::headless::OpenError::Busy)
         ));
         assert_eq!(chat::list_turns(&pool, &session).await.unwrap().len(), 2);

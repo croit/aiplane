@@ -32,6 +32,7 @@ use shared::api::ToolDef;
 
 use aiplane_features::server::chat_attachments;
 use aiplane_features::server::file_refs::{self, FileRef};
+use aiplane_runtime::classification_output::upload_stamped;
 use aiplane_runtime::server::tools::{Tool, ToolContext, ToolError, ToolFuture};
 
 /// Most members one archive may have.
@@ -76,6 +77,10 @@ struct Member {
 impl Tool for ZipAttachments {
     fn id(&self) -> &str {
         "zip_attachments"
+    }
+
+    fn egress(&self) -> bool {
+        false
     }
 
     fn schema(&self) -> ToolDef {
@@ -196,9 +201,10 @@ impl Tool for ZipAttachments {
                     .await
                     .map_err(|e| ToolError::Failed(format!("reserve filename: {e}")))?;
 
-            chat_attachments::upload(s3, turn_id, &filename, "application/zip", archive)
+            let outcome = upload_stamped(&ctx, s3, turn_id, &filename, "application/zip", archive)
                 .await
                 .map_err(|e| ToolError::Failed(format!("storing the archive: {e}")))?;
+            let filename = outcome.filename;
 
             let marker = session_core::attachments::marker_line(
                 &filename,
@@ -486,6 +492,7 @@ mod tests {
             agent: None,
             personal_agent: None,
             personal_execution: None,
+            classification: None,
             pending_actions: None,
             pending_execution_facts: None,
             call_id: None,

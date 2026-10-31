@@ -16,7 +16,7 @@ use std::collections::HashMap;
 
 use aiplane_core::server::db::automatic_routes::{self, AutomaticRoute};
 use aiplane_core::server::feature_defaults::{self, Feature};
-use aiplane_core::server::upstreams::{Compliance, PoolAccess, PoolKind};
+use aiplane_core::server::upstreams::{PoolAccess, PoolKind};
 
 use crate::server::AppState;
 
@@ -24,10 +24,10 @@ use crate::server::AppState;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelChoice {
     pub id: String,
-    /// The data-handling flags the picker shows: a flag is clear only when
-    /// every pool the name (or, for a route, any model it reaches) is served
-    /// by is clear.
-    pub compliance: Compliance,
+    /// The classification level rank the name is cleared for: the lowest rank
+    /// of every pool the name (or, for a route, any model it reaches) is
+    /// served by.
+    pub level_rank: u32,
     /// Set for an automatic route.
     pub route: Option<RouteChoice>,
 }
@@ -43,6 +43,11 @@ pub struct RouteChoice {
 }
 
 impl ModelChoice {
+    /// Whether a conversation at `conversation_rank` may use it.
+    pub fn cleared_for(&self, conversation_rank: u32) -> bool {
+        self.level_rank >= conversation_rank
+    }
+
     /// Whether a manager may grant it: every model, and an automatic route
     /// whose every member they may use themselves.
     pub fn grantable(&self) -> bool {
@@ -103,9 +108,9 @@ fn assemble_choices(
 ) -> Vec<ModelChoice> {
     let mut choices: Vec<ModelChoice> = reachable(state, kind, access)
         .into_iter()
-        .map(|(id, compliance)| ModelChoice {
+        .map(|(id, level_rank)| ModelChoice {
             id,
-            compliance,
+            level_rank,
             route: None,
         })
         .collect();
@@ -155,11 +160,11 @@ fn feature_of(kind: PoolKind) -> Option<Feature> {
     Feature::ALL.into_iter().find(|f| f.pool_kind() == kind)
 }
 
-/// The models of `kind` `access` may route to, with their merged flags.
-fn reachable(state: &AppState, kind: PoolKind, access: &PoolAccess) -> HashMap<String, Compliance> {
+/// The models of `kind` `access` may route to, with their merged level ranks.
+fn reachable(state: &AppState, kind: PoolKind, access: &PoolAccess) -> HashMap<String, u32> {
     state
         .upstreams
-        .models_with_compliance_for_kind_for(kind, access)
+        .models_with_level_for_kind_for(kind, access)
         .into_iter()
         .filter(|(id, _)| access.allows_model(id))
         .collect()
@@ -173,30 +178,26 @@ fn route_choice(
     let targets = access.for_route_targets(&route.alias, route.members());
     let chat = reachable(state, PoolKind::Chat, &targets);
     let selectors = reachable(state, PoolKind::SystemOne, &targets);
-    let mut compliance = *chat.get(&route.fallback_target)?;
-    match selectors.get(&route.selector_model) {
+    let mut level_rank = *chat.get(&route.fallback_target)?;
+    let mut whole = match selectors.get(&route.selector_model) {
         Some(selector) => {
-            compliance.gdpr &= selector.gdpr;
-            compliance.nda &= selector.nda;
+            level_rank = level_rank.min(*selector);
+            true
         }
         None => {
-            compliance.gdpr = false;
-            compliance.nda = false;
+            level_rank = 0;
+            false
         }
-    }
-    let mut whole = selectors.contains_key(&route.selector_model);
+    };
     for candidate in &route.candidates {
         match chat.get(&candidate.target) {
-            Some(flags) => {
-                compliance.gdpr &= flags.gdpr;
-                compliance.nda &= flags.nda;
-            }
+            Some(rank) => level_rank = level_rank.min(*rank),
             None => whole = false,
         }
     }
     Some(ModelChoice {
         id: route.alias,
-        compliance,
+        level_rank,
         route: Some(RouteChoice {
             candidates: route.candidates.into_iter().map(|c| c.target).collect(),
             whole,
@@ -224,7 +225,7 @@ pub(super) mod tests {
             offer_voices: Vec::new(),
             allowed_groups: groups.iter().map(|g| g.to_string()).collect(),
             fallback_offline: None,
-            compliance: Default::default(),
+            level_rank: 0,
             enforce_limits: true,
             kind,
             strategy: PickerStrategy::RoundRobin,

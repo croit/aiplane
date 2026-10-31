@@ -100,6 +100,24 @@ impl From<chat::DbError> for OpenError {
     }
 }
 
+/// [`open_session`] for a person's background run: a conversation it mints
+/// starts at the classification policy's default level, as a chat opened in the
+/// app does; one it reuses keeps its own.
+pub async fn open_user_session(
+    state: &crate::server::AppState,
+    p: OpenParams<'_>,
+) -> Result<(String, String), OpenError> {
+    let minted_for = match (&p.owner, &p.existing_session) {
+        (Owner::User(owner), None) => Some((*owner).to_owned()),
+        _ => None,
+    };
+    let opened = open_session(&state.db, p).await?;
+    if let Some(owner) = minted_for {
+        crate::classification_default::apply_default_level(state, &opened.0, &owner).await?;
+    }
+    Ok(opened)
+}
+
 pub async fn open_session(db: &Pool, p: OpenParams<'_>) -> Result<(String, String), OpenError> {
     let owner = match p.owner {
         Owner::Run { .. } => {
@@ -950,7 +968,7 @@ pub(crate) mod tests {
                 offer_voices: Vec::new(),
                 allowed_groups: Vec::new(),
                 fallback_offline: None,
-                compliance: Default::default(),
+                level_rank: 0,
                 enforce_limits: true,
                 kind: PoolKind::Chat,
                 strategy: PickerStrategy::RoundRobin,
@@ -2487,7 +2505,7 @@ pub(crate) mod tests {
                         offer_voices: Vec::new(),
                         allowed_groups: vec![role.into()],
                         fallback_offline: None,
-                        compliance: Default::default(),
+                        level_rank: 0,
                         enforce_limits: true,
                         kind: PoolKind::Chat,
                         strategy: PickerStrategy::RoundRobin,

@@ -29,8 +29,6 @@ pools-field-allowed-groups-hint = Groupes AIplane autorisés à voir et utiliser
 pools-field-voices = Voix (lang=voice par ligne)
 pools-field-offer-voices = Voix sélectionnables (une par ligne, au choix de l'utilisateur)
 pools-no-backends = Aucun backend défini pour l'instant. Ajoutez-en un d'abord sur la page Backends.
-pools-field-gdpr = Conforme au GDPR
-pools-field-nda = Couvert par NDA
 pools-field-enforce-limits = Appliquer les limites de débit et les quotas
 
 upstreams-problem-no-backends = Aucun backend assigné — rien dans ce pool ne peut servir une requête.

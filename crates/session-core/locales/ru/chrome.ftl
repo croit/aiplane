@@ -24,8 +24,6 @@ searchable-select-search-placeholder = Поиск вариантов…
 searchable-select-search-aria = Поиск: { $field }
 searchable-select-clear-search = Очистить поиск
 searchable-select-no-results = Подходящих вариантов нет.
-searchable-select-model-gdpr = GDPR
-searchable-select-model-nda = NDA
 
 # Показывается вместо страницы, чья необязательная функция отключена в
 # /admin/settings. Пункт навигации при этом исчезает; это ответ тому, кто

@@ -64,7 +64,7 @@ pub async fn initialize_for_turn(
     };
     let session = session_core::db::get_session(&state.db, &user.id, turn.session_id).await?.ok_or_else(|| fail("The personal agent conversation is unavailable. Restore its owned binding before continuing."))?;
     let stored = session_core::db::get_turn(&state.db, turn.session_id, turn.assistant_turn_id).await?.ok_or_else(|| fail("The personal agent assistant turn is unavailable. Correct its conversation binding before continuing."))?;
-    if session.shared
+    if aiplane_core::server::db::chat_shares::is_shared(&state.db, &session.id).await?
         || stored.role != session_core::db::TurnRole::Assistant
         || stored.status != session_core::db::TurnStatus::InProgress
         || stored.model.as_deref() != Some(turn.model)

@@ -12,6 +12,7 @@ pub mod auth;
 pub mod automatic_routing;
 pub mod capabilities;
 pub mod capped_read;
+pub mod classification;
 pub mod config;
 pub mod crypto;
 pub mod db;

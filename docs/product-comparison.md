@@ -4,7 +4,7 @@ This is a feature-by-feature comparison of croit AIplane, LiteLLM and Open WebUI
 
 **Checked on 6 October 2026.** AIplane entries use the local `main` implementation revision pinned at the end of this document. LiteLLM and Open WebUI entries describe the public product documentation linked in the source index. For LiteLLM, ✅ means available in the open-source edition; 🟡 Enterprise means the capability requires a paid Enterprise license. Product capabilities change; recheck those sources before using this matrix in a proposal or contract.
 
-The request-priority rows were checked on **11 October 2026** against AIplane revision `d5b81c2a` and the official documentation cited as L31 and O6. Other entries retain the review dates and revision pins below.
+The request-priority rows were checked on **11 October 2026** against AIplane revision `d5b81c2a` and the official documentation cited as L31 and O6. The data classification rows were checked on **31 October 2026** against AIplane's implementation and the LiteLLM and Open WebUI sources already cited. Other entries retain the review dates and revision pins below.
 
 ## How to read the matrix
 
@@ -122,9 +122,13 @@ The request-priority rows were checked on **11 October 2026** against AIplane re
 | Usage reporting by request source | ✅ | 🟡 | ⚪ | A8 L10 |
 | Cost reporting based on configured prices | ✅ | ✅ | 🟡 | A8 L10 O6 |
 | Unpriced usage is visibly identified | ✅ | 🟡 | ⚪ | A8 L10 |
-| GDPR coverage declaration per model pool | ✅ | ⚪ | ⚪ | A11 |
-| NDA coverage declaration per model pool | ✅ | ⚪ | ⚪ | A11 |
-| Content guard can monitor, confirm, or deny a request | ✅ | 🟡 (guardrail framework OSS; behavior varies) | ⚪ | A11 L11 L29 |
+| Configurable data classification levels with ISO 27001, TISAX, BSI and TLP templates | ✅ | ⚪ | ⚪ | A11 |
+| Model pools, tools, connectors and knowledge collections cleared per classification level | ✅ | ⚪ | ⚪ | A11 |
+| Document labels and stamps (Purview, TSCP, visible stamps) set an upload's level | ✅ | ⚪ | ⚪ | A11 |
+| Data classes detected by patterns, word lists and a detector model | ✅ | 🟡 (guardrail framework OSS; behavior varies) | ⚪ | A11 L11 L29 |
+| Detection can monitor, raise, confirm, or block a request | ✅ | 🟡 (guardrail framework OSS; behavior varies) | ⚪ | A11 L11 L29 |
+| Generated files marked with the conversation's level | ✅ | ⚪ | ⚪ | A11 |
+| Link sharing limited to a classification level | ✅ | ⚪ | ⚪ | A2 A11 |
 | Built-in moderation callback integrations | 🟡 | 🟡 Enterprise for listed integrations | ⚪ | A11 L29 |
 | Guardrails scoped to individual keys or teams | ✅ | 🟡 Enterprise | ⚪ | A11 L29 |
 | Human approval before a tool action | ✅ | 🟡 | ⚪ | A12 L11 O7 |
@@ -314,7 +318,7 @@ Browser control needs a narrow definition. AIplane's documented extension acts i
 
 The marks do not establish comparative performance, security quality, or total cost. Those require deployment-specific tests, threat models and pricing evidence. “No” applies only to the named capability and documented product surface; it does not mean the vendor could not add it or that an extension could not approximate it.
 
-AIplane's GDPR and NDA pool flags are operator declarations. They do not inspect a provider's contracts or certify compliance. LiteLLM OSS already includes virtual keys, user/team controls, budgets, spend tracking, routing, and request/response logging. Its SSO is free for up to five users; SCIM, organization/team-scoped delegated administration, team-member permission customization, model-specific budgets per key, selected built-in moderation integrations, key/team-scoped guardrails, secret managers, automated virtual-key rotation, IP allowlists, team-specific logging controls, and multi-region deployment are documented as Enterprise capabilities. This distinction matters: the matrix does not imply that LiteLLM has no access control in OSS; it separates baseline controls from paid enterprise governance. Open WebUI's feature marks describe the documented self-hosted product and can still depend on configuration or connected services.
+AIplane's classification levels and pool clearances are operator declarations, and its detection of data classes is pattern- and model-based. They do not inspect a provider's contracts, certify compliance, or guarantee that every sensitive passage is detected. LiteLLM OSS already includes virtual keys, user/team controls, budgets, spend tracking, routing, and request/response logging. Its SSO is free for up to five users; SCIM, organization/team-scoped delegated administration, team-member permission customization, model-specific budgets per key, selected built-in moderation integrations, key/team-scoped guardrails, secret managers, automated virtual-key rotation, IP allowlists, team-specific logging controls, and multi-region deployment are documented as Enterprise capabilities. This distinction matters: the matrix does not imply that LiteLLM has no access control in OSS; it separates baseline controls from paid enterprise governance. Open WebUI's feature marks describe the documented self-hosted product and can still depend on configuration or connected services.
 
 ## Evidence sources
 
@@ -334,7 +338,7 @@ AIplane sources link to this repository's user and operator documentation. LiteL
 | A8 | [Access, tokens and limits](admin/access.md) |
 | A9 | [Agent builder](agent-guide/create.md), [agent permissions](agent-guide/permissions.md) |
 | A10 | [Knowledge collections](admin/knowledge.md), [tools and integrations](guide/tools-and-integrations.md), [tool inventory](tools-inventory.md) |
-| A11 | [Model settings](admin/models.md), [content guard settings](admin/settings.md#access-and-content-guard) |
+| A11 | [Model settings](admin/models.md), [data classification settings](admin/settings.md#data-classification) |
 | A12 | [Approvals and handoffs](guide/automation-and-inbox.md), [agent decisions](agent-guide/run-observe.md) |
 | A13 | [Agent runs and activity](agent-guide/run-observe.md) |
 | A14 | [Account, memory and usage](guide/account-and-usage.md) |

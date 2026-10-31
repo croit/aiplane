@@ -42,12 +42,8 @@
 	let agentVersion = $state<number | null>(initial?.agent_version ?? null);
 	const authoredModel = $derived(scheduledVersionModel(versions, agentVersion));
 	const target = $derived(agents.find((candidate) => candidate.id === principalId));
-	let selectedModel = $derived(models.find((candidate: ChatModelOption) => candidate.id === model));
 
-	let modelOptions = $derived(modelSelectOptions(models, {
-		gdpr: t('searchable-select-model-gdpr'),
-		nda: t('searchable-select-model-nda')
-	}));
+	let modelOptions = $derived(modelSelectOptions(models));
 
 	async function save() {
 		if (disposed || !canWrite || busy) return;
@@ -108,8 +104,6 @@
 			{:else}<input class="input min-w-0 w-full" bind:value={model} required aria-label={t('webhooks-model-label')} placeholder={t('webhooks-model-placeholder')} />{/if}
 		</label>
 		<AgentRunPicker {agents} initialId={initial?.personal_agent_id ?? null} bind:value={agentId} onchange={() => (linkedSession = '')} />
-		{#if selectedModel && !selectedModel.gdpr}<div class="alert alert-error"><span>{t('webhooks-gdpr-warning')}</span></div>{/if}
-		{#if selectedModel && !selectedModel.nda}<div class="alert alert-error"><span>{t('webhooks-nda-warning')}</span></div>{/if}
 		{/if}
 		<label class="flex min-w-0 w-full flex-col gap-1"><div class="label"><span class="label-text">{t('webhooks-prompt-label')}</span></div><textarea class="textarea min-h-28 min-w-0 w-full" bind:value={prompt} required maxlength="8000" aria-label={t('webhooks-prompt-label')} placeholder={t('webhooks-prompt-placeholder')}></textarea></label>
 

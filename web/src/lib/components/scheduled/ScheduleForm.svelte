@@ -51,15 +51,11 @@
 		[1, 'scheduled-weekday-mon'], [2, 'scheduled-weekday-tue'], [3, 'scheduled-weekday-wed'],
 		[4, 'scheduled-weekday-thu'], [5, 'scheduled-weekday-fri'], [6, 'scheduled-weekday-sat'], [0, 'scheduled-weekday-sun']
 	] as const;
-	let selectedModel = $derived(models.find((candidate: ChatModelOption) => candidate.id === model));
 	// Rebuilt when the zone changes so a newly picked one is present even if
 	// the platform never listed it; the offsets are for "now", which is what
 	// someone choosing a fire time is reasoning about.
 	let timezoneChoices = $derived(timezoneOptions(timezone));
-	let modelOptions = $derived(modelSelectOptions(models, {
-		gdpr: t('searchable-select-model-gdpr'),
-		nda: t('searchable-select-model-nda')
-	}));
+	let modelOptions = $derived(modelSelectOptions(models));
 
 	function toggleWeekday(day: number) {
 		schedule.weekdays = schedule.weekdays.includes(day)
@@ -151,8 +147,6 @@
 			{/if}
 		</label>
 		<AgentRunPicker {agents} initialId={initial?.personal_agent_id ?? null} bind:value={agentId} onchange={() => (linkedSession = '')} />
-		{#if selectedModel && !selectedModel.gdpr}<div class="alert alert-error"><span>{t('scheduled-gdpr-warning')}</span></div>{/if}
-		{#if selectedModel && !selectedModel.nda}<div class="alert alert-error"><span>{t('scheduled-nda-warning')}</span></div>{/if}
 		{/if}
 		<label class="flex min-w-0 w-full flex-col gap-1">
 			<div class="label"><span class="label-text">{t('scheduled-prompt-label')}</span></div>

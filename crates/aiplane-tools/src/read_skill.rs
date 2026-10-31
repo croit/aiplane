@@ -110,6 +110,10 @@ impl Tool for ReadSkill {
         READ_SKILL_ID
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         // The model already has the name → description listing in its system
         // context, so the schema stays short and stable (no per-user skill
@@ -307,6 +311,7 @@ mod tests {
             agent: None,
             personal_agent: None,
             personal_execution: None,
+            classification: None,
             pending_actions: None,
             pending_execution_facts: None,
             call_id: None,

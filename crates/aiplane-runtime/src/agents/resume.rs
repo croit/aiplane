@@ -887,12 +887,12 @@ async fn validate_personal_level_in(
     level: &PersonalLevel,
 ) -> Result<(), AgentResumeError> {
     let valid: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM chat_turns t JOIN chat_sessions s ON s.id = t.session_id
+        concat!("SELECT EXISTS(SELECT 1 FROM chat_turns t JOIN chat_sessions s ON s.id = t.session_id
          JOIN personal_agent_sessions p ON p.session_id = s.id JOIN agent_owners d ON d.principal_id = p.agent_id
          JOIN system_principals principal ON principal.id = d.principal_id
          WHERE t.id = ? AND t.role = 'assistant' AND t.model = ? AND s.id = ? AND s.user_id = ?
-           AND s.principal_id IS NULL AND s.shared = 0 AND p.owner_user_id = ? AND p.agent_id = ?
-           AND d.owner_user_id = ? AND d.active = 1 AND principal.disabled_at IS NULL AND s.parent_turn_id IS ? AND p.parent_turn_id IS ?)",
+           AND s.principal_id IS NULL AND ", aiplane_core::unshared_sql!("s"), " AND p.owner_user_id = ? AND p.agent_id = ?
+           AND d.owner_user_id = ? AND d.active = 1 AND principal.disabled_at IS NULL AND s.parent_turn_id IS ? AND p.parent_turn_id IS ?)"),
     ).bind(&level.suspension.turn_id).bind(&level.model).bind(&level.binding.session_id).bind(owner)
         .bind(owner).bind(&level.binding.agent_id).bind(owner)
         .bind(level.link.as_ref().map(|link| link.parent_turn_id.as_str()))

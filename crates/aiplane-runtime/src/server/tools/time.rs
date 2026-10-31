@@ -45,6 +45,10 @@ impl Tool for CurrentTimestamp {
         "get_current_timestamp"
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         ToolDef::function(
             self.id(),

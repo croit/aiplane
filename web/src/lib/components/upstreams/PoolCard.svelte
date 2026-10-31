@@ -68,8 +68,6 @@
 			<span class="badge badge-secondary badge-sm">{pool.kind}</span>
 			<span class="badge badge-ghost badge-sm font-mono">{pool.strategy}</span>
 			{#if pool.fallback_offline}<span class="badge badge-warning badge-outline badge-sm font-mono" title={t('backends-fallback-offline-title')}>{t('backends-fallback-offline-badge', { model: pool.fallback_offline })}</span>{/if}
-			<span class={`text-xs ${pool.compliance_gdpr ? 'text-success' : 'text-error'}`}>{pool.compliance_gdpr ? '✓' : '✗'} {t('upstreams-comp-gdpr')}</span>
-			<span class={`text-xs ${pool.compliance_nda ? 'text-success' : 'text-error'}`}>{pool.compliance_nda ? '✓' : '✗'} {t('upstreams-comp-nda')}</span>
 			<span class={`text-xs ${pool.enforce_limits ? 'text-success' : 'text-error'}`}>{pool.enforce_limits ? '✓' : '✗'} {t('upstreams-comp-limits')}</span>
 			<span class="flex-1"></span>
 			<button class="btn btn-ghost btn-xs" type="button" onclick={() => (editing = true)}>{t('upstreams-edit-pool')}</button>

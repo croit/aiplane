@@ -40,6 +40,7 @@ use aiplane_features::server::file_refs::{self, FileRef};
 use aiplane_features::server::typst::{
     self, DefaultSource, DocxExport, FieldType, PptxExport, Template,
 };
+use aiplane_runtime::classification_output::upload_stamped;
 use aiplane_runtime::server::tools::sandbox::{SandboxClient, b64};
 use aiplane_runtime::server::tools::{Tool, ToolContext, ToolError, ToolFuture, ToolResult};
 
@@ -71,6 +72,10 @@ impl TypstRenderTool {
 impl Tool for TypstRenderTool {
     fn id(&self) -> &str {
         self.id
+    }
+
+    fn egress(&self) -> bool {
+        false
     }
 
     /// A render is fast (PDF+PNG on the host, ~seconds) UNLESS the template
@@ -458,10 +463,10 @@ async fn render_and_attach(
     let base_data = edit_base_escaped.as_ref().unwrap_or(data);
     let data_bytes = serialize_data(base_data);
 
-    let pdf_out = chat_attachments::upload(s3, turn_id, &pdf_name, "application/pdf", rendered.pdf)
+    let pdf_out = upload_stamped(ctx, s3, turn_id, &pdf_name, "application/pdf", rendered.pdf)
         .await
         .map_err(|e| ToolError::Failed(format!("upload pdf: {e}")))?;
-    let png_out = chat_attachments::upload(s3, turn_id, &png_name, "image/png", rendered.png)
+    let png_out = upload_stamped(ctx, s3, turn_id, &png_name, "image/png", rendered.png)
         .await
         .map_err(|e| ToolError::Failed(format!("upload png: {e}")))?;
     // Park the field data where `base_target` says. The hidden `.json` is
@@ -489,6 +494,7 @@ async fn render_and_attach(
     let mut pptx_error: Option<String> = None;
     if let (Some(cfg), Some(sandbox)) = (template.pptx.as_ref(), sandbox) {
         (pptx_out, pptx_error) = export_pptx(
+            ctx,
             s3,
             turn_id,
             &pptx_name,
@@ -510,7 +516,7 @@ async fn render_and_attach(
     let mut docx_error: Option<String> = None;
     if let (Some(cfg), Some(sandbox)) = (template.docx.as_ref(), sandbox) {
         (docx_out, odt_out, docx_error) = export_docx(
-            s3, turn_id, &docx_name, &odt_name, sandbox, template, cfg, &inputs, &staged,
+            ctx, s3, turn_id, &docx_name, &odt_name, sandbox, template, cfg, &inputs, &staged,
         )
         .await;
     }
@@ -708,7 +714,7 @@ async fn persist_base(
     // failing a render that otherwise succeeded.
     let session_id = ctx.session_id.as_deref();
     let hidden_json = |bytes: Vec<u8>| async move {
-        let out = chat_attachments::upload(s3, turn_id, json_name, "application/json", bytes)
+        let out = upload_stamped(ctx, s3, turn_id, json_name, "application/json", bytes)
             .await
             .map_err(|e| ToolError::Failed(format!("upload data json: {e}")))?;
         Ok::<_, ToolError>(vec![
@@ -881,6 +887,7 @@ async fn compile_with_at_fixup(
 /// back as a note string instead of an `Err`.
 #[allow(clippy::too_many_arguments)]
 async fn export_pptx(
+    ctx: &ToolContext,
     s3: &aiplane_core::server::config::S3Config,
     turn_id: &str,
     pptx_name: &str,
@@ -891,8 +898,7 @@ async fn export_pptx(
     staged: &[(String, Vec<u8>)],
 ) -> (Option<chat_attachments::UploadOutcome>, Option<String>) {
     match convert_to_pptx(sandbox, template, cfg, render_data, staged).await {
-        Ok(bytes) => match chat_attachments::upload(s3, turn_id, pptx_name, PPTX_MIME, bytes).await
-        {
+        Ok(bytes) => match upload_stamped(ctx, s3, turn_id, pptx_name, PPTX_MIME, bytes).await {
             Ok(out) => (Some(out), None),
             Err(e) => (None, Some(format!("upload pptx: {e}"))),
         },
@@ -910,6 +916,7 @@ async fn export_pptx(
 /// landed).
 #[allow(clippy::too_many_arguments)]
 async fn export_docx(
+    ctx: &ToolContext,
     s3: &aiplane_core::server::config::S3Config,
     turn_id: &str,
     docx_name: &str,
@@ -928,13 +935,13 @@ async fn export_docx(
         Ok((docx_bytes, odt_bytes)) => {
             let mut docx_out = None;
             let mut docx_error = None;
-            match chat_attachments::upload(s3, turn_id, docx_name, DOCX_MIME, docx_bytes).await {
+            match upload_stamped(ctx, s3, turn_id, docx_name, DOCX_MIME, docx_bytes).await {
                 Ok(out) => docx_out = Some(out),
                 Err(e) => docx_error = Some(format!("upload docx: {e}")),
             }
             let mut odt_out = None;
             if let Some(odt_bytes) = odt_bytes {
-                match chat_attachments::upload(s3, turn_id, odt_name, ODT_MIME, odt_bytes).await {
+                match upload_stamped(ctx, s3, turn_id, odt_name, ODT_MIME, odt_bytes).await {
                     Ok(out) => odt_out = Some(out),
                     Err(e) => tracing::warn!(error = %e, "upload odt"),
                 }
@@ -1545,6 +1552,10 @@ impl Tool for TypstEditTool {
         self.id
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     /// Same as the render tool: an edit re-renders (incl. any sandbox pptx/docx
     /// export), so allow the sandbox ceiling rather than the 30 s default.
     fn max_duration(&self) -> Option<std::time::Duration> {
@@ -1766,6 +1777,10 @@ impl Tool for TypstReadTool {
         self.id
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     fn schema(&self) -> ToolDef {
         // `id` is `typst_<tid>_read`; the render/edit siblings drop `_read`.
         let render_id = self.id.strip_suffix("_read").unwrap_or(self.id);
@@ -1855,6 +1870,10 @@ impl Tool for TypstPptxTool {
         self.id
     }
 
+    fn egress(&self) -> bool {
+        false
+    }
+
     /// This tool's whole job is the sandbox pptx export, so it always needs the
     /// sandbox ceiling rather than the 30 s default `TOOL_TIMEOUT`.
     fn max_duration(&self) -> Option<std::time::Duration> {
@@ -1940,7 +1959,7 @@ impl Tool for TypstPptxTool {
             )
             .await
             .map_err(|e| ToolError::Failed(format!("reserve pptx name: {e}")))?;
-            let out = chat_attachments::upload(s3, turn_id, &name, PPTX_MIME, bytes)
+            let out = upload_stamped(&ctx, s3, turn_id, &name, PPTX_MIME, bytes)
                 .await
                 .map_err(|e| ToolError::Failed(format!("upload pptx: {e}")))?;
             let marker = chat_attachments::marker_line(turn_id, &out);
@@ -2455,6 +2474,7 @@ mod tests {
             agent: None,
             personal_agent: None,
             personal_execution: None,
+            classification: None,
             pending_actions: None,
             pending_execution_facts: None,
             call_id: None,

@@ -198,8 +198,8 @@ pub(super) async fn admit_and_open(
             None
         };
         Some(
-            headless::open_session(
-                &state.db,
+            headless::open_user_session(
+                state,
                 OpenParams {
                     owner: headless::Owner::User(user),
                     title: &expected.name,

@@ -55,8 +55,6 @@ settings-s-limits = Ratenlimits & Kontingente
 settings-s-limits-blurb = Hauptschalter für die Regeln unter /admin/limits.
 settings-s-agents = Persönliche Agenten
 settings-s-agents-blurb = Begrenzung persönlicher Agenten.
-settings-s-content_guard = Inhaltsprüfung
-settings-s-content_guard-blurb = Prüft Inhalte, bevor das ausgewählte Modell sie erhält.
 settings-s-feedback = Feedback-Widget
 settings-s-feedback-blurb = Wohin das In-App-Feedback-Widget Issues anlegt.
 settings-s-push = Web Push
@@ -68,29 +66,9 @@ settings-s-metrics-blurb = Der Scrape-Endpunkt GET /metrics. Er antwortet nur, w
 
 # ─── Felder ──────────────────────────────────────────────────────────────────
 
-settings-f-content_guard-enabled = Inhaltsprüfung aktivieren
-settings-f-content_guard-enabled-help = Prüft nur den Compliance-Bereich, den der Pool des ausgewählten Modells nicht abdeckt.
-settings-f-content_guard-model = Prüfmodell
-settings-f-content_guard-model-help = System-One-Modell für GDPR- und NDA-Entscheidungen.
-settings-content-guard-model-warning = Dieses System-One-Modell ist nicht konform mit: { $requirements }. An dieses Modell gesendete Inhalte können die jeweilige Schutzgrenze verlassen.
-content-guard-confirm-heading = Inhaltsschutz
 content-guard-confirm-question = Dieser Inhalt wurde als geschützt erkannt. Möchten Sie ihn dennoch an das ausgewählte Modell senden?
 content-guard-confirm-approve = Trotzdem senden
 content-guard-confirm-deny = Nicht senden
-settings-f-content_guard-mode = Modus
-settings-f-content_guard-mode-help = Beobachten protokolliert Entscheidungen; Erzwingen wendet die gewählte Aktion an.
-settings-f-content_guard-mode-opt-monitor = Beobachten
-settings-f-content_guard-mode-opt-enforce = Erzwingen
-settings-f-content_guard-gdpr_action = GDPR-Aktion
-settings-f-content_guard-gdpr_action-help = Aktion, wenn personenbezogene Daten an einen nicht GDPR-konformen Pool gesendet würden.
-settings-f-content_guard-nda_action = NDA-Aktion
-settings-f-content_guard-nda_action-help = Aktion, wenn vertrauliche Inhalte an einen Pool ohne NDA-Abdeckung gesendet würden.
-settings-f-content_guard-gdpr_action-opt-allow = Erlauben
-settings-f-content_guard-gdpr_action-opt-confirm = Bestätigung anfordern
-settings-f-content_guard-gdpr_action-opt-deny = Ablehnen
-settings-f-content_guard-nda_action-opt-allow = Erlauben
-settings-f-content_guard-nda_action-opt-confirm = Bestätigung anfordern
-settings-f-content_guard-nda_action-opt-deny = Ablehnen
 
 settings-f-chat-prompt-enabled = Chat-Prompt aktivieren
 settings-f-chat-prompt-enabled-help = Hauptschalter für den deployment-weiten System-Prompt der Person-Chats.
@@ -327,12 +305,3 @@ settings-s-chat-welcome-blurb = Wird in einer leeren Unterhaltung vor der ersten
 settings-f-chat-welcome-text = Begrüßungstext
 settings-f-chat-welcome-text-help = Mittig auf einer Karte in einem leeren Chat. Markdown wird unterstützt; leer bedeutet: kein Begrüßungstext. Platzhalter: { "{" }name{ "}" } (Anzeigename), { "{" }first_name{ "}" }, { "{" }email{ "}" }, { "{" }language{ "}" } (Sprachcode). Text in <prompt>…</prompt> wird zu einem Knopf, der ihn sendet.
 
-settings-s-chat-confidential = Vertrauliche Chats
-settings-s-chat-confidential-blurb = Eine vertrauliche Unterhaltung wird nur noch an Modelle geroutet, die dafür freigegeben sind, und wird nie wieder unvertraulich.
-settings-f-chat-confidential-default = Neue Chats starten vertraulich
-settings-f-chat-confidential-default-help = Neue Unterhaltungen werden beim Anlegen als vertraulich markiert. Eine spätere Änderung öffnet bestehende Unterhaltungen nicht wieder.
-settings-f-chat-confidential-requires = Voraussetzung für einen vertraulichen Chat
-settings-f-chat-confidential-requires-help = Welches Compliance-Kennzeichen die Pools eines Modells tragen müssen, damit es in einer vertraulichen Unterhaltung wählbar bleibt. „Beide“ verlangt GDPR- und NDA-Abdeckung; ein Cloud-Modell mit beiden Kennzeichen bleibt wählbar.
-settings-f-chat-confidential-requires-opt-both = GDPR und NDA
-settings-f-chat-confidential-requires-opt-gdpr = Nur GDPR
-settings-f-chat-confidential-requires-opt-nda = Nur NDA

@@ -1728,12 +1728,31 @@ pub async fn chat_attachment(State(state): State<Arc<RamaState>>, req: Request) 
     // the chat-view gate so attachments in a shared conversation are
     // fetchable by a viewer, while a private turn's files stay owner-only.
     // 404 (not 403) on miss/denied — don't leak whether the turn exists.
-    match session_core::db::turn_session_readable(&state.db, &turn_id, &session.user_id).await {
+    let reader =
+        match aiplane_core::server::db::users::find_by_id(&state.db, &session.user_id).await {
+            Ok(Some(user)) => aiplane_runtime::chat_sharing::Reader::new(&state, &user),
+            Ok(None) => {
+                return attachment_error(
+                    rama::http::StatusCode::UNAUTHORIZED,
+                    "unauthorized",
+                    &t(lang, "chat-error-auth-required"),
+                );
+            }
+            Err(err) => {
+                tracing::warn!(error = %err, "loading the attachment reader");
+                return attachment_error(
+                    rama::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal_error",
+                    &t(lang, "chat-error-db-error"),
+                );
+            }
+        };
+    match aiplane_runtime::chat_sharing::turn_readable(&state, &reader, &turn_id).await {
         Ok(true) => {}
         Ok(false) => {
             tracing::warn!(
                 requester = %session.user_id, %turn_id,
-                "rejected attachment fetch (not owner, not shared)",
+                "rejected attachment fetch (not owner, not shared with the reader)",
             );
             return attachment_error(
                 rama::http::StatusCode::NOT_FOUND,
@@ -1742,7 +1761,7 @@ pub async fn chat_attachment(State(state): State<Arc<RamaState>>, req: Request) 
             );
         }
         Err(err) => {
-            tracing::warn!(error = %err, "turn_session_readable");
+            tracing::warn!(error = %err, "turn_readable");
             return attachment_error(
                 rama::http::StatusCode::INTERNAL_SERVER_ERROR,
                 "internal_error",

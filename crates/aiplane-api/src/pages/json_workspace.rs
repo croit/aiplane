@@ -233,10 +233,6 @@ pub struct ActionView {
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct ModelOption {
     pub id: String,
-    /// The model's backend keeps data within GDPR safeguards.
-    pub gdpr: bool,
-    /// The model's backend is covered by a confidentiality agreement.
-    pub nda: bool,
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
@@ -331,13 +327,9 @@ fn action_json_with_counts(
 fn chat_model_options(state: &RamaState) -> Vec<ModelOption> {
     state
         .upstreams
-        .models_with_compliance_for_kind(aiplane_core::server::upstreams::PoolKind::Chat)
+        .models_with_level_for_kind(aiplane_core::server::upstreams::PoolKind::Chat)
         .into_iter()
-        .map(|(id, compliance)| ModelOption {
-            id,
-            gdpr: compliance.gdpr,
-            nda: compliance.nda,
-        })
+        .map(|(id, _)| ModelOption { id })
         .collect()
 }
 

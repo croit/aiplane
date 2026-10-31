@@ -51,7 +51,7 @@ async fn state_with_tool_grants(upstream_uri: &str, granted_tools: Vec<String>) 
             offer_voices: Vec::new(),
             allowed_groups: Vec::new(),
             fallback_offline: None,
-            compliance: Default::default(),
+            level_rank: 0,
             enforce_limits: true,
             kind: PoolKind::Chat,
             strategy: PickerStrategy::RoundRobin,

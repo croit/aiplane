@@ -62,8 +62,6 @@ settings-s-limits = Rate limits & quotas
 settings-s-limits-blurb = Master switch for the rules configured at /admin/limits.
 settings-s-agents = Personal agents
 settings-s-agents-blurb = Capacity for personal agents.
-settings-s-content_guard = Content guard
-settings-s-content_guard-blurb = Checks content before a selected model receives it.
 settings-s-feedback = Feedback widget
 settings-s-feedback-blurb = Where the in-app feedback widget files issues.
 settings-s-push = Web Push
@@ -75,29 +73,9 @@ settings-s-metrics-blurb = The GET /metrics scrape endpoint. It answers only wit
 
 # ─── Fields ──────────────────────────────────────────────────────────────────
 
-settings-f-content_guard-enabled = Enable content guard
-settings-f-content_guard-enabled-help = Check only the compliance area the selected model pool does not cover.
-settings-f-content_guard-model = Guard model
-settings-f-content_guard-model-help = System One model used for GDPR and NDA decisions.
-settings-content-guard-model-warning = This System One model is not compliant with: { $requirements }. Content sent to it may leave the respective protection boundary.
-content-guard-confirm-heading = Content protection
 content-guard-confirm-question = This content was identified as protected. Do you want to send it to the selected model anyway?
 content-guard-confirm-approve = Send anyway
 content-guard-confirm-deny = Do not send
-settings-f-content_guard-mode = Mode
-settings-f-content_guard-mode-help = Monitor logs decisions; enforce applies the selected action.
-settings-f-content_guard-mode-opt-monitor = Monitor
-settings-f-content_guard-mode-opt-enforce = Enforce
-settings-f-content_guard-gdpr_action = GDPR action
-settings-f-content_guard-gdpr_action-help = Action when personal data would be sent to a non-GDPR pool.
-settings-f-content_guard-nda_action = NDA action
-settings-f-content_guard-nda_action-help = Action when confidential content would be sent to a pool without NDA coverage.
-settings-f-content_guard-gdpr_action-opt-allow = Allow
-settings-f-content_guard-gdpr_action-opt-confirm = Ask for confirmation
-settings-f-content_guard-gdpr_action-opt-deny = Deny
-settings-f-content_guard-nda_action-opt-allow = Allow
-settings-f-content_guard-nda_action-opt-confirm = Ask for confirmation
-settings-f-content_guard-nda_action-opt-deny = Deny
 
 settings-f-chat-prompt-enabled = Enable the chat prompt
 settings-f-chat-prompt-enabled-help = Master switch for the deployment-wide system prompt of a person's chat.
@@ -337,12 +315,3 @@ settings-s-chat-welcome-blurb = Shown on an empty conversation before the first 
 settings-f-chat-welcome-text = Welcome text
 settings-f-chat-welcome-text-help = Centred on a card in an empty chat. Markdown is supported; empty means no welcome text. Placeholders: { "{" }name{ "}" } (display name), { "{" }first_name{ "}" }, { "{" }email{ "}" }, { "{" }language{ "}" } (interface language). Text wrapped in <prompt>…</prompt> becomes a button that sends it.
 
-settings-s-chat-confidential = Confidential chats
-settings-s-chat-confidential-blurb = A confidential conversation may only be routed to models cleared for it, and it never becomes non-confidential again.
-settings-f-chat-confidential-default = New chats start confidential
-settings-f-chat-confidential-default-help = New conversations are marked confidential when they are created. Changing this later does not open existing conversations.
-settings-f-chat-confidential-requires = Required for a confidential chat
-settings-f-chat-confidential-requires-help = Which compliance marker a model's pools must carry to stay selectable in a confidential conversation. Both requires GDPR and NDA coverage; a cloud model with both stays selectable.
-settings-f-chat-confidential-requires-opt-both = GDPR and NDA
-settings-f-chat-confidential-requires-opt-gdpr = GDPR only
-settings-f-chat-confidential-requires-opt-nda = NDA only
