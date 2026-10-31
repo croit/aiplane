@@ -245,6 +245,30 @@ impl JsonTurnFeed {
         }
     }
 
+    /// A feed for a subscriber whose snapshot already carried `seen`: only
+    /// what changes after it goes out. Starting from nothing instead would
+    /// append the text the snapshot showed a second time. The finalize is
+    /// left to [`Self::diff`], since the snapshot's status alone does not
+    /// close the client's stream.
+    pub fn after(seen: &TurnWithTools) -> Self {
+        Self {
+            content_sent: seen.turn.content.clone().unwrap_or_default(),
+            reasoning_sent: seen.turn.reasoning.clone().unwrap_or_default(),
+            tools_sent: seen
+                .tool_calls
+                .iter()
+                .map(|call| (call.id.clone(), call.status.as_str().to_string()))
+                .collect(),
+            steers_sent: seen
+                .steers
+                .iter()
+                .map(|steer| (steer.id.clone(), steer.status.as_str().to_string()))
+                .collect(),
+            attempts_sent: seen.attempts.len(),
+            ..Self::new(&seen.turn.id)
+        }
+    }
+
     /// Whether the finalize event already went out — the stream loop's cue
     /// to close.
     pub fn is_finalized(&self) -> bool {
@@ -446,7 +470,16 @@ pub async fn run_json_turn_stream(
     use rama::futures::sink::SinkExt;
 
     let mut tx = tx;
-    let mut feed = JsonTurnFeed::new(&assistant_turn_id);
+    let seen = initial.iter().rev().find_map(|event| match event {
+        ChatEvent::Snapshot { turns, .. } => {
+            turns.iter().find(|row| row.turn.id == assistant_turn_id)
+        }
+        _ => None,
+    });
+    let mut feed = seen.map_or_else(
+        || JsonTurnFeed::new(&assistant_turn_id),
+        JsonTurnFeed::after,
+    );
     let mut dirty = false;
     let mut last_emit: Option<tokio::time::Instant> = None;
 
@@ -858,6 +891,31 @@ mod tests {
             ChatEvent::Steer { status, .. } if status == "resent"
         ));
         assert!(feed.diff(&row).is_empty());
+    }
+
+    #[test]
+    fn a_feed_after_a_snapshot_sends_only_what_came_since() {
+        let mut seen = turn(TurnStatus::InProgress, "Found it.", "look");
+        seen.tool_calls
+            .push(tool("c1", "lookup", ToolCallStatus::Completed, Some("{}")));
+        seen.steers
+            .push(steer_row("s1", "faster", crate::db::SteerStatus::Pending));
+        let mut feed = JsonTurnFeed::after(&seen);
+        assert!(feed.diff(&seen).is_empty());
+
+        let mut now = turn(TurnStatus::InProgress, "Found it. Here it is.", "look");
+        now.tool_calls = seen.tool_calls.clone();
+        now.tool_calls
+            .push(tool("c2", "fetch", ToolCallStatus::Running, None));
+        now.steers = seen.steers.clone();
+        let events = feed.diff(&now);
+        assert_eq!(events.len(), 2, "{events:?}");
+        assert!(
+            matches!(&events[0], ChatEvent::TurnDelta { text_delta, full: false, .. } if text_delta == " Here it is.")
+        );
+        assert!(
+            matches!(&events[1], ChatEvent::ToolCallStarted { tool_call_id, .. } if tool_call_id == "c2")
+        );
     }
 
     #[test]
