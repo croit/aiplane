@@ -96,9 +96,10 @@ connect company systems and define who can access models, tools and workflows.
   [Manage access](docs/admin/access.md).
 - 🔑 **Scoped tokens and usage limits.** Issue revocable API tokens, restrict
   model and tool access, set request, token or cost quotas, and review usage.
-- ⚖️ **Data classification.** Rank conversations and model pools by sensitivity
-  and let a System One detector raise, confirm or block requests that need a
-  higher level than the target model is cleared for.
+- ⚖️ **Data and document classification by ISO 27001, TISAX, BSI or TLP.**
+  Rank conversations, uploads and model pools by sensitivity, read document
+  labels and stamps, and let a detector raise, confirm or block content that a
+  model is not cleared for.
   [Review model controls](docs/admin/models.md) · [Configure data classification](docs/admin/settings.md#data-classification).
 - 📊 **Agent insights and activity history.** Inspect run analytics and export
   agent activity records for review.

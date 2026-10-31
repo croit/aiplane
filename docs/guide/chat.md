@@ -49,9 +49,17 @@ Both operations are destructive to the later transcript:
 
 Read the confirmation before proceeding. If you need to retain the original, export it first.
 
+## Data classification
+
+When the administrator has set up [data classification](../admin/settings.md#data-classification), the header shows the conversation's level, and the composer offers the levels it can move to. A level only rises on its own: a message or upload that the classification recognises — a document label or stamp, a pattern such as an IBAN, a term from a word list, or content the detector model matches — raises the conversation to that data's level, and the model picker then lists only the models cleared for it. Raising it yourself is always possible; lowering needs a reason and is allowed only when the administrator permits it.
+
+Depending on the data class, the conversation asks you to confirm before the content goes to the model, or refuses the message; the refusal says why in your language. When the detector model cannot be reached, a message that needs it is refused rather than sent unchecked. While the administrator is still trying a scheme in monitor mode, nothing changes and an info box above the composer names the level and data classes the content would require.
+
 ## Share and fork
 
 Select **Share** in the header to open the share dialog and choose one of three options:
+
+![The share dialog: not shared, by link for every signed-in user, or only named people and groups.](../img/guide/chat-share-dialog.png)
 
 - **Not shared**: only you can read the conversation.
 - **By link**: **any signed-in user on the installation** who has the link can read it; it is not an anonymous public link. When you save, the conversation URL is copied where the browser allows clipboard access, and the button briefly shows **Link copied**; without that label nothing was copied. Give that URL to another signed-in user.

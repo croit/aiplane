@@ -50,7 +50,7 @@ the confirmed scope does not request it.
 | Work progress, failure and retry | Implemented foundation; product refinement | Shared SSE, stopping, tool results and run histories exist. Webhook replay may repeat side effects. A consolidated agent progress/recovery view and safe automatic retry contract are not implemented. |
 | Reusable agent configuration templates | New gap; reusable foundation | Skills can be authored/exported and agents have spec revisions. An agent blueprint preview/install flow with explicit resource mapping and no private-state export is not available. |
 | Organization agents and team governance | Planned | System principals, grants, shares and audit exist. Groups do not own agent data; organization ownership, responders and organization/agent credentials require explicit modeling. |
-| Computer network and data controls | Partial foundation; planned review | Runner isolation, default-deny egress/proxy controls and gateway outbound guards exist. A model-request content guard is not a computer-wide DLP system. Agent-specific certificate lifecycle and an equivalent DLP guarantee have not been established. |
+| Computer network and data controls | Partial foundation; planned review | Runner isolation, default-deny egress/proxy controls and gateway outbound guards exist. Data classification of model requests is not a computer-wide DLP system. Agent-specific certificate lifecycle and an equivalent DLP guarantee have not been established. |
 | Separate agent billing allowance | New optional requirement | Existing user/principal usage and limits are reusable. A separate agent allowance/dashboard is absent; external subscription packaging does not justify adding a second billing system. |
 | Slack channel, native desktop/mobile client, external bot runtime | Excluded | The requested product works through AIplane's web interface and own model/runtime infrastructure. Existing generic integrations do not make a Slack-facing agent feature part of this scope. |
 
@@ -177,7 +177,7 @@ decision; it is not authorized by this research.
 | Local delegation and durable child pauses | runtime `agents/{router,resume}.rs`; `RunChain::enter` and `MAX_DEPTH = 3`; [Communication proposal](agents-communication.md); [Agent runs](agent-runs.md). |
 | Reusable instructions | features `server/skills.rs`; tools `read_skill.rs`; runtime principal-aware skill catalog; [Skills user flow](guide/tools-and-integrations.md#author-a-personal-skill). |
 | Attention, progress and stopping | [Automation and Inbox](guide/automation-and-inbox.md); existing schedule/webhook histories, chat JSON-SSE and cancellation. |
-| Usage and administrative boundaries | [Access](admin/access.md), [content guard settings](admin/settings.md#access-and-content-guard), [agent observation](agent-guide/run-observe.md). |
+| Usage and administrative boundaries | [Access](admin/access.md), [data classification settings](admin/settings.md#data-classification), [agent observation](agent-guide/run-observe.md). |
 
 No code, migration, API contract or permission has changed through this
 comparison. Implemented-path evidence comes from source inspection; tests and
