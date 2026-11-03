@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { onMount } from 'svelte';
 	import PrioritySelect from '#lib/components/PrioritySelect.svelte';
 	import { canChoosePriority, type Priority } from '#lib/priority.js';
 	import StatusPill from '#lib/components/ui/StatusPill.svelte';
@@ -38,6 +39,13 @@
 	} = $props();
 
 	let busy = $state(false);
+	/** A clock the expiry badge can react to; `Date.now()` in a `$derived`
+	 * is not a dependency, so the badge used to freeze at first render. */
+	let now = $state(Date.now());
+	onMount(() => {
+		const timer = setInterval(() => (now = Date.now()), 60_000);
+		return () => clearInterval(timer);
+	});
 	let picker = $state<CapabilityPicker | null>(null);
 	let editingModels = $state(false);
 	let editingTools = $state(false);
@@ -58,7 +66,7 @@
 	let quotaValue = $state<number | null>(null);
 
 	const menuId = $derived(`token-menu-${token.id}`);
-	const expiresIn = $derived(daysUntilExpiry(token.expires_at, Date.now()));
+	const expiresIn = $derived(daysUntilExpiry(token.expires_at, now));
 	const modelSummary = $derived(selectionSummary(models, token.owner_models));
 	const pinned = $derived(Object.values(token.tool_states).filter((state) => state === 'on').length);
 	const tightest = $derived([...token.quota_status].sort((a, b) => limitPercent(b.used, b.limit) - limitPercent(a.used, a.limit))[0] ?? null);

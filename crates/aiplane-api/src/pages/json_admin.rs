@@ -1408,7 +1408,10 @@ pub async fn limits_save(State(state): State<Arc<RamaState>>, req: Request) -> R
             }
         }
         limits::SubjectType::User => {
-            let users = db::users::list_all(&state.db).await.unwrap_or_default();
+            let users = match db::users::list_all(&state.db).await {
+                Ok(users) => users,
+                Err(err) => return internal(err),
+            };
             match users.iter().find(|u| {
                 u.id == parsed.subject_id
                     || u.email.to_lowercase() == parsed.subject_id.to_lowercase()

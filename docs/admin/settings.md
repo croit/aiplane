@@ -1,6 +1,6 @@
 # Configure system features
 
-Open **Administration → Settings** (`/admin/settings`) with [administrator rights](access.md). The categories are Chat, Tools, Data, Access, Notifications and Web search. Settings cards show the effective configuration from the server; model pickers use models available for the required pool kind.
+Open **Administration → Settings** (`/admin/settings`) with [administrator rights](access.md). The categories are Chat, Tools, Data, Access, Notifications, Web search and Branding. Settings cards show the effective configuration from the server; model pickers use models available for the required pool kind.
 
 ## Change a setting
 
@@ -10,7 +10,7 @@ Open **Administration → Settings** (`/admin/settings`) with [administrator rig
 4. Check the success message and restart-pending banner.
 5. For restart-required fields, restart through your deployment's normal process and verify the feature afterwards.
 
-Most fields reload without restart. The declared restart fields are `comfyui.base_url`, `comfyui.content_dir`, `rag.enabled`, `rag.data_dir` and `rag.clone_concurrency`. The UI also reports its pending list explicitly. A disabled feature does not become usable merely because its service URL is filled in.
+Most fields reload without restart. The declared restart fields are `comfyui.base_url`, `comfyui.content_dir`, `rag.enabled`, `rag.data_dir`, `rag.clone_concurrency` and `rag.build_timeout_mins`. The UI also reports its pending list explicitly. A disabled feature does not become usable merely because its service URL is filled in.
 
 Settings are stored in the database. Secrets are write-only: the UI shows whether one is set, not its plaintext. Where a stored secret is long enough for a fragment to be safe, the UI shows a head/tail fingerprint (for example `tvly-…f99`) so you can tell which key is stored. Leaving a secret input blank during Save preserves the stored value. Use its explicit Clear action, with confirmation, to remove it. Clearing a stored setting uses its built-in fallback; it does not re-import an arbitrary value from a configuration file.
 
@@ -89,7 +89,7 @@ A fresh installation has a single level, `public`. With one level the feature is
 - **Link sharing**: a conversation above the policy's *highest level for link sharing* cannot be shared by link, and a link already shared stops working as soon as the conversation is raised above it. An empty or unknown value means the lowest level; with one level there is no limit.
 - **Monitor** mode changes nothing. It logs what the detector finds and a failed evaluation, records a finding above the conversation's level as a monitored event, and shows the person an info box naming the level and data classes enforce mode would require. Use it to try a scheme before enforcing it. **Enforce** applies the action, and a detector failure refuses the request. The levels already held by a conversation and the model filter apply in both modes.
 
-The detector runs after the caller's [limits](access.md#set-request-token-or-cost-limits), so an over-budget request is never sent to it. The detector request has a five-second timeout. A confirmation in browser chat needs a connected prompt receiver and an affirmative answer within three minutes.
+The detector runs after the caller's [limits](access.md#set-request-token-or-cost-limits), so an over-budget request is never sent to it. A detector request to the `system_one` pool has a five-second timeout; the chat-model fallback has twenty. A confirmation in browser chat needs a connected prompt receiver and an affirmative answer within three minutes.
 
 An upgrade converts the previous GDPR and NDA pool flags, the content guard and sticky confidential conversations into levels and classes, which you then edit on the same page. Classification is a model-based check and an operator declaration: it is not a certification and does not guarantee that every sensitive passage is detected.
 

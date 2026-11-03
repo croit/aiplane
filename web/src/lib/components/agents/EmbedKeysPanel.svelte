@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { agentsApi, embedSnippet, splitList, type AgentError, type EmbedKey } from '#lib/agents.js';
-	import { t } from '#lib/i18n.svelte.js';
+	import { locale, t } from '#lib/i18n.svelte.js';
 
 	/**
 	 * The keys websites embed this agent with (`docs/embed.md`). The server
@@ -59,7 +59,7 @@
 					<span class="font-semibold">{key.name}</span>
 					{#each key.origins as origin (origin)}<span class="badge badge-outline badge-sm font-mono">{origin}</span>{/each}
 					<span class="text-xs text-base-content/60">
-						{t('agents-embed-created-by', { user: key.created_by, at: new Date(key.created_at).toLocaleDateString() })}
+						{t('agents-embed-created-by', { user: key.created_by, at: new Date(key.created_at).toLocaleDateString(locale.current) })}
 					</span>
 					{#if key.revoked_at}
 						<span class="badge badge-ghost badge-sm ml-auto">{t('agents-embed-revoked')}</span>

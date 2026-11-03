@@ -561,7 +561,10 @@ pub async fn skills_delete(State(state): State<Arc<RamaState>>, req: Request) ->
 /// GET /api/v0/admin/skills — the global catalog + the role-grant overlay.
 pub async fn admin_skills_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = require_admin_json!(state, req);
-    let grants = db::skill_grants::all(&state.db).await.unwrap_or_default();
+    let grants = match db::skill_grants::all(&state.db).await {
+        Ok(grants) => grants,
+        Err(err) => return internal(err),
+    };
     let mut grant_map: std::collections::BTreeMap<String, Vec<String>> = Default::default();
     for (skill, group) in grants {
         grant_map.entry(skill).or_default().push(group);
@@ -730,17 +733,16 @@ pub async fn admin_skills_grants(State(state): State<Arc<RamaState>>, req: Reque
     if store.current().get(&parsed.skill).is_none() {
         return json_error(StatusCode::NOT_FOUND, "not_found", "no such skill");
     }
-    let groups: std::collections::HashSet<_> = db::gateway_groups::list_group_names(&state.db)
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
+    let groups: std::collections::HashSet<_> =
+        match db::gateway_groups::list_group_names(&state.db).await {
+            Ok(names) => names.into_iter().collect(),
+            Err(err) => return internal(err),
+        };
     let all_skills_groups: std::collections::HashSet<_> =
-        db::skill_grants::roles_for_skill(&state.db, "*")
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+        match db::skill_grants::roles_for_skill(&state.db, "*").await {
+            Ok(roles) => roles.into_iter().collect(),
+            Err(err) => return internal(err),
+        };
     let roles: Vec<_> = parsed
         .roles
         .into_iter()
@@ -749,9 +751,10 @@ pub async fn admin_skills_grants(State(state): State<Arc<RamaState>>, req: Reque
     if let Err(err) = db::skill_grants::set_for_skill(&state.db, &parsed.skill, &roles).await {
         return internal(err);
     }
-    // Re-seed the resolver overlay exactly like the form path.
-    let grants = db::skill_grants::all(&state.db).await.unwrap_or_default();
-    state.rbac.set_skill_grant_overlay(grants);
+    // Re-seed the resolver overlay exactly like the form path. `reload_rbac`
+    // keeps the previous snapshot/overlay on a read error; a local
+    // `unwrap_or_default()` here would wipe every skill grant at runtime.
+    state.reload_rbac().await;
     json_ok(
         StatusCode::OK,
         SkillGrantsBody {

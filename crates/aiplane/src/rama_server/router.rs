@@ -43,6 +43,7 @@ use crate::rama_server::body_limit::{BodyLimitLayer, Endpoint, endpoint};
 use crate::rama_server::dev_seed;
 use crate::rama_server::embed_cors::EmbedCorsLayer;
 use crate::rama_server::first_run::FirstRunLayer;
+use crate::rama_server::security_headers::SecurityHeadersLayer;
 use crate::rama_server::setup_api;
 use crate::rama_server::{
     api, comfyui_api, messages, metrics, oidc_handlers, openapi, pages, proxy, rag_api, responses,
@@ -1022,6 +1023,11 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
 /// origin some live embed key lists; every other `/api/v0` route stays
 /// same-origin.
 ///
+/// `SecurityHeadersLayer` is outermost: every response — including the 404s
+/// and bearer 401s the inner layers produce — carries the browser-hardening
+/// headers, and HTML/SVG get a content policy. See
+/// [`security_headers`](crate::rama_server::security_headers).
+///
 /// `FirstRunLayer` sits outside the error handler for a related reason: on an
 /// unconfigured gateway an unmatched path should land on the setup wizard, not
 /// on a 404 that explains nothing. It is a no-op once setup has completed. See
@@ -1043,6 +1049,7 @@ pub fn service(
     let embed_cors = EmbedCorsLayer::new(state.db.clone());
     let router = router(state);
     (
+        SecurityHeadersLayer,
         V1CorsLayer,
         embed_cors,
         first_run,

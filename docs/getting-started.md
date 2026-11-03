@@ -44,6 +44,9 @@ The manual is available at `/docs/`, including before setup is complete.
 ## Complete setup
 
 1. Enter the public URL, issuer URL, client ID and client secret in the wizard.
+   The issuer must be an `http` or `https` URL; link-local and cloud-metadata
+   addresses are refused, because the unauthenticated first-run wizard would
+   otherwise be a generic server-side request probe.
 2. Register the displayed callback URI with your identity provider.
 3. Continue to the provider and sign in. AIplane verifies the login before
    saving the provider configuration.

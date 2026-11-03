@@ -21,6 +21,7 @@
 
 use std::sync::Arc;
 
+use jiff::{SignedDuration, Timestamp};
 use rama::http::service::web::extract::{Path, State};
 use rama::http::{Request, Response, StatusCode, header};
 use serde_json::json;
@@ -35,6 +36,13 @@ use aiplane_core::server::db::usage::UsageSource;
 use aiplane_runtime::rama_server::state::RamaState;
 use aiplane_runtime::server::headless::{self, DriveParams, OpenParams};
 use aiplane_runtime::server::webhooks::{self, Webhook};
+
+/// A public trigger accepts at most this many fires in any 60 seconds. It is
+/// deliberately generous (two a second): the point is to stop a leaked URL or
+/// a link unfurler from driving an unbounded number of paid runs, not to meter
+/// normal event traffic.
+const MAX_FIRES_PER_MINUTE: i64 = 120;
+const FIRE_WINDOW_SECS: i64 = 60;
 
 // ===========================================================================
 // Public trigger — POST/GET /hooks/{secret}
@@ -145,6 +153,8 @@ pub(super) enum AdmissionError {
     Conflict,
     #[error("The webhook conversation is busy")]
     Busy,
+    #[error("The webhook is firing too often")]
+    RateLimited,
 }
 
 pub(super) fn admission_error(error: AdmissionError, lang: Lang, public: bool) -> Response {
@@ -167,6 +177,15 @@ pub(super) fn admission_error(error: AdmissionError, lang: Lang, public: bool) -
             StatusCode::CONFLICT,
             &t(lang, "agent-background-error-busy"),
         ),
+        AdmissionError::RateLimited => {
+            let mut resp = trigger_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                &t(lang, "agent-background-error-rate-limited"),
+            );
+            resp.headers_mut()
+                .insert(header::RETRY_AFTER, header::HeaderValue::from_static("60"));
+            resp
+        }
         AdmissionError::Conflict if !public => super::json_error(
             StatusCode::CONFLICT,
             "configuration_conflict",
@@ -255,6 +274,16 @@ pub(super) async fn admit_and_open(
         if hook.configuration_generation != expected.configuration_generation {
             return Err(AdmissionError::Conflict);
         };
+        if matches!(kind, webhooks::AdmissionKind::Fire { .. }) {
+            let now = Timestamp::now();
+            let since = now
+                .checked_sub(SignedDuration::from_secs(FIRE_WINDOW_SECS))
+                .unwrap_or(now);
+            let recent = webhooks::recent_fire_count_in(&mut tx, &hook.id, since).await?;
+            if recent >= MAX_FIRES_PER_MINUTE {
+                return Err(AdmissionError::RateLimited);
+            }
+        }
         let run = webhooks::admit_run_in(
             &mut tx,
             &webhooks::WebhookAdmission {

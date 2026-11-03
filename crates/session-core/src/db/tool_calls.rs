@@ -3,22 +3,15 @@
 
 use super::*;
 
-pub(crate) async fn next_tool_call_seq(pool: &Pool, turn_id: &str) -> Result<i64, DbError> {
-    let row = sqlx::query(
-        r#"SELECT COALESCE(MAX(seq), -1) + 1 AS next_seq
-           FROM chat_tool_calls
-           WHERE turn_id = ?"#,
-    )
-    .bind(turn_id)
-    .fetch_one(pool)
-    .await?;
-    Ok(row.try_get("next_seq")?)
-}
-
 /// Insert a running tool call row. The model emits `id`,
 /// `function.name`, and `function.arguments` (potentially across
 /// multiple stream deltas) — the worker assembles those server-side
 /// and inserts when ready to dispatch the tool.
+///
+/// The sequence is computed *inside* the INSERT: reading `MAX(seq)` first
+/// and inserting second leaves a gap in which a concurrent call for the same
+/// turn reads the same number and dies on `UNIQUE (turn_id, seq)`. The same
+/// shape as `steers::insert_steer`.
 pub async fn insert_running_tool_call(
     pool: &Pool,
     turn_id: &str,
@@ -26,9 +19,25 @@ pub async fn insert_running_tool_call(
     name: &str,
     arguments_json: &str,
 ) -> Result<ToolCall, DbError> {
-    let seq = next_tool_call_seq(pool, turn_id).await?;
     let now = Timestamp::now();
-    let call = ToolCall {
+    let row = sqlx::query(
+        r#"INSERT INTO chat_tool_calls
+              (id, turn_id, seq, name, arguments_json, status, created_at)
+           SELECT ?, ?, COALESCE(MAX(seq), -1) + 1, ?, ?, ?, ?
+             FROM chat_tool_calls WHERE turn_id = ?
+           RETURNING seq"#,
+    )
+    .bind(id)
+    .bind(turn_id)
+    .bind(name)
+    .bind(arguments_json)
+    .bind(ToolCallStatus::Running.as_str())
+    .bind(now.to_string())
+    .bind(turn_id)
+    .fetch_one(pool)
+    .await?;
+    let seq: i64 = row.try_get("seq")?;
+    Ok(ToolCall {
         id: id.to_string(),
         turn_id: turn_id.to_string(),
         seq,
@@ -38,22 +47,7 @@ pub async fn insert_running_tool_call(
         status: ToolCallStatus::Running,
         created_at: now,
         completed_at: None,
-    };
-    sqlx::query(
-        r#"INSERT INTO chat_tool_calls
-              (id, turn_id, seq, name, arguments_json, status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)"#,
-    )
-    .bind(&call.id)
-    .bind(&call.turn_id)
-    .bind(call.seq)
-    .bind(&call.name)
-    .bind(&call.arguments_json)
-    .bind(call.status.as_str())
-    .bind(call.created_at.to_string())
-    .execute(pool)
-    .await?;
-    Ok(call)
+    })
 }
 
 /// Max bytes of `output_json` we persist per tool call. `fetch_url`

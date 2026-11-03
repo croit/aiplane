@@ -41,6 +41,23 @@
 	let manualClaim = $state('');
 	let manualValue = $state('');
 
+	/**
+	 * Read a JSON answer, but report an HTTP failure from the status first.
+	 * A 502 or an empty 204 is not JSON; `res.json()` on it throws a syntax
+	 * error that hides the real status from the operator.
+	 */
+	async function jsonBody(res: Response): Promise<any> {
+		const text = await res.text().catch(() => '');
+		let body: any = null;
+		try {
+			body = text ? JSON.parse(text) : null;
+		} catch {
+			body = null;
+		}
+		if (!res.ok) throw new Error(body?.error?.message ?? (text.trim() || res.statusText));
+		return body;
+	}
+
 	async function refresh() {
 		try {
 			// A reopened wizard (`restore-setup` on the host) is token-gated: the
@@ -53,8 +70,7 @@
 				? `/api/v0/setup/state?claim=${encodeURIComponent(claim)}`
 				: '/api/v0/setup/state';
 			const res = await fetch(url, { headers: { accept: 'application/json' } });
-			const body = await res.json();
-			if (!res.ok) throw new Error(body?.error?.message ?? res.statusText);
+			const body = await jsonBody(res);
 			wiz = body;
 			if (body.draft && !fissuer) {
 				fpublicUrl = body.draft.public_url;
@@ -88,8 +104,7 @@
 					roles_claim: frolesClaim
 				})
 			});
-			const body = await res.json();
-			if (!res.ok) throw new Error(body?.error?.message ?? res.statusText);
+			const body = await jsonBody(res);
 			// Navigate the browser into the provider's authorization URL; the
 			// callback lands back on /app/setup with the proof recorded.
 			location.href = body.authorize_url;
@@ -101,8 +116,13 @@
 	}
 
 	async function restart() {
-		await fetch('/api/v0/setup/restart', { method: 'POST' });
-		await refresh();
+		try {
+			const res = await fetch('/api/v0/setup/restart', { method: 'POST' });
+			if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+			await refresh();
+		} catch (err) {
+			error = err instanceof Error ? err.message : String(err);
+		}
 	}
 
 	async function finish() {
@@ -119,8 +139,7 @@
 					manual_value: manualValue
 				})
 			});
-			const body = await res.json();
-			if (!res.ok) throw new Error(body?.error?.message ?? res.statusText);
+			const body = await jsonBody(res);
 			location.href = '/admin/settings';
 		} catch (err) {
 			error = String(err);

@@ -74,13 +74,16 @@ integrations and features vary with each installation's configuration.*
 - [Configure permissions](agent-guide/permissions.md).
 - [Test and publish](agent-guide/test-publish.md).
 - [Observe runs and handle decisions](agent-guide/run-observe.md).
+- [Agent spec field reference](agent-guide/spec-reference.md): every field the advanced JSON editor edits, and what Save and Publish validate.
 
 ## Reference
 
 - [HTTP API](reference/api.md): model protocols, authentication and accepted endpoints.
 - [Environment and process](reference/environment.md).
 - [Tool inventory](tools-inventory.md): tool IDs, availability gates and dynamic families.
+- [Tool contracts](reference/tools.md): arguments, results and limits for each tool.
 - [Stable identifiers](compatibility.md): names that identify existing storage and are shared with separately updated clients.
+- [Feature comparison](product-comparison.md): AIplane against LiteLLM and Open WebUI.
 - [Documentation website and LLM exports](documentation-system.md): where to read or download this build's documentation.
 
 ## Read with a language model

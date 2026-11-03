@@ -219,6 +219,11 @@ deliberate — the person who clicked Connect and the Google account they
 picked on the consent screen need not be the same, and it is the latter that
 decides what the index can see.
 
+The Connect route is a state-changing GET, so it only accepts a navigation
+that started on the AIplane page (or a typed/bookmarked URL). A cross-site
+link is refused with a page telling the operator to start from AIplane; the
+callback still requires the admin session and the single-use state.
+
 **Google-native documents have no bytes.** A Doc, Sheet or Slide cannot be
 downloaded; it must be *exported*, and the target format decides how much
 survives. We ask for the Office formats — docx, xlsx, pptx — rather than
@@ -555,7 +560,10 @@ box re-walking (and for git, re-cloning) continuously.
 It is unauthenticated by design — the token in the URL *is* the credential,
 the same shape `/hooks/{secret}` uses for user webhooks — and only its
 SHA-256 is stored, so a leaked database hands out no working URLs. Mint or
-rotate it from the collection's row; the plaintext is shown once.
+rotate it from the collection's row; the plaintext is shown once. One
+collection accepts at most one accepted sync call per 60 seconds; a repeat
+answers `429` with `Retry-After: 60`, so a leaked token cannot drive a fresh
+full reindex the moment the previous one finishes.
 
 **The body is ignored.** This is a doorbell, not a change feed: what actually
 changed is established by the walk that follows, which is cheap on a source

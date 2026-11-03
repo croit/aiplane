@@ -16,7 +16,8 @@ browser workflow.
 - **Egress** — whether data leaves the conversation through the tool: out of
   AIplane, or into memory and scheduled runs that other conversations read
   (`Tool::egress`). MCP tools, ComfyUI workflows and the sandbox tools are
-  always `yes`; the `typst_<template>` family is `no`.
+  `yes`, except `read_sandbox_output` (it reads back bytes the sandbox already
+  produced); the `typst_<template>` family is `no`.
 - **Toggle key** — the switch an administrator can grant and a person can
   enable for their conversation. Related tools may share one switch.
 

@@ -208,7 +208,7 @@
 						</div>
 					{/if}
 					<p class="text-xs opacity-60">{t('render-canvas-edit-hint')}</p>
-					<textarea class="textarea min-h-96 w-full flex-1 font-mono text-sm" bind:value={draft}></textarea>
+					<textarea class="textarea min-h-96 w-full flex-1 font-mono text-sm" aria-label={t('chat-render-canvas-document-tab')} bind:value={draft}></textarea>
 				{:else}
 					<Markdown content={displayContent} class="prose prose-sm max-w-none overflow-x-auto" />
 				{/if}

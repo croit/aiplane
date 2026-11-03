@@ -91,11 +91,18 @@ pub async fn record_within(
         .bind(i64::from(w.rate.max))
         .fetch_all(&mut **tx)
         .await?;
-        let times: Vec<Timestamp> = rows
-            .iter()
-            .filter_map(|r| r.try_get::<String, _>("created_at").ok())
-            .filter_map(|t| format!("{t}Z").parse().ok())
-            .collect();
+        let mut times: Vec<Timestamp> = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let raw: String = row.try_get("created_at")?;
+            let parsed: Timestamp =
+                format!("{raw}Z")
+                    .parse()
+                    .map_err(|e: jiff::Error| DbError::Decode {
+                        column: "created_at",
+                        source: e.into(),
+                    })?;
+            times.push(parsed);
+        }
         if let Err(exceeded) = sliding_window(w.scope, w.rate, &times, at) {
             return Ok(Err(exceeded));
         }

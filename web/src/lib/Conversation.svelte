@@ -1238,6 +1238,7 @@
 				<div class="join w-full">
 					<input
 						class="input input-sm join-item w-full"
+						aria-label={t('chat-prompt-placeholder')}
 						placeholder={t('chat-prompt-placeholder')}
 						bind:value={promptText}
 						onkeydown={(e) => e.key === 'Enter' && submitPrompt()}
@@ -1317,6 +1318,7 @@
 				bind:this={composerInput}
 				class="textarea textarea-ghost min-h-11 max-h-48 flex-1 resize-none focus:outline-none"
 				rows="1"
+				aria-label={t('chat-render-composer-placeholder')}
 				placeholder={t('chat-render-composer-placeholder')}
 				bind:value={draft}
 				onkeydown={onKeydown}
@@ -1418,7 +1420,7 @@
 			ondrop={onDrop}
 		>
 			<h2 class="text-lg font-semibold">{t('render-edit-prompt')}</h2>
-			<textarea class="textarea mt-3 min-h-36 w-full" bind:value={editDraft}></textarea>
+			<textarea class="textarea mt-3 min-h-36 w-full" aria-label={t('render-edit-prompt')} bind:value={editDraft}></textarea>
 			{#if editFiles.length > 0}
 				<div class="mt-2 flex flex-wrap gap-1">
 					{#each editFiles as file, index (`${file.name}-${file.size}-${file.lastModified}`)}

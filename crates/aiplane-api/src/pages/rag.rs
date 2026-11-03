@@ -6,13 +6,43 @@
 //! All that is left of the old `/rag` page: the operator screen is a SPA
 //! route now, backed by the JSON handlers in `rama_server::rag_api`.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use rama::http::service::web::extract::State;
-use rama::http::{Request, Response};
+use rama::http::{Request, Response, StatusCode, header};
 
 use aiplane_core::server::db::rag as rag_db;
 use aiplane_runtime::rama_server::state::RamaState;
+
+/// A per-collection minimum interval between accepted sync-hook calls. The
+/// pending-ref check only covers the window while a build is running; a leaked
+/// token could otherwise start a fresh full reindex the moment the last one
+/// finished. Process-local on purpose: the indexer is one process, and this is
+/// an abuse guard, not a durable quota.
+const SYNC_INTERVAL: Duration = Duration::from_secs(60);
+
+#[derive(Default)]
+struct SyncThrottle(Mutex<HashMap<i64, Instant>>);
+
+impl SyncThrottle {
+    /// Whether `collection_id` may start a sync at `now`. The first call and
+    /// one after the interval pass; a repeat inside it does not.
+    fn admit(&self, collection_id: i64, now: Instant) -> bool {
+        let mut last = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        last.retain(|_, at| now.duration_since(*at) < SYNC_INTERVAL * 10);
+        if let Some(previous) = last.get(&collection_id)
+            && now.duration_since(*previous) < SYNC_INTERVAL
+        {
+            return false;
+        }
+        last.insert(collection_id, now);
+        true
+    }
+}
+
+static LAST_SYNC: LazyLock<SyncThrottle> = LazyLock::new(SyncThrottle::default);
 
 /// The token from `/hooks/rag/{token}`, with its case intact.
 ///
@@ -55,6 +85,16 @@ pub async fn rag_sync_hook(State(state): State<Arc<RamaState>>, req: Request) ->
     let Ok(Some(collection)) = rag_db::find_by_sync_token(&state.db, &token).await else {
         return super::not_found("unknown sync token");
     };
+    if !LAST_SYNC.admit(collection.id, Instant::now()) {
+        let mut resp = super::json_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too_many_requests",
+            "This collection was synced recently; try again in a minute.",
+        );
+        resp.headers_mut()
+            .insert(header::RETRY_AFTER, header::HeaderValue::from_static("60"));
+        return resp;
+    }
     let Some(indexer) = state.indexer.as_ref() else {
         return super::json_error(
             rama::http::StatusCode::SERVICE_UNAVAILABLE,
@@ -88,4 +128,19 @@ pub async fn rag_sync_hook(State(state): State<Arc<RamaState>>, req: Request) ->
             queued,
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_second_sync_inside_the_interval_is_refused() {
+        let throttle = SyncThrottle::default();
+        let now = Instant::now();
+        assert!(throttle.admit(1, now));
+        assert!(!throttle.admit(1, now + Duration::from_secs(1)));
+        assert!(throttle.admit(2, now));
+        assert!(throttle.admit(1, now + SYNC_INTERVAL));
+    }
 }

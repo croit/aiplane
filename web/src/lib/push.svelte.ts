@@ -67,6 +67,7 @@ export async function enablePush(): Promise<void> {
 	push.ui = { phase: 'busy' };
 	try {
 		const cfgRes = await fetch('/api/v0/push/config', { headers: { accept: 'application/json' } });
+		if (!cfgRes.ok) throw new Error(`push config ${cfgRes.status}`);
 		const cfg = (await cfgRes.json()) as PushConfig;
 		if (!cfg.enabled || !cfg.publicKey) {
 			push.ui = { phase: 'unsupported' };
@@ -107,11 +108,15 @@ export async function disablePush(): Promise<void> {
 		if (sub) {
 			const endpoint = sub.endpoint;
 			await sub.unsubscribe();
-			await fetch('/api/v0/push/unsubscribe', {
+			const res = await fetch('/api/v0/push/unsubscribe', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ endpoint })
 			});
+			// The browser subscription is already gone; if the gateway still
+			// holds the row it keeps pushing to a dead endpoint. Say so rather
+			// than reporting "disabled".
+			if (!res.ok) throw new Error(`unsubscribe ${res.status}`);
 		}
 		push.note = t('tokens-push-disabled');
 	} catch {

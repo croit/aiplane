@@ -39,6 +39,7 @@ chat-render-no-tools-suffix = .
 chat-render-entry-count = { $count ->
     [one] { $count } запись
     [few] { $count } записи
+    [other] { $count } записи
    *[many] { $count } записей
 }
 chat-render-active-count-title = Активные инструменты — нажмите для управления
@@ -81,6 +82,7 @@ chat-render-export-md = Markdown (.md)
 chat-render-revision-count = { $count ->
     [one] { $count } версия
     [few] { $count } версии
+    [other] { $count } версии
    *[many] { $count } версий
 }
 chat-render-canvas-saving = Сохранение…

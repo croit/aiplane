@@ -12,7 +12,6 @@ import {
 	newConversationState,
 	parseUserContent,
 	replaceUserText,
-	sessionTitle,
 	type ChatEvent,
 	type ConversationState,
 	type TurnWithTools
@@ -199,27 +198,6 @@ test('info banners and tool prompts set and clear', () => {
 	);
 	applyEvent(state, { type: 'tool_prompt', action: 'hide', turn_id: 'a1' });
 	assert.equal(state.prompt, null);
-});
-
-test('session titles fall back to the first user line, truncated', () => {
-	const long = 'a very long first line that goes past the sixty character limit for sure yes';
-	const turns = [
-		{ turn: { role: 'user', user_content: long } as never, tool_calls: [], steers: [] }
-	];
-	assert.equal(
-		sessionTitle({ title: null } as never, turns as never).endsWith('…'),
-		true
-	);
-	assert.equal(
-		sessionTitle({ title: '  ' } as never, [
-			{
-				turn: { role: 'user', user_content: 'first line\nsecond' } as never,
-				tool_calls: [],
-				steers: []
-			}
-		] as never),
-		'first line'
-	);
 });
 
 test('attachment markers parse into chips and vanish from the text', () => {

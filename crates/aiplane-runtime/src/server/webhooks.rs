@@ -575,6 +575,25 @@ pub struct WebhookAdmission<'a> {
     pub payload: &'a str,
 }
 
+/// How many times `webhook_id` fired since `since`. The public trigger's rate
+/// guard reads this under the same write lock that admits the next run, so a
+/// burst cannot all pass the check before any of it is counted.
+pub async fn recent_fire_count_in(
+    tx: &mut WriteTx,
+    webhook_id: &str,
+    since: Timestamp,
+) -> Result<i64, DbError> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM webhook_runs \
+         WHERE webhook_id = ? AND rtrim(fired_at, 'Z') >= ?",
+    )
+    .bind(webhook_id)
+    .bind(aiplane_core::server::db::window_key(since))
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(count)
+}
+
 pub async fn admit_run_in(
     tx: &mut WriteTx,
     new: &WebhookAdmission<'_>,
@@ -1662,5 +1681,46 @@ mod tests {
                 .unwrap(),
             DeleteOutcome::Deleted
         );
+    }
+
+    #[tokio::test]
+    async fn recent_fire_count_reads_only_the_window() {
+        let pool = fresh_db().await;
+        seed_user(&pool, "u1").await;
+        let now = Timestamp::now();
+        sqlx::query(
+            "INSERT INTO webhooks (id, user_id, name, prompt, model, secret_hash, created_at, \
+             updated_at) VALUES ('h1', 'u1', 'n', 'p', 'm', 'hash', ?, ?)",
+        )
+        .bind(now.to_string())
+        .bind(now.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        for (id, at) in [
+            ("r1", now),
+            ("r2", now),
+            (
+                "old",
+                now.checked_sub(jiff::SignedDuration::from_secs(120))
+                    .unwrap(),
+            ),
+        ] {
+            sqlx::query(
+                "INSERT INTO webhook_runs (id, webhook_id, fired_at, prompt, payload, source, \
+                 created_at) VALUES (?, 'h1', ?, 'p', 'b', 'fire', ?)",
+            )
+            .bind(id)
+            .bind(at.to_string())
+            .bind(now.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let mut tx = WriteTx::begin(&pool).await.unwrap();
+        let since = now
+            .checked_sub(jiff::SignedDuration::from_secs(60))
+            .unwrap();
+        assert_eq!(recent_fire_count_in(&mut tx, "h1", since).await.unwrap(), 2);
     }
 }

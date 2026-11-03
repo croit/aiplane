@@ -180,6 +180,7 @@ rag-source-consent-save-first = 请先保存包含客户端 ID 和密钥的集�
 rag-source-consent-connected = 已连接
 rag-source-consent-connect = 连接
 rag-oauth-lookup-failed = 无法读取该集合。
+rag-oauth-cross-site = 请从 AIplane 页面打开此链接，不要从其他网站打开。
 rag-oauth-not-oauth = 此来源类型不通过浏览器连接。
 rag-oauth-no-client = 请先在集合中保存 OAuth 客户端 ID 和密钥。
 rag-oauth-bad-authorize-url = 无法构建提供方的授权 URL。

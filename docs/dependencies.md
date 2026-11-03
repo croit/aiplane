@@ -61,6 +61,9 @@ These are pre-approved; just add them to the relevant crate's `Cargo.toml` (refe
 | `pdf-extract` | `gateway` | Pure-Rust (via `lopdf`) text-layer extraction for the `fetch_attachment` PDF reader's default `mode="text"` tier. No native deps; a born-digital PDF reads back like any text attachment. |
 | `pdfium-render` | `gateway` | Optional `mode="images"` escalation tier for the `fetch_attachment` PDF reader: rasterises scanned-PDF pages for a vision model when the text layer is empty. The one runtime native-library exception to the static-binary rule (loads Chromium's `pdfium`, BSD-3, dynamically). See [Notes](#notes-on-specific-deps). |
 | `image` (default-features off, `png` + `jpeg` + `webp`) | `aiplane-api`, `aiplane-features`, `aiplane-tools` (`aiplane`: dev, test fixtures) | Encodes the bitmaps `pdfium-render` produces to PNG for the vision `image_url` parts; renders the QR tool's codes; decodes and resamples the operator's raster logo uploads (branding) before they land in the database. Version matches `pdfium-render`'s `image_latest` so the two unify on one copy. |
+| `qrcode` (default-features off) | `aiplane-tools` | Pure-Rust QR matrix generation for the `generate_qr_code` tool (URL, WiFi, vCard, SEPA). Default features are off: the tool rasterises the matrix itself through `image`, so the crate's own encoder is not pulled in. |
+| `quick-xml` | `aiplane-features` | WebDAV `multistatus` parsing for the fileshare RAG source (Nextcloud) and the classification XML text extractor. XML is a correctness and security bug farm (entities, namespaces, encodings); a hand-rolled reader is the wrong place to save a dependency. |
+| `libc` | `sandbox-runner` | The sandbox workspace uses the `*at` family (`openat`, `renameat`, `mkdirat`) with `O_NOFOLLOW` to keep a run inside its own directory, plus `geteuid` for the root check. `std` has no `*at` API, so there is no stdlib substitute. |
 
 ### Notes on specific deps
 
