@@ -115,6 +115,7 @@ output (see the Dockerfile).
 | `marked` | Client-side Markdown rendering of chat replies: the JSON event wire carries markdown text, and rendering moved to the client by design. |
 | `dompurify` | Sanitises `marked` output before `{@html}` — model output is untrusted input like any other. |
 | `typescript`, `svelte-check`, `@types/node` | `mise run check-web` / `mise run test-web` gates. |
+| `deepmerge` (patched, `web/vendor/`) | Transitive build dependency of `@sveltejs/vite-plugin-svelte`. Upstream 4.3.1 has no fixed release for GHSA-gcqx-w48m-w2h4 (prototype poisoning in `mergeObject`, low, build-time only); `web/package.json` depends on the patched tarball and overrides the transitive copy. Drop the override once upstream publishes a fix. |
 
 ## Explicitly not allowed (yet)
 
