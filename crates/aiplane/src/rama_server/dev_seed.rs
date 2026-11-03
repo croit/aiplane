@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use jiff::Timestamp;
 use rama::http::service::web::extract::State;
-use rama::http::{Response, StatusCode, header};
+use rama::http::{Request, Response, StatusCode, header};
 
 use aiplane_core::rama_server::session::secure_cookies;
 use aiplane_core::server::db::Pool;
@@ -134,6 +134,24 @@ async fn signed_in(state: &RamaState, target: &str) -> anyhow::Result<Response> 
         .expect("static redirect response"))
 }
 
+/// These routes mint a full admin session without a credential. They exist
+/// for a developer's loopback dev server and the in-process e2e suite, so a
+/// request from a real non-loopback peer is refused. `None` means there is no
+/// socket information (the in-process `router.serve` tests), which is not a
+/// remote caller.
+fn not_local(state: &RamaState, req: &Request) -> Option<Response> {
+    match state.client_addr(req) {
+        Some(ip) if !ip.is_loopback() => Some(
+            Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                .body("the dev session routes are loopback-only".into())
+                .expect("static text response"),
+        ),
+        _ => None,
+    }
+}
+
 /// A 500 that says what the seeding was doing when it failed — this
 /// endpoint's users are developers staring at a test-runner failure. Logged
 /// too, because the response alone is easy to miss when the caller is a
@@ -149,7 +167,10 @@ fn failed(what: &str, err: anyhow::Error) -> Response {
 
 /// GET `/__dev/session` — sign in as the fixture user without resetting
 /// anything. Idempotent; safe to call concurrently with any test.
-pub async fn sign_in(State(state): State<Arc<RamaState>>) -> Response {
+pub async fn sign_in(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    if let Some(refusal) = not_local(&state, &req) {
+        return refusal;
+    }
     if let Err(err) = ensure_user(&state.db).await {
         return failed("upserting the fixture user", err);
     }
@@ -166,7 +187,10 @@ pub async fn sign_in(State(state): State<Arc<RamaState>>) -> Response {
 }
 
 /// GET `/__dev/seed-session` — reset the canonical fixture, then sign in.
-pub async fn reset(State(state): State<Arc<RamaState>>) -> Response {
+pub async fn reset(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    if let Some(refusal) = not_local(&state, &req) {
+        return refusal;
+    }
     if let Err(err) = reset_tokens(&state.db).await {
         return failed("resetting the token fixture", err);
     }

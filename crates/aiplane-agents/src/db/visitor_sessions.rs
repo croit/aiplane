@@ -383,6 +383,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_out_of_order_slide_never_shortens_the_session() {
+        let fx = fixture().await;
+        fx.start("th", 30 * MIN, 24 * 60 * MIN).await;
+        let late = add(t0(), 20 * MIN).unwrap();
+        let Lookup::Active(v) = lookup(&fx.pool, "th", late).await.unwrap() else {
+            panic!("live");
+        };
+        let slid = slide(&fx.pool, &v, late).await.unwrap();
+        let earlier = add(t0(), 10 * MIN).unwrap();
+        let back = slide(&fx.pool, &slid, earlier).await.unwrap();
+        assert_eq!(back.expires_at, slid.expires_at);
+        assert_eq!(back.last_seen_at, slid.last_seen_at);
+    }
+
+    #[tokio::test]
     async fn an_idle_ttl_longer_than_the_cap_starts_capped() {
         let fx = fixture().await;
         let v = fx.start("th", 48 * 60 * MIN, 24 * 60 * MIN).await;
