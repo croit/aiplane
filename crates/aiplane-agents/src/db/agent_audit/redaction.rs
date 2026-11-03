@@ -234,6 +234,7 @@ mod tests {
         for kind in AuditKind::ALL {
             let mut detail = json!({ "said": "the code is 481516", "n": 481516 });
             r.apply(*kind, &mut detail);
+            // codeql[rust/cleartext-logging] — `detail` is the redacted copy; the test asserts the secret is gone.
             assert!(!detail.to_string().contains("481516"), "{kind:?}: {detail}");
         }
         assert!(format!("{r:?}").contains("<withheld>"));

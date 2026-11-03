@@ -1,0 +1,22 @@
+# CodeQL configuration for croit AIplane.
+#
+# The scanner runs through `.github/workflows/codeql.yml` (advanced setup) so
+# this file is the source of truth. Test code is excluded by path: a
+# deterministic test key, a test assertion that prints a fixture, or a
+# reserved `*.invalid` URL is not a production finding. CodeQL's path filter
+# cannot see `#[cfg(test)]` blocks inside a production file; those sites carry
+# a `// codeql[query-id]` suppression instead (see `crypto.rs`,
+# `agent_channels.rs`, `gate.rs`, `slot_tools.rs`, `injection.rs`,
+# `config.rs` and `redaction.rs`).
+name: "AIplane CodeQL"
+
+paths-ignore:
+  - "crates/aiplane/tests/**"
+  - "crates/**/tests/**"
+  - "crates/**/tests.rs"
+  - "crates/**/common/mod.rs"
+  - "web/**/*.test.ts"
+  - "e2e/**"
+  - "extension/**/*.test.*"
+  - "clients/**/*.test.*"
+  - "scripts/**/*.test.*"

@@ -845,6 +845,7 @@ mod tests {
             assert_eq!(
                 Cond::parse(&cond).unwrap().requires_trusted_provenance(),
                 expected,
+                // codeql[rust/cleartext-logging] — the message prints the JSON condition, not a secret.
                 "{cond}"
             );
         }

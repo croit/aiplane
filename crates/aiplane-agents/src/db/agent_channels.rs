@@ -269,6 +269,7 @@ mod tests {
     #[tokio::test]
     async fn the_url_is_sealed_at_rest_and_opens_for_sending_only() {
         let (pool, agent) = pool_with_agent().await;
+        // codeql[rust/hard-coded-cryptographic-value] — deterministic test key, not a credential.
         let crypto = Crypto::from_session(&[3u8; 32]);
         let channel = create(&pool, &crypto, &agent, &new("ops"), "alice")
             .await
@@ -296,6 +297,7 @@ mod tests {
     #[tokio::test]
     async fn a_name_is_unique_per_agent_and_delete_is_scoped_to_it() {
         let (pool, agent) = pool_with_agent().await;
+        // codeql[rust/hard-coded-cryptographic-value] — deterministic test key, not a credential.
         let crypto = Crypto::from_session(&[3u8; 32]);
         let first = create(&pool, &crypto, &agent, &new("ops"), "alice")
             .await
