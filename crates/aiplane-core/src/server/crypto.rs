@@ -327,8 +327,8 @@ mod activity_key_tests {
         let key = &ring[0];
         assert_eq!(key.id.len(), 16);
         let expected = {
-            // codeql[rust/hard-coded-cryptographic-value] — the same deterministic test key.
             let mut mac =
+                // codeql[rust/hard-coded-cryptographic-value] — the same deterministic test key.
                 <Hmac<Sha256>>::new_from_slice(&derive(&[7u8; 32], ACTIVITY_LABEL)).unwrap();
             mac.update(b"event");
             hex_encode(&mac.finalize().into_bytes())
@@ -509,6 +509,7 @@ mod tests {
         /// into the at-rest key.
         #[test]
         fn key_derivation_is_byte_for_byte_stable() {
+            // codeql[rust/hard-coded-cryptographic-value] — known-answer test: this key is the fixture.
             let secret = [9u8; 32];
             assert_eq!(
                 derive(&secret, LABEL),
@@ -526,11 +527,13 @@ mod tests {
         /// 96-bit nonce and AES-256-GCM output with the tag appended.
         #[test]
         fn a_ciphertext_from_an_earlier_release_still_opens() {
+            // codeql[rust/hard-coded-cryptographic-value] — known-answer test: this nonce is the fixture.
             let nonce = [70, 115, 125, 239, 81, 156, 73, 132, 64, 88, 30, 127];
             let ciphertext = [
                 47, 91, 32, 20, 4, 226, 4, 200, 36, 63, 214, 118, 149, 130, 31, 167, 57, 43, 249,
                 93, 223, 154, 179, 72, 223, 59, 215, 242, 204, 245,
             ];
+            // codeql[rust/hard-coded-cryptographic-value] — known-answer test: this key is the fixture.
             let crypto = Crypto::from_key([7u8; 32]);
             assert_eq!(
                 crypto.open(&nonce, &ciphertext).unwrap(),
