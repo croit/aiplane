@@ -1,0 +1,60 @@
+# CodeQL advanced setup for croit AIplane.
+#
+# Default setup scans test code as if it were production, which produced only
+# false positives (deterministic test keys, assertion messages, reserved
+# `*.invalid` URLs). This workflow replaces it so the repository owns the
+# configuration: `.github/codeql/codeql-config.yml` excludes the test trees,
+# and the few `#[cfg(test)]` blocks inside production files carry line
+# suppressions.
+#
+# Every `uses:` is pinned to a full 40-character commit SHA, matching the rest
+# of `.github/workflows` (see the rationale in `ci.yml`). Bump them with
+# Dependabot, never by replacing the SHA with a tag.
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+  actions: read
+  security-events: write
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+          - language: c-cpp
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: python
+            build-mode: none
+          - language: rust
+            build-mode: none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: github/codeql-action/init@a3d1b77a1ba1550fbb5c74db1dc3a11f4a481126 # v3.39.2
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          config-file: ./.github/codeql/codeql-config.yml
+      - uses: github/codeql-action/analyze@a3d1b77a1ba1550fbb5c74db1dc3a11f4a481126 # v3.39.2
+        with:
+          category: "/language:${{ matrix.language }}"

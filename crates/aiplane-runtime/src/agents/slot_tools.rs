@@ -233,6 +233,7 @@ mod tests {
             ]
         );
         for trusted in ["set_verified", "set_plan"] {
+            // codeql[rust/cleartext-logging] — `trusted` is a tool id, not a secret.
             assert!(!t.contains(trusted), "{trusted}");
         }
         assert_eq!(

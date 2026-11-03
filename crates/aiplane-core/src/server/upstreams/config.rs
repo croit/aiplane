@@ -522,6 +522,7 @@ mod tests {
             ("x-custom".to_string(), "v".to_string()),
         ]);
         let request = apply_extra_headers(
+            // codeql[rust/non-https-url] — reserved, non-resolving test URL; the request is never sent.
             reqwest::Client::new().request(Method::GET, "http://x.invalid/v1"),
             &headers,
         )

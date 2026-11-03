@@ -506,6 +506,7 @@ mod tests {
         for text in [german_letter, code, json, prose, uuids] {
             assert!(
                 signals_of(text).is_empty(),
+                // codeql[rust/cleartext-logging] — `text` is a test fixture, not a secret.
                 "{text:?} -> {:?}",
                 signals_of(text)
             );

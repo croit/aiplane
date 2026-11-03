@@ -320,12 +320,14 @@ mod activity_key_tests {
 
     #[test]
     fn the_activity_key_is_hmac_sha256_under_a_key_derived_from_the_at_rest_key() {
+        // codeql[rust/hard-coded-cryptographic-value] — deterministic test key, not a credential.
         let crypto = Crypto::from_key([7u8; 32]);
         let ring = crypto.activity_keys();
         assert_eq!(ring.len(), 1);
         let key = &ring[0];
         assert_eq!(key.id.len(), 16);
         let expected = {
+            // codeql[rust/hard-coded-cryptographic-value] — the same deterministic test key.
             let mut mac =
                 <Hmac<Sha256>>::new_from_slice(&derive(&[7u8; 32], ACTIVITY_LABEL)).unwrap();
             mac.update(b"event");
@@ -334,6 +336,7 @@ mod activity_key_tests {
         assert_eq!(key.sign(b"event"), expected);
         assert_ne!(key.sign(b"event"), sha256_hex(b"event"));
         assert_ne!(
+            // codeql[rust/hard-coded-cryptographic-value] — a different deterministic test key.
             Crypto::from_key([8u8; 32]).activity_keys()[0].sign(b"event"),
             key.sign(b"event"),
             "another gateway's key signs differently"
@@ -457,6 +460,7 @@ mod tests {
         fn the_fingerprint_never_contains_the_whole_secret() {
             let key = "sk-live-abcdef1234567890-ghijkl";
             let fp = secret_fingerprint(key).expect("long enough for a fingerprint");
+            // codeql[rust/cleartext-logging] — the message prints the safe fingerprint, never the key.
             assert!(!fp.contains(key), "{fp} must not carry the key");
             assert_eq!(fp.chars().count(), 9, "4 + ellipsis + 4");
         }
