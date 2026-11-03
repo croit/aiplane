@@ -25,7 +25,8 @@
 		"svelte-check": "^4.7.7",
 		"tailwindcss": "^4.1.0",
 		"typescript": "^6.0.3",
-		"vite": "^8.3.5"
+		"vite": "^8.3.5",
+		"deepmerge": "file:./vendor/deepmerge-4.3.2-aiplane.1.tgz"
 	},
 	"dependencies": {
 		"@zumer/snapdom": "^3.3.7",
@@ -33,7 +34,8 @@
 		"marked": "^18.1.1"
 	},
 	"overrides": {
-		"postcss-selector-parser": "7.1.6"
+		"postcss-selector-parser": "7.1.6",
+		"deepmerge": "$deepmerge"
 	},
 	"imports": {
 		"#lib/*": "./src/lib/*"

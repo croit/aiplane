@@ -45,7 +45,9 @@ odfpy
 typ2pptx
 
 # PDF read/write/manipulate/render (PyMuPDF = fitz)
-pypdf
+# 6.21.4 is the first release that fixes GHSA-5849-834g-hvw5, GHSA-cggf-277g-3q54
+# and GHSA-mfr5-77xh-9j7h (the three high-severity 2026-10-30 advisories).
+pypdf>=6.21.4
 pdfplumber
 pymupdf
 reportlab
