@@ -389,12 +389,16 @@ pub async fn get_content(pool: &Pool, turn_id: &str) -> Result<Option<String>, D
         .bind(turn_id)
         .fetch_optional(pool)
         .await?;
-    Ok(row.map(|r| {
-        r.try_get::<Option<String>, _>("content")
-            .ok()
-            .flatten()
-            .unwrap_or_default()
-    }))
+    match row {
+        None => Ok(None),
+        Some(row) => {
+            let content: Option<String> = row.try_get("content").map_err(|e| DbError::Decode {
+                column: "content",
+                source: e.into(),
+            })?;
+            Ok(Some(content.unwrap_or_default()))
+        }
+    }
 }
 
 /// Append to an in-progress assistant turn's `reasoning`. Same

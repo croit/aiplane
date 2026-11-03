@@ -19,7 +19,7 @@ use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 use uuid::Uuid;
 
-use super::{DbError, Pool};
+use super::{DbError, Pool, WriteTx};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VisitorSession {
@@ -159,22 +159,42 @@ pub async fn lookup(pool: &Pool, token_hash: &str, now: Timestamp) -> Result<Loo
 
 /// Count an accepted request: move `expires_at` to `now + idle_ttl`, capped
 /// at `max_expires_at`.
+///
+/// Read, decide and write under one write lock: two accepted requests whose
+/// updates land in reverse order must not move `expires_at`/`last_seen_at`
+/// backwards, and a request resolved just before expiry must not extend the
+/// session after it has expired.
 pub async fn slide(
     pool: &Pool,
     session: &VisitorSession,
     now: Timestamp,
 ) -> Result<VisitorSession, DbError> {
-    let expires_at = add(now, session.idle_ttl)?.min(session.max_expires_at);
-    sqlx::query("UPDATE visitor_sessions SET last_seen_at = ?, expires_at = ? WHERE id = ?")
-        .bind(now.to_string())
-        .bind(expires_at.to_string())
+    let mut tx = WriteTx::begin(pool).await?;
+    let row = sqlx::query(&format!("SELECT {COLS} FROM visitor_sessions WHERE id = ?"))
         .bind(&session.id)
-        .execute(pool)
+        .fetch_optional(&mut *tx)
         .await?;
+    let Some(current) = row.as_ref().map(map_session).transpose()? else {
+        return Ok(session.clone());
+    };
+    if now >= current.expires_at || now >= current.max_expires_at {
+        return Ok(current);
+    }
+    let expires_at = add(now, current.idle_ttl)?
+        .min(current.max_expires_at)
+        .max(current.expires_at);
+    let last_seen_at = now.max(current.last_seen_at);
+    sqlx::query("UPDATE visitor_sessions SET last_seen_at = ?, expires_at = ? WHERE id = ?")
+        .bind(last_seen_at.to_string())
+        .bind(expires_at.to_string())
+        .bind(&current.id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     Ok(VisitorSession {
-        last_seen_at: now,
+        last_seen_at,
         expires_at,
-        ..session.clone()
+        ..current
     })
 }
 

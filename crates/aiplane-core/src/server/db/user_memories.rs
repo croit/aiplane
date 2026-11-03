@@ -19,7 +19,7 @@ use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 use uuid::Uuid;
 
-use super::{DbError, Pool};
+use super::{DbError, Pool, WriteTx};
 
 /// What a memory is about. Keeps the store structured: the model tags
 /// each fact when it `remember`s, the `/memory` page groups by it, and
@@ -113,13 +113,18 @@ pub async fn insert(
     let now = Timestamp::now();
     let now_s = now.to_string();
 
+    // The dedupe read and the write share one write-locked transaction: two
+    // `remember` calls in one round (tools run concurrently) would otherwise
+    // both miss the SELECT and insert duplicates. The schema has no unique
+    // index to fall back on.
+    let mut tx = WriteTx::begin(pool).await?;
     if let Some(existing) = sqlx::query(
         r#"SELECT id, kind, content, created_at FROM user_memories
            WHERE user_id = ? AND content = ?"#,
     )
     .bind(user_id)
     .bind(content)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await?
     .as_ref()
     .map(map_row)
@@ -129,8 +134,9 @@ pub async fn insert(
             .bind(kind.as_str())
             .bind(&now_s)
             .bind(&existing.id)
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
+        tx.commit().await?;
         return Ok(Memory { kind, ..existing });
     }
 
@@ -145,8 +151,9 @@ pub async fn insert(
     .bind(content)
     .bind(&now_s)
     .bind(&now_s)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(Memory {
         id,
         kind,
@@ -364,6 +371,17 @@ mod tests {
         let rows = list_for_user(&pool, "alice", 50).await.unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].kind, MemoryKind::Project);
+    }
+
+    #[tokio::test]
+    async fn concurrent_duplicate_inserts_collapse_to_one_row() {
+        let pool = fresh().await;
+        let (a, b) = tokio::join!(
+            insert(&pool, "alice", MemoryKind::Fact, "runs ceph"),
+            insert(&pool, "alice", MemoryKind::Fact, "runs ceph"),
+        );
+        assert_eq!(a.unwrap().id, b.unwrap().id);
+        assert_eq!(list_for_user(&pool, "alice", 50).await.unwrap().len(), 1);
     }
 
     #[tokio::test]

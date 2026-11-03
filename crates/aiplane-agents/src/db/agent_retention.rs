@@ -13,7 +13,7 @@
 
 use jiff::Timestamp;
 
-use super::{DbError, Pool};
+use super::{DbError, Pool, WriteTx};
 
 /// What one sweep of one agent deleted.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -127,7 +127,7 @@ pub async fn delete_conversation(
     conversation: &Conversation,
     idle_before: Timestamp,
 ) -> Result<bool, DbError> {
-    let mut tx = pool.begin().await?;
+    let mut tx = WriteTx::begin(pool).await?;
     let updated: Option<String> = sqlx::query_scalar(&format!(
         "SELECT updated_at FROM chat_sessions
          WHERE id = ? AND principal_id = ? AND {ROOT_AT_REST}"

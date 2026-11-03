@@ -22,7 +22,7 @@ use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 use uuid::Uuid;
 
-use super::{DbError, Pool, parse_ts};
+use super::{DbError, Pool, WriteTx, parse_ts};
 
 /// The content type of a document. Drives both how the model edits it
 /// (see [`DocumentFormat::edit_kind`]) and how the canvas panel renders
@@ -395,7 +395,21 @@ pub async fn append_version(
     turn_id: Option<&str>,
     author: VersionAuthor,
 ) -> Result<Option<Document>, DbError> {
-    let Some(doc) = get(pool, session_id, id).await? else {
+    // One writer at a time: the head version is read, the next one inserted
+    // and the head bumped under the same write lock. Two concurrent appends
+    // (two canvas tools in one round, or a hand edit racing a model write)
+    // used to both read `N`, and the loser died on `UNIQUE (document_id,
+    // version)` — or, worse, left the inserted version unreachable behind an
+    // un-bumped head.
+    let mut tx = WriteTx::begin(pool).await?;
+    let row = sqlx::query(&format!(
+        "SELECT {DOC_COLUMNS} FROM documents WHERE id = ? AND session_id = ?"
+    ))
+    .bind(id)
+    .bind(session_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(doc) = row.as_ref().map(map_doc).transpose()? else {
         return Ok(None);
     };
     let now = Timestamp::now();
@@ -414,15 +428,20 @@ pub async fn append_version(
     .bind(turn_id)
     .bind(author.as_str())
     .bind(&now_s)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
 
-    sqlx::query("UPDATE documents SET current_ver = ?, updated_at = ? WHERE id = ?")
-        .bind(next)
-        .bind(&now_s)
-        .bind(id)
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "UPDATE documents SET current_ver = ?, updated_at = ? WHERE id = ? AND session_id = ?",
+    )
+    .bind(next)
+    .bind(&now_s)
+    .bind(id)
+    .bind(session_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
 
     Ok(Some(Document {
         current_ver: next,
@@ -630,6 +649,39 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(first.content, "v1");
+    }
+
+    #[tokio::test]
+    async fn concurrent_appends_get_distinct_versions_and_a_consistent_head() {
+        let pool = open(Path::new(":memory:")).await.unwrap();
+        seed_session(&pool, "s1").await;
+        let id = new_id();
+        create(
+            &pool,
+            &id,
+            "s1",
+            "u1",
+            "Doc",
+            DocumentFormat::Text,
+            "v1",
+            None,
+        )
+        .await
+        .unwrap();
+        let (a, b) = tokio::join!(
+            append_version(&pool, "s1", &id, "a", None, None, VersionAuthor::Assistant),
+            append_version(&pool, "s1", &id, "b", None, None, VersionAuthor::Assistant),
+        );
+        let mut versions = [
+            a.unwrap().unwrap().current_ver,
+            b.unwrap().unwrap().current_ver,
+        ];
+        versions.sort_unstable();
+        assert_eq!(versions, [2, 3]);
+        let (doc, latest) = get_version(&pool, "s1", &id, None).await.unwrap().unwrap();
+        assert_eq!(doc.current_ver, 3);
+        assert!(latest.content == "a" || latest.content == "b");
+        assert_eq!(list_versions(&pool, "s1", &id).await.unwrap().len(), 3);
     }
 
     #[tokio::test]

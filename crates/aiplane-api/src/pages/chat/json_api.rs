@@ -93,9 +93,13 @@ pub async fn sessions_list(
         None => None,
     };
     if let Some(q) = params.q.filter(|q| !q.trim().is_empty()) {
-        let hits = chat::search_sessions_scoped(&state.db, &user.id, q.trim(), 50, scope.as_ref())
-            .await
-            .unwrap_or_default();
+        let hits =
+            match chat::search_sessions_scoped(&state.db, &user.id, q.trim(), 50, scope.as_ref())
+                .await
+            {
+                Ok(hits) => hits,
+                Err(error) => return internal(error),
+            };
         let sessions = hits
             .into_iter()
             .filter(|hit| {
