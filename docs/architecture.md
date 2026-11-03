@@ -61,7 +61,7 @@ encodes the levels above and fails on any upward or sideways Cargo edge, naming
 it. See [`testing.md`](testing.md#architecture-tests).
 
 ### `crates/shared`
-I/O-free wire types and encoding helpers: the browser API types in `api`, the sandbox runner contract in `sandbox`, and base64/hex helpers. It depends on `serde`, `serde_json` and `jiff`.
+I/O-free wire types and encoding helpers: the browser API types in `api`, the sandbox runner contract in `sandbox`, and base64/hex helpers. It depends on `serde`, `serde_json`, `schemars` and `jiff`.
 
 ### `crates/session-core`
 The chat substrate: the `chat_*` tables' accessors, the worker registry, the
@@ -150,7 +150,7 @@ Where the world gets tied together:
 - `server/state.rs` — `AppState`: the db pool, config, `Arc<UpstreamRegistry>`, `Arc<ToolRegistry>`, `Arc<Resolver>`, and the optional feature handles (RAG indexer, skills, ComfyUI, push, geoip, sandbox client, MCP manager).
 - `rama_server/state.rs` — `RamaState` wraps `AppState` (via `Deref`) and adds the session store, worker registry, usage sink and rate-limit enforcer; `rama_server/auth.rs` — `require_bearer` for `/v1/*`.
 - `openai_driver.rs` — the `session_core::SessionDriver` impl that streams a chat completion, plus `loop_guard.rs`.
-- `openai_driver/turn_policy.rs` — the chat driver's turn policy. `TurnPolicy` is `Chat` (a person's turn) or `Agent(&AgentRun)`, taken from the turn's `Actor`, and owns everything that differs between them: the leading system message (built in one place, refreshed per round only when an agent's conversation state can change it), the round's tool offer (a person's per-conversation overlay; an agent's grants ∩ spec tools plus its synthetic and terminal tools), the model access, budget, injection scan and usage name, the conversation's "off" switches (a person's only), how the final round and a round without calls end under a finish contract, and settling the run (`run_outcome`). The round loop calls the policy and never asks whether it runs an agent, so an agent run makes none of the chat-only reads (`allowed_tools_for_session`, `chat_session_tools`, the MCP enabled-key union). An enum, not a trait object: the set is closed, as `Actor` is, and the methods are async.
+- `openai_driver/turn_policy.rs` — the chat driver's turn policy. `TurnPolicy` is `Chat` (a person's turn), `Agent(&AgentRun)` (an agent's run) or `Persona(&ChatPersona)` (a person's turn in a built-in persona's conversation), taken from the turn's `Actor`, and owns everything that differs between them: the leading system message (built in one place, refreshed per round only when an agent's conversation state can change it), the round's tool offer (a person's per-conversation overlay; an agent's grants ∩ spec tools plus its synthetic and terminal tools), the model access, budget, injection scan and usage name, the conversation's "off" switches (a person's only), how the final round and a round without calls end under a finish contract, and settling the run (`run_outcome`). The round loop calls the policy and never asks whether it runs an agent, so an agent run makes none of the chat-only reads (`allowed_tools_for_session`, `chat_session_tools`, the MCP enabled-key union). An enum, not a trait object: the set is closed, as `Actor` is, and the methods are async.
 - `suspend.rs` + `openai_driver/resume.rs` — durable suspend and resume: a tool returns `tool_suspend(…)`, the driver writes the run state to `chat_turn_suspensions` and frees the worker, and a resume continues the same turn from there. `server/tools/ask_first.rs` (`AskFirst`) wraps any tool so it runs only after someone approves the call. See [`tools-rbac.md`](tools-rbac.md#suspend-and-resume).
 - `finish.rs` — the completion contract for non-interactive runs (`FinishContract`, `RunOutcome`): a run given one ends only through a schema-valid `finish(result)` call or a structured incomplete outcome. `headless::drive` takes one and returns the outcome. See [`tools-rbac.md`](tools-rbac.md#finish-contract).
 - `server/{scheduled,webhooks,compaction,headless}` — the background workers that need state. `headless::open_session`/`drive` run as a person or as a system principal: an agent run's session is owned by the principal (no person's chat), it is offered only the principal's grants, and with a `RunChain` every tool call's decision is audited (`openai_driver/call_policy.rs`).
@@ -221,6 +221,16 @@ and `rama_server::spa` serves it from `AIPLANE_STATIC_DIR` — content-hashed bu
 `immutable`, `index.html` and `sw.js` `no-cache`. With the variable unset the UI
 answers 503 and nothing else changes, which is what makes a headless deployment
 (API + proxy only) a supported configuration rather than an accident.
+
+### `crates/sandbox-runner`
+
+Deliberately **outside** the stack: its own binary and image, deployed beside
+the gateway rather than linked into it (the architecture test lists it in
+`OUTSIDE_THE_STACK`). It executes sandboxed tool work in a container, exposes
+the workspace operations (list/read/write/create/remove) with `*at`-family
+syscalls under a canonical agent directory, and reports whether its deployment
+has egress. The gateway reaches it through the sandbox client in
+`aiplane-runtime::server::tools::sandbox`; see [`sandbox.md`](sandbox.md).
 
 ## Request flow: `POST /v1/chat/completions`
 

@@ -30,6 +30,7 @@ pub mod rag_api;
 pub mod responses;
 pub mod router;
 pub mod sandbox_api;
+pub mod security_headers;
 pub mod setup_api;
 pub mod spa;
 pub(crate) mod translated;

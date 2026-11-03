@@ -60,6 +60,7 @@ test('a message never renders empty', () => {
 test('placeholders match across languages', () => {
 	// A translation that drops `{count}` silently renders a sentence with a
 	// hole in it; one that invents a placeholder renders the literal braces.
+	// Check both directions: a subset check only catches the second.
 	const names = (msg: string) => [...msg.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
 	const flatten = (v: string | Record<string, string>) =>
 		typeof v === 'string' ? [v] : Object.values(v);
@@ -77,6 +78,27 @@ test('placeholders match across languages', () => {
 						`it would render as literal braces`
 				);
 			}
+			for (const name of expected) {
+				assert.ok(
+					actual.has(name),
+					`${lang}/${key} drops {${name}} — the sentence renders with a hole in it`
+				);
+			}
+		}
+	}
+});
+
+test('every plural message has the `other` fallback', () => {
+	// A non-integer count falls into `other`; without it the runtime picks
+	// whichever variant happens to be first (see i18n.svelte.ts).
+	for (const [lang, catalog] of Object.entries({ en, ...CATALOGS })) {
+		for (const [key, value] of Object.entries(catalog)) {
+			if (typeof value === 'string') continue;
+			assert.ok(
+				'other' in value,
+				`${lang}/${key} has no \`other\` variant — a fractional count would render ` +
+					`the first variant (${Object.keys(value).join(', ')})`
+			);
 		}
 	}
 });

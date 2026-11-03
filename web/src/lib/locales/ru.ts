@@ -392,7 +392,6 @@ export const ru: Catalog = {
  "agent-memory-own-scope": "Заметки этого агента. Другие агенты не могут их читать.",
  "agent-memory-reload": "Перезагрузить память",
  "agent-memory-retry": "Повторить",
- "agent-memory-scope": "Личные заметки этого агента. Они хранятся отдельно от вашей персональной памяти.",
  "agent-output-redacted": "[удалено]",
  "agent-output-withheld": "Я не могу дать этот ответ, так как в нём упоминались данные, которые я не смог подтвердить для вас. Переформулируйте вопрос или обратитесь в службу поддержки.",
  "agent-plan-connection-required": "Для этого инструмента нужно сначала настроить подключение учётной записи.",
@@ -637,7 +636,6 @@ export const ru: Catalog = {
  "agents-embed-origins-help": "Ровно то, что отправляет браузер: https://www.example.com, с портом, если он не стандартный, без пути.",
  "agents-embed-revoke": "Отозвать",
  "agents-embed-revoked": "Отозван",
- "agents-empty": "Пока нет агентов. Создайте первого.",
  "agents-error-assist-failed": "Помощнику не удалось дать ответ на этот раз. Попробуйте ещё раз.",
  "agents-error-assist-unavailable": "Помощник сейчас недоступен на этом сервере. Попробуйте позже или обратитесь к администратору.",
  "agents-error-generic": "На сервере что-то пошло не так. Попробуйте ещё раз или обратитесь к администратору, если ошибка повторится.",
@@ -1475,7 +1473,8 @@ export const ru: Catalog = {
  "chat-render-entry-count": {
   "few": "{count} записи",
   "many": "{count} записей",
-  "one": "{count} запись"
+  "one": "{count} запись",
+  "other": "{count} записи"
  },
  "chat-render-export-aria": "Экспортировать беседу",
  "chat-render-export-label": "Экспорт",
@@ -1493,7 +1492,8 @@ export const ru: Catalog = {
  "chat-render-revision-count": {
   "few": "{count} версии",
   "many": "{count} версий",
-  "one": "{count} версия"
+  "one": "{count} версия",
+  "other": "{count} версии"
  },
  "chat-render-share-label-off": "Поделиться",
  "chat-render-share-label-on": "Открыт доступ ✓",

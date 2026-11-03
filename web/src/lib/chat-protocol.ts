@@ -470,18 +470,6 @@ export function applyEvent(state: ConversationState, event: ChatEvent): void {
 	}
 }
 
-/** The sidebar's display title: the stored one, else the first user message. */
-export function sessionTitle(session: ChatSession, turns: Iterable<LiveTurn>): string {
-	if (session.title?.trim()) return session.title;
-	for (const t of turns) {
-		if (t.turn.role === 'user' && t.turn.user_content) {
-			const first = t.turn.user_content.split('\n').find((l) => l.trim()) ?? '';
-			return first.length > 60 ? `${first.slice(0, 60)}…` : first || 'Untitled chat';
-		}
-	}
-	return 'Untitled chat';
-}
-
 // ---------------------------------------------------------------------------
 // Chat attachments (user turns carry `[gw-attachment …]` markers inline)
 

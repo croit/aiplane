@@ -28,6 +28,7 @@
 	} = $props();
 
 	const WIDTH = { sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-3xl', xl: 'max-w-5xl' } as const;
+	const titleId = $props.id();
 
 	let dialog = $state<HTMLDialogElement | null>(null);
 
@@ -43,12 +44,12 @@
 	}
 </script>
 
-<dialog bind:this={dialog} class="modal modal-middle" onclose={closed}>
+<dialog bind:this={dialog} class="modal modal-middle" aria-labelledby={titleId} onclose={closed}>
 	{#if open}
 		<div class="modal-box flex max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] flex-col gap-4 p-0 {WIDTH[size]}">
 			<header class="flex items-start gap-3 px-5 pt-5">
 				<div class="min-w-0 flex-1">
-					<h3 class="m-0 text-lg font-semibold">{title}</h3>
+					<h3 id={titleId} class="m-0 text-lg font-semibold">{title}</h3>
 					{#if description}<p class="mb-0 mt-1 text-sm text-base-content/60">{description}</p>{/if}
 				</div>
 				<button type="button" class="btn btn-circle btn-ghost btn-sm" aria-label={t('ui-close')} onclick={() => (open = false)}>✕</button>
