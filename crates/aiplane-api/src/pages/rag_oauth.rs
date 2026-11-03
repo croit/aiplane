@@ -41,6 +41,18 @@ use rama::http::StatusCode;
 /// the pending row says which collection and which kind it belongs to.
 pub const CALLBACK_PATH: &str = "/rag/oauth/callback";
 
+/// Whether a navigation came from this site (or was typed/bookmarked).
+fn same_site_navigation(req: &Request) -> bool {
+    match req
+        .headers()
+        .get("sec-fetch-site")
+        .and_then(|value| value.to_str().ok())
+    {
+        Some(site) => site == "same-origin" || site == "none",
+        None => true,
+    }
+}
+
 /// GET `/rag/{id}/connect` — start the consent flow for a collection's source.
 pub async fn rag_connect(
     State(state): State<Arc<RamaState>>,
@@ -52,6 +64,20 @@ pub async fn rag_connect(
         Ok(s) => s,
         Err(resp) => return resp,
     };
+    // This is a state-changing GET (it creates a pending consent row and
+    // redirects), and the session cookie is SameSite=Lax, so it is sent on a
+    // top-level navigation from another site. Browsers label that navigation
+    // `sec-fetch-site: cross-site`; a same-origin link or a typed/bookmarked
+    // URL is `same-origin`/`none`. A client that sends no header is allowed
+    // (older browsers), since the callback still needs the admin session and
+    // the single-use state.
+    if !same_site_navigation(&req) {
+        return flow_error_page(
+            lang,
+            StatusCode::FORBIDDEN,
+            &t(lang, "rag-oauth-cross-site"),
+        );
+    }
 
     let collection = match rag_db::find_collection_by_id(&state.db, id).await {
         Ok(Some(c)) => c,
@@ -404,4 +430,27 @@ pub async fn rag_oauth_callback(
         "rag oauth: source connected"
     );
     see_other("/rag")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rama::http::Body;
+
+    fn request(site: Option<&str>) -> Request {
+        let mut builder = Request::builder().uri("/rag/1/connect");
+        if let Some(site) = site {
+            builder = builder.header("sec-fetch-site", site);
+        }
+        builder.body(Body::empty()).unwrap()
+    }
+
+    #[test]
+    fn only_a_same_origin_or_typed_navigation_starts_consent() {
+        assert!(same_site_navigation(&request(Some("same-origin"))));
+        assert!(same_site_navigation(&request(Some("none"))));
+        assert!(!same_site_navigation(&request(Some("cross-site"))));
+        assert!(!same_site_navigation(&request(Some("same-site"))));
+        assert!(same_site_navigation(&request(None)));
+    }
 }

@@ -405,6 +405,7 @@ agent-background-error-linked = Choisissez une conversation privée vous apparte
 agent-background-error-pending-delete = Cette automatisation est en cours ou attend une approbation. Désactivez-la, puis terminez ou arrêtez le tour avant de la supprimer.
 agent-background-error-unavailable = Cet agent est inactif ou indisponible. Activez-le ou choisissez un autre assistant avant d’exécuter cette automatisation.
 agent-background-error-busy = La conversation sélectionnée est en cours ou attend une approbation. Terminez ou arrêtez le tour avant de la réutiliser.
+agent-background-error-rate-limited = Ce webhook est déclenché trop souvent. Attendez une minute et réessayez.
 agent-background-error-recording = Le lancement n’a pas pu être enregistré. Aucune exécution du modèle n’a démarré. Réessayez ; contactez votre administrateur si l’erreur persiste.
 
 agent-action-heading = Actions

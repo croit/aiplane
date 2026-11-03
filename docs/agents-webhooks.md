@@ -82,8 +82,9 @@ the indistinguishable 404 behavior.
 
 Preserve the existing bounded 256 KiB body-prefix contract, nonce-delimited
 untrusted input and execution limits. Prefix truncation is not oversize rejection;
-this package introduces no webhook-specific rate admission mechanism. Do not
-describe the prompt delimiter as a security boundary.
+a public trigger accepts at most 120 fires in any 60 seconds (a 429 with
+`Retry-After: 60` beyond that), and that is the only webhook-specific rate
+admission mechanism. Do not describe the prompt delimiter as a security boundary.
 
 Rotation retains the existing last-writer behavior, requires current management
 generation and changes only the secret hash. Final fire admission rechecks that

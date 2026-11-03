@@ -406,6 +406,7 @@ agent-background-error-linked = Choose a private conversation owned by you and b
 agent-background-error-pending-delete = This automation has a running turn or is waiting for approval. Disable it, then finish or stop the turn before deleting it.
 agent-background-error-unavailable = This agent is inactive or unavailable. Activate it or choose another assistant before running this automation.
 agent-background-error-busy = The selected conversation is running or waiting for approval. Finish or stop that turn before reusing it.
+agent-background-error-rate-limited = This webhook is firing too often. Wait a minute and try again.
 agent-background-error-recording = The run could not be recorded. No model execution started. Try again; contact your administrator if the error persists.
 
 agent-action-heading = Actions

@@ -156,6 +156,36 @@ pub fn redirect_uri_for(public_url: &str) -> String {
     format!("{}/auth/callback", public_url.trim_end_matches('/'))
 }
 
+/// Whether the setup wizard may probe `issuer`'s discovery document.
+///
+/// The wizard's `POST /api/v0/setup/test` is unauthenticated on a first-run
+/// gateway, and it makes the gateway fetch the issuer. Without a guard that is
+/// a generic SSRF probe from the gateway's network position, including the
+/// cloud metadata endpoints. Link-local addresses and the well-known metadata
+/// names are refused; private RFC 1918 ranges stay allowed because a
+/// self-hosted IdP (Keycloak, Authentik) normally lives there, and loopback
+/// stays allowed for a developer's local provider.
+pub fn issuer_is_probeable(issuer: &str) -> bool {
+    let Ok(url) = Url::parse(issuer) else {
+        return false;
+    };
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
+    }
+    match url.host() {
+        Some(url::Host::Ipv4(v4)) => !v4.is_link_local(),
+        Some(url::Host::Ipv6(v6)) => !v6.is_unicast_link_local(),
+        Some(url::Host::Domain(host)) => {
+            let host = host.trim_end_matches('.').to_ascii_lowercase();
+            !matches!(
+                host.as_str(),
+                "metadata.google.internal" | "metadata" | "instance-data"
+            )
+        }
+        None => false,
+    }
+}
+
 impl OidcClient {
     pub async fn build(config: &OidcParams, public_url: &str) -> Result<Arc<Self>, OidcError> {
         // Discovery URL: `<issuer>/.well-known/openid-configuration`. We don't
@@ -712,5 +742,24 @@ mod tests {
         assert_eq!(base64url_no_pad(b"foob"), "Zm9vYg");
         assert_eq!(base64url_no_pad(b"fooba"), "Zm9vYmE");
         assert_eq!(base64url_no_pad(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[test]
+    fn setup_issuer_allows_http_https_and_private_hosts() {
+        assert!(issuer_is_probeable("https://login.example.com"));
+        assert!(issuer_is_probeable("http://localhost:8080/realms/aiplane"));
+        assert!(issuer_is_probeable("https://10.0.0.5/realms/aiplane"));
+        assert!(issuer_is_probeable("https://idp.internal.example/"));
+    }
+
+    #[test]
+    fn setup_issuer_refuses_link_local_metadata_and_non_http() {
+        assert!(!issuer_is_probeable(
+            "http://169.254.169.254/latest/meta-data"
+        ));
+        assert!(!issuer_is_probeable("http://[fe80::1]/"));
+        assert!(!issuer_is_probeable("https://metadata.google.internal/"));
+        assert!(!issuer_is_probeable("file:///etc/passwd"));
+        assert!(!issuer_is_probeable("not a url"));
     }
 }

@@ -405,6 +405,7 @@ agent-background-error-linked = 请选择属于你的、关联同一智能体的
 agent-background-error-pending-delete = 此自动化正在运行或等待审批。请先禁用它，然后完成或停止该轮执行后再删除。
 agent-background-error-unavailable = 此智能体未启用或不可用。执行此自动化前请启用它或选择其他助手。
 agent-background-error-busy = 所选对话正在运行或等待审批。请先完成或停止该轮执行，再复用此对话。
+agent-background-error-rate-limited = 此 Webhook 触发过于频繁。请等待一分钟后重试。
 agent-background-error-recording = 无法保存此次运行记录。模型尚未开始执行。请重试；如果错误持续出现，请联系管理员。
 
 agent-action-heading = 操作

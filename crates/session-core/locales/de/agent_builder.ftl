@@ -405,6 +405,7 @@ agent-background-error-linked = Wählen Sie eine private Unterhaltung aus Ihrem 
 agent-background-error-pending-delete = Diese Automatisierung läuft oder wartet auf Freigabe. Deaktivieren Sie sie und beenden oder stoppen Sie den Durchlauf, bevor Sie sie löschen.
 agent-background-error-unavailable = Dieser Agent ist inaktiv oder nicht verfügbar. Aktivieren Sie ihn oder wählen Sie einen anderen Assistenten, bevor Sie diese Automatisierung ausführen.
 agent-background-error-busy = Die ausgewählte Unterhaltung läuft oder wartet auf Freigabe. Beenden oder stoppen Sie den Durchlauf, bevor Sie sie wiederverwenden.
+agent-background-error-rate-limited = Dieser Webhook wird zu häufig ausgelöst. Warten Sie eine Minute und versuchen Sie es erneut.
 agent-background-error-recording = Der Durchlauf konnte nicht gespeichert werden. Es wurde kein Modellaufruf gestartet. Versuchen Sie es erneut; wenden Sie sich an Ihren Administrator, wenn der Fehler weiterhin auftritt.
 
 agent-action-heading = Aktionen

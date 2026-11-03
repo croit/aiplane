@@ -180,6 +180,7 @@ rag-source-consent-save-first = Sammlung zuerst mit Client-ID und Secret speiche
 rag-source-consent-connected = verbunden
 rag-source-consent-connect = Verbinden
 rag-oauth-lookup-failed = Die Sammlung konnte nicht gelesen werden.
+rag-oauth-cross-site = Öffnen Sie diesen Link von der AIplane-Seite aus, nicht von einer anderen Website.
 rag-oauth-not-oauth = Diese Quellenart wird nicht im Browser verbunden.
 rag-oauth-no-client = Speichern Sie zuerst OAuth-Client-ID und Secret an der Sammlung.
 rag-oauth-bad-authorize-url = Die Autorisierungs-URL des Anbieters konnte nicht gebildet werden.

@@ -332,6 +332,14 @@ pub async fn setup_test(State(state): State<Arc<RamaState>>, req: Request) -> Re
             "Public URL, issuer and client id are all required.",
         );
     }
+    if !aiplane_core::server::auth::oidc::issuer_is_probeable(&issuer) {
+        return error_json(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "The issuer must be an http(s) URL, and must not be a link-local or cloud-metadata \
+             address.",
+        );
+    }
     // A blank secret on an existing draft keeps the stored one (the SPA never
     // echoes secrets back); on a fresh draft it is required.
     let secret = if parsed.client_secret.is_empty() {
