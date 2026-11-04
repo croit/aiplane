@@ -29,7 +29,7 @@
 		"deepmerge": "file:./vendor/deepmerge-4.3.2-aiplane.1.tgz"
 	},
 	"dependencies": {
-		"@zumer/snapdom": "^3.3.7",
+		"@zumer/snapdom": "^3.7.0",
 		"dompurify": "^3.4.17",
 		"marked": "^18.1.1"
 	},
