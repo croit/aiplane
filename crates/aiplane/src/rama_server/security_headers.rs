@@ -23,9 +23,11 @@ use rama::http::{Request, Response, header};
 use rama::{Layer, Service};
 
 /// The application shell's policy. `connect-src 'self'` keeps the JSON API
-/// same-origin; `img-src`/`media-src` allow the blob and data URLs the canvas,
+/// same-origin; `form-action` admits `https:` because browsers apply it to the
+/// redirects a form submission follows, and connecting an integration posts to
+/// `/integrations/{key}/connect`, which redirects to the provider's consent page; `img-src`/`media-src` allow the blob and data URLs the canvas,
 /// voice recorder and generated images use.
-const APP_CSP: &str = "default-src 'self'; base-uri 'self'; form-action 'self'; \
+const APP_CSP: &str = "default-src 'self'; base-uri 'self'; form-action 'self' https:; \
      frame-ancestors 'self'; object-src 'none'; \
      img-src 'self' data: blob: https:; media-src 'self' blob:; font-src 'self' data:; \
      style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; \
@@ -144,6 +146,16 @@ mod tests {
                 .get(header::CONTENT_SECURITY_POLICY)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn forms_may_follow_a_redirect_to_an_https_provider() {
+        let form_action = APP_CSP
+            .split(';')
+            .map(str::trim)
+            .find(|directive| directive.starts_with("form-action"))
+            .unwrap();
+        assert_eq!(form_action, "form-action 'self' https:");
     }
 
     #[tokio::test]
