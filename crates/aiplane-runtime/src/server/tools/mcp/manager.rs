@@ -42,14 +42,15 @@ use crate::server::tools::ask_first::{AskFirst, DEFAULT_APPROVAL_TIMEOUT};
 use crate::server::tools::{Tool, ToolContext, ToolFuture, ToolRegistry, ToolSource};
 use aiplane_core::server::auth::mcp_oauth;
 use aiplane_core::server::crypto::Crypto;
-use aiplane_core::server::db::Pool;
 use aiplane_core::server::db::mcp_audit;
 use aiplane_core::server::db::mcp_catalog::{self, Connector};
 use aiplane_core::server::db::mcp_connections::{
     self, Connection, ConnectionIdentity, ConnectionOwner, RefreshTokens,
 };
 use aiplane_core::server::db::user_mcp::{self, ToolMode};
+use aiplane_core::server::db::{DbError, Pool};
 use aiplane_core::server::rbac::Resolver;
+use aiplane_features::server::push::PushSender;
 
 /// How long a live connection (and its tool listing) is reused before a
 /// refresh. Keeps active conversations warm without holding sockets forever.
@@ -179,6 +180,9 @@ pub struct McpConnectionManager {
     /// background worker and a live request can't both spend the same refresh
     /// token (which, with rotation, would invalidate one of them).
     refresh_locks: RefreshLocks,
+    /// Tells a user their connection needs a reconnect; unset when Web Push
+    /// is off.
+    push: std::sync::OnceLock<Arc<PushSender>>,
 }
 
 impl McpConnectionManager {
@@ -189,7 +193,39 @@ impl McpConnectionManager {
             rbac,
             cache: Mutex::new(HashMap::new()),
             refresh_locks: Mutex::new(HashMap::new()),
+            push: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Notify users through `push` when one of their connections needs a
+    /// reconnect.
+    pub fn set_push(&self, push: Arc<PushSender>) {
+        let _ = self.push.set(push);
+    }
+
+    /// Take a connection out of service: only a new authorization brings it
+    /// back. The user is told once, when the connection leaves `connected`;
+    /// returns whether this call did that.
+    async fn retire(
+        &self,
+        identity: &ConnectionIdentity,
+        catalog_generation: &str,
+        reason: &str,
+    ) -> Result<bool, DbError> {
+        let retired =
+            mcp_connections::mark_reauth(&self.db, identity, catalog_generation, reason).await?;
+        if retired
+            && let ConnectionOwner::User(user_id) = &identity.owner
+            && let Some(push) = self.push.get()
+        {
+            tokio::spawn(notify_needs_reconnect(
+                self.db.clone(),
+                push.clone(),
+                user_id.clone(),
+                identity.connector_key.clone(),
+            ));
+        }
+        Ok(retired)
     }
 
     /// Get-or-create the refresh lock for a `(user, connector)` pair.
@@ -746,13 +782,13 @@ impl McpConnectionManager {
         if rejections.count >= REJECTION_GIVE_UP_COUNT
             && rejections.since <= now - jiff::Span::new().seconds(REJECTION_GIVE_UP_SECS)
         {
-            let _ = mcp_connections::mark_reauth(
-                &self.db,
-                identity,
-                &connector.dispatch_generation,
-                &format!("the server has refused this credential for over an hour: {error}"),
-            )
-            .await;
+            let _ = self
+                .retire(
+                    identity,
+                    &connector.dispatch_generation,
+                    &format!("the server has refused this credential for over an hour: {error}"),
+                )
+                .await;
         }
     }
 
@@ -790,13 +826,9 @@ impl McpConnectionManager {
                 // re-failing every turn, and the store asks for a new sign-in
                 // instead of showing a stale "connected".
                 Err(err) => {
-                    let _ = mcp_connections::mark_reauth(
-                        &self.db,
-                        &conn.identity(),
-                        &connector.dispatch_generation,
-                        &err,
-                    )
-                    .await;
+                    let _ = self
+                        .retire(&conn.identity(), &connector.dispatch_generation, &err)
+                        .await;
                     Err(TokenError {
                         message: err,
                         needs_reauth: true,
@@ -1009,13 +1041,8 @@ impl McpConnectionManager {
         // network blip — keeps the connection, so the next turn or maintenance
         // pass refreshes again; the error is kept for whoever looks.
         let _ = if err.needs_reauth {
-            mcp_connections::mark_reauth(
-                &self.db,
-                &identity,
-                &connector.dispatch_generation,
-                &err.message,
-            )
-            .await
+            self.retire(&identity, &connector.dispatch_generation, &err.message)
+                .await
         } else {
             mcp_connections::record_refresh_failure(
                 &self.db,
@@ -1563,6 +1590,65 @@ impl UserMcpLayer {
         self.tools.insert(id.clone(), tool);
         self.modes.insert(id.clone(), mode);
         self.connector_of.insert(id, connector_key.to_string());
+    }
+}
+
+/// Ping the user's subscribed browsers that a connector needs re-authorizing.
+///
+/// Best-effort and quiet: no-op when the user has no subscription, every
+/// failure only logged. Called once per disconnect, on the connection's move
+/// from `connected` to `reauth`.
+async fn notify_needs_reconnect(
+    db: Pool,
+    push: Arc<PushSender>,
+    user_id: String,
+    connector_key: String,
+) {
+    use aiplane_core::server::db::push_subscriptions;
+    use aiplane_features::server::push::{PushMessage, SendOutcome};
+    use session_core::i18n::{self, Lang, t, t_args};
+
+    let (db, user_id, connector_key) = (&db, user_id.as_str(), connector_key.as_str());
+    let subs = match push_subscriptions::list_for_user(db, user_id).await {
+        Ok(s) if !s.is_empty() => s,
+        Ok(_) => return,
+        Err(err) => {
+            tracing::warn!(error = %err, "push: listing subscriptions for connector reconnect");
+            return;
+        }
+    };
+    // The display name the user knows the connector by ("Google Workspace"),
+    // falling back to its key if the catalog row went away underneath us.
+    let name = mcp_catalog::get(db, connector_key)
+        .await
+        .ok()
+        .flatten()
+        .map(|c| c.name)
+        .unwrap_or_else(|| connector_key.to_string());
+
+    for sub in subs {
+        let lang = sub
+            .lang
+            .as_deref()
+            .and_then(Lang::from_code)
+            .unwrap_or(Lang::En);
+        let message = PushMessage {
+            title: t(lang, "push-connector-reconnect-title"),
+            body: t_args(
+                lang,
+                "push-connector-reconnect-body",
+                &i18n::args([("connector", name.clone().into())]),
+            ),
+            url: "/tools/integrations".to_string(),
+            // One connector, one notification — a later ping for the same
+            // connector replaces it rather than stacking.
+            tag: format!("connector-{connector_key}"),
+        };
+        if push.send(&sub, &message).await == SendOutcome::Gone
+            && let Err(err) = push_subscriptions::delete(db, &sub.id).await
+        {
+            tracing::warn!(error = %err, "push: pruning gone subscription");
+        }
     }
 }
 
@@ -2959,6 +3045,18 @@ mod tests {
         assert!(mgr.ensure_connection(&owner, &connector).await.is_err());
         let after = connection().await;
         assert_eq!(after.status, mcp_connections::STATUS_REAUTH);
-        assert!(after.last_error.unwrap().contains("over an hour"));
+        assert!(
+            after
+                .last_error
+                .as_deref()
+                .unwrap()
+                .contains("over an hour")
+        );
+        assert!(
+            !mgr.retire(&after.identity(), &connector.dispatch_generation, "again")
+                .await
+                .unwrap(),
+            "a retired connection is retired, and its user told, only once"
+        );
     }
 }

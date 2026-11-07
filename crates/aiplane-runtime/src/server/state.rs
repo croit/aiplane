@@ -995,6 +995,7 @@ impl AppState {
     /// Install the Web Push sender (VAPID keypair + HTTP client). Called at
     /// startup only when `push.enabled`.
     pub fn with_push(mut self, push: Arc<aiplane_features::server::push::PushSender>) -> Self {
+        self.mcp.set_push(push.clone());
         self.push = Some(push);
         self
     }
@@ -1027,6 +1028,9 @@ impl AppState {
             crypto.clone(),
             self.rbac.clone(),
         );
+        if let Some(push) = &self.push {
+            self.mcp.set_push(push.clone());
+        }
         self.crypto = crypto;
         self
     }

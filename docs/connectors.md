@@ -127,8 +127,9 @@ The MCP server refusing a credential (401 or 403 at connect) is noted with its
 time and counted, and any accepted connect clears both. A credential the server
 has refused at least three times over at least an hour, without accepting it in
 between — a revoked personal access token, an OAuth token the server rejects
-even after a refresh — flips the card to **Needs reconnect**; a single refusal
-does not.
+even after a refresh — flips the card to **Needs reconnect** and sends the user
+a push notification; a single refusal does not. Whatever takes a connection out
+of service, the user is notified once, when it happens.
 
 ## How the tool list stays current
 
