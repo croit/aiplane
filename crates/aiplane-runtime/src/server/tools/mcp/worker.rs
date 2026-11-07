@@ -13,12 +13,13 @@
 //!
 //! Refreshes go through [`super::manager::McpConnectionManager::refresh_connection`],
 //! which serializes per `(user, connector)` so the worker can't race a live
-//! request and double-spend a rotating refresh token. A connection whose
-//! refresh ultimately fails is parked (the store shows "needs reconnect") as
-//! either `error` or — when the authorization server declared the credential
-//! dead — `reauth`, which also pushes a notification, since only the user can
-//! fix that one and they'd otherwise discover it mid-conversation. The loop
-//! never panics — a failed pass is logged and retried.
+//! request and double-spend a rotating refresh token. A refresh that fails
+//! because the authorization server declared the credential dead parks the
+//! connection as `reauth` (the store shows "needs reconnect") and pushes a
+//! notification, since only the user can fix that one and they'd otherwise
+//! discover it mid-conversation. Any other failure — the server restarting, a
+//! network blip — leaves the connection `connected`, and the next pass tries
+//! again. The loop never panics — a failed pass is logged and retried.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -81,7 +82,7 @@ async fn drain_once(state: &Arc<RamaState>) -> Result<(), DbError> {
             tracing::warn!(
                 owner = ?conn.owner, connector = %conn.connector_key,
                 error = %err, needs_reauth = err.needs_reauth,
-                "proactive MCP token refresh failed — connection marked needs-reconnect"
+                "proactive MCP token refresh failed"
             );
             // A dead credential is the user's to fix and they'd otherwise find
             // out mid-conversation, when a tool call quietly goes missing. A

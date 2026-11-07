@@ -34,11 +34,10 @@ pub struct ConnectionIdentity {
     pub generation: String,
 }
 
-/// `status` of a usable connection.
+/// `status` of a usable connection. A failure that may pass on its own (the
+/// server down, a transport error) leaves a connection here, so the next use
+/// or the next maintenance pass tries again.
 pub const STATUS_CONNECTED: &str = "connected";
-/// `status` after a failure we might recover from on our own (server down,
-/// TLS/transport error, a token the server refused for an unclear reason).
-pub const STATUS_ERROR: &str = "error";
 /// `status` after the authorization server declared the stored credential dead
 /// (`invalid_grant` / `invalid_client` / `unauthorized_client`). Nothing but a
 /// fresh user authorization brings it back, so the store says so plainly
@@ -363,12 +362,24 @@ pub async fn update_tokens(
     tx.commit().await?;
     Ok(changed == 1)
 }
-pub async fn mark_error(
+/// Keep a failed refresh's error on a connection that stays in service.
+pub async fn record_refresh_failure(
     pool: &Pool,
     expected: &ConnectionIdentity,
     expected_catalog_generation: &str,
     error: &str,
-    needs_reauth: bool,
+) -> Result<bool, DbError> {
+    let (user, principal) = expected.owner.columns();
+    let changed = sqlx::query("UPDATE mcp_connections SET last_error=? WHERE id=? AND user_id IS ? AND principal_id IS ? AND connector_key=? AND generation=? AND status='connected' AND catalog_generation=?")
+        .bind(error).bind(&expected.connection_id).bind(user).bind(principal).bind(&expected.connector_key).bind(&expected.generation).bind(expected_catalog_generation)
+        .execute(pool).await?.rows_affected();
+    Ok(changed == 1)
+}
+pub async fn mark_reauth(
+    pool: &Pool,
+    expected: &ConnectionIdentity,
+    expected_catalog_generation: &str,
+    error: &str,
 ) -> Result<bool, DbError> {
     let mut tx = WriteTx::begin(pool).await?;
     if !credential_catalog_matches_in(
@@ -387,7 +398,7 @@ pub async fn mark_error(
     }
     let (user, principal) = expected.owner.columns();
     let changed=sqlx::query("UPDATE mcp_connections SET status=?,last_error=?,updated_at=? WHERE id=? AND user_id IS ? AND principal_id IS ? AND connector_key=? AND generation=? AND status='connected' AND catalog_generation=?")
-        .bind(if needs_reauth {STATUS_REAUTH}else{STATUS_ERROR}).bind(error).bind(Timestamp::now().to_string())
+        .bind(STATUS_REAUTH).bind(error).bind(Timestamp::now().to_string())
         .bind(&expected.connection_id).bind(user).bind(principal).bind(&expected.connector_key).bind(&expected.generation).bind(expected_catalog_generation).execute(&mut *tx).await?.rows_affected();
     tx.commit().await?;
     Ok(changed == 1)
@@ -1086,12 +1097,11 @@ mod tests {
                 .unwrap()
         );
         assert!(
-            !mark_error(
+            !mark_reauth(
                 &p,
                 &old,
                 "fixture-catalog-generation",
-                "stale provider failure",
-                true
+                "stale provider failure"
             )
             .await
             .unwrap()
@@ -1156,12 +1166,11 @@ mod tests {
         let saved = list_connections(&p, &user()).await.unwrap();
         assert_eq!(saved.len(), 1);
         assert!(
-            mark_error(
+            mark_reauth(
                 &p,
                 &saved[0].identity(),
                 "fixture-catalog-generation",
-                "provider rejected credential",
-                true
+                "provider rejected credential"
             )
             .await
             .unwrap()
@@ -1550,7 +1559,7 @@ mod tests {
                 .unwrap()
         );
         assert!(
-            !mark_error(&p, &identity, &generation, "stale provider error", true)
+            !mark_reauth(&p, &identity, &generation, "stale provider error")
                 .await
                 .unwrap()
         );
@@ -1574,23 +1583,21 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(
-            !mark_error(
+            !mark_reauth(
                 &p,
                 &old,
                 "static-current",
-                "credential could not be decrypted",
-                true
+                "credential could not be decrypted"
             )
             .await
             .unwrap()
         );
         assert!(
-            mark_error(
+            mark_reauth(
                 &p,
                 &current,
                 "static-current",
-                "credential could not be decrypted",
-                true
+                "credential could not be decrypted"
             )
             .await
             .unwrap()
@@ -1607,12 +1614,11 @@ mod tests {
         sqlx::query("UPDATE mcp_catalog_connectors SET dispatch_generation='static-retired' WHERE key='gmail'")
             .execute(&p).await.unwrap();
         assert!(
-            !mark_error(
+            !mark_reauth(
                 &p,
                 &replacement,
                 "static-current",
-                "stale decryption failure",
-                true
+                "stale decryption failure"
             )
             .await
             .unwrap()

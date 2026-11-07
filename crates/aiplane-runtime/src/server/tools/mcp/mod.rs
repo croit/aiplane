@@ -29,7 +29,7 @@ use std::time::Duration;
 
 use rmcp::RoleClient;
 use rmcp::handler::client::ClientHandler;
-use rmcp::model::{CallToolRequestParams, CallToolResult};
+use rmcp::model::{CallToolRequestParams, CallToolResult, ClientConfig, ProtocolVersion};
 use rmcp::serve_client;
 use rmcp::service::{NotificationContext, RunningService};
 use rmcp::transport::StreamableHttpClientTransport;
@@ -72,6 +72,16 @@ struct McpClientHandler {
 }
 
 impl ClientHandler for McpClientHandler {
+    /// Offers the newest protocol revision that still has a session-based
+    /// `initialize`. rmcp's default offers its newest draft, and servers that
+    /// only implement the released revisions answer that with a session they
+    /// then reject: GitHub's remote server negotiates down to `2025-11-25` and
+    /// fails the `notifications/initialized` that follows with `400 invalid
+    /// session`.
+    fn get_info(&self) -> ClientConfig {
+        ClientConfig::default().with_protocol_version(ProtocolVersion::LATEST_WITH_INITIALIZE)
+    }
+
     fn on_tool_list_changed(
         &self,
         _context: NotificationContext<RoleClient>,
@@ -501,6 +511,40 @@ mod tests {
         let id = sanitize_tool_id("server", &"x".repeat(200));
         assert!(id.len() <= 64, "len was {}", id.len());
         assert!(id.starts_with("mcp__server__x"));
+    }
+
+    #[tokio::test]
+    async fn the_handshake_offers_the_newest_revision_with_a_session() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(|request: &wiremock::Request| {
+                let request: Value = serde_json::from_slice(&request.body).unwrap();
+                let result = match request["method"].as_str() {
+                    Some("initialize") => json!({
+                        "protocolVersion": "2025-11-25", "capabilities": {"tools": {}},
+                        "serverInfo": {"name": "fixture", "version": "1"}
+                    }),
+                    Some("tools/list") => json!({"tools": []}),
+                    Some("notifications/initialized") => return ResponseTemplate::new(202),
+                    other => panic!("unexpected MCP method: {other:?}"),
+                };
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/json")
+                    .insert_header("mcp-session-id", "fixture-session")
+                    .set_body_json(json!({"jsonrpc": "2.0", "id": request["id"], "result": result}))
+            })
+            .mount(&server)
+            .await;
+        connect_http_server("fixture", &server.uri(), None)
+            .await
+            .unwrap();
+        let requests = server.received_requests().await.unwrap();
+        let initialize: Value = requests
+            .iter()
+            .map(|request| serde_json::from_slice::<Value>(&request.body).unwrap())
+            .find(|body| body["method"] == "initialize")
+            .unwrap();
+        assert_eq!(initialize["params"]["protocolVersion"], "2025-11-25");
     }
 
     #[tokio::test]
