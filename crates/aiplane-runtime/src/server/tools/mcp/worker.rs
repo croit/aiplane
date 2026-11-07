@@ -15,9 +15,8 @@
 //! which serializes per `(user, connector)` so the worker can't race a live
 //! request and double-spend a rotating refresh token. A refresh that fails
 //! because the authorization server declared the credential dead parks the
-//! connection as `reauth` (the store shows "needs reconnect") and pushes a
-//! notification, since only the user can fix that one and they'd otherwise
-//! discover it mid-conversation. Any other failure — the server restarting, a
+//! connection as `reauth` (the store shows "needs reconnect"), and the manager
+//! notifies the user. Any other failure — the server restarting, a
 //! network blip — leaves the connection `connected`, and the next pass tries
 //! again. The loop never panics — a failed pass is logged and retried.
 
@@ -28,14 +27,14 @@ use jiff::Timestamp;
 
 use crate::rama_server::state::RamaState;
 use aiplane_core::server::db::DbError;
-use aiplane_core::server::db::mcp_connections::{self, ConnectionOwner};
+use aiplane_core::server::db::mcp_connections;
 
-/// How often the maintenance pass runs.
-const POLL_INTERVAL: Duration = Duration::from_secs(30 * 60);
+/// How often the maintenance pass runs. Short against
+/// [`REFRESH_WINDOW_SECS`], so a refresh that failed is tried several more
+/// times before the access token runs out.
+const POLL_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
-/// Refresh any connection whose access token expires within this window —
-/// set a little above [`POLL_INTERVAL`] so a token can't slip through the gap
-/// between two passes.
+/// Refresh any connection whose access token expires within this window.
 const REFRESH_WINDOW_SECS: i64 = 35 * 60;
 
 /// For connections whose provider returned no `expires_in`, refresh when they
@@ -84,72 +83,7 @@ async fn drain_once(state: &Arc<RamaState>) -> Result<(), DbError> {
                 error = %err, needs_reauth = err.needs_reauth,
                 "proactive MCP token refresh failed"
             );
-            // A dead credential is the user's to fix and they'd otherwise find
-            // out mid-conversation, when a tool call quietly goes missing. A
-            // transient failure gets no ping — the next pass may well fix it.
-            if err.needs_reauth
-                && let ConnectionOwner::User(user_id) = &conn.owner
-            {
-                notify_needs_reconnect(state, user_id, &conn.connector_key).await;
-            }
         }
     }
     Ok(())
-}
-
-/// Ping the user's subscribed browsers that a connector needs re-authorizing.
-///
-/// Best-effort and quiet: no-op unless push is configured and the user has a
-/// subscription, every failure only logged. Fires at most once per disconnect —
-/// the connection has just left `connected`, so the sweep won't pick it up
-/// again until the user reconnects.
-async fn notify_needs_reconnect(state: &Arc<RamaState>, user_id: &str, connector_key: &str) {
-    use aiplane_core::server::db::{mcp_catalog, push_subscriptions};
-    use aiplane_features::server::push::{PushMessage, SendOutcome};
-    use session_core::i18n::{self, Lang, t, t_args};
-
-    let Some(push) = state.push.clone() else {
-        return;
-    };
-    let subs = match push_subscriptions::list_for_user(&state.db, user_id).await {
-        Ok(s) if !s.is_empty() => s,
-        Ok(_) => return,
-        Err(err) => {
-            tracing::warn!(error = %err, "push: listing subscriptions for connector reconnect");
-            return;
-        }
-    };
-    // The display name the user knows the connector by ("Google Workspace"),
-    // falling back to its key if the catalog row went away underneath us.
-    let name = mcp_catalog::get(&state.db, connector_key)
-        .await
-        .ok()
-        .flatten()
-        .map(|c| c.name)
-        .unwrap_or_else(|| connector_key.to_string());
-
-    for sub in subs {
-        let lang = sub
-            .lang
-            .as_deref()
-            .and_then(Lang::from_code)
-            .unwrap_or(Lang::En);
-        let message = PushMessage {
-            title: t(lang, "push-connector-reconnect-title"),
-            body: t_args(
-                lang,
-                "push-connector-reconnect-body",
-                &i18n::args([("connector", name.clone().into())]),
-            ),
-            url: "/tools/integrations".to_string(),
-            // One connector, one notification — a later ping for the same
-            // connector replaces it rather than stacking.
-            tag: format!("connector-{connector_key}"),
-        };
-        if push.send(&sub, &message).await == SendOutcome::Gone
-            && let Err(err) = push_subscriptions::delete(&state.db, &sub.id).await
-        {
-            tracing::warn!(error = %err, "push: pruning gone subscription");
-        }
-    }
 }

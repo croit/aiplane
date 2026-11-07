@@ -105,19 +105,31 @@ when only system principals should ever reach it.
 ## How connections stay signed in
 
 AIplane refreshes an OAuth connection's access token shortly before it
-expires: on use, and in a background pass every 30 minutes, so an idle
+expires: on use, and in a background pass every five minutes, so an idle
 connection stays signed in too. A connection whose provider reported no expiry
 is refreshed every six hours, which keeps its refresh token exercised on
 providers that revoke idle grants.
 
 A refresh that fails because the authorization server is unreachable or
-answers with an error status — a restart, a network blip — leaves the
-connection connected and keeps the error on it; the next turn or background
-pass tries again. The card flips to **Needs reconnect**, and the user gets a
+answers with an error status — a restart, a network blip — or with the OAuth
+errors `temporarily_unavailable` or `server_error`, is retried twice within the
+turn that needed it (after half a second and two seconds, unless the attempts
+already took five seconds), so a moment's hiccup does not cost the turn its
+tools; the background pass leaves that out, its next pass is the retry. If it
+still fails, the connection stays connected and keeps the error; the next turn
+or background pass tries again. The card flips to **Needs reconnect**, and the user gets a
 push notification, when the grant is dead — an OAuth `invalid_grant`,
 `invalid_client` or `unauthorized_client`, or a stored credential AIplane cannot
 decrypt — or when an expired access token has not been renewed for
 a day.
+
+The MCP server refusing a credential (401 or 403 at connect) is noted with its
+time and counted, and any accepted connect clears both. A credential the server
+has refused at least three times over at least an hour, without accepting it in
+between — a revoked personal access token, an OAuth token the server rejects
+even after a refresh — flips the card to **Needs reconnect** and sends the user
+a push notification; a single refusal does not. Whatever takes a connection out
+of service, the user is notified once, when it happens.
 
 ## How the tool list stays current
 

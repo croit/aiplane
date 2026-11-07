@@ -353,6 +353,21 @@ pub(crate) async fn connect_http_server(
     Ok(ConnectedServer { conn, tools })
 }
 
+/// Whether a failed [`connect_http_server`] means the server refused the
+/// credential (401 / 403) rather than being unreachable or broken. rmcp
+/// reports the status only in its message, so this reads the message; the
+/// tests pin it against rmcp's actual wording.
+pub(crate) fn rejects_credential(connect_error: &str) -> bool {
+    [
+        "unexpected server response: HTTP 401 ",
+        "unexpected server response: HTTP 403 ",
+        "error: Auth required,",
+        "error: Insufficient scope,",
+    ]
+    .iter()
+    .any(|marker| connect_error.contains(marker))
+}
+
 /// Build the namespaced, OpenAI-function-name-safe id for a bridged tool.
 ///
 /// The id is stable for already-valid short names. Names that need scrubbing
@@ -454,7 +469,7 @@ fn map_call_result(res: CallToolResult) -> ToolResult {
 
 #[cfg(test)]
 mod tests {
-    use super::{connect_http_server, map_call_result, sanitize_tool_id};
+    use super::{connect_http_server, map_call_result, rejects_credential, sanitize_tool_id};
     use crate::server::tools::{
         Tool, ToolContext, ToolError, ToolRegistry, extract_content_parts, runner,
     };
@@ -511,6 +526,38 @@ mod tests {
         let id = sanitize_tool_id("server", &"x".repeat(200));
         assert!(id.len() <= 64, "len was {}", id.len());
         assert!(id.starts_with("mcp__server__x"));
+    }
+
+    #[tokio::test]
+    async fn a_refused_credential_is_told_apart_from_an_unreachable_server() {
+        for (status, www_authenticate, body, rejected) in [
+            (401, None, "no", true),
+            (401, Some("Bearer realm=\"mcp\""), "no", true),
+            (403, None, "no", true),
+            (403, Some("Bearer error=\"insufficient_scope\""), "no", true),
+            (503, None, "no", false),
+            (502, None, "upstream said HTTP 403 Forbidden", false),
+        ] {
+            let server = MockServer::start().await;
+            let mut response = ResponseTemplate::new(status).set_body_string(body);
+            if let Some(challenge) = www_authenticate {
+                response = response.insert_header("www-authenticate", challenge);
+            }
+            Mock::given(method("POST"))
+                .respond_with(response)
+                .mount(&server)
+                .await;
+            let err = connect_http_server("fixture", &server.uri(), Some("token"))
+                .await
+                .err()
+                .unwrap();
+            assert_eq!(rejects_credential(&err), rejected, "{status}: {err}");
+        }
+        let unreachable = connect_http_server("fixture", "http://127.0.0.1:1/mcp", Some("token"))
+            .await
+            .err()
+            .unwrap();
+        assert!(!rejects_credential(&unreachable), "{unreachable}");
     }
 
     #[tokio::test]

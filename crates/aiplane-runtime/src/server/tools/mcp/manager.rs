@@ -42,14 +42,15 @@ use crate::server::tools::ask_first::{AskFirst, DEFAULT_APPROVAL_TIMEOUT};
 use crate::server::tools::{Tool, ToolContext, ToolFuture, ToolRegistry, ToolSource};
 use aiplane_core::server::auth::mcp_oauth;
 use aiplane_core::server::crypto::Crypto;
-use aiplane_core::server::db::Pool;
 use aiplane_core::server::db::mcp_audit;
 use aiplane_core::server::db::mcp_catalog::{self, Connector};
 use aiplane_core::server::db::mcp_connections::{
     self, Connection, ConnectionIdentity, ConnectionOwner, RefreshTokens,
 };
 use aiplane_core::server::db::user_mcp::{self, ToolMode};
+use aiplane_core::server::db::{DbError, Pool};
 use aiplane_core::server::rbac::Resolver;
+use aiplane_features::server::push::PushSender;
 
 /// How long a live connection (and its tool listing) is reused before a
 /// refresh. Keeps active conversations warm without holding sockets forever.
@@ -58,6 +59,21 @@ const CACHE_TTL: Duration = Duration::from_secs(10 * 60);
 /// Refresh the access token when it expires within this window (or already
 /// has), so a call never races the expiry.
 const REFRESH_SKEW_SECS: i64 = 60;
+
+/// Waits before the retries of a token refresh that failed for a reason that
+/// may pass at once — the authorization server restarting, a dropped
+/// connection — so a moment's hiccup does not cost a turn its tools.
+const REFRESH_RETRY_DELAYS: [Duration; 2] = [Duration::from_millis(500), Duration::from_secs(2)];
+
+/// No retry once the attempts so far took this long: an authorization server
+/// that answers slowly or not at all would otherwise hold up every turn.
+const REFRESH_RETRY_BUDGET: Duration = Duration::from_secs(5);
+
+/// How long, and how many times, the MCP server must go on refusing a
+/// connection's credential, without accepting it in between, before the
+/// connection is taken out of service.
+const REJECTION_GIVE_UP_SECS: i64 = 60 * 60;
+const REJECTION_GIVE_UP_COUNT: i64 = 3;
 
 /// How long a connection may go on failing to refresh an expired access token
 /// before it is taken out of service: a day bounds a provider outage, and
@@ -164,6 +180,9 @@ pub struct McpConnectionManager {
     /// background worker and a live request can't both spend the same refresh
     /// token (which, with rotation, would invalidate one of them).
     refresh_locks: RefreshLocks,
+    /// Tells a user their connection needs a reconnect; unset when Web Push
+    /// is off.
+    push: std::sync::OnceLock<Arc<PushSender>>,
 }
 
 impl McpConnectionManager {
@@ -174,7 +193,39 @@ impl McpConnectionManager {
             rbac,
             cache: Mutex::new(HashMap::new()),
             refresh_locks: Mutex::new(HashMap::new()),
+            push: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Notify users through `push` when one of their connections needs a
+    /// reconnect.
+    pub fn set_push(&self, push: Arc<PushSender>) {
+        let _ = self.push.set(push);
+    }
+
+    /// Take a connection out of service: only a new authorization brings it
+    /// back. The user is told once, when the connection leaves `connected`;
+    /// returns whether this call did that.
+    async fn retire(
+        &self,
+        identity: &ConnectionIdentity,
+        catalog_generation: &str,
+        reason: &str,
+    ) -> Result<bool, DbError> {
+        let retired =
+            mcp_connections::mark_reauth(&self.db, identity, catalog_generation, reason).await?;
+        if retired
+            && let ConnectionOwner::User(user_id) = &identity.owner
+            && let Some(push) = self.push.get()
+        {
+            tokio::spawn(notify_needs_reconnect(
+                self.db.clone(),
+                push.clone(),
+                user_id.clone(),
+                identity.connector_key.clone(),
+            ));
+        }
+        Ok(retired)
     }
 
     /// Get-or-create the refresh lock for a `(user, connector)` pair.
@@ -561,27 +612,39 @@ impl McpConnectionManager {
                 .access_token(owner, connector, &conn)
                 .await
                 .map_err(String::from)?;
-            match connect_http_server(&connector.key, &connector.url, Some(&access)).await {
-                Ok(s) => s,
-                // The server rejected a token we didn't think was expired
-                // (revoked upstream, clock skew, rotated elsewhere). If we haven't
-                // already refreshed this pass and a refresh token exists, force one
-                // refresh + a single reconnect before giving up.
-                Err(e) if !refreshed && conn.refresh_token_ct.is_some() => {
-                    tracing::info!(owner = ?owner, connector = %connector.key,
-                    "MCP connect failed; forcing token refresh + one retry");
-                    let new_access = match self.refresh(owner, connector, true).await {
-                        Ok(access) => access,
-                        Err(re) => {
-                            let msg = format!("{e}; forced refresh also failed: {re}");
-                            return Err(msg);
-                        }
-                    };
-                    connect_http_server(&connector.key, &connector.url, Some(&new_access))
-                        .await
-                        .map_err(|e2| format!("reconnect after refresh failed: {e2}"))?
+            let attempt =
+                match connect_http_server(&connector.key, &connector.url, Some(&access)).await {
+                    Ok(s) => Ok(s),
+                    // The server rejected a token we didn't think was expired
+                    // (revoked upstream, clock skew, rotated elsewhere). If we haven't
+                    // already refreshed this pass and a refresh token exists, force one
+                    // refresh + a single reconnect before giving up.
+                    Err(e) if !refreshed && conn.refresh_token_ct.is_some() => {
+                        tracing::info!(owner = ?owner, connector = %connector.key,
+                        "MCP connect failed; forcing token refresh + one retry");
+                        let new_access = match self.refresh(owner, connector, true, true).await {
+                            Ok(access) => access,
+                            Err(re) => {
+                                self.note_rejection(&identity, connector, &e).await;
+                                let msg = format!("{e}; forced refresh also failed: {re}");
+                                return Err(msg);
+                            }
+                        };
+                        connect_http_server(&connector.key, &connector.url, Some(&new_access))
+                            .await
+                            .map_err(|e2| format!("reconnect after refresh failed: {e2}"))
+                    }
+                    Err(e) => Err(e),
+                };
+            match attempt {
+                Ok(s) => {
+                    let _ = mcp_connections::record_accepted(&self.db, &identity).await;
+                    s
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    self.note_rejection(&identity, connector, &e).await;
+                    return Err(e);
+                }
             }
         };
         let ConnectedServer { conn: _live, tools } = connected;
@@ -691,6 +754,44 @@ impl McpConnectionManager {
         Ok(tools)
     }
 
+    /// Keep track of the server refusing a connection's credential. One refusal
+    /// may be a hiccup on the server's side; a credential refused for
+    /// [`REJECTION_GIVE_UP_SECS`], at least [`REJECTION_GIVE_UP_COUNT`] times, is
+    /// dead, and only reconnecting helps.
+    async fn note_rejection(
+        &self,
+        identity: &ConnectionIdentity,
+        connector: &Connector,
+        error: &str,
+    ) {
+        if !super::rejects_credential(error) {
+            return;
+        }
+        let now = Timestamp::now();
+        let Ok(Some(rejections)) = mcp_connections::record_rejection(
+            &self.db,
+            identity,
+            &connector.dispatch_generation,
+            error,
+            now,
+        )
+        .await
+        else {
+            return;
+        };
+        if rejections.count >= REJECTION_GIVE_UP_COUNT
+            && rejections.since <= now - jiff::Span::new().seconds(REJECTION_GIVE_UP_SECS)
+        {
+            let _ = self
+                .retire(
+                    identity,
+                    &connector.dispatch_generation,
+                    &format!("the server has refused this credential for over an hour: {error}"),
+                )
+                .await;
+        }
+    }
+
     /// Decrypt the stored access token, refreshing it first when it's expired
     /// (or about to be). Returns `(token, refreshed)` — `refreshed` is true
     /// when a refresh ran, so the caller can avoid a redundant forced refresh
@@ -725,13 +826,9 @@ impl McpConnectionManager {
                 // re-failing every turn, and the store asks for a new sign-in
                 // instead of showing a stale "connected".
                 Err(err) => {
-                    let _ = mcp_connections::mark_reauth(
-                        &self.db,
-                        &conn.identity(),
-                        &connector.dispatch_generation,
-                        &err,
-                    )
-                    .await;
+                    let _ = self
+                        .retire(&conn.identity(), &connector.dispatch_generation, &err)
+                        .await;
                     Err(TokenError {
                         message: err,
                         needs_reauth: true,
@@ -740,7 +837,7 @@ impl McpConnectionManager {
             };
         }
         // Needs refresh.
-        match self.refresh(owner, connector, false).await {
+        match self.refresh(owner, connector, false, true).await {
             Ok(token) => Ok((token, true)),
             Err(err) => Err(err),
         }
@@ -759,7 +856,7 @@ impl McpConnectionManager {
             .await
             .map_err(|e| TokenError::transient(format!("loading connector: {e}")))?
             .ok_or_else(|| TokenError::transient("connector no longer in catalog"))?;
-        match self.refresh(owner, &connector, true).await {
+        match self.refresh(owner, &connector, true, false).await {
             Ok(_) => {
                 self.invalidate(owner, connector_key).await;
                 Ok(())
@@ -782,7 +879,10 @@ impl McpConnectionManager {
     /// `(user, connector)` so a concurrent refresh (background worker vs a live
     /// request) can't double-spend the refresh token. Reloads the connection
     /// under the lock; unless `force`, returns the existing token if another
-    /// task already refreshed it while we waited. A failure marks the
+    /// task already refreshed it while we waited. With `retry_hiccups`, a
+    /// failure that may pass is retried at once (see [`REFRESH_RETRY_DELAYS`]);
+    /// the maintenance pass has its own cadence and leaves that out. A failure
+    /// marks the
     /// connection `reauth` only when the credential is dead; any other failure
     /// leaves it `connected` for the next attempt.
     async fn refresh(
@@ -790,6 +890,7 @@ impl McpConnectionManager {
         owner: &ConnectionOwner,
         connector: &Connector,
         force: bool,
+        retry_hiccups: bool,
     ) -> Result<String, TokenError> {
         let lock = self.refresh_lock(owner, &connector.key).await;
         let _held = lock.lock().await;
@@ -864,17 +965,31 @@ impl McpConnectionManager {
             // is the authorization server telling us this credential is finished —
             // a dead refresh token, or (for a DCR client) a server that no longer
             // knows the client we registered, e.g. after it lost its OAuth store.
-            let tokens = mcp_oauth::refresh(
-                &token_url,
-                &refresh_token,
-                &client_id,
-                client_secret.as_deref(),
-            )
-            .await
-            .map_err(|e| TokenError {
-                message: format!("token refresh: {e}"),
-                needs_reauth: e.needs_reauth(),
-            })?;
+            let started = Instant::now();
+            let mut retries = REFRESH_RETRY_DELAYS.iter().filter(|_| retry_hiccups);
+            let tokens = loop {
+                match mcp_oauth::refresh(
+                    &token_url,
+                    &refresh_token,
+                    &client_id,
+                    client_secret.as_deref(),
+                )
+                .await
+                {
+                    Ok(tokens) => break tokens,
+                    Err(e) => match retries.next() {
+                        Some(delay) if e.may_pass() && started.elapsed() < REFRESH_RETRY_BUDGET => {
+                            tokio::time::sleep(*delay).await
+                        }
+                        _ => {
+                            return Err(TokenError {
+                                message: format!("token refresh: {e}"),
+                                needs_reauth: e.needs_reauth(),
+                            });
+                        }
+                    },
+                }
+            };
 
             let access_sealed = self
                 .crypto
@@ -926,13 +1041,8 @@ impl McpConnectionManager {
         // network blip — keeps the connection, so the next turn or maintenance
         // pass refreshes again; the error is kept for whoever looks.
         let _ = if err.needs_reauth {
-            mcp_connections::mark_reauth(
-                &self.db,
-                &identity,
-                &connector.dispatch_generation,
-                &err.message,
-            )
-            .await
+            self.retire(&identity, &connector.dispatch_generation, &err.message)
+                .await
         } else {
             mcp_connections::record_refresh_failure(
                 &self.db,
@@ -1480,6 +1590,65 @@ impl UserMcpLayer {
         self.tools.insert(id.clone(), tool);
         self.modes.insert(id.clone(), mode);
         self.connector_of.insert(id, connector_key.to_string());
+    }
+}
+
+/// Ping the user's subscribed browsers that a connector needs re-authorizing.
+///
+/// Best-effort and quiet: no-op when the user has no subscription, every
+/// failure only logged. Called once per disconnect, on the connection's move
+/// from `connected` to `reauth`.
+async fn notify_needs_reconnect(
+    db: Pool,
+    push: Arc<PushSender>,
+    user_id: String,
+    connector_key: String,
+) {
+    use aiplane_core::server::db::push_subscriptions;
+    use aiplane_features::server::push::{PushMessage, SendOutcome};
+    use session_core::i18n::{self, Lang, t, t_args};
+
+    let (db, user_id, connector_key) = (&db, user_id.as_str(), connector_key.as_str());
+    let subs = match push_subscriptions::list_for_user(db, user_id).await {
+        Ok(s) if !s.is_empty() => s,
+        Ok(_) => return,
+        Err(err) => {
+            tracing::warn!(error = %err, "push: listing subscriptions for connector reconnect");
+            return;
+        }
+    };
+    // The display name the user knows the connector by ("Google Workspace"),
+    // falling back to its key if the catalog row went away underneath us.
+    let name = mcp_catalog::get(db, connector_key)
+        .await
+        .ok()
+        .flatten()
+        .map(|c| c.name)
+        .unwrap_or_else(|| connector_key.to_string());
+
+    for sub in subs {
+        let lang = sub
+            .lang
+            .as_deref()
+            .and_then(Lang::from_code)
+            .unwrap_or(Lang::En);
+        let message = PushMessage {
+            title: t(lang, "push-connector-reconnect-title"),
+            body: t_args(
+                lang,
+                "push-connector-reconnect-body",
+                &i18n::args([("connector", name.clone().into())]),
+            ),
+            url: "/tools/integrations".to_string(),
+            // One connector, one notification — a later ping for the same
+            // connector replaces it rather than stacking.
+            tag: format!("connector-{connector_key}"),
+        };
+        if push.send(&sub, &message).await == SendOutcome::Gone
+            && let Err(err) = push_subscriptions::delete(db, &sub.id).await
+        {
+            tracing::warn!(error = %err, "push: pruning gone subscription");
+        }
     }
 }
 
@@ -2708,6 +2877,13 @@ mod tests {
         assert!(conn.last_error.unwrap().contains("503"));
         drop(unavailable);
 
+        let hiccup = Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(503).set_body_string("restarting"))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount_as_scoped(&server)
+            .await;
         let renewed = Mock::given(method("POST"))
             .and(path("/token"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -2715,9 +2891,13 @@ mod tests {
             })))
             .mount_as_scoped(&server)
             .await;
-        mgr.refresh_connection(&owner, &connector.key)
+        let stale = mcp_connections::get_connection(&mgr.db, &owner, &connector.key)
             .await
+            .unwrap()
             .unwrap();
+        let (access, refreshed) = mgr.access_token(&owner, &connector, &stale).await.unwrap();
+        assert!(refreshed);
+        assert_eq!(access, "new-access", "a turn rides out a single hiccup");
         let conn = mcp_connections::get_connection(&mgr.db, &owner, &connector.key)
             .await
             .unwrap()
@@ -2725,6 +2905,7 @@ mod tests {
         assert_eq!(conn.status, mcp_connections::STATUS_CONNECTED);
         assert_eq!(conn.last_error, None);
         assert_eq!(mgr.decrypt_access(&conn).unwrap(), "new-access");
+        drop(hiccup);
         drop(renewed);
 
         let dead = Mock::given(method("POST"))
@@ -2759,5 +2940,123 @@ mod tests {
             .unwrap_err();
         assert!(err.needs_reauth, "a day of failed renewals gives up");
         assert_eq!(status().await, mcp_connections::STATUS_REAUTH);
+    }
+    #[tokio::test]
+    async fn a_credential_refused_for_an_hour_needs_a_reconnect() {
+        let mgr = manager().await;
+        let server = MockServer::start().await;
+        sqlx::query(
+            "INSERT INTO users (id, email, roles_json, created_at, updated_at) \
+             VALUES ('u1','u@e','[]','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')",
+        )
+        .execute(&mgr.db)
+        .await
+        .unwrap();
+        let mut connector = global_connector(AuthKind::StaticBearer);
+        connector.scope = Scope::PerUser;
+        mcp_catalog::create(&mgr.db, catalog_input(&connector, server.uri()))
+            .await
+            .unwrap();
+        mcp_catalog::set_enabled(&mgr.db, &connector.key, true)
+            .await
+            .unwrap();
+        let connector = mcp_catalog::get(&mgr.db, &connector.key)
+            .await
+            .unwrap()
+            .unwrap();
+        let token = mgr.crypto.seal_str("personal-access-token").unwrap();
+        mcp_connections::upsert_connection(
+            &mgr.db,
+            mcp_connections::NewConnection {
+                owner: ConnectionOwner::User("u1".into()),
+                connector_key: connector.key.clone(),
+                catalog_generation: connector.dispatch_generation.clone(),
+                access_token_ct: token.ciphertext,
+                access_token_nonce: token.nonce,
+                refresh_token_ct: None,
+                refresh_token_nonce: None,
+                token_expires_at: None,
+                scopes: vec![],
+                dcr_client_id: None,
+                dcr_client_secret_ct: None,
+                dcr_client_secret_nonce: None,
+                token_url: None,
+            },
+        )
+        .await
+        .unwrap();
+        let owner = ConnectionOwner::User("u1".into());
+        let connection = || async {
+            mcp_connections::get_connection(&mgr.db, &owner, &connector.key)
+                .await
+                .unwrap()
+                .unwrap()
+        };
+        let refused = || {
+            Mock::given(method("POST"))
+                .respond_with(ResponseTemplate::new(401).set_body_string("token rejected"))
+        };
+
+        let first_refusal = refused().mount_as_scoped(&server).await;
+        assert!(mgr.ensure_connection(&owner, &connector).await.is_err());
+        let after = connection().await;
+        assert_eq!(after.status, mcp_connections::STATUS_CONNECTED);
+        assert!(after.rejected_since.is_some());
+        drop(first_refusal);
+
+        let accepted = Mock::given(method("POST"))
+            .respond_with(|request: &wiremock::Request| {
+                let request: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+                let result = match request["method"].as_str() {
+                    Some("initialize") => serde_json::json!({
+                        "protocolVersion": "2025-11-25", "capabilities": {"tools": {}},
+                        "serverInfo": {"name": "fixture", "version": "1"}
+                    }),
+                    Some("tools/list") => serde_json::json!({"tools": []}),
+                    Some("notifications/initialized") => return ResponseTemplate::new(202),
+                    other => panic!("unexpected MCP method: {other:?}"),
+                };
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/json")
+                    .set_body_json(serde_json::json!({"jsonrpc": "2.0", "id": request["id"], "result": result}))
+            })
+            .mount_as_scoped(&server)
+            .await;
+        assert!(mgr.ensure_connection(&owner, &connector).await.is_ok());
+        assert_eq!(connection().await.rejected_since, None);
+        drop(accepted);
+        mgr.invalidate(&owner, &connector.key).await;
+
+        let hour_ago = Timestamp::now() - jiff::Span::new().minutes(61);
+        refused().mount(&server).await;
+        assert!(mgr.ensure_connection(&owner, &connector).await.is_err());
+        assert_eq!(connection().await.status, mcp_connections::STATUS_CONNECTED);
+        sqlx::query("UPDATE mcp_connections SET rejected_since=?")
+            .bind(hour_ago.to_string())
+            .execute(&mgr.db)
+            .await
+            .unwrap();
+        assert!(mgr.ensure_connection(&owner, &connector).await.is_err());
+        assert_eq!(
+            connection().await.status,
+            mcp_connections::STATUS_CONNECTED,
+            "two refusals an hour apart are not yet a dead credential"
+        );
+        assert!(mgr.ensure_connection(&owner, &connector).await.is_err());
+        let after = connection().await;
+        assert_eq!(after.status, mcp_connections::STATUS_REAUTH);
+        assert!(
+            after
+                .last_error
+                .as_deref()
+                .unwrap()
+                .contains("over an hour")
+        );
+        assert!(
+            !mgr.retire(&after.identity(), &connector.dispatch_generation, "again")
+                .await
+                .unwrap(),
+            "a retired connection is retired, and its user told, only once"
+        );
     }
 }
