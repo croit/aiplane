@@ -30,12 +30,12 @@ use crate::rama_server::state::RamaState;
 use aiplane_core::server::db::DbError;
 use aiplane_core::server::db::mcp_connections::{self, ConnectionOwner};
 
-/// How often the maintenance pass runs.
-const POLL_INTERVAL: Duration = Duration::from_secs(30 * 60);
+/// How often the maintenance pass runs. Short against
+/// [`REFRESH_WINDOW_SECS`], so a refresh that failed is tried several more
+/// times before the access token runs out.
+const POLL_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
-/// Refresh any connection whose access token expires within this window —
-/// set a little above [`POLL_INTERVAL`] so a token can't slip through the gap
-/// between two passes.
+/// Refresh any connection whose access token expires within this window.
 const REFRESH_WINDOW_SECS: i64 = 35 * 60;
 
 /// For connections whose provider returned no `expires_in`, refresh when they

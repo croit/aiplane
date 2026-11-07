@@ -67,6 +67,11 @@ pub struct Connection {
     /// Resolved OAuth token endpoint, persisted so refresh skips re-discovery.
     pub token_url: Option<String>,
     pub last_error: Option<String>,
+    /// Since when the MCP server has rejected this credential, without an
+    /// accepted connect in between.
+    pub rejected_since: Option<Timestamp>,
+    /// How often the server has refused it since [`Self::rejected_since`].
+    pub rejections: i64,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -138,6 +143,8 @@ fn map_conn(row: &SqliteRow) -> Result<Connection, DbError> {
         dcr_client_secret_nonce: row.try_get("dcr_client_secret_nonce")?,
         token_url: row.try_get("token_url")?,
         last_error: row.try_get("last_error")?,
+        rejected_since: super::parse_optional_ts(row.try_get("rejected_since")?, "rejected_since")?,
+        rejections: row.try_get("rejections")?,
         created_at: super::parse_ts(row.try_get("created_at")?, "created_at")?,
         updated_at: super::parse_ts(row.try_get("updated_at")?, "updated_at")?,
     })
@@ -146,7 +153,7 @@ fn map_conn(row: &SqliteRow) -> Result<Connection, DbError> {
 const CONN_COLS: &str = "catalog_generation, id, user_id, principal_id, generation, authorization_generation, authorization_expires_at, connector_key, status, access_token_ct, \
      access_token_nonce, refresh_token_ct, refresh_token_nonce, token_expires_at, \
      scopes_json, dcr_client_id, dcr_client_secret_ct, dcr_client_secret_nonce, \
-     token_url, last_error, created_at, updated_at";
+     token_url, last_error, rejected_since, rejections, created_at, updated_at";
 
 fn map_owner(row: &SqliteRow) -> Result<ConnectionOwner, DbError> {
     match (
@@ -309,7 +316,7 @@ pub async fn upsert_connection_in(
     let (user, principal) = new.owner.columns();
     sqlx::query("DELETE FROM pending_mcp_oauth WHERE user_id IS ? AND principal_id IS ? AND connector_key=?")
         .bind(user).bind(principal).bind(&new.connector_key).execute(&mut **tx).await?;
-    sqlx::query("INSERT INTO mcp_connections(id,user_id,principal_id,connector_key,generation,catalog_generation,status,access_token_ct,access_token_nonce,refresh_token_ct,refresh_token_nonce,token_expires_at,scopes_json,dcr_client_id,dcr_client_secret_ct,dcr_client_secret_nonce,token_url,created_at,updated_at) VALUES(?,?,?,?,?,?,'connected',?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET generation=excluded.generation,catalog_generation=excluded.catalog_generation,status='connected',authorization_generation=NULL,authorization_expires_at=NULL,access_token_ct=excluded.access_token_ct,access_token_nonce=excluded.access_token_nonce,refresh_token_ct=excluded.refresh_token_ct,refresh_token_nonce=excluded.refresh_token_nonce,token_expires_at=excluded.token_expires_at,scopes_json=excluded.scopes_json,dcr_client_id=excluded.dcr_client_id,dcr_client_secret_ct=excluded.dcr_client_secret_ct,dcr_client_secret_nonce=excluded.dcr_client_secret_nonce,token_url=excluded.token_url,last_error=NULL,updated_at=excluded.updated_at")
+    sqlx::query("INSERT INTO mcp_connections(id,user_id,principal_id,connector_key,generation,catalog_generation,status,access_token_ct,access_token_nonce,refresh_token_ct,refresh_token_nonce,token_expires_at,scopes_json,dcr_client_id,dcr_client_secret_ct,dcr_client_secret_nonce,token_url,created_at,updated_at) VALUES(?,?,?,?,?,?,'connected',?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET generation=excluded.generation,catalog_generation=excluded.catalog_generation,status='connected',authorization_generation=NULL,authorization_expires_at=NULL,access_token_ct=excluded.access_token_ct,access_token_nonce=excluded.access_token_nonce,refresh_token_ct=excluded.refresh_token_ct,refresh_token_nonce=excluded.refresh_token_nonce,token_expires_at=excluded.token_expires_at,scopes_json=excluded.scopes_json,dcr_client_id=excluded.dcr_client_id,dcr_client_secret_ct=excluded.dcr_client_secret_ct,dcr_client_secret_nonce=excluded.dcr_client_secret_nonce,token_url=excluded.token_url,last_error=NULL,rejected_since=NULL,rejections=0,updated_at=excluded.updated_at")
         .bind(&id).bind(user).bind(principal).bind(&new.connector_key).bind(&generation).bind(&new.catalog_generation)
         .bind(&new.access_token_ct).bind(&new.access_token_nonce).bind(&new.refresh_token_ct).bind(&new.refresh_token_nonce)
         .bind(new.token_expires_at.map(|t|t.to_string())).bind(serde_json::to_string(&new.scopes).expect("string vector serializes"))
@@ -362,6 +369,46 @@ pub async fn update_tokens(
     tx.commit().await?;
     Ok(changed == 1)
 }
+/// A run of refusals of one credential, without an accepted connect between.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rejections {
+    pub since: Timestamp,
+    pub count: i64,
+}
+
+/// Note that the MCP server rejected the connection's credential at `now`,
+/// keeping the error. Returns the run of refusals so far, or `None` when the
+/// connection changed meanwhile.
+pub async fn record_rejection(
+    pool: &Pool,
+    expected: &ConnectionIdentity,
+    expected_catalog_generation: &str,
+    error: &str,
+    now: Timestamp,
+) -> Result<Option<Rejections>, DbError> {
+    let (user, principal) = expected.owner.columns();
+    let row: Option<(String, i64)> = sqlx::query_as("UPDATE mcp_connections SET rejected_since=COALESCE(rejected_since,?),rejections=rejections+1,last_error=? WHERE id=? AND user_id IS ? AND principal_id IS ? AND connector_key=? AND generation=? AND status='connected' AND catalog_generation=? RETURNING rejected_since,rejections")
+        .bind(now.to_string()).bind(error).bind(&expected.connection_id).bind(user).bind(principal).bind(&expected.connector_key).bind(&expected.generation).bind(expected_catalog_generation)
+        .fetch_optional(pool).await?;
+    row.map(|(since, count)| {
+        Ok(Rejections {
+            since: super::parse_ts(since, "rejected_since")?,
+            count,
+        })
+    })
+    .transpose()
+}
+
+/// The MCP server accepted the connection's credential: end a run of
+/// refusals, and drop the refusal's error with it.
+pub async fn record_accepted(pool: &Pool, expected: &ConnectionIdentity) -> Result<(), DbError> {
+    let (user, principal) = expected.owner.columns();
+    sqlx::query("UPDATE mcp_connections SET rejected_since=NULL,rejections=0,last_error=NULL WHERE id=? AND user_id IS ? AND principal_id IS ? AND connector_key=? AND generation=? AND status='connected' AND rejected_since IS NOT NULL")
+        .bind(&expected.connection_id).bind(user).bind(principal).bind(&expected.connector_key).bind(&expected.generation)
+        .execute(pool).await?;
+    Ok(())
+}
+
 /// Keep a failed refresh's error on a connection that stays in service.
 pub async fn record_refresh_failure(
     pool: &Pool,
@@ -1631,5 +1678,81 @@ mod tests {
                 .status,
             STATUS_CONNECTED
         );
+    }
+    #[tokio::test]
+    async fn a_rejection_keeps_its_start_until_the_server_accepts_again() {
+        let p = pool().await;
+        let identity = upsert_connection(&p, credential(user(), 1))
+            .await
+            .unwrap()
+            .unwrap();
+        let first = timestamp("2030-01-01T00:00:00Z");
+        let later = timestamp("2030-01-01T02:00:00Z");
+        for (count, at, error) in [(1, first, "HTTP 401"), (2, later, "HTTP 401 again")] {
+            assert_eq!(
+                record_rejection(&p, &identity, "fixture-catalog-generation", error, at)
+                    .await
+                    .unwrap(),
+                Some(Rejections {
+                    since: first,
+                    count
+                })
+            );
+        }
+        let rejected = get_connection(&p, &user(), "gmail").await.unwrap().unwrap();
+        assert_eq!(rejected.status, STATUS_CONNECTED);
+        assert_eq!(rejected.last_error.as_deref(), Some("HTTP 401 again"));
+
+        record_accepted(&p, &identity).await.unwrap();
+        let accepted = get_connection(&p, &user(), "gmail").await.unwrap().unwrap();
+        assert_eq!(accepted.rejected_since, None);
+        assert_eq!(accepted.rejections, 0);
+        assert_eq!(accepted.last_error, None);
+
+        assert!(
+            record_refresh_failure(
+                &p,
+                &identity,
+                "fixture-catalog-generation",
+                "token endpoint 503"
+            )
+            .await
+            .unwrap()
+        );
+        record_accepted(&p, &identity).await.unwrap();
+        assert_eq!(
+            get_connection(&p, &user(), "gmail")
+                .await
+                .unwrap()
+                .unwrap()
+                .last_error
+                .as_deref(),
+            Some("token endpoint 503"),
+            "an accepted connect leaves an error that is not a refusal"
+        );
+
+        record_rejection(
+            &p,
+            &identity,
+            "fixture-catalog-generation",
+            "HTTP 403",
+            later,
+        )
+        .await
+        .unwrap();
+        let replacement = upsert_connection(&p, credential(user(), 2))
+            .await
+            .unwrap()
+            .unwrap();
+        let reconnected = get_connection(&p, &user(), "gmail").await.unwrap().unwrap();
+        assert_eq!(reconnected.rejected_since, None);
+        assert_eq!(
+            record_rejection(&p, &identity, "fixture-catalog-generation", "stale", later)
+                .await
+                .unwrap(),
+            None,
+            "a replaced credential's rejection is not recorded on its successor"
+        );
+        assert_ne!(replacement.generation, identity.generation);
     }
 }

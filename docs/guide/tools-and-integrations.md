@@ -34,7 +34,7 @@ Open **Tools → Integrations** (`/tools/integrations`). Each visible connector 
 
 Read/write badges describe the connector's discovered tool metadata. Review the tool's description and arguments when deciding what to authorize. A global connector is configured by the operator and does not require your own sign-in.
 
-A connection stays signed in on its own: AIplane renews it in the background, and retries by itself when the provider is briefly unavailable. **Needs reconnect** appears when the provider has revoked or expired your sign-in, or could not renew it for a day. Use **Reconnect** when credentials or tool discovery fail. Use **Disconnect** to remove your connection after confirming the action. A disconnected personal connector cannot supply its tools through that connection. If the tool list is unavailable, the card displays the discovery error; reconnecting or operator configuration may be required.
+A connection stays signed in on its own: AIplane renews it in the background, and retries by itself when the provider is briefly unavailable. **Needs reconnect** appears when the provider has revoked or expired your sign-in, could not renew it for a day, or has refused your token repeatedly for an hour. Use **Reconnect** when credentials or tool discovery fail. Use **Disconnect** to remove your connection after confirming the action. A disconnected personal connector cannot supply its tools through that connection. If the tool list is unavailable, the card displays the discovery error; reconnecting or operator configuration may be required.
 
 ## Use browser control
 

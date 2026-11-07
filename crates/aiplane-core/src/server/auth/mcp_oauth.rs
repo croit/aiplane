@@ -81,6 +81,20 @@ impl OauthError {
                 )
         )
     }
+
+    /// Whether the same request may succeed when sent again a moment later:
+    /// the token endpoint unreachable or answering with an error status, or an
+    /// OAuth error that says the server is having trouble. Anything else fails
+    /// the same way again.
+    pub fn may_pass(&self) -> bool {
+        match self {
+            OauthError::Exchange(_) => true,
+            OauthError::Provider { code, .. } => {
+                matches!(code.as_str(), "temporarily_unavailable" | "server_error")
+            }
+            _ => false,
+        }
+    }
 }
 
 /// `code: description`, or just the code when the server sent no description.
@@ -752,6 +766,21 @@ mod tests {
             "token exchange failed: provider rejected the request — invalid_grant"
         );
         assert!(bare.needs_reauth());
+    }
+
+    #[test]
+    fn only_a_trouble_answer_or_an_unreachable_endpoint_may_pass() {
+        let provider = |code: &str| OauthError::Provider {
+            code: code.into(),
+            description: String::new(),
+        };
+        assert!(OauthError::Exchange("POST …: connection refused".into()).may_pass());
+        assert!(provider("temporarily_unavailable").may_pass());
+        assert!(provider("server_error").may_pass());
+        for code in ["invalid_grant", "invalid_scope", "invalid_request"] {
+            assert!(!provider(code).may_pass(), "{code}");
+        }
+        assert!(!OauthError::Refused("private address".into()).may_pass());
     }
 
     #[test]
