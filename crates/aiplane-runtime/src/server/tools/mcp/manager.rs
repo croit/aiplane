@@ -59,6 +59,11 @@ const CACHE_TTL: Duration = Duration::from_secs(10 * 60);
 /// has), so a call never races the expiry.
 const REFRESH_SKEW_SECS: i64 = 60;
 
+/// How long a connection may go on failing to refresh an expired access token
+/// before it is taken out of service: a day bounds a provider outage, and
+/// covers any failure the provider never names as a dead credential.
+const REFRESH_GIVE_UP_SECS: i64 = 24 * 60 * 60;
+
 /// Hard cap on live cached connections. Past this, idle/stale entries are
 /// evicted (closing their sockets) before inserting a new one — bounds memory
 /// + open MCP sessions on a long-running daemon.
@@ -100,6 +105,14 @@ impl TokenError {
         Self {
             message: message.into(),
             needs_reauth: false,
+        }
+    }
+
+    /// A failure only a new authorization fixes.
+    fn reauth(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            needs_reauth: true,
         }
     }
 }
@@ -560,8 +573,6 @@ impl McpConnectionManager {
                     let new_access = match self.refresh(owner, connector, true).await {
                         Ok(access) => access,
                         Err(re) => {
-                            // Park the connection with the right reason, same as
-                            // the expiry-driven refresh path below does.
                             let msg = format!("{e}; forced refresh also failed: {re}");
                             return Err(msg);
                         }
@@ -683,8 +694,8 @@ impl McpConnectionManager {
     /// Decrypt the stored access token, refreshing it first when it's expired
     /// (or about to be). Returns `(token, refreshed)` — `refreshed` is true
     /// when a refresh ran, so the caller can avoid a redundant forced refresh
-    /// on a subsequent connect failure. On refresh failure the connection is
-    /// marked errored.
+    /// on a subsequent connect failure. A dead credential marks the
+    /// connection `reauth`; see [`Self::refresh`].
     async fn access_token(
         &self,
         owner: &ConnectionOwner,
@@ -714,12 +725,11 @@ impl McpConnectionManager {
                 // re-failing every turn, and the store asks for a new sign-in
                 // instead of showing a stale "connected".
                 Err(err) => {
-                    let _ = mcp_connections::mark_error(
+                    let _ = mcp_connections::mark_reauth(
                         &self.db,
                         &conn.identity(),
                         &connector.dispatch_generation,
                         &err,
-                        true,
                     )
                     .await;
                     Err(TokenError {
@@ -738,8 +748,8 @@ impl McpConnectionManager {
 
     /// Proactively refresh one connection (background worker entry point):
     /// runs the refresh under the per-connection lock and drops any cached live
-    /// connection so the next use picks up the new token. Marks the connection
-    /// errored on failure so the store surfaces "needs reconnect".
+    /// connection so the next use picks up the new token. See [`Self::refresh`]
+    /// for what a failure does to the connection.
     pub async fn refresh_connection(
         &self,
         owner: &ConnectionOwner,
@@ -772,7 +782,9 @@ impl McpConnectionManager {
     /// `(user, connector)` so a concurrent refresh (background worker vs a live
     /// request) can't double-spend the refresh token. Reloads the connection
     /// under the lock; unless `force`, returns the existing token if another
-    /// task already refreshed it while we waited.
+    /// task already refreshed it while we waited. A failure marks the
+    /// connection `reauth` only when the credential is dead; any other failure
+    /// leaves it `connected` for the next attempt.
     async fn refresh(
         &self,
         owner: &ConnectionOwner,
@@ -824,7 +836,7 @@ impl McpConnectionManager {
             let refresh_token = self
                 .crypto
                 .open_str(rt_nonce, rt_ct)
-                .map_err(|e| TokenError::transient(format!("decrypting refresh token: {e}")))?;
+                .map_err(|e| TokenError::reauth(format!("decrypting refresh token: {e}")))?;
 
             // Reuse the token endpoint resolved + persisted at connect time; only
             // re-run discovery for older connections that predate persistence.
@@ -847,7 +859,7 @@ impl McpConnectionManager {
 
             let (client_id, client_secret) = self
                 .client_credentials(connector, &conn)
-                .map_err(TokenError::transient)?;
+                .map_err(TokenError::reauth)?;
             // `needs_reauth` rides along: an `invalid_grant` / `invalid_client` here
             // is the authorization server telling us this credential is finished —
             // a dead refresh token, or (for a DCR client) a server that no longer
@@ -898,17 +910,39 @@ impl McpConnectionManager {
             Ok(tokens.access_token)
         }
         .await;
-        if let Err(err) = &result {
-            let _ = mcp_connections::mark_error(
+        let Err(mut err) = result else {
+            return result;
+        };
+        let given_up = conn.token_expires_at.is_some_and(|exp| {
+            exp < Timestamp::now() - jiff::Span::new().seconds(REFRESH_GIVE_UP_SECS)
+        });
+        if !err.needs_reauth && given_up {
+            err = TokenError::reauth(format!(
+                "{}; the access token expired over a day ago and could not be renewed since",
+                err.message
+            ));
+        }
+        // A failure that may pass — the authorization server restarting, a
+        // network blip — keeps the connection, so the next turn or maintenance
+        // pass refreshes again; the error is kept for whoever looks.
+        let _ = if err.needs_reauth {
+            mcp_connections::mark_reauth(
                 &self.db,
                 &identity,
                 &connector.dispatch_generation,
                 &err.message,
-                err.needs_reauth,
             )
-            .await;
-        }
-        result
+            .await
+        } else {
+            mcp_connections::record_refresh_failure(
+                &self.db,
+                &identity,
+                &connector.dispatch_generation,
+                &err.message,
+            )
+            .await
+        };
+        Err(err)
     }
 
     /// Resolve `(client_id, client_secret?)` for token requests: the
@@ -1486,7 +1520,7 @@ mod tests {
     use aiplane_core::server::crypto::Crypto;
     use aiplane_core::server::db;
     use aiplane_core::server::db::mcp_catalog::{AuthKind, Scope};
-    use wiremock::matchers::method;
+    use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn fixture_rbac() -> Arc<Resolver> {
@@ -2600,5 +2634,130 @@ mod tests {
             );
             assert!(server.received_requests().await.unwrap().is_empty());
         }
+    }
+    #[tokio::test]
+    async fn only_a_dead_credential_takes_a_connection_out_of_service() {
+        let mgr = manager().await;
+        let server = MockServer::start().await;
+        sqlx::query(
+            "INSERT INTO users (id, email, roles_json, created_at, updated_at) \
+             VALUES ('u1','u@e','[]','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')",
+        )
+        .execute(&mgr.db)
+        .await
+        .unwrap();
+        let mut connector = global_connector(AuthKind::OAuth2);
+        connector.scope = Scope::PerUser;
+        connector.client_id = Some("aiplane".into());
+        mcp_catalog::create(&mgr.db, catalog_input(&connector, server.uri()))
+            .await
+            .unwrap();
+        mcp_catalog::set_enabled(&mgr.db, &connector.key, true)
+            .await
+            .unwrap();
+        let connector = mcp_catalog::get(&mgr.db, &connector.key)
+            .await
+            .unwrap()
+            .unwrap();
+        let access = mgr.crypto.seal_str("old-access").unwrap();
+        let refresh = mgr.crypto.seal_str("refresh-1").unwrap();
+        mcp_connections::upsert_connection(
+            &mgr.db,
+            mcp_connections::NewConnection {
+                owner: ConnectionOwner::User("u1".into()),
+                connector_key: connector.key.clone(),
+                catalog_generation: connector.dispatch_generation.clone(),
+                access_token_ct: access.ciphertext,
+                access_token_nonce: access.nonce,
+                refresh_token_ct: Some(refresh.ciphertext),
+                refresh_token_nonce: Some(refresh.nonce),
+                token_expires_at: Some(Timestamp::now()),
+                scopes: vec![],
+                dcr_client_id: None,
+                dcr_client_secret_ct: None,
+                dcr_client_secret_nonce: None,
+                token_url: Some(format!("{}/token", server.uri())),
+            },
+        )
+        .await
+        .unwrap();
+        let owner = ConnectionOwner::User("u1".into());
+        let status = || async {
+            mcp_connections::get_connection(&mgr.db, &owner, &connector.key)
+                .await
+                .unwrap()
+                .unwrap()
+                .status
+        };
+
+        let unavailable = Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(503).set_body_string("starting up"))
+            .mount_as_scoped(&server)
+            .await;
+        let err = mgr
+            .refresh_connection(&owner, &connector.key)
+            .await
+            .unwrap_err();
+        assert!(!err.needs_reauth);
+        let conn = mcp_connections::get_connection(&mgr.db, &owner, &connector.key)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(conn.status, mcp_connections::STATUS_CONNECTED);
+        assert!(conn.last_error.unwrap().contains("503"));
+        drop(unavailable);
+
+        let renewed = Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "new-access", "token_type": "Bearer", "expires_in": 3600
+            })))
+            .mount_as_scoped(&server)
+            .await;
+        mgr.refresh_connection(&owner, &connector.key)
+            .await
+            .unwrap();
+        let conn = mcp_connections::get_connection(&mgr.db, &owner, &connector.key)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(conn.status, mcp_connections::STATUS_CONNECTED);
+        assert_eq!(conn.last_error, None);
+        assert_eq!(mgr.decrypt_access(&conn).unwrap(), "new-access");
+        drop(renewed);
+
+        let dead = Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "error": "invalid_grant", "error_description": "Grant not found"
+            })))
+            .mount_as_scoped(&server)
+            .await;
+        let err = mgr
+            .refresh_connection(&owner, &connector.key)
+            .await
+            .unwrap_err();
+        assert!(err.needs_reauth);
+        assert_eq!(status().await, mcp_connections::STATUS_REAUTH);
+        drop(dead);
+
+        let two_days_ago = Timestamp::now() - jiff::Span::new().hours(48);
+        sqlx::query("UPDATE mcp_connections SET status='connected', token_expires_at=?")
+            .bind(two_days_ago.to_string())
+            .execute(&mgr.db)
+            .await
+            .unwrap();
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(503).set_body_string("still down"))
+            .mount(&server)
+            .await;
+        let err = mgr
+            .refresh_connection(&owner, &connector.key)
+            .await
+            .unwrap_err();
+        assert!(err.needs_reauth, "a day of failed renewals gives up");
+        assert_eq!(status().await, mcp_connections::STATUS_REAUTH);
     }
 }

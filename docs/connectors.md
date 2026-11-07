@@ -102,7 +102,27 @@ when only system principals should ever reach it.
 
 ---
 
+## How connections stay signed in
+
+AIplane refreshes an OAuth connection's access token shortly before it
+expires: on use, and in a background pass every 30 minutes, so an idle
+connection stays signed in too. A connection whose provider reported no expiry
+is refreshed every six hours, which keeps its refresh token exercised on
+providers that revoke idle grants.
+
+A refresh that fails because the authorization server is unreachable or
+answers with an error status — a restart, a network blip — leaves the
+connection connected and keeps the error on it; the next turn or background
+pass tries again. The card flips to **Needs reconnect**, and the user gets a
+push notification, when the grant is dead — an OAuth `invalid_grant`,
+`invalid_client` or `unauthorized_client`, or a stored credential AIplane cannot
+decrypt — or when an expired access token has not been renewed for
+a day.
+
 ## How the tool list stays current
+
+AIplane speaks streamable HTTP to the MCP server and offers protocol revision
+`2025-11-25` in the handshake — the newest with a session-based `initialize`.
 
 A connector's tools are listed from the server on first use and cached for ten
 minutes (`manager::CACHE_TTL`) so an active conversation reuses the connection
