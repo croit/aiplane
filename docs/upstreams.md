@@ -85,6 +85,47 @@ Configure models where `/models` cannot tell the truth:
 
 A model the upstream stops serving stays advertised until it is removed from the list; requests for it surface the upstream's own error.
 
+## OpenRouter
+
+OpenRouter is a **provider type** on a backend, not a second topology. Set
+**Provider → OpenRouter** in the backend editor, enter one OpenRouter key, and
+link that one backend to as many pools as it should serve (chat, embedding,
+transcription, speech, image, rerank, System One). Its catalog is the
+account-filtered `GET /models/user`, read once per pool kind with the matching
+`output_modalities` value, so the models the account can actually use appear
+without being typed in.
+
+Selecting a model is an explicit allowlist, not discovery: an OpenRouter
+backend with nothing selected serves nothing. The selection is stored per pool,
+so one backend can carry a different model list for chat and for System One.
+A pool has one model list, so give OpenRouter its own pool per kind: putting it
+in a pool that also holds a self-hosted backend pins that backend to the same
+list. The panel warns when the chosen pool has other backends.
+
+Each selected model carries **two purchase-price ceilings** in USD per 1M
+tokens — input and output — plus a provider strategy:
+
+| Strategy | `provider` sent to OpenRouter |
+|---|---|
+| `cheapest` | `sort: "price"` (optional `preferred_min_throughput`) |
+| `fastest` | `sort: "throughput"` |
+| `balanced` | no `sort`; OpenRouter's own effective-cost routing |
+
+Every request also carries `max_price: {prompt, completion}` and
+`require_parameters: true`. The block is **gateway-owned**: unlike the
+per-model sampling defaults, a client cannot replace it, because that would
+bypass the ceiling the account is protected by.
+
+A model with no provider under both ceilings is removed from the running
+advertised set, so it disappears from `/v1/models`, the chat picker and
+routing; a direct API call gets `model_not_found` rather than a silent
+downgrade to another model. The selection is kept, so the model returns when a
+price drops again. Prices and per-provider performance are re-read every ten
+minutes (and on **Refresh prices**); `max_price` is the hard guard between
+refreshes. `max_price` does not cover cache read/write prices or conditional
+long-context overrides, so a provider whose cache price exceeds the ceiling is
+not excluded by it.
+
 ## Model discovery
 
 Every 5 s, each backend gets a `GET <base_url>/models` probe (with the backend's bearer token, if configured). A backend linked into several pools is probed **once** per tick, and identified once per apply; every pool's view of it takes the answer by its own model rule. On 200 + a parseable model envelope, the backend's advertised-model set is **replaced wholesale** with the names it lists: OpenAI's `{"data": [{"id": ...}, ...]}` (`data[].id`), or TypeSafe System One's `{"models": [{"name": ...}, ...]}` (`models[].name`), so a TypeSafe-native server such as jeff is discovered without speaking OpenAI's shape. On 401 or non-parseable 200, the backend is marked alive but its model set is left as-is (so a previously-populated set survives a transient parser failure). On network error, timeout, or 5xx, the probe counts toward the unhealthy threshold.

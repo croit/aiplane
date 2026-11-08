@@ -48,13 +48,16 @@ pub mod config;
 pub mod db_bridge;
 pub mod error_classify;
 pub mod health;
+pub mod openrouter;
 pub mod prefix_index;
 pub mod profile;
 pub mod registry;
 mod scheduler;
 pub mod wait;
 
-pub use config::{BackendConfig, FallbackConfig, PickerStrategy, PoolKind, UpstreamPoolConfig};
+pub use config::{
+    BackendConfig, FallbackConfig, PickerStrategy, PoolKind, ProviderKind, UpstreamPoolConfig,
+};
 pub use prefix_index::PrefixIndex;
 pub use profile::{BackendProfile, Detected};
 pub use registry::{

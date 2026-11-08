@@ -125,6 +125,89 @@ async fn v1_chat_completions_relays_through_upstream() {
     );
 }
 
+/// The OpenRouter purchase-price ceiling is gateway-owned: a client that sends
+/// its own `provider` block cannot raise it, change the strategy or drop it.
+#[tokio::test]
+async fn v1_chat_completions_overrides_a_client_provider_block_with_the_openrouter_policy() {
+    use aiplane_core::server::db::upstreams_config::{self, BackendRow, OpenRouterPolicyRow};
+    use aiplane_core::server::upstreams::config::ProviderKind;
+
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{"message": {"role": "assistant", "content": "hi"}}]
+        })))
+        .mount(&upstream)
+        .await;
+
+    let state = common::state_with_chat_pool(&upstream.uri()).await;
+    upstreams_config::upsert_backend(
+        &state.db,
+        &BackendRow {
+            provider: ProviderKind::OpenRouter,
+            priority: Default::default(),
+            name: "mock".into(),
+            base_url: upstream.uri(),
+            api_key_env: None,
+            api_key_ct: None,
+            api_key_nonce: None,
+            weight: 1,
+            max_inflight: 16,
+            health_path: "/models".into(),
+            supports_edit: false,
+            enabled: true,
+            extra_headers: Default::default(),
+            models: Vec::new(),
+            aliases: Vec::new(),
+            created_at: jiff::Timestamp::now(),
+            updated_at: jiff::Timestamp::now(),
+        },
+    )
+    .await
+    .unwrap();
+    upstreams_config::upsert_openrouter_policy(
+        &state.db,
+        "mock",
+        &OpenRouterPolicyRow {
+            model_id: "model-a".into(),
+            max_prompt_price: 0.30,
+            max_completion_price: 1.20,
+            strategy: "cheapest".into(),
+            min_throughput: Some(40.0),
+            available: true,
+            cheapest_prompt_price: Some(0.27),
+            cheapest_completion_price: Some(1.10),
+            cheapest_provider: Some("deepseek".into()),
+            observed_at: None,
+        },
+    )
+    .await
+    .unwrap();
+    let bearer = common::seed_user_with_token(&state, "alice").await;
+    let app = common::app(state);
+
+    post_chat(
+        &app,
+        &bearer,
+        json!({
+            "model": "model-a",
+            "messages": [],
+            "provider": {"max_price": {"prompt": 999.0, "completion": 999.0}, "sort": "throughput"}
+        }),
+    )
+    .await;
+    let requests = upstream.received_requests().await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&requests.last().unwrap().body).unwrap();
+    assert_eq!(
+        body["provider"]["max_price"],
+        json!({"prompt": 0.30, "completion": 1.20})
+    );
+    assert_eq!(body["provider"]["sort"], json!("price"));
+    assert_eq!(body["provider"]["preferred_min_throughput"], json!(40.0));
+    assert_eq!(body["provider"]["require_parameters"], json!(true));
+}
+
 /// A stored `provider` table (an upstream extension parameter, e.g.
 /// OpenRouter's provider routing) rides along on the forwarded request
 /// body, and a client-supplied `provider` wins over the stored default.
@@ -1362,6 +1445,7 @@ async fn state_with_backend_api_key(
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![BackendConfig {
+                provider: Default::default(),
                 priority: Default::default(),
                 alias: Default::default(),
                 supports_edit: false,
@@ -1425,6 +1509,7 @@ async fn state_with_alias_pool(
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![BackendConfig {
+                provider: Default::default(),
                 priority: Default::default(),
                 alias: HashMap::from([("qwen".into(), None)]),
                 supports_edit: false,

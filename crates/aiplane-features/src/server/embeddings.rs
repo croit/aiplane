@@ -168,6 +168,7 @@ mod tests {
                 models: Vec::new(),
                 fallback_offline: None,
                 backend: vec![BackendConfig {
+                    provider: Default::default(),
                     priority: Default::default(),
                     name: "mock".into(),
                     base_url: upstream_url.into(),

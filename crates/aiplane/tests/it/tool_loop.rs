@@ -57,6 +57,7 @@ async fn state_with_tool_grants(upstream_uri: &str, granted_tools: Vec<String>) 
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![BackendConfig {
+                provider: Default::default(),
                 priority: Default::default(),
                 alias: Default::default(),
                 supports_edit: false,

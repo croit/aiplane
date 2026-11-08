@@ -199,6 +199,7 @@ mod tests {
         let pool = UpstreamPoolConfig::new(
             PoolKind::Chat,
             vec![BackendConfig {
+                provider: Default::default(),
                 max_inflight: 1,
                 models: vec!["m".into()],
                 ..BackendConfig::new("b", "http://unused/v1")

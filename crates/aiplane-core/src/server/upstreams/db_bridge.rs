@@ -104,6 +104,7 @@ fn backend_row_to_config(row: &BackendRow, crypto: &Crypto) -> BackendConfig {
     };
 
     BackendConfig {
+        provider: row.provider,
         priority: row.priority.clone(),
         name: row.name.clone(),
         base_url: row.base_url.clone(),
@@ -183,6 +184,7 @@ mod tests {
         snap.backends.insert(
             "gpu-01".into(),
             BackendRow {
+                provider: Default::default(),
                 priority: Default::default(),
                 name: "gpu-01".into(),
                 base_url: "http://gpu-01:8000/v1".into(),
@@ -244,6 +246,7 @@ mod tests {
         snap.backends.insert(
             "b".into(),
             BackendRow {
+                provider: Default::default(),
                 priority: Default::default(),
                 name: "b".into(),
                 base_url: "http://b".into(),
@@ -303,6 +306,7 @@ mod tests {
         snap.backends.insert(
             "b".into(),
             BackendRow {
+                provider: Default::default(),
                 priority: Default::default(),
                 name: "b".into(),
                 base_url: "http://b".into(),

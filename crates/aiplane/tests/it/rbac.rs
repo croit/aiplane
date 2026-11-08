@@ -45,6 +45,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 /// A backend pointed at the mock, optionally advertising image-edit support.
 fn backend(name: &str, base_url: &str, supports_edit: bool) -> BackendConfig {
     BackendConfig {
+        provider: Default::default(),
         priority: Default::default(),
         alias: Default::default(),
         supports_edit,

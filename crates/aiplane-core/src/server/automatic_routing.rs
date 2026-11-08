@@ -852,6 +852,7 @@ mod tests {
                     offer_voices: Vec::new(),
                     allowed_groups: Vec::new(),
                     backend: vec![BackendConfig {
+                        provider: Default::default(),
                         priority: Default::default(),
                         name: name.to_owned(),
                         base_url: upstream.uri(),

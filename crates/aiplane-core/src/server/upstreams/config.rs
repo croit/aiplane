@@ -155,6 +155,37 @@ impl PoolKind {
     ];
 }
 
+/// What kind of upstream a backend is. This is an explicit operator choice,
+/// not a hostname guess: it decides whether the gateway reads OpenRouter's
+/// account-filtered catalog and injects a provider policy, or speaks plain
+/// OpenAI-compatible HTTP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProviderKind {
+    #[default]
+    OpenAiCompatible,
+    OpenRouter,
+}
+
+impl ProviderKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenAiCompatible => "openai_compatible",
+            Self::OpenRouter => "openrouter",
+        }
+    }
+
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "openrouter" => Self::OpenRouter,
+            _ => Self::OpenAiCompatible,
+        }
+    }
+
+    pub fn is_openrouter(self) -> bool {
+        self == Self::OpenRouter
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PickerStrategy {
     RoundRobin,
@@ -197,6 +228,10 @@ impl PickerStrategy {
 pub struct BackendConfig {
     pub priority: crate::server::priority::BackendPriority,
     pub name: String,
+    /// The upstream's protocol family. `OpenRouter` reads the account catalog
+    /// and injects a gateway-owned `provider` block; every other backend is
+    /// plain OpenAI-compatible HTTP.
+    pub provider: ProviderKind,
     pub base_url: String,
     pub api_key_env: Option<String>,
     /// The API key value itself: the decrypted stored key (see `db_bridge`).
@@ -366,6 +401,7 @@ impl BackendConfig {
         Self {
             priority: Default::default(),
             name: name.into(),
+            provider: ProviderKind::OpenAiCompatible,
             base_url: base_url.into(),
             api_key_env: None,
             api_key: None,

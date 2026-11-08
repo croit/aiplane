@@ -72,6 +72,10 @@ pub struct AliasStatus {
 pub struct Backend {
     pub priority: crate::server::priority::BackendPriority,
     pub name: String,
+    /// The upstream's protocol family. An OpenRouter backend never discovers
+    /// models from `/models`; its catalog is the operator's selection, filtered
+    /// by the price policy.
+    pub provider: crate::server::upstreams::config::ProviderKind,
     pub base_url: String,
     pub api_key: Option<String>,
     pub weight: u32,
@@ -132,6 +136,13 @@ pub struct Backend {
     /// When non-empty this *is* the served set and nothing is discovered —
     /// see [`Backend::with_effective_models`].
     config_models: HashSet<String>,
+    /// The subset of [`Self::config_models`] currently allowed by an external
+    /// policy — the OpenRouter price ceiling, refreshed by the catalog worker.
+    /// `None` means "no policy": every configured model is served. It is an
+    /// overlay rather than a rewrite of `config_models` so a price spike hides
+    /// a model without losing the operator's selection, and the model returns
+    /// by itself when the price drops again.
+    available_models: RwLock<Option<HashSet<String>>>,
     /// Client-facing aliases this backend answers to, alias name →
     /// optional explicit target real id. `Some(id)` pins a specific
     /// model; `None` (a bare alias) resolves to the backend's sole model at
@@ -187,13 +198,17 @@ impl Backend {
         let backend = Self {
             priority: cfg.priority.clone(),
             name: cfg.name.clone(),
+            provider: cfg.provider,
             base_url: cfg.base_url.trim_end_matches('/').to_string(),
             api_key: cfg.api_key(),
             weight: cfg.weight.max(1),
             max_inflight: cfg.max_inflight.max(1),
             health_path: cfg.health_path.clone(),
             extra_headers: cfg.extra_headers.clone(),
-            discovers_models: config_models.is_empty(),
+            // OpenRouter never discovers: its catalog is the operator's
+            // selection, and an empty selection means "serve nothing" rather
+            // than "serve the whole account".
+            discovers_models: !cfg.provider.is_openrouter() && config_models.is_empty(),
             supports_edit: cfg.supports_edit,
             inflight: AtomicU32::new(0),
             dispatched: AtomicU64::new(0),
@@ -202,6 +217,11 @@ impl Backend {
             enabled: AtomicBool::new(cfg.enabled),
             models: RwLock::new(HashSet::new()),
             config_models,
+            // Fail closed: an OpenRouter backend serves nothing until the
+            // catalog worker has priced its selection. The alternative — an
+            // empty overlay meaning "no policy" — would serve every selected
+            // model at whatever the provider charges during startup.
+            available_models: RwLock::new(cfg.provider.is_openrouter().then(HashSet::new)),
             aliases,
             disabled_aliases: RwLock::new(HashSet::new()),
             context_windows: RwLock::new(HashMap::new()),
@@ -286,22 +306,30 @@ impl Backend {
     }
 
     /// Real-model membership only (no aliases): the backend's effective set
-    /// contains `model`. The routing hot path, so a lookup, not a clone.
+    /// contains `model`, and no external policy currently hides it. The routing
+    /// hot path, so a lookup, not a clone.
     fn serves_real(&self, model: &str) -> bool {
-        self.with_effective_models(|set| set.contains(model))
+        self.available_allows(model) && self.with_effective_models(|set| set.contains(model))
+    }
+
+    /// Whether the current policy overlay (if any) still offers `model`.
+    fn available_allows(&self, model: &str) -> bool {
+        match self.available_models.read() {
+            Ok(guard) => guard.as_ref().is_none_or(|set| set.contains(model)),
+            Err(_) => true,
+        }
     }
 
     /// The backend's sole effective model, if it serves exactly one. Backs
     /// bare (list-form) alias resolution — an alias with no explicit target
     /// binds to this. `None` when the backend serves zero or several models.
     fn sole_model(&self) -> Option<String> {
-        self.with_effective_models(|set| {
-            if set.len() == 1 {
-                set.iter().next().cloned()
-            } else {
-                None
-            }
-        })
+        let set = self.models_snapshot();
+        if set.len() == 1 {
+            set.into_iter().next()
+        } else {
+            None
+        }
     }
 
     /// True if a bare alias is currently disabled (the backend serves ≠1
@@ -485,7 +513,45 @@ impl Backend {
     /// listing/UI paths (`/v1/models`, the transcription dropdown), not the
     /// request hot path (which uses `serves_model`).
     pub fn models_snapshot(&self) -> HashSet<String> {
-        self.with_effective_models(|set| set.clone())
+        let base = self.with_effective_models(|set| set.clone());
+        match self.available_models.read() {
+            Ok(guard) => match guard.as_ref() {
+                Some(available) => base.intersection(available).cloned().collect(),
+                None => base,
+            },
+            Err(_) => base,
+        }
+    }
+
+    /// Replace the policy overlay (OpenRouter price ceilings). `None` clears
+    /// it, restoring every configured model. Ignored on a discovering backend:
+    /// discovery is already the authority there.
+    pub fn set_available_models(&self, models: Option<HashSet<String>>) {
+        if self.discovers_models {
+            return;
+        }
+        if let Ok(mut guard) = self.available_models.write() {
+            *guard = models;
+        }
+        self.reevaluate_aliases();
+    }
+
+    /// The operator's configured selection, before any policy overlay. Used by
+    /// the catalog worker to know which models to price.
+    pub fn configured_models(&self) -> HashSet<String> {
+        self.config_models.clone()
+    }
+
+    pub fn is_openrouter(&self) -> bool {
+        self.provider.is_openrouter()
+    }
+
+    /// The operator selected this model, but a policy (the OpenRouter price
+    /// ceiling) currently hides it. Distinct from "unknown": it must answer
+    /// `404` without triggering the unknown-model fallback, which would be the
+    /// silent downgrade the ceiling exists to prevent.
+    pub fn policy_hides(&self, model: &str) -> bool {
+        self.config_models.contains(model) && !self.available_allows(model)
     }
 
     /// The *live* probe set only (never the config fallback), empty until the
@@ -2370,6 +2436,11 @@ impl UpstreamRegistry {
         match self.acquire_for_access_affine(model, kind, access, affinity) {
             Ok(acquired) => Ok(acquired),
             Err(RouteError::UnknownModel(orig)) => {
+                // A selected model hidden by its price ceiling is not a typo:
+                // falling back would silently buy a different model.
+                if self.policy_hides_model(&orig, kind) {
+                    return Err(RouteError::UnknownModel(orig));
+                }
                 let fb = self.data().fallback.for_kind(kind).map(str::to_owned);
                 match fb {
                     Some(fallback) => self
@@ -2389,6 +2460,19 @@ impl UpstreamRegistry {
             // Saturated (or any other) → surface as-is; no fallback under load.
             Err(other) => Err(other),
         }
+    }
+
+    /// Whether any pool of `kind` has this model selected but hidden by a
+    /// policy overlay. See [`Backend::policy_hides`].
+    fn policy_hides_model(&self, model: &str, kind: PoolKind) -> bool {
+        self.pools()
+            .iter()
+            .filter(|pool| pool.kind == kind)
+            .any(|pool| {
+                pool.backends
+                    .iter()
+                    .any(|backend| backend.policy_hides(model))
+            })
     }
 
     /// The `fallback_offline` model configured on the named pool, if any.
@@ -2430,6 +2514,9 @@ impl UpstreamRegistry {
         match self.resolve_access_no_slot(model, kind, access) {
             Ok(id) => Ok(id),
             Err(RouteError::UnknownModel(orig)) => {
+                if self.policy_hides_model(&orig, kind) {
+                    return Err(RouteError::UnknownModel(orig));
+                }
                 let fb = self.data().fallback.for_kind(kind).map(str::to_owned);
                 match fb {
                     Some(fallback) => self
@@ -2666,6 +2753,7 @@ mod tests {
             super::PoolKind::Chat,
             vec![
                 BackendConfig {
+                    provider: Default::default(),
                     priority: BackendPriority::Custom(PriorityMapping {
                         field: "request_priority".into(),
                         low: 1,
@@ -2676,6 +2764,7 @@ mod tests {
                     ..BackendConfig::new("custom", "http://unused")
                 },
                 BackendConfig {
+                    provider: Default::default(),
                     models: vec!["second".into()],
                     ..BackendConfig::new("generic", "http://unused")
                 },
@@ -3382,6 +3471,7 @@ mod tests {
 
     fn backend(name: &str, max_inflight: u32) -> BackendConfig {
         BackendConfig {
+            provider: Default::default(),
             max_inflight,
             ..BackendConfig::new(name, format!("http://{name}:8000/v1"))
         }
@@ -3622,6 +3712,7 @@ mod tests {
     /// Backend with a static fallback model list (no probe needed to route).
     fn backend_with_models(name: &str, models: &[&str]) -> BackendConfig {
         BackendConfig {
+            provider: Default::default(),
             priority: Default::default(),
             models: models.iter().map(|s| (*s).to_string()).collect(),
             ..backend(name, 16)
@@ -5063,6 +5154,7 @@ mod tests {
 
     fn backend_alias(name: &str, spec: HashMap<String, Option<String>>) -> BackendConfig {
         BackendConfig {
+            provider: Default::default(),
             priority: Default::default(),
             alias: spec,
             ..backend(name, 16)
@@ -5371,6 +5463,41 @@ mod tests {
     }
 
     #[test]
+    fn a_price_hidden_model_does_not_trigger_the_unknown_model_fallback() {
+        let reg = build_with_fallback(
+            vec![(
+                "chat",
+                pool_config(
+                    PoolKind::Chat,
+                    PickerStrategy::RoundRobin,
+                    vec![
+                        backend_with_models("a", &["m"]),
+                        backend_with_models("b", &["house-model"]),
+                    ],
+                ),
+            )],
+            FallbackConfig {
+                chat: Some("house-model".into()),
+                ..Default::default()
+            },
+        );
+        // `m` is selected but its provider is over the ceiling, so the policy
+        // overlay hides it. That is a refusal, not a typo — no downgrade.
+        reg.pools()[0].backends[0].set_available_models(Some(HashSet::new()));
+        assert!(matches!(
+            reg.route("m", PoolKind::Chat).unwrap_err(),
+            RouteError::UnknownModel(model) if model == "m"
+        ));
+        // A genuinely unknown name still falls back.
+        assert_eq!(
+            reg.route("never-heard-of", PoolKind::Chat)
+                .unwrap()
+                .resolved_model(),
+            "house-model"
+        );
+    }
+
+    #[test]
     fn unknown_fallback_is_single_hop_and_404_without_config() {
         // No fallback configured → plain 404.
         let reg = build(vec![(
@@ -5463,6 +5590,7 @@ mod tests {
             snap.backends.insert(
                 "b".into(),
                 BackendRow {
+                    provider: Default::default(),
                     priority: Default::default(),
                     name: "b".into(),
                     base_url: "http://b".into(),

@@ -49,15 +49,65 @@ pub async fn apply_defaults(pool: &Pool, body: &mut Value) -> Result<(), Default
         return Ok(());
     };
     let model = model.to_string();
-    let Some(row) = db::get(pool, &model).await? else {
-        return Ok(());
-    };
-    if row.defaults_toml.trim().is_empty() {
-        return Ok(());
+    if let Some(row) = db::get(pool, &model).await?
+        && !row.defaults_toml.trim().is_empty()
+    {
+        let defaults = parse_defaults(&row.defaults_toml)?;
+        fill_missing_keys(body, &defaults);
     }
-    let defaults = parse_defaults(&row.defaults_toml)?;
-    fill_missing_keys(body, &defaults);
+    apply_openrouter_policy(pool, &model, body).await;
     Ok(())
+}
+
+/// Overlay the gateway-owned OpenRouter `provider` block. Unlike the admin's
+/// sampling defaults, this is an **override**, not a default: the ceiling and
+/// the routing strategy are the operator's spend policy, and a client that
+/// could replace them could bypass the ceiling the account is protected by.
+async fn apply_openrouter_policy(pool: &Pool, model: &str, body: &mut Value) {
+    let Ok(Some(policy)) =
+        crate::server::db::upstreams_config::get_openrouter_policy_for_model(pool, model).await
+    else {
+        return;
+    };
+    let Some(object) = body.as_object_mut() else {
+        return;
+    };
+    object.insert("provider".into(), provider_block(&policy));
+}
+
+/// The `provider` object OpenRouter receives. `max_price` is in USD per 1M
+/// tokens, matching the admin form and `pricing` in the catalog.
+pub fn provider_block(policy: &crate::server::db::upstreams_config::OpenRouterPolicyRow) -> Value {
+    let mut provider = serde_json::Map::new();
+    provider.insert(
+        "max_price".into(),
+        serde_json::json!({
+            "prompt": policy.max_prompt_price,
+            "completion": policy.max_completion_price,
+        }),
+    );
+    // Only providers that actually honour the parameters the request carries.
+    provider.insert("require_parameters".into(), Value::Bool(true));
+    match policy.strategy.as_str() {
+        "cheapest" => {
+            provider.insert("sort".into(), Value::String("price".into()));
+            if let Some(min) = policy.min_throughput {
+                provider.insert(
+                    "preferred_min_throughput".into(),
+                    serde_json::Number::from_f64(min)
+                        .map(Value::Number)
+                        .unwrap_or(Value::Null),
+                );
+            }
+        }
+        "fastest" => {
+            provider.insert("sort".into(), Value::String("throughput".into()));
+        }
+        // `balanced`: leave routing to OpenRouter's own effective-cost model,
+        // with the ceiling still applied.
+        _ => {}
+    }
+    Value::Object(provider)
 }
 
 /// Bytes-oriented variant for the /v1 proxy's pass-through path,
@@ -73,19 +123,27 @@ pub async fn apply_defaults_to_bytes(
     body: rama::bytes::Bytes,
 ) -> rama::bytes::Bytes {
     let row = match db::get(pool, model).await {
-        Ok(Some(r)) if !r.defaults_toml.trim().is_empty() => r,
-        Ok(_) => return body,
+        Ok(Some(r)) if !r.defaults_toml.trim().is_empty() => Some(r),
+        Ok(_) => None,
         Err(err) => {
             tracing::warn!(error = %err, %model, "model_defaults: db lookup failed");
-            return body;
+            None
         }
     };
-    let defaults = match parse_defaults(&row.defaults_toml) {
-        Ok(d) => d,
-        Err(err) => {
+    let policy = crate::server::db::upstreams_config::get_openrouter_policy_for_model(pool, model)
+        .await
+        .ok()
+        .flatten();
+    if row.is_none() && policy.is_none() {
+        return body;
+    }
+    let defaults = match row.as_ref().map(|r| parse_defaults(&r.defaults_toml)) {
+        Some(Ok(d)) => Some(d),
+        Some(Err(err)) => {
             tracing::warn!(error = %err, %model, "model_defaults: TOML parse failed");
-            return body;
+            None
         }
+        None => None,
     };
     let mut value: Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
@@ -94,7 +152,14 @@ pub async fn apply_defaults_to_bytes(
             return body;
         }
     };
-    fill_missing_keys(&mut value, &defaults);
+    if let Some(defaults) = &defaults {
+        fill_missing_keys(&mut value, defaults);
+    }
+    if let Some(policy) = &policy
+        && let Some(object) = value.as_object_mut()
+    {
+        object.insert("provider".into(), provider_block(policy));
+    }
     match serde_json::to_vec(&value) {
         Ok(out) => rama::bytes::Bytes::from(out),
         Err(err) => {
@@ -330,5 +395,98 @@ only = ["together"]
         let mut body = json!({"model": "untouched", "messages": []});
         apply_defaults(&pool, &mut body).await.unwrap();
         assert_eq!(body, json!({"model": "untouched", "messages": []}));
+    }
+
+    fn policy(
+        strategy: &str,
+        min: Option<f64>,
+    ) -> crate::server::db::upstreams_config::OpenRouterPolicyRow {
+        crate::server::db::upstreams_config::OpenRouterPolicyRow {
+            model_id: "deepseek/deepseek-v4.1".into(),
+            max_prompt_price: 0.30,
+            max_completion_price: 1.20,
+            strategy: strategy.into(),
+            min_throughput: min,
+            available: true,
+            cheapest_prompt_price: Some(0.27),
+            cheapest_completion_price: Some(1.10),
+            cheapest_provider: Some("deepseek".into()),
+            observed_at: None,
+        }
+    }
+
+    #[test]
+    fn the_provider_block_always_carries_the_price_ceiling() {
+        let block = provider_block(&policy("balanced", None));
+        assert_eq!(
+            block["max_price"],
+            json!({"prompt": 0.30, "completion": 1.20})
+        );
+        assert_eq!(block["require_parameters"], json!(true));
+        // Balanced leaves routing to OpenRouter: no sort key.
+        assert!(block.get("sort").is_none());
+    }
+
+    #[test]
+    fn cheapest_sorts_by_price_and_keeps_a_throughput_floor() {
+        let block = provider_block(&policy("cheapest", Some(40.0)));
+        assert_eq!(block["sort"], json!("price"));
+        assert_eq!(block["preferred_min_throughput"], json!(40.0));
+    }
+
+    #[test]
+    fn fastest_sorts_by_throughput() {
+        let block = provider_block(&policy("fastest", None));
+        assert_eq!(block["sort"], json!("throughput"));
+    }
+
+    #[tokio::test]
+    async fn a_client_cannot_raise_the_openrouter_ceiling() {
+        let pool = crate::server::db::open(std::path::Path::new(":memory:"))
+            .await
+            .unwrap();
+        crate::server::db::upstreams_config::upsert_backend(
+            &pool,
+            &crate::server::db::upstreams_config::BackendRow {
+                provider: crate::server::upstreams::config::ProviderKind::OpenRouter,
+                priority: Default::default(),
+                name: "or".into(),
+                base_url: "https://openrouter.ai/api/v1".into(),
+                api_key_env: None,
+                api_key_ct: None,
+                api_key_nonce: None,
+                weight: 1,
+                max_inflight: 16,
+                health_path: "/models".into(),
+                supports_edit: false,
+                enabled: true,
+                extra_headers: Default::default(),
+                models: Vec::new(),
+                aliases: Vec::new(),
+                created_at: jiff::Timestamp::now(),
+                updated_at: jiff::Timestamp::now(),
+            },
+        )
+        .await
+        .unwrap();
+        crate::server::db::upstreams_config::upsert_openrouter_policy(
+            &pool,
+            "or",
+            &policy("cheapest", Some(40.0)),
+        )
+        .await
+        .unwrap();
+
+        let mut body = json!({
+            "model": "deepseek/deepseek-v4.1",
+            "messages": [],
+            "provider": { "max_price": { "prompt": 999.0, "completion": 999.0 }, "sort": "throughput" }
+        });
+        apply_defaults(&pool, &mut body).await.unwrap();
+        assert_eq!(
+            body["provider"]["max_price"],
+            json!({"prompt": 0.30, "completion": 1.20})
+        );
+        assert_eq!(body["provider"]["sort"], json!("price"));
     }
 }

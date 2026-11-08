@@ -49,8 +49,12 @@ export interface BackendAlias {
 	target: string | null;
 }
 
+export type ProviderKind = 'openai_compatible' | 'openrouter';
+
 export interface Backend {
 	priority: BackendPriority;
+	/** `openrouter` reads the account catalog and injects the price policy. */
+	provider: ProviderKind;
 	name: string;
 	base_url: string;
 	api_key_env: string | null;
@@ -302,4 +306,75 @@ const naturalCollator = new Intl.Collator(undefined, { numeric: true, sensitivit
 
 export function naturalSort(values: readonly string[]): string[] {
 	return [...values].sort((a, b) => naturalCollator.compare(a, b));
+}
+
+/** One model from the OpenRouter account catalog, with its policy. */
+export interface OpenRouterModel {
+	id: string;
+	name: string;
+	description: string;
+	context_length: number | null;
+	max_completion_tokens: number | null;
+	input_modalities: string[];
+	output_modalities: string[];
+	supports_tools: boolean;
+	supports_structured_output: boolean;
+	/** The model's list price in USD per 1M tokens. */
+	prompt_price: number;
+	completion_price: number;
+	selected: boolean;
+	available: boolean;
+	policy: {
+		max_prompt_price: number;
+		max_completion_price: number;
+		strategy: string;
+		min_throughput: number | null;
+	} | null;
+	cheapest_provider: string | null;
+	cheapest_prompt_price: number | null;
+	cheapest_completion_price: number | null;
+	endpoints: OpenRouterEndpoint[];
+}
+
+export interface OpenRouterEndpoint {
+	provider: string;
+	prompt_price: number;
+	completion_price: number;
+	throughput_p50: number | null;
+	latency_p50: number | null;
+	uptime_30m: number | null;
+	quantization: string | null;
+	context_length: number | null;
+}
+
+export interface OpenRouterPool {
+	name: string;
+	kind: string;
+	modality: string | null;
+	/** Other backends in this pool; a pool has one model list. */
+	other_backends: string[];
+}
+
+export interface OpenRouterView {
+	backend: string;
+	connected: boolean;
+	key: {
+		label: string | null;
+		usage: number | null;
+		limit: number | null;
+		limit_remaining: number | null;
+		is_free_tier: boolean;
+	} | null;
+	pools: OpenRouterPool[];
+	pool: string;
+	catalog: OpenRouterModel[];
+	error: string | null;
+}
+
+export interface OpenRouterSelection {
+	model: string;
+	max_prompt_price: number;
+	max_completion_price: number;
+	strategy: string;
+	min_throughput: number | null;
 }

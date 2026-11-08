@@ -18,6 +18,7 @@
 
 	let { backend = null, currentPool = null, pools, existingNames, onSaved, onCancel }: Props = $props();
 	let name = $state(untrack(() => backend?.name ?? ''));
+	let provider = $state<'openai_compatible' | 'openrouter'>(untrack(() => backend?.provider ?? 'openai_compatible'));
 	let baseUrl = $state(untrack(() => backend?.base_url ?? ''));
 	let apiKey = $state('');
 	let apiKeyEnv = $state(untrack(() => backend?.api_key_env ?? ''));
@@ -62,6 +63,7 @@
 			}
 			await adminPut('/api/v0/admin/backends', {
 				name,
+				provider,
 				base_url: baseUrl,
 				api_key_env: apiKeyEnv,
 				api_key: apiKey,
@@ -142,7 +144,7 @@
 			testResult = await request<BackendTestResult>('/api/v0/admin/backends/test', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ name, base_url: baseUrl, api_key_env: apiKeyEnv, api_key: apiKey, health_path: healthPath, extra_headers: parseHeaders(extraHeaders) })
+				body: JSON.stringify({ name, provider, base_url: baseUrl, api_key_env: apiKeyEnv, api_key: apiKey, health_path: healthPath, extra_headers: parseHeaders(extraHeaders) })
 			});
 		} catch (err) {
 			const failed = err instanceof ApiError ? backendTestFailure(err.detail) : null;
@@ -177,6 +179,21 @@
 		<label class="flex flex-col gap-1">
 			<span class="text-xs text-base-content/70">{t('backends-field-name')}</span>
 			<input class="input font-mono w-full" bind:value={name} required />
+		</label>
+		<label class="flex flex-col gap-1">
+			<span class="text-xs text-base-content/70">{t('openrouter-provider-field')}</span>
+			<select
+				class="select w-full"
+				aria-label={t('openrouter-provider-field')}
+				bind:value={provider}
+				onchange={() => {
+					if (provider === 'openrouter' && !baseUrl.trim()) baseUrl = 'https://openrouter.ai/api/v1';
+				}}
+			>
+				<option value="openai_compatible">{t('openrouter-provider-openai')}</option>
+				<option value="openrouter">{t('openrouter-provider-openrouter')}</option>
+			</select>
+			<span class="text-xs text-base-content/50">{t('openrouter-provider-hint')}</span>
 		</label>
 		<label class="flex flex-col gap-1">
 			<span class="text-xs text-base-content/70">{t('backends-field-base-url')}</span>

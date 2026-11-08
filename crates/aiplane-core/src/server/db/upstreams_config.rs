@@ -17,6 +17,7 @@ use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 
 use super::{DbError, Pool};
+use crate::server::upstreams::config::ProviderKind;
 
 // ---------------------------------------------------------------------------
 // Row structs
@@ -26,6 +27,8 @@ use super::{DbError, Pool};
 pub struct BackendRow {
     pub priority: crate::server::priority::BackendPriority,
     pub name: String,
+    /// The upstream's protocol family (migration 0093).
+    pub provider: ProviderKind,
     pub base_url: String,
     /// Optional env-var NAME holding the API key — a fallback resolved from the
     /// environment only when no sealed [`api_key_ct`](Self::api_key_ct) is set.
@@ -135,7 +138,7 @@ pub async fn load_snapshot(db: &Pool) -> Result<UpstreamConfigSnapshot, DbError>
 
 async fn load_all_backends(db: &Pool) -> Result<HashMap<String, BackendRow>, DbError> {
     let rows = sqlx::query(
-        r#"SELECT name, base_url, api_key_env, api_key_ct, api_key_nonce, weight, max_inflight,
+        r#"SELECT name, provider, base_url, api_key_env, api_key_ct, api_key_nonce, weight, max_inflight,
                   health_path, supports_edit, enabled, priority, extra_headers, created_at, updated_at
              FROM backends ORDER BY name"#,
     )
@@ -157,6 +160,7 @@ async fn load_all_backends(db: &Pool) -> Result<HashMap<String, BackendRow>, DbE
                     },
                 )?,
                 name: name.clone(),
+                provider: ProviderKind::parse(&row.try_get::<String, _>("provider")?),
                 base_url: row.try_get("base_url")?,
                 api_key_env: row.try_get("api_key_env")?,
                 api_key_ct: row.try_get("api_key_ct")?,
@@ -600,10 +604,11 @@ pub async fn upsert_backend(db: &Pool, row: &BackendRow) -> Result<(), DbError> 
     let now = now_rfc3339();
     sqlx::query(
         r#"INSERT INTO backends
-               (name, base_url, api_key_env, api_key_ct, api_key_nonce, weight, max_inflight,
+               (name, provider, base_url, api_key_env, api_key_ct, api_key_nonce, weight, max_inflight,
                 health_path, supports_edit, enabled, priority, extra_headers, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(name) DO UPDATE SET
+               provider      = excluded.provider,
                base_url      = excluded.base_url,
                api_key_env   = excluded.api_key_env,
                api_key_ct    = excluded.api_key_ct,
@@ -618,6 +623,7 @@ pub async fn upsert_backend(db: &Pool, row: &BackendRow) -> Result<(), DbError> 
                updated_at    = excluded.updated_at"#,
     )
     .bind(&row.name)
+    .bind(row.provider.as_str())
     .bind(&row.base_url)
     .bind(&row.api_key_env)
     .bind(&row.api_key_ct)
@@ -1068,6 +1074,349 @@ pub async fn set_fallback(db: &Pool, kind: &str, model_id: Option<&str>) -> Resu
 }
 
 // ---------------------------------------------------------------------------
+// OpenRouter catalog policies and endpoint observations
+// ---------------------------------------------------------------------------
+
+/// One selected OpenRouter model's purchase-price policy.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpenRouterPolicyRow {
+    pub model_id: String,
+    /// USD per 1M tokens, the unit `provider.max_price` uses.
+    pub max_prompt_price: f64,
+    pub max_completion_price: f64,
+    /// `cheapest` | `fastest` | `balanced`.
+    pub strategy: String,
+    pub min_throughput: Option<f64>,
+    pub available: bool,
+    pub cheapest_prompt_price: Option<f64>,
+    pub cheapest_completion_price: Option<f64>,
+    pub cheapest_provider: Option<String>,
+    pub observed_at: Option<String>,
+}
+
+/// One provider endpoint observed for a selected model.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpenRouterEndpointRow {
+    pub provider_tag: String,
+    pub provider_name: String,
+    pub prompt_price: f64,
+    pub completion_price: f64,
+    pub request_price: Option<f64>,
+    pub image_price: Option<f64>,
+    pub cache_read_price: Option<f64>,
+    pub cache_write_price: Option<f64>,
+    pub context_length: Option<i64>,
+    pub max_completion_tokens: Option<i64>,
+    pub throughput_p50: Option<f64>,
+    pub latency_p50: Option<f64>,
+    pub uptime_30m: Option<f64>,
+    pub quantization: Option<String>,
+    pub supported_parameters: Vec<String>,
+}
+
+pub async fn load_openrouter_policies(
+    db: &Pool,
+    backend: &str,
+) -> Result<HashMap<String, OpenRouterPolicyRow>, DbError> {
+    let rows = sqlx::query(
+        r#"SELECT p.model_id, p.max_prompt_price, p.max_completion_price, p.strategy,
+                  p.min_throughput, p.available, p.cheapest_prompt_price,
+                  p.cheapest_completion_price, p.cheapest_provider, p.observed_at
+             FROM openrouter_model_policies p
+             JOIN backends b ON b.id = p.backend_id
+            WHERE b.name = ?
+            ORDER BY p.model_id"#,
+    )
+    .bind(backend)
+    .fetch_all(db)
+    .await?;
+    let mut out = HashMap::new();
+    for row in &rows {
+        let model_id: String = row.try_get("model_id")?;
+        out.insert(
+            model_id.clone(),
+            OpenRouterPolicyRow {
+                model_id,
+                max_prompt_price: row.try_get("max_prompt_price")?,
+                max_completion_price: row.try_get("max_completion_price")?,
+                strategy: row.try_get("strategy")?,
+                min_throughput: row.try_get("min_throughput")?,
+                available: row.try_get::<i64, _>("available")? != 0,
+                cheapest_prompt_price: row.try_get("cheapest_prompt_price")?,
+                cheapest_completion_price: row.try_get("cheapest_completion_price")?,
+                cheapest_provider: row.try_get("cheapest_provider")?,
+                observed_at: row.try_get("observed_at")?,
+            },
+        );
+    }
+    Ok(out)
+}
+
+pub async fn upsert_openrouter_policy(
+    db: &Pool,
+    backend: &str,
+    row: &OpenRouterPolicyRow,
+) -> Result<(), DbError> {
+    let now = now_rfc3339();
+    sqlx::query(
+        r#"INSERT INTO openrouter_model_policies
+               (backend_id, model_id, max_prompt_price, max_completion_price, strategy,
+                min_throughput, available, cheapest_prompt_price, cheapest_completion_price,
+                cheapest_provider, observed_at, created_at, updated_at)
+           VALUES ((SELECT id FROM backends WHERE name = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(backend_id, model_id) DO UPDATE SET
+               max_prompt_price          = excluded.max_prompt_price,
+               max_completion_price      = excluded.max_completion_price,
+               strategy                  = excluded.strategy,
+               min_throughput            = excluded.min_throughput,
+               available                 = excluded.available,
+               cheapest_prompt_price     = excluded.cheapest_prompt_price,
+               cheapest_completion_price = excluded.cheapest_completion_price,
+               cheapest_provider         = excluded.cheapest_provider,
+               observed_at               = excluded.observed_at,
+               updated_at                = excluded.updated_at"#,
+    )
+    .bind(backend)
+    .bind(&row.model_id)
+    .bind(row.max_prompt_price)
+    .bind(row.max_completion_price)
+    .bind(&row.strategy)
+    .bind(row.min_throughput)
+    .bind(row.available as i64)
+    .bind(row.cheapest_prompt_price)
+    .bind(row.cheapest_completion_price)
+    .bind(&row.cheapest_provider)
+    .bind(&row.observed_at)
+    .bind(&now)
+    .bind(&now)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// The policy that applies to `model_id`, with the backend that owns it. Model
+/// ids are OpenRouter's globally unique `author/slug`, so this is unambiguous
+/// even when the same id is also served by a self-hosted backend.
+pub async fn get_openrouter_policy_for_model(
+    db: &Pool,
+    model_id: &str,
+) -> Result<Option<OpenRouterPolicyRow>, DbError> {
+    let row = sqlx::query(
+        r#"SELECT p.model_id, p.max_prompt_price, p.max_completion_price, p.strategy,
+                  p.min_throughput, p.available, p.cheapest_prompt_price,
+                  p.cheapest_completion_price, p.cheapest_provider, p.observed_at
+             FROM openrouter_model_policies p
+             JOIN backends b ON b.id = p.backend_id
+            WHERE b.provider = 'openrouter' AND p.model_id = ?
+            ORDER BY p.available DESC
+            LIMIT 1"#,
+    )
+    .bind(model_id)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.map(|row| OpenRouterPolicyRow {
+        model_id: row.try_get("model_id").unwrap_or_default(),
+        max_prompt_price: row.try_get("max_prompt_price").unwrap_or(0.0),
+        max_completion_price: row.try_get("max_completion_price").unwrap_or(0.0),
+        strategy: row
+            .try_get("strategy")
+            .unwrap_or_else(|_| "balanced".into()),
+        min_throughput: row.try_get("min_throughput").ok().flatten(),
+        available: row.try_get::<i64, _>("available").unwrap_or(0) != 0,
+        cheapest_prompt_price: row.try_get("cheapest_prompt_price").ok().flatten(),
+        cheapest_completion_price: row.try_get("cheapest_completion_price").ok().flatten(),
+        cheapest_provider: row.try_get("cheapest_provider").ok().flatten(),
+        observed_at: row.try_get("observed_at").ok().flatten(),
+    }))
+}
+
+pub async fn set_openrouter_availability(
+    db: &Pool,
+    backend: &str,
+    model_id: &str,
+    available: bool,
+    cheapest_prompt_price: Option<f64>,
+    cheapest_completion_price: Option<f64>,
+    cheapest_provider: Option<&str>,
+) -> Result<(), DbError> {
+    sqlx::query(
+        r#"UPDATE openrouter_model_policies
+              SET available = ?, cheapest_prompt_price = ?, cheapest_completion_price = ?,
+                  cheapest_provider = ?, observed_at = ?, updated_at = ?
+            WHERE backend_id = (SELECT id FROM backends WHERE name = ?)
+              AND model_id = ?"#,
+    )
+    .bind(available as i64)
+    .bind(cheapest_prompt_price)
+    .bind(cheapest_completion_price)
+    .bind(cheapest_provider)
+    .bind(now_rfc3339())
+    .bind(now_rfc3339())
+    .bind(backend)
+    .bind(model_id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn replace_openrouter_endpoints(
+    db: &Pool,
+    backend: &str,
+    model_id: &str,
+    endpoints: &[OpenRouterEndpointRow],
+) -> Result<(), DbError> {
+    let now = now_rfc3339();
+    let mut tx = db.begin().await?;
+    sqlx::query(
+        r#"DELETE FROM openrouter_endpoint_observations
+            WHERE backend_id = (SELECT id FROM backends WHERE name = ?) AND model_id = ?"#,
+    )
+    .bind(backend)
+    .bind(model_id)
+    .execute(&mut *tx)
+    .await?;
+    for endpoint in endpoints {
+        sqlx::query(
+            r#"INSERT INTO openrouter_endpoint_observations
+                   (backend_id, model_id, provider_tag, provider_name, prompt_price,
+                    completion_price, request_price, image_price, cache_read_price,
+                    cache_write_price, context_length, max_completion_tokens,
+                    throughput_p50, latency_p50, uptime_30m, quantization,
+                    supported_parameters, observed_at)
+               VALUES ((SELECT id FROM backends WHERE name = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(backend)
+        .bind(model_id)
+        .bind(&endpoint.provider_tag)
+        .bind(&endpoint.provider_name)
+        .bind(endpoint.prompt_price)
+        .bind(endpoint.completion_price)
+        .bind(endpoint.request_price)
+        .bind(endpoint.image_price)
+        .bind(endpoint.cache_read_price)
+        .bind(endpoint.cache_write_price)
+        .bind(endpoint.context_length)
+        .bind(endpoint.max_completion_tokens)
+        .bind(endpoint.throughput_p50)
+        .bind(endpoint.latency_p50)
+        .bind(endpoint.uptime_30m)
+        .bind(&endpoint.quantization)
+        .bind(serde_json::to_string(&endpoint.supported_parameters).map_err(|source| {
+            DbError::Decode {
+                column: "supported_parameters",
+                source: source.into(),
+            }
+        })?)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Every observation for one backend, grouped by model. The admin catalog
+/// reads this once instead of one query per model.
+pub async fn load_all_openrouter_endpoints(
+    db: &Pool,
+    backend: &str,
+) -> Result<HashMap<String, Vec<OpenRouterEndpointRow>>, DbError> {
+    let rows = sqlx::query(
+        r#"SELECT o.model_id, o.provider_tag, o.provider_name, o.prompt_price,
+                  o.completion_price, o.request_price, o.image_price, o.cache_read_price,
+                  o.cache_write_price, o.context_length, o.max_completion_tokens,
+                  o.throughput_p50, o.latency_p50, o.uptime_30m, o.quantization,
+                  o.supported_parameters
+             FROM openrouter_endpoint_observations o
+             JOIN backends b ON b.id = o.backend_id
+            WHERE b.name = ?
+            ORDER BY o.model_id, o.prompt_price, o.provider_tag"#,
+    )
+    .bind(backend)
+    .fetch_all(db)
+    .await?;
+    let mut out: HashMap<String, Vec<OpenRouterEndpointRow>> = HashMap::new();
+    for row in &rows {
+        let model_id: String = row.try_get("model_id")?;
+        out.entry(model_id)
+            .or_default()
+            .push(OpenRouterEndpointRow {
+                provider_tag: row.try_get("provider_tag")?,
+                provider_name: row.try_get("provider_name")?,
+                prompt_price: row.try_get("prompt_price")?,
+                completion_price: row.try_get("completion_price")?,
+                request_price: row.try_get("request_price")?,
+                image_price: row.try_get("image_price")?,
+                cache_read_price: row.try_get("cache_read_price")?,
+                cache_write_price: row.try_get("cache_write_price")?,
+                context_length: row.try_get("context_length")?,
+                max_completion_tokens: row.try_get("max_completion_tokens")?,
+                throughput_p50: row.try_get("throughput_p50")?,
+                latency_p50: row.try_get("latency_p50")?,
+                uptime_30m: row.try_get("uptime_30m")?,
+                quantization: row.try_get("quantization")?,
+                supported_parameters: serde_json::from_str(
+                    &row.try_get::<String, _>("supported_parameters")?,
+                )
+                .unwrap_or_default(),
+            });
+    }
+    Ok(out)
+}
+
+pub async fn load_openrouter_endpoints(
+    db: &Pool,
+    backend: &str,
+    model_id: &str,
+) -> Result<Vec<OpenRouterEndpointRow>, DbError> {
+    let rows = sqlx::query(
+        r#"SELECT provider_tag, provider_name, prompt_price, completion_price, request_price,
+                  image_price, cache_read_price, cache_write_price, context_length,
+                  max_completion_tokens, throughput_p50, latency_p50, uptime_30m,
+                  quantization, supported_parameters
+             FROM openrouter_endpoint_observations o
+             JOIN backends b ON b.id = o.backend_id
+            WHERE b.name = ? AND o.model_id = ?
+            ORDER BY o.prompt_price, o.provider_tag"#,
+    )
+    .bind(backend)
+    .bind(model_id)
+    .fetch_all(db)
+    .await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in &rows {
+        out.push(OpenRouterEndpointRow {
+            provider_tag: row.try_get("provider_tag")?,
+            provider_name: row.try_get("provider_name")?,
+            prompt_price: row.try_get("prompt_price")?,
+            completion_price: row.try_get("completion_price")?,
+            request_price: row.try_get("request_price")?,
+            image_price: row.try_get("image_price")?,
+            cache_read_price: row.try_get("cache_read_price")?,
+            cache_write_price: row.try_get("cache_write_price")?,
+            context_length: row.try_get("context_length")?,
+            max_completion_tokens: row.try_get("max_completion_tokens")?,
+            throughput_p50: row.try_get("throughput_p50")?,
+            latency_p50: row.try_get("latency_p50")?,
+            uptime_30m: row.try_get("uptime_30m")?,
+            quantization: row.try_get("quantization")?,
+            supported_parameters: serde_json::from_str(
+                &row.try_get::<String, _>("supported_parameters")?,
+            )
+            .unwrap_or_default(),
+        });
+    }
+    Ok(out)
+}
+
+/// Replace one pool's configured model list without touching anything else
+/// about the pool. The OpenRouter catalog writes its selection here so each
+/// pool of the same backend can carry a different modality's models.
+pub async fn set_pool_models(db: &Pool, pool_name: &str, models: &[String]) -> Result<(), DbError> {
+    replace_pool_models(db, pool_name, models).await
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1093,6 +1442,7 @@ mod tests {
     /// A backend with nothing else set, for the detection tests.
     fn bare_backend(name: &str) -> BackendRow {
         BackendRow {
+            provider: Default::default(),
             priority: Default::default(),
             name: name.into(),
             base_url: "http://host:11434/v1".into(),
@@ -1207,6 +1557,7 @@ mod tests {
 
         // The operator repoints it somewhere else.
         let moved = BackendRow {
+            provider: Default::default(),
             priority: Default::default(),
             base_url: "https://api.example.com/v1".into(),
             ..bare_backend("moved")
@@ -1277,6 +1628,7 @@ mod tests {
     async fn backend_round_trip() {
         let pool = test_pool().await;
         let backend = BackendRow {
+            provider: Default::default(),
             priority: Default::default(),
             name: "gpu-01".into(),
             base_url: "http://gpu-01:8000/v1".into(),
@@ -1373,6 +1725,7 @@ mod tests {
     async fn renaming_a_backend_moves_every_row_that_names_it() {
         let pool = test_pool().await;
         let backend = BackendRow {
+            provider: Default::default(),
             priority: Default::default(),
             name: "voxtral".into(),
             base_url: "http://llm01:8002/v1".into(),
@@ -1463,6 +1816,7 @@ mod tests {
             upsert_backend(
                 &pool,
                 &BackendRow {
+                    provider: Default::default(),
                     priority: Default::default(),
                     name: name.into(),
                     base_url: "http://x/v1".into(),
@@ -1535,6 +1889,7 @@ mod tests {
             upsert_backend(
                 &pool,
                 &BackendRow {
+                    provider: Default::default(),
                     priority: Default::default(),
                     name: name.into(),
                     base_url: "http://x/v1".into(),
@@ -1577,6 +1932,7 @@ mod tests {
     async fn backend_delete_cascades() {
         let pool = test_pool().await;
         let backend = BackendRow {
+            provider: Default::default(),
             priority: Default::default(),
             name: "tmp".into(),
             base_url: "http://tmp".into(),
@@ -1616,6 +1972,7 @@ mod tests {
         let pool = test_pool().await;
 
         let backend = BackendRow {
+            provider: Default::default(),
             priority: Default::default(),
             name: "b1".into(),
             base_url: "http://b1".into(),
@@ -1682,6 +2039,7 @@ mod tests {
         upsert_backend(
             &pool,
             &BackendRow {
+                provider: Default::default(),
                 priority: Default::default(),
                 name: "tts".into(),
                 base_url: "http://tts".into(),
@@ -1807,6 +2165,7 @@ mod tests {
         upsert_backend(
             &pool,
             &BackendRow {
+                provider: Default::default(),
                 priority: Default::default(),
                 name: "b".into(),
                 base_url: "http://b".into(),

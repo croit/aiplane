@@ -61,6 +61,7 @@ async fn the_header_map_round_trips_through_the_database_layer() {
     let mut headers = std::collections::BTreeMap::new();
     headers.insert("anthropic-version".to_string(), "2023-06-01".to_string());
     let row = aiplane_core::server::db::upstreams_config::BackendRow {
+        provider: Default::default(),
         priority: Default::default(),
         name: "anthropic".to_string(),
         base_url: "https://api.anthropic.com/v1".to_string(),

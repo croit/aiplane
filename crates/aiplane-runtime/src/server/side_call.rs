@@ -574,6 +574,9 @@ async fn send(
     state
         .upstreams
         .apply_priority(&acquired, &mut body, priority);
+    // A side call is still a paid request: apply the same OpenRouter provider
+    // ceiling the main paths do, or a title/compaction call could exceed it.
+    let _ = aiplane_core::server::model_defaults::apply_defaults(&state.db, &mut body).await;
     exchange.backend = Some(backend.name.clone());
     exchange.request = body.clone();
     let mut req = state

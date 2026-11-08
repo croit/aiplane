@@ -977,6 +977,7 @@ mod tests {
                     offer_voices: Vec::new(),
                     allowed_groups: Vec::new(),
                     backend: vec![BackendConfig {
+                        provider: Default::default(),
                         priority: Default::default(),
                         name: name.into(),
                         base_url: upstream.uri(),
@@ -1166,6 +1167,7 @@ mod tests {
                 offer_voices: Vec::new(),
                 allowed_groups: Vec::new(),
                 backend: vec![BackendConfig {
+                    provider: Default::default(),
                     priority: Default::default(),
                     name: "judge-backend".into(),
                     base_url: upstream.to_owned(),

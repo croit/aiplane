@@ -137,6 +137,7 @@ mod tests {
 
     fn pool_with_one_backend() -> HashMap<String, UpstreamPoolConfig> {
         let backend = BackendConfig {
+            provider: Default::default(),
             priority: Default::default(),
             name: "b1".into(),
             base_url: "http://b1:8000/v1".into(),

@@ -35,7 +35,7 @@ use aiplane_core::server::config::{
 use aiplane_core::server::rbac::{Resolver, RoleConfig};
 use aiplane_core::server::upstreams::{
     self,
-    config::{BackendConfig, PickerStrategy, PoolKind, UpstreamPoolConfig},
+    config::{BackendConfig, PickerStrategy, PoolKind, ProviderKind, UpstreamPoolConfig},
 };
 use aiplane_core::server::{Config, db};
 use aiplane_features::server::comfyui::{ChatUpdateRegistry, Client, ComfyuiStore};
@@ -300,6 +300,141 @@ async fn main() -> anyhow::Result<()> {
         .mount(&voice_mock)
         .await;
 
+    // --- OpenRouter fixture ------------------------------------------
+    //
+    // A second upstream that speaks OpenRouter's catalog shape. The admin
+    // panel reads `/models/user`, prices each selected model from
+    // `/models/{author}/{slug}/endpoints`, and the gateway forwards chat to
+    // `/chat/completions` with a gateway-owned `provider` block.
+    let openrouter_mock = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "object": "list",
+            "data": [{ "id": "deepseek/deepseek-v4.1", "object": "model" }],
+        })))
+        .mount(&openrouter_mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/models/user"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": [
+                {
+                    "id": "deepseek/deepseek-v4.1",
+                    "canonical_slug": "deepseek/deepseek-v4.1",
+                    "name": "DeepSeek V4.1",
+                    "description": "A cheap, fast coding model.",
+                    "context_length": 128000,
+                    "architecture": {
+                        "input_modalities": ["text"],
+                        "output_modalities": ["text"],
+                        "modality": "text->text",
+                        "instruct_type": "deepseek-v3.1"
+                    },
+                    "pricing": { "prompt": "0.0000003", "completion": "0.0000012", "request": "0", "image": "0" },
+                    "supported_parameters": ["tools", "tool_choice", "structured_outputs", "temperature"],
+                    "top_provider": { "context_length": 128000, "max_completion_tokens": 8192, "is_moderated": false },
+                    "endpoints": ["/api/v1/chat/completions", "/api/v1/messages", "/api/v1/responses"]
+                },
+                {
+                    "id": "anthropic/claude-sonnet-5.5",
+                    "canonical_slug": "anthropic/claude-sonnet-5.5",
+                    "name": "Claude Sonnet 5.5",
+                    "description": "A stronger, more expensive model.",
+                    "context_length": 200000,
+                    "architecture": {
+                        "input_modalities": ["text", "image"],
+                        "output_modalities": ["text"],
+                        "modality": "text+image->text",
+                        "instruct_type": "claude"
+                    },
+                    "pricing": { "prompt": "0.000003", "completion": "0.000015", "request": "0", "image": "0" },
+                    "supported_parameters": ["tools", "tool_choice", "structured_outputs", "temperature"],
+                    "top_provider": { "context_length": 200000, "max_completion_tokens": 8192, "is_moderated": false },
+                    "endpoints": ["/api/v1/chat/completions", "/api/v1/messages", "/api/v1/responses"]
+                },
+                {
+                    "id": "meta-llama/llama-4.1-70b-instruct",
+                    "canonical_slug": "meta-llama/llama-4.1-70b-instruct",
+                    "name": "Llama 4.1 70B Instruct",
+                    "description": "Open-weight chat model.",
+                    "context_length": 131072,
+                    "architecture": {
+                        "input_modalities": ["text"],
+                        "output_modalities": ["text"],
+                        "modality": "text->text",
+                        "instruct_type": "llama4"
+                    },
+                    "pricing": { "prompt": "0.0000002", "completion": "0.0000008", "request": "0", "image": "0" },
+                    "supported_parameters": ["tools", "temperature"],
+                    "top_provider": { "context_length": 131072, "max_completion_tokens": 4096, "is_moderated": false },
+                    "endpoints": ["/api/v1/chat/completions"]
+                }
+            ]
+        })))
+        .mount(&openrouter_mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/models/deepseek/deepseek-v4.1/endpoints"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "id": "deepseek/deepseek-v4.1",
+                "name": "DeepSeek V4.1",
+                "endpoints": [
+                    {
+                        "name": "DeepSeek",
+                        "provider_name": "DeepSeek",
+                        "tag": "deepseek",
+                        "model_id": "deepseek/deepseek-v4.1",
+                        "model_name": "DeepSeek V4.1",
+                        "context_length": 128000,
+                        "max_completion_tokens": 8192,
+                        "pricing": { "prompt": "0.0000003", "completion": "0.0000012", "request": "0", "image": "0" },
+                        "throughput_last_30m": { "p50": 84.0, "p90": 40.0 },
+                        "latency_last_30m": { "p50": 0.4, "p90": 1.1 },
+                        "uptime_last_30m": 99.8,
+                        "quantization": "fp8",
+                        "supported_parameters": ["tools", "tool_choice", "structured_outputs"]
+                    },
+                    {
+                        "name": "Together",
+                        "provider_name": "Together",
+                        "tag": "together",
+                        "model_id": "deepseek/deepseek-v4.1",
+                        "model_name": "DeepSeek V4.1",
+                        "context_length": 128000,
+                        "max_completion_tokens": 8192,
+                        "pricing": { "prompt": "0.00000045", "completion": "0.0000015", "request": "0", "image": "0" },
+                        "throughput_last_30m": { "p50": 120.0, "p90": 70.0 },
+                        "latency_last_30m": { "p50": 0.2, "p90": 0.6 },
+                        "uptime_last_30m": 99.2,
+                        "quantization": "bf16",
+                        "supported_parameters": ["tools", "tool_choice", "structured_outputs"]
+                    }
+                ]
+            }
+        })))
+        .mount(&openrouter_mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": { "label": "dev-ui", "usage": 12.34, "limit": 500.0, "limit_remaining": 487.66, "is_free_tier": false }
+        })))
+        .mount(&openrouter_mock)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "or-demo",
+            "object": "chat.completion",
+            "model": "deepseek/deepseek-v4.1",
+            "choices": [{ "index": 0, "message": { "role": "assistant", "content": "Hello from the OpenRouter fixture." }, "finish_reason": "stop" }],
+            "usage": { "prompt_tokens": 5, "completion_tokens": 6, "total_tokens": 11 }
+        })))
+        .mount(&openrouter_mock)
+        .await;
+
     // Spoken answers for the embed widget's read-aloud: half a second of a
     // tone as WAV, which the widget decodes like any speech answer.
     Mock::given(method("POST"))
@@ -330,6 +465,7 @@ async fn main() -> anyhow::Result<()> {
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![BackendConfig {
+                provider: Default::default(),
                 priority: Default::default(),
                 alias: Default::default(),
                 supports_edit: false,
@@ -359,6 +495,7 @@ async fn main() -> anyhow::Result<()> {
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![BackendConfig {
+                provider: Default::default(),
                 priority: Default::default(),
                 alias: Default::default(),
                 supports_edit: false,
@@ -388,6 +525,7 @@ async fn main() -> anyhow::Result<()> {
             strategy: PickerStrategy::RoundRobin,
             models: vec!["demo-selector".into()],
             backend: vec![BackendConfig {
+                provider: Default::default(),
                 priority: Default::default(),
                 alias: Default::default(),
                 supports_edit: false,
@@ -422,6 +560,7 @@ async fn main() -> anyhow::Result<()> {
             strategy: PickerStrategy::RoundRobin,
             models: vec!["demo-tts".into()],
             backend: vec![BackendConfig {
+                provider: Default::default(),
                 priority: Default::default(),
                 alias: Default::default(),
                 supports_edit: false,
@@ -453,6 +592,7 @@ async fn main() -> anyhow::Result<()> {
             strategy: PickerStrategy::RoundRobin,
             models: vec!["demo-image".into()],
             backend: vec![BackendConfig {
+                provider: Default::default(),
                 priority: Default::default(),
                 alias: Default::default(),
                 supports_edit: true,
@@ -469,6 +609,39 @@ async fn main() -> anyhow::Result<()> {
             }],
         },
     );
+    // OpenRouter catalog fixture. No models are selected yet: the panel writes
+    // them through `POST /api/v0/admin/upstreams/openrouter/select`, exactly
+    // like a real operator would.
+    pools.insert(
+        "openrouter".to_string(),
+        UpstreamPoolConfig {
+            voices: Default::default(),
+            offer_voices: Vec::new(),
+            allowed_groups: Vec::new(),
+            fallback_offline: None,
+            level_rank: 0,
+            enforce_limits: true,
+            kind: PoolKind::Chat,
+            strategy: PickerStrategy::RoundRobin,
+            models: Vec::new(),
+            backend: vec![BackendConfig {
+                provider: ProviderKind::OpenRouter,
+                priority: Default::default(),
+                alias: Default::default(),
+                supports_edit: false,
+                extra_headers: BTreeMap::new(),
+                enabled: true,
+                name: "openrouter".into(),
+                base_url: openrouter_mock.uri(),
+                api_key_env: None,
+                api_key: Some("sk-or-dev-ui".into()),
+                weight: 1,
+                max_inflight: 16,
+                health_path: "/models".into(),
+                models: Vec::new(),
+            }],
+        },
+    );
     // The database is the only source of topology now, so the fixture writes
     // rows and then builds the registry back out of them — the same path the
     // real boot takes, rather than a parallel one that could drift from it.
@@ -480,6 +653,7 @@ async fn main() -> anyhow::Result<()> {
             db::upstreams_config::upsert_backend(
                 &pool,
                 &db::upstreams_config::BackendRow {
+                    provider: backend.provider,
                     priority: Default::default(),
                     name: backend.name.clone(),
                     base_url: backend.base_url.clone(),
@@ -837,6 +1011,7 @@ async fn main() -> anyhow::Result<()> {
     router::serve(state, addr).await?;
     drop(chat_mock);
     drop(voice_mock);
+    drop(openrouter_mock);
     drop(erp_mock);
     Ok(())
 }

@@ -2134,6 +2134,7 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
             };
             BackendView {
                 priority: b.priority.clone(),
+                provider: b.provider.as_str(),
                 name: b.name.clone(),
                 base_url: b.base_url.clone(),
                 api_key_env: b.api_key_env.clone(),
@@ -2250,6 +2251,7 @@ pub struct PoolVoiceView {
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct BackendView {
     pub priority: BackendPriority,
+    pub provider: &'static str,
     pub name: String,
     pub base_url: String,
     /// The environment variable the API key is read from.
@@ -2476,6 +2478,9 @@ fn picker_strategy_key(strategy: aiplane_core::server::upstreams::PickerStrategy
 pub struct BackendSaveBody {
     #[serde(default)]
     pub priority: BackendPriority,
+    /// `openai_compatible` (default) or `openrouter`.
+    #[serde(default)]
+    pub provider: String,
     pub name: String,
     pub base_url: String,
     #[serde(default)]
@@ -2520,6 +2525,9 @@ pub struct AliasBody {
 pub struct BackendTestBody {
     #[serde(default)]
     pub name: String,
+    /// `openrouter` tests the account catalog instead of the public `/models`.
+    #[serde(default)]
+    pub provider: String,
     pub base_url: String,
     #[serde(default)]
     pub api_key_env: String,
@@ -2562,7 +2570,14 @@ pub async fn backends_test(State(state): State<Arc<RamaState>>, req: Request) ->
         "" => "/models",
         path => path,
     };
-    let url = format!("{base_url}{health_path}");
+    let provider = upstreams::config::ProviderKind::parse(&parsed.provider);
+    let url = if provider.is_openrouter() {
+        // The account-filtered catalog is the useful answer for OpenRouter:
+        // the public `/models` lists models the key may not be allowed to use.
+        format!("{base_url}/models/user?output_modalities=text")
+    } else {
+        format!("{base_url}{health_path}")
+    };
     let (key, key_source) = backend_test_key(&state, &parsed).await;
     let mut request = state.http.get(&url).header(
         "user-agent",
@@ -2910,6 +2925,7 @@ pub async fn backends_save(State(state): State<Arc<RamaState>>, req: Request) ->
         _ => true,
     };
     let row = BackendRow {
+        provider: upstreams::config::ProviderKind::parse(&parsed.provider),
         priority: parsed.priority,
         name: name.clone(),
         base_url: parsed.base_url.trim().to_string(),
@@ -3501,4 +3517,549 @@ pub struct BackendStatus {
     /// Its request counts over the last hour, in twelve five-minute buckets.
     pub usage: Vec<i64>,
     pub requests_last_hour: i64,
+}
+
+// ---------------------------------------------------------------------------
+// OpenRouter catalog: one backend, one key, the account's models, and a
+// purchase-price ceiling per selected model.
+// ---------------------------------------------------------------------------
+
+fn query_param(req: &Request, name: &str) -> Option<String> {
+    req.uri().query()?.split('&').find_map(|pair| {
+        let (key, value) = pair.split_once('=')?;
+        (key == name).then(|| value.to_string())
+    })
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct OpenRouterView {
+    pub backend: String,
+    pub connected: bool,
+    pub key: Option<OpenRouterKeyView>,
+    pub pools: Vec<OpenRouterPoolView>,
+    pub pool: String,
+    pub catalog: Vec<OpenRouterModelView>,
+    pub error: Option<String>,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct OpenRouterKeyView {
+    pub label: Option<String>,
+    pub usage: Option<f64>,
+    pub limit: Option<f64>,
+    pub limit_remaining: Option<f64>,
+    pub is_free_tier: bool,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct OpenRouterPoolView {
+    pub name: String,
+    pub kind: String,
+    pub modality: Option<String>,
+    /// Other backends in this pool. A pool has one model list, so selecting
+    /// here also pins theirs; the panel warns when this is not empty.
+    pub other_backends: Vec<String>,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct OpenRouterModelView {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub context_length: Option<i64>,
+    pub max_completion_tokens: Option<i64>,
+    pub input_modalities: Vec<String>,
+    pub output_modalities: Vec<String>,
+    pub supports_tools: bool,
+    pub supports_structured_output: bool,
+    pub prompt_price: f64,
+    pub completion_price: f64,
+    pub selected: bool,
+    pub available: bool,
+    pub policy: Option<OpenRouterPolicyView>,
+    pub cheapest_provider: Option<String>,
+    pub cheapest_prompt_price: Option<f64>,
+    pub cheapest_completion_price: Option<f64>,
+    pub endpoints: Vec<OpenRouterEndpointView>,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct OpenRouterPolicyView {
+    pub max_prompt_price: f64,
+    pub max_completion_price: f64,
+    pub strategy: String,
+    pub min_throughput: Option<f64>,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct OpenRouterEndpointView {
+    pub provider: String,
+    pub prompt_price: f64,
+    pub completion_price: f64,
+    pub throughput_p50: Option<f64>,
+    pub latency_p50: Option<f64>,
+    pub uptime_30m: Option<f64>,
+    pub quantization: Option<String>,
+    pub context_length: Option<i64>,
+}
+
+/// GET /api/v0/admin/upstreams/openrouter?backend=&pool=
+pub async fn openrouter_catalog(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_session, _admin) = require_admin_json!(state, req);
+    let Some(backend_name) = query_param(&req, "backend") else {
+        return bad_request("`backend` is required");
+    };
+    let backend = match upstreams_config::get_backend(&state.db, &backend_name).await {
+        Ok(Some(backend)) => backend,
+        Ok(None) => return not_found(format!("no backend `{backend_name}`")),
+        Err(err) => return internal(err),
+    };
+    if backend.provider != upstreams::config::ProviderKind::OpenRouter {
+        return bad_request(format!(
+            "`{backend_name}` is not an OpenRouter backend — set its provider to `openrouter` first"
+        ));
+    }
+    let snapshot = match upstreams_config::load_snapshot(&state.db).await {
+        Ok(snapshot) => snapshot,
+        Err(err) => return internal(err),
+    };
+    let pools: Vec<OpenRouterPoolView> = snapshot
+        .pools
+        .iter()
+        .filter(|pool| pool.backends.iter().any(|name| name == &backend_name))
+        .map(|pool| OpenRouterPoolView {
+            name: pool.name.clone(),
+            kind: pool.kind.clone(),
+            modality: upstreams::config::PoolKind::ALL
+                .iter()
+                .find(|kind| kind.as_str() == pool.kind)
+                .and_then(|kind| upstreams::openrouter::modality_for_kind(*kind))
+                .map(str::to_string),
+            other_backends: pool
+                .backends
+                .iter()
+                .filter(|name| *name != &backend_name)
+                .cloned()
+                .collect(),
+        })
+        .collect();
+    let Some(pool_name) = pools
+        .iter()
+        .find(|pool| query_param(&req, "pool").as_deref() == Some(pool.name.as_str()))
+        .or_else(|| pools.first())
+        .map(|pool| pool.name.clone())
+    else {
+        return json_ok(
+            StatusCode::OK,
+            OpenRouterView {
+                backend: backend_name,
+                connected: false,
+                key: None,
+                pools,
+                pool: String::new(),
+                catalog: Vec::new(),
+                error: Some(
+                    "this backend is not linked to any pool — add it to a pool first".into(),
+                ),
+            },
+        );
+    };
+    let pool_kind = pools
+        .iter()
+        .find(|pool| pool.name == pool_name)
+        .map(|pool| pool.kind.clone())
+        .unwrap_or_default();
+    let kind = upstreams::config::PoolKind::ALL
+        .iter()
+        .find(|kind| kind.as_str() == pool_kind)
+        .copied();
+    let Some(modality) = kind.and_then(upstreams::openrouter::modality_for_kind) else {
+        return json_ok(
+            StatusCode::OK,
+            OpenRouterView {
+                backend: backend_name,
+                connected: true,
+                key: None,
+                pools,
+                pool: pool_name.clone(),
+                catalog: Vec::new(),
+                error: Some(format!(
+                    "the `{pool_kind}` pool kind has no OpenRouter model list"
+                )),
+            },
+        );
+    };
+    let api_key = state
+        .crypto
+        .open_str(
+            backend.api_key_nonce.as_deref().unwrap_or_default(),
+            backend.api_key_ct.as_deref().unwrap_or_default(),
+        )
+        .ok()
+        .filter(|key| !key.is_empty())
+        .or_else(|| {
+            backend
+                .api_key_env
+                .as_deref()
+                .and_then(|name| std::env::var(name).ok())
+                .filter(|key| !key.is_empty())
+        });
+    let key = upstreams::openrouter::fetch_key(
+        &state.http,
+        &backend.base_url,
+        api_key.as_deref(),
+        &backend.extra_headers,
+    )
+    .await
+    .ok()
+    .map(|key| OpenRouterKeyView {
+        label: key.label,
+        usage: key.usage,
+        limit: key.limit,
+        limit_remaining: key.limit_remaining,
+        is_free_tier: key.is_free_tier,
+    });
+    let catalog = match upstreams::openrouter::fetch_catalog(
+        &state.http,
+        &backend.base_url,
+        api_key.as_deref(),
+        &backend.extra_headers,
+        modality,
+    )
+    .await
+    {
+        Ok(catalog) => catalog,
+        Err(err) => {
+            return json_ok(
+                StatusCode::OK,
+                OpenRouterView {
+                    backend: backend_name,
+                    connected: false,
+                    key,
+                    pools,
+                    pool: pool_name.clone(),
+                    catalog: Vec::new(),
+                    error: Some(err.to_string()),
+                },
+            );
+        }
+    };
+    let policies = upstreams_config::load_openrouter_policies(&state.db, &backend_name)
+        .await
+        .unwrap_or_default();
+    let selected: std::collections::HashSet<String> = snapshot
+        .pools
+        .iter()
+        .find(|p| p.name == pool_name)
+        .map(|p| p.models.iter().cloned().collect())
+        .unwrap_or_default();
+    let mut all_endpoints =
+        upstreams_config::load_all_openrouter_endpoints(&state.db, &backend_name)
+            .await
+            .unwrap_or_default();
+    let mut models = Vec::with_capacity(catalog.len());
+    for model in catalog {
+        let policy = policies.get(&model.id);
+        let endpoints = all_endpoints.remove(&model.id).unwrap_or_default();
+        // Read every borrowed field before moving the owned ones.
+        let id = model.id.clone();
+        let max_completion_tokens = model.max_completion_tokens();
+        let input_modalities = model.input_modalities().to_vec();
+        let output_modalities = model.output_modalities().to_vec();
+        let supports_tools = model.supports("tools");
+        let supports_structured_output = model.supports("structured_outputs");
+        let prompt_price = model.pricing.prompt_per_million();
+        let completion_price = model.pricing.completion_per_million();
+        models.push(OpenRouterModelView {
+            id: id.clone(),
+            name: model.name,
+            description: model.description,
+            context_length: model.context_length,
+            max_completion_tokens,
+            input_modalities,
+            output_modalities,
+            supports_tools,
+            supports_structured_output,
+            prompt_price,
+            completion_price,
+            selected: selected.contains(&model.id),
+            available: policy.map(|p| p.available).unwrap_or(false),
+            policy: policy.map(|p| OpenRouterPolicyView {
+                max_prompt_price: p.max_prompt_price,
+                max_completion_price: p.max_completion_price,
+                strategy: p.strategy.clone(),
+                min_throughput: p.min_throughput,
+            }),
+            cheapest_provider: policy.and_then(|p| p.cheapest_provider.clone()),
+            cheapest_prompt_price: policy.and_then(|p| p.cheapest_prompt_price),
+            cheapest_completion_price: policy.and_then(|p| p.cheapest_completion_price),
+            endpoints: endpoints
+                .into_iter()
+                .map(|e| OpenRouterEndpointView {
+                    provider: e.provider_name,
+                    prompt_price: e.prompt_price,
+                    completion_price: e.completion_price,
+                    throughput_p50: e.throughput_p50,
+                    latency_p50: e.latency_p50,
+                    uptime_30m: e.uptime_30m,
+                    quantization: e.quantization,
+                    context_length: e.context_length,
+                })
+                .collect(),
+        });
+    }
+    models.sort_by(|a, b| {
+        a.prompt_price
+            .partial_cmp(&b.prompt_price)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    json_ok(
+        StatusCode::OK,
+        OpenRouterView {
+            backend: backend_name,
+            connected: true,
+            key,
+            pools,
+            pool: pool_name,
+            catalog: models,
+            error: None,
+        },
+    )
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+pub struct OpenRouterSelectBody {
+    pub backend: String,
+    pub pool: String,
+    #[serde(default)]
+    pub models: Vec<OpenRouterSelection>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+pub struct OpenRouterSelection {
+    pub model: String,
+    pub max_prompt_price: f64,
+    pub max_completion_price: f64,
+    #[serde(default = "balanced_strategy")]
+    pub strategy: String,
+    #[serde(default)]
+    pub min_throughput: Option<f64>,
+}
+
+fn balanced_strategy() -> String {
+    "balanced".into()
+}
+
+/// POST /api/v0/admin/upstreams/openrouter/select — replace one pool's
+/// selection and each selected model's purchase-price ceiling.
+pub async fn openrouter_select(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_session, _admin) = require_admin_json!(state, req);
+    let (_, body) = req.into_parts();
+    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+        Ok(bytes) => bytes,
+        Err(message) => return bad_request(message),
+    };
+    let parsed: OpenRouterSelectBody = match serde_json::from_slice(&bytes) {
+        Ok(parsed) => parsed,
+        Err(err) => return bad_request(format!("parsing the OpenRouter selection: {err}")),
+    };
+    let backend = match upstreams_config::get_backend(&state.db, &parsed.backend).await {
+        Ok(Some(backend)) => backend,
+        Ok(None) => return not_found(format!("no backend `{}`", parsed.backend)),
+        Err(err) => return internal(err),
+    };
+    if backend.provider != upstreams::config::ProviderKind::OpenRouter {
+        return bad_request(format!("`{}` is not an OpenRouter backend", parsed.backend));
+    }
+    if !matches!(
+        upstreams_config::pool_exists(&state.db, &parsed.pool).await,
+        Ok(true)
+    ) {
+        return not_found(format!("no pool `{}`", parsed.pool));
+    }
+    let before = match upstreams_config::load_snapshot(&state.db).await {
+        Ok(snapshot) => snapshot,
+        Err(err) => return internal(err),
+    };
+    let Some(pool) = before.pools.iter().find(|pool| pool.name == parsed.pool) else {
+        return not_found(format!("no pool `{}`", parsed.pool));
+    };
+    if !pool.backends.iter().any(|name| name == &parsed.backend) {
+        return bad_request(format!(
+            "`{}` is not a backend of pool `{}` — add it to the pool first",
+            parsed.backend, parsed.pool
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for selection in &parsed.models {
+        if selection.model.trim().is_empty() {
+            return bad_request("a selected model needs an id");
+        }
+        if !seen.insert(selection.model.clone()) {
+            return bad_request(format!("`{}` was selected twice", selection.model));
+        }
+        if !matches!(
+            selection.strategy.as_str(),
+            "cheapest" | "fastest" | "balanced"
+        ) {
+            return bad_request(format!(
+                "`{}` is not a provider strategy — use cheapest, fastest or balanced",
+                selection.strategy
+            ));
+        }
+        if !selection.max_prompt_price.is_finite()
+            || !selection.max_completion_price.is_finite()
+            || selection.max_prompt_price < 0.0
+            || selection.max_completion_price < 0.0
+        {
+            return bad_request("price ceilings must be non-negative numbers");
+        }
+        if let Some(min) = selection.min_throughput
+            && (!min.is_finite() || min < 0.0)
+        {
+            return bad_request("the minimum throughput must be a non-negative number");
+        }
+    }
+    let model_ids: Vec<String> = parsed
+        .models
+        .iter()
+        .map(|selection| selection.model.clone())
+        .collect();
+    if let Err(err) = upstreams_config::set_pool_models(&state.db, &parsed.pool, &model_ids).await {
+        return internal(err);
+    }
+    let now = jiff::Timestamp::now().to_string();
+    for selection in &parsed.models {
+        let row = upstreams_config::OpenRouterPolicyRow {
+            model_id: selection.model.clone(),
+            max_prompt_price: selection.max_prompt_price,
+            max_completion_price: selection.max_completion_price,
+            strategy: selection.strategy.clone(),
+            min_throughput: selection.min_throughput,
+            // Fail closed until the first price refresh proves a provider fits.
+            available: false,
+            cheapest_prompt_price: None,
+            cheapest_completion_price: None,
+            cheapest_provider: None,
+            observed_at: Some(now.clone()),
+        };
+        if let Err(err) =
+            upstreams_config::upsert_openrouter_policy(&state.db, &parsed.backend, &row).await
+        {
+            return internal(err);
+        }
+    }
+    // A selection is not a draft: apply it now, so the models the operator just
+    // picked are routable without a second "Apply changes" click. The rest of
+    // the topology editor keeps its explicit apply, because it changes URLs,
+    // pools and credentials; this one only adds or removes model ids.
+    let snapshot = match upstreams_config::load_snapshot(&state.db).await {
+        Ok(snapshot) => snapshot,
+        Err(err) => return internal(err),
+    };
+    if let Err(err) = state.upstreams.reload(&snapshot, &state.crypto) {
+        return internal(err);
+    }
+    let armed = tokio::spawn(aiplane_core::server::upstreams::health::spawn(
+        state.upstreams.clone(),
+        Some(state.db.clone()),
+    ));
+    if let Err(err) = armed.await {
+        tracing::error!(error = %err, "arming the health probes after an OpenRouter selection panicked");
+    }
+    state.topology_dirty_reset();
+    let dirty: u32 = 0;
+    let refresh = upstreams::openrouter::refresh_backend(
+        &state.db,
+        &state.upstreams,
+        &state.http,
+        &parsed.backend,
+    )
+    .await
+    .map(|report| OpenRouterRefreshView {
+        selected: report.selected,
+        available: report.available,
+        errors: report.errors,
+    })
+    .map_err(|err| err.to_string());
+    match refresh {
+        Ok(refresh) => json_ok(
+            StatusCode::OK,
+            OpenRouterSelectResult {
+                backend: parsed.backend,
+                pool: parsed.pool,
+                selected: model_ids.len(),
+                dirty,
+                refresh: Some(refresh),
+                error: None,
+            },
+        ),
+        Err(error) => json_ok(
+            StatusCode::OK,
+            OpenRouterSelectResult {
+                backend: parsed.backend,
+                pool: parsed.pool,
+                selected: model_ids.len(),
+                dirty,
+                refresh: None,
+                error: Some(error),
+            },
+        ),
+    }
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct OpenRouterSelectResult {
+    pub backend: String,
+    pub pool: String,
+    pub selected: usize,
+    pub dirty: u32,
+    pub refresh: Option<OpenRouterRefreshView>,
+    pub error: Option<String>,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct OpenRouterRefreshView {
+    pub selected: usize,
+    pub available: usize,
+    pub errors: Vec<String>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+pub struct OpenRouterRefreshBody {
+    pub backend: String,
+}
+
+/// POST /api/v0/admin/upstreams/openrouter/refresh — re-read prices and
+/// provider performance, and update what the gateway offers.
+pub async fn openrouter_refresh(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_session, _admin) = require_admin_json!(state, req);
+    let (_, body) = req.into_parts();
+    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+        Ok(bytes) => bytes,
+        Err(message) => return bad_request(message),
+    };
+    let parsed: OpenRouterRefreshBody = match serde_json::from_slice(&bytes) {
+        Ok(parsed) => parsed,
+        Err(err) => return bad_request(format!("parsing the refresh body: {err}")),
+    };
+    match upstreams::openrouter::refresh_backend(
+        &state.db,
+        &state.upstreams,
+        &state.http,
+        &parsed.backend,
+    )
+    .await
+    {
+        Ok(report) => json_ok(
+            StatusCode::OK,
+            OpenRouterRefreshView {
+                selected: report.selected,
+                available: report.available,
+                errors: report.errors,
+            },
+        ),
+        Err(err) => internal(err),
+    }
 }

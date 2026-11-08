@@ -183,6 +183,16 @@ pub(super) fn operations() -> Vec<Op> {
             .body(json::<admin::FallbackBody>())
             .ok(json::<admin::FallbackSaved>())
             .errors(&[400]),
+        get("/api/v0/admin/upstreams/openrouter", Access::Admin)
+            .ok(json::<admin::OpenRouterView>()),
+        post("/api/v0/admin/upstreams/openrouter/select", Access::Admin)
+            .body(json::<admin::OpenRouterSelectBody>())
+            .ok(json::<admin::OpenRouterSelectResult>())
+            .errors(&[400, 404]),
+        post("/api/v0/admin/upstreams/openrouter/refresh", Access::Admin)
+            .body(json::<admin::OpenRouterRefreshBody>())
+            .ok(json::<admin::OpenRouterRefreshView>())
+            .errors(&[400]),
         post("/api/v0/admin/upstreams/reload", Access::Admin).ok(json::<admin::TopologyApplied>()),
     ]
 }

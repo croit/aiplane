@@ -44,6 +44,10 @@ const DOWN_PROBE_INTERVAL: Duration = Duration::from_secs(1);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const FAILURE_THRESHOLD: u32 = 3;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
+/// How often an OpenRouter backend's catalog and per-provider prices are
+/// re-read. The request path's `max_price` is the hard guard between ticks;
+/// this cadence only decides how quickly a hidden model returns.
+const OPENROUTER_REFRESH_INTERVAL: Duration = Duration::from_secs(600);
 /// How many backends are identified at once. Each round is five concurrent
 /// GETs, so this is really a cap of `5 × N` in-flight requests on a client
 /// that deliberately pools no connections — and the backend count is entirely
@@ -157,6 +161,39 @@ pub async fn spawn(registry: Arc<UpstreamRegistry>, db: Option<Pool>) {
         let db = db.clone();
         tokio::spawn(async move {
             run_probe(http, target, registry, generation, db).await;
+        });
+    }
+
+    // OpenRouter's prices and provider performance move on a much slower clock
+    // than liveness. Refresh once at apply and then every ten minutes; the
+    // request path's `max_price` is the hard guard in between.
+    if let Some(db) = db.clone() {
+        let http = http.clone();
+        let registry = Arc::clone(&registry);
+        tokio::spawn(async move {
+            loop {
+                if registry.generation() != generation {
+                    return;
+                }
+                let reports = super::openrouter::refresh_all(&db, &registry, &http).await;
+                for report in reports {
+                    if !report.errors.is_empty() {
+                        tracing::warn!(
+                            backend = %report.backend,
+                            errors = ?report.errors,
+                            "OpenRouter catalog refresh had errors"
+                        );
+                    } else if report.selected > 0 {
+                        tracing::info!(
+                            backend = %report.backend,
+                            selected = report.selected,
+                            available = report.available,
+                            "OpenRouter catalog refreshed"
+                        );
+                    }
+                }
+                sleep(OPENROUTER_REFRESH_INTERVAL).await;
+            }
         });
     }
 }
@@ -838,6 +875,7 @@ mod tests {
 
     fn image_backend(base_url: &str) -> BackendConfig {
         BackendConfig {
+            provider: Default::default(),
             priority: Default::default(),
             name: "img".into(),
             base_url: base_url.into(),
@@ -942,6 +980,7 @@ mod tests {
     /// one pool view each.
     fn shared_backend_registry(base_url: &str) -> std::sync::Arc<UpstreamRegistry> {
         let backend = |models: Vec<String>| BackendConfig {
+            provider: Default::default(),
             priority: Default::default(),
             name: "openrouter".into(),
             models,
@@ -1054,6 +1093,7 @@ mod tests {
         upstreams_config::upsert_backend(
             &db,
             &BackendRow {
+                provider: Default::default(),
                 priority: Default::default(),
                 name: "openrouter".into(),
                 base_url: server.uri(),
@@ -1267,6 +1307,7 @@ mod detection_wiring {
                 offer_voices: Vec::new(),
                 allowed_groups: Vec::new(),
                 backend: vec![BackendConfig {
+                    provider: Default::default(),
                     priority: Default::default(),
                     name: "ollama".into(),
                     // As an operator writes it: the OpenAI base.

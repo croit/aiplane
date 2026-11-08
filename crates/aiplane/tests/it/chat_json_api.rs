@@ -79,6 +79,7 @@ async fn state_with_chat_access_at_level(
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![BackendConfig {
+                provider: Default::default(),
                 priority: Default::default(),
                 alias: Default::default(),
                 supports_edit: false,
@@ -124,6 +125,7 @@ async fn state_with_aliased_chat_model(model: &str, alias: &str) -> RamaState {
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![BackendConfig {
+                provider: Default::default(),
                 priority: Default::default(),
                 alias: HashMap::from([(alias.to_string(), None)]),
                 supports_edit: false,

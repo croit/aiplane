@@ -49,6 +49,7 @@ async fn gateway(upstream: &MockServer) -> RamaState {
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![BackendConfig {
+                provider: Default::default(),
                 priority: Default::default(),
                 alias: Default::default(),
                 supports_edit: false,
