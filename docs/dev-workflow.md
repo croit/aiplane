@@ -18,10 +18,10 @@ The Rust binary and the UI build separately: `cargo build` needs no Node, and th
 
 | Goal | Command |
 |---|---|
-| Run the complete HMR development stack on :8080, with regular OIDC login | `mise run dev` |
+| **The default dev server**: complete HMR stack on :8080, real `gateway.sqlite`, regular OIDC login | `mise run dev` |
 | Run the production-shaped compiled SPA on :8080 | `mise run dev-served` |
 | Run only the Rust gateway | `mise run dev-gateway` |
-| Run a stub gateway for UI debugging (seeded session, mock LLM) | `mise run dev-ui` |
+| Run a deterministic UI fixture (seeded session, mock LLM, no OIDC) for automation/screenshots | `mise run dev-ui` |
 | Build the AIplane debug binary (no run) | `mise run dev-build` |
 | Install `web/node_modules` (only when the lockfile changed) | `mise run web-install` |
 | Build the SvelteKit SPA into `target/frontend/build/` | `mise run build-web` |
@@ -288,8 +288,12 @@ mise run dev
 # then open http://localhost:8080 — it redirects to /setup
 ```
 
-If you want a working UI without an identity provider, `mise run dev-ui` boots
-a stub gateway with mock backends and a pre-seeded session instead.
+`mise run dev` is the default dev server and the one to use for manual browser
+work: it serves your real `gateway.sqlite`, so the OIDC provider configured
+there is the login you see. `mise run dev-ui` is a separate, deterministic
+fixture for automation, screenshots and e2e; it has no OIDC login, uses mock
+backends, and its in-memory database forgets every configuration change on
+restart. Do not use it as a substitute for the dev server.
 
 `mise run dev-served` is the production-shaped alternative: it builds `target/frontend/build` and serves that directory directly from the debug gateway on `http://localhost:8080`, without HMR. `mise run dev-gateway` exposes the Rust process alone and honors the normal `IP` / `PORT` environment variables.
 
@@ -304,6 +308,14 @@ delete `gateway.sqlite*` in the worktree to reseed, or set `AIPLANE_DEV_SEED=0` 
 fresh `/setup` database. If the main database is ahead of the checkout's own migrations
 (the branch predates one of them), the seed is skipped with that reason rather than leaving
 a database the binary would refuse to open; merge the main branch or start from `/setup`.
+
+`mise run dev` is the only dev server with OIDC. `mise run dev-ui` is a fixture
+and has no working `/auth/login` (it answers 500 by design); drive it with the
+cookie it prints. If a real `mise run dev` bounces you back to `/login`, read
+its log: `seeding the dev database from …` means the OIDC-configured database
+was copied, while `not seeding: …` names why it was not. An existing
+`gateway.sqlite*` is never overwritten — delete it (dev database; back it up
+first if it matters) or set `AIPLANE_DEV_SEED=0` and finish `/setup`.
 
 ## Environment
 
@@ -351,7 +363,16 @@ normalised, so it's `aiplane_core`, not `aiplane-core`.
 
 ## Debugging the UI
 
-Every authed surface — the SPA's screens and the `/api/v0/*` JSON routes behind them — is gated by OIDC, which makes ad-hoc browser debugging (browser automation, devtools, screenshotting bugs) annoying: you'd otherwise need a full OIDC provider wired up just to *see* a page. The `dev-ui` mise task short-circuits that:
+**Use `mise run dev` for manual browser debugging.** It serves your real
+`gateway.sqlite` and the OIDC provider configured there, so devtools, the SPA
+and `/api/v0/*` use the same login as production. That is the default dev
+server; nothing else is needed to see an authed page.
+
+The `dev-ui` fixture exists for the cases where the real login is in the way:
+automated browser tests, screenshots, and UI work that needs deterministic
+mock upstreams. It is **not** the normal dev server, has **no OIDC login**, and
+uses an **in-memory database** — every backend, pool and OpenRouter selection
+is gone when it restarts. Use it only when you specifically need that fixture.
 
 ```bash
 mise run dev-ui
@@ -417,15 +438,21 @@ A chat turn is two calls: `POST /api/v0/chat/sessions/{id}/messages` to submit (
 
 ### Signing in to the real `mise run dev` gateway
 
-`dev-ui` is its own server with mock backends. To poke at an authed page of the *real* dev gateway (your actual `./gateway.sqlite`), the same trick exists as debug-only endpoints (`rama_server::dev_seed`): `GET /__dev/session` signs you in as the fixture user `alice@example.com` without touching anything, and `GET /__dev/seed-session` additionally resets her tokens to the canonical three — the same pair the e2e suite drives (`mise run e2e`):
+The real dev gateway logs in through the OIDC provider configured in your
+`gateway.sqlite`; use the normal browser login. For automation that cannot
+complete the OIDC round trip, the debug-only endpoints
+(`rama_server::dev_seed`) exist: `GET /__dev/session` signs you in as the
+fixture user `alice@example.com` without touching anything, and
+`GET /__dev/seed-session` additionally resets her tokens to the canonical
+three — the same pair the e2e suite drives (`mise run e2e`):
 
 ```bash
 curl -si http://127.0.0.1:8080/__dev/session | grep -i set-cookie   # id=…
 ```
 
-### From a browser / automation
+### From a browser / automation (`dev-ui` fixture)
 
-Open any origin page (e.g. `http://127.0.0.1:8080/login`), then inject the cookie via devtools (`document.cookie = 'id=…; Path=/'`) or your automation tool's cookie API, and navigate to the route you want. From there the SPA runs against the mock backend with real streaming.
+Open any origin page (e.g. `http://127.0.0.1:8080/login`), then inject the cookie via devtools (`document.cookie = 'id=…; Path=/'`) or your automation tool's cookie API, and navigate to the route you want. From there the SPA runs against the mock backend with real streaming. This is the `dev-ui` fixture path, not the real dev server.
 
 The repo's README/docs screenshots are produced this way — see the `take-screenshots` helper under `.claude/skills/take-screenshots/`, which drives Playwright with the seeded cookie.
 

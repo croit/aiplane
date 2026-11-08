@@ -189,9 +189,12 @@ When packaging the binary yourself, ship that frontend directory too and set
 its static artifact does not contain the website or manual. The repository
 Dockerfile copies the full frontend artifact into the runtime image.
 
-Use `mise run dev` for development rather than rebuilding release binaries.
-Use a separate `mise run dev-ui` fixture for browser checks; it uses mock
-upstreams and synthetic accounts rather than production data.
+Use `mise run dev` for development rather than rebuilding release binaries. It
+is the default dev server and serves your real `gateway.sqlite` with the OIDC
+provider configured there, so manual browser checks use the production login.
+`mise run dev-ui` is a separate deterministic fixture for automated browser
+checks and screenshots: it uses mock upstreams and synthetic accounts, has no
+OIDC login, and its in-memory database resets on restart.
 
 ## Network and filesystem boundaries
 

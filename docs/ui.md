@@ -1327,9 +1327,17 @@ Open `http://localhost:8080`. Vite proxies the complete dynamic surface to :8081
 
 `lint`, `verify` and `ci` all depend on the relevant ones, so a fresh checkout needs no manual step.
 
-### Browser debugging — `mise run dev-ui`
+### Browser debugging — `mise run dev` first, `dev-ui` for fixtures
 
-Every authed surface is gated by OIDC, which makes ad-hoc browser debugging annoying. **Don't fabricate a hand-rolled `test.html`** — it won't boot the real bundle and will miss real bugs.
+**Use `mise run dev` for manual browser debugging.** It serves your real
+`gateway.sqlite` and the OIDC provider configured there, so the login, the SPA
+and `/api/v0/*` behave exactly as they do in production.
+
+`mise run dev-ui` is a separate deterministic fixture for automation,
+screenshots and e2e. It is not the normal dev server: it has no OIDC login, uses
+mock upstreams and an in-memory database, and forgets every configuration
+change on restart. **Don't fabricate a hand-rolled `test.html`** — it won't
+boot the real bundle and will miss real bugs.
 
 ```bash
 AIPLANE_STATIC_DIR=target/frontend/build mise run dev-ui
@@ -1337,7 +1345,7 @@ AIPLANE_STATIC_DIR=target/frontend/build mise run dev-ui
 
 Boots the full rama gateway on `127.0.0.1:8080` against an in-memory SQLite, wiremock chat + transcription backends, and a pre-seeded admin session with demo data. It prints the signed cookie on startup; paste it via `document.cookie` after a `goto`, then drive any page with Playwright. Full recipe in [`dev-workflow.md`](dev-workflow.md#debugging-the-ui).
 
-For the *real* dev gateway (your own `gateway.sqlite`), the debug-only `GET /__dev/session` signs you in as the fixture user without touching anything.
+For automation against the *real* dev gateway, the debug-only `GET /__dev/session` signs you in as the fixture user without touching anything; for manual use, log in normally through OIDC.
 
 ### Browser tests
 

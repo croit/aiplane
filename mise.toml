@@ -144,7 +144,7 @@ NEXTCLOUD_PASS="$PASSWORD" \
 dir = "{{ config_root }}"
 
 [tasks.dev]
-description = "Run the complete local stack: Vite HMR on public :8080 and the Rust gateway on private :8081. One browser origin, one command."
+description = "The default dev server: complete local stack with Vite HMR on public :8080 and the Rust gateway on private :8081. Serves the real gateway.sqlite and its configured OIDC login."
 depends = ["web-install"]
 run = """
 PUBLIC_PORT="${AIPLANE_DEV_PUBLIC_PORT:-8080}"
@@ -384,7 +384,7 @@ sources = ["web/src/**/*", "web/embed/**/*", "web/shared/**/*", "web/vite.config
 run = "npm --prefix web run check"
 
 [tasks.dev-ui]
-description = "Stub gateway for local UI debugging: real rama server on :8080 against a wiremock chat + transcription backend with a pre-seeded session. Prints the session cookie to stdout so playwright (or curl) can drive any authed page (/, /settings/tokens, /chat, /api/v0/*) without OIDC. See docs/dev-workflow.md → 'Debugging the UI'."
+description = "Deterministic UI fixture for automation, screenshots and e2e — NOT the normal dev server. Real rama server on :8080 against wiremock backends with a pre-seeded session and an in-memory database (no OIDC login; configuration resets on restart). Use `mise run dev` for manual browser work with the real gateway.sqlite and OIDC. See docs/dev-workflow.md → 'Debugging the UI'."
 depends = ["build-web"]
 env = { AIPLANE_STATIC_DIR = "target/frontend/build" }
 run = "mise run stage-extension && cargo run --example dev_ui -p aiplane"

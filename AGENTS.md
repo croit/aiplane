@@ -239,13 +239,19 @@ mise run lint-crate <crate>        # clippy for that crate
 mise run verify                    # ONCE before pushing: lint + all tests (~20 min)
 mise run test / mise run lint      # the whole-workspace halves of `verify`
 
-# Browser-driven UI debugging (no OIDC required)
+# Browser-driven UI debugging: use `mise run dev` above. It serves your real
+# gateway.sqlite and the OIDC provider configured there, so manual debugging
+# and devtools use the same login as production.
+#
+# Deterministic UI fixture for automation/screenshots/e2e — NOT the normal dev
+# server. It has no OIDC login, uses mock upstreams and an in-memory database,
+# so its configuration (backends, pools, OpenRouter selection) resets on every
+# restart. Prints the seeded session cookie for Playwright.
 mise run dev-ui            # real rama server on :8080 + wiremock chat &
-                           # transcription backends + a pre-seeded session;
-                           # prints the cookie for playwright. Use this —
-                           # NOT a hand-rolled test.html — when debugging
-                           # ANY authed page (chat, tokens, dashboard,
-                           # theme toggle, /api/v0/*). See docs/dev-workflow.md
+                           # transcription backends + a pre-seeded session.
+                           # Use this — NOT a hand-rolled test.html — for
+                           # automated browser runs that cannot complete the
+                           # OIDC round trip. See docs/dev-workflow.md
                            # → "Debugging the UI".
 
 # Slow path — DON'T use for iteration
