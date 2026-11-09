@@ -16,6 +16,12 @@ backends-field-api-key-keep = leave blank to keep current key
 backends-field-api-key-stored = Stored key: { $hint }
 backends-field-pool = Pool
 backends-field-pool-none = (none)
+backends-field-pools = Pools
+backends-field-pools-hint = One pool per kind the account serves. Checked pools are joined; new pools are created with defaults and joined in the same save.
+backends-pool-new = New pool
+backends-pool-new-kind = Pool kind
+backends-pool-new-name = Pool name
+backends-pool-new-remove = Remove pool
 backends-save-backend = Save backend
 backends-delete-backend = Delete
 

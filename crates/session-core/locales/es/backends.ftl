@@ -12,6 +12,12 @@ backends-field-name = Nombre
 backends-field-base-url = URL base
 backends-field-pool = Grupo
 backends-field-pool-none = (ninguno)
+backends-field-pools = Pools
+backends-field-pools-hint = Un pool por cada tipo de modelo que sirve la cuenta. Los pools marcados se unen; los pools nuevos se crean con valores predeterminados y se unen en el mismo guardado.
+backends-pool-new = Pool nueva
+backends-pool-new-kind = Tipo de pool
+backends-pool-new-name = Nombre del pool
+backends-pool-new-remove = Quitar pool
 backends-save-backend = Guardar backend
 backends-delete-backend = Eliminar
 

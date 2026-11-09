@@ -11,12 +11,13 @@
 		backend?: Backend | null;
 		currentPool?: string | null;
 		pools: Pool[];
+		poolKinds: string[];
 		existingNames: string[];
 		onSaved: () => void | Promise<void>;
 		onCancel?: () => void;
 	}
 
-	let { backend = null, currentPool = null, pools, existingNames, onSaved, onCancel }: Props = $props();
+	let { backend = null, currentPool = null, pools, poolKinds, existingNames, onSaved, onCancel }: Props = $props();
 	let name = $state(untrack(() => backend?.name ?? ''));
 	let provider = $state<'openai_compatible' | 'openrouter'>(untrack(() => backend?.provider ?? 'openai_compatible'));
 	let baseUrl = $state(untrack(() => backend?.base_url ?? ''));
@@ -26,6 +27,23 @@
 	let weight = $state(untrack(() => backend?.weight ?? 1));
 	let maxInflight = $state(untrack(() => backend?.max_inflight ?? 16));
 	let poolName = $state(untrack(() => currentPool ?? ''));
+	// OpenRouter serves one pool per kind: the checked existing pools plus
+	// the new pools this save creates.
+	let selectedPools = $state<string[]>(
+		untrack(() => backend ? pools.filter((pool) => pool.backends.includes(backend.name)).map((pool) => pool.name) : currentPool ? [currentPool] : [])
+	);
+	let newPools = $state<{ kind: string; name: string }[]>([]);
+	let openRouterKinds = $derived(poolKinds.filter((kind) => kind !== 'ocr'));
+	function togglePool(poolName: string) {
+		selectedPools = selectedPools.includes(poolName) ? selectedPools.filter((name) => name !== poolName) : [...selectedPools, poolName];
+	}
+	function addNewPool() {
+		const kind = openRouterKinds[0] ?? 'chat';
+		newPools = [...newPools, { kind, name: `openrouter-${kind}` }];
+	}
+	function removeNewPool(index: number) {
+		newPools = newPools.filter((_, i) => i !== index);
+	}
 	let models = $state(untrack(() => backend?.models.join(', ') ?? ''));
 	let aliases = $state(
 		untrack(() => backend?.aliases.map(({ alias, target }) => (target ? `${alias}=${target}` : alias)).join('\n') ?? '')
@@ -75,7 +93,12 @@
 				models: splitList(models),
 				aliases: parseAliases(aliases),
 				extra_headers: parseHeaders(extraHeaders),
-				pool: poolName || null,
+				pools: provider === 'openrouter'
+					? [...selectedPools, ...newPools.map((newPool) => newPool.name.trim())]
+					: poolName ? [poolName] : [],
+				new_pools: provider === 'openrouter'
+					? newPools.map((newPool) => ({ name: newPool.name.trim(), kind: newPool.kind }))
+					: [],
 				overwrite
 			});
 			await onSaved();
@@ -212,11 +235,37 @@
 			<span class="text-xs text-base-content/70">{t('backends-field-health-path')}</span>
 			<input class="input font-mono w-full" bind:value={healthPath} />
 		</label>
-		<label class="flex flex-col gap-1">
-			<span class="text-xs text-base-content/70">{t('backends-field-pool')}</span>
-			<SearchableSelect options={poolOptions} bind:value={poolName} ariaLabel={t('backends-field-pool')} size="sm" class="w-full" />
-			<span class="text-xs text-base-content/50">{t('backends-field-pool-hint')}</span>
-		</label>
+		{#if provider === 'openrouter'}
+			<div class="flex flex-col gap-2">
+				<span class="text-xs text-base-content/70">{t('backends-field-pools')}</span>
+				<div class="flex flex-col gap-1">
+					{#each pools as pool (pool.name)}
+						<label class="flex items-center gap-2 text-sm">
+							<input type="checkbox" class="checkbox checkbox-sm" checked={selectedPools.includes(pool.name)} onchange={() => togglePool(pool.name)} />
+							<span>{pool.name}</span>
+							<span class="badge badge-ghost badge-sm">{pool.kind}</span>
+						</label>
+					{/each}
+					{#each newPools as newPool, index (index + newPool.kind + newPool.name)}
+						<div class="flex items-center gap-2">
+							<select class="select select-sm w-44" aria-label={t('backends-pool-new-kind')} value={newPool.kind} onchange={(event) => { const kind = event.currentTarget.value; newPools = newPools.map((other, i) => i === index ? { kind, name: other.name === `openrouter-${other.kind}` ? `openrouter-${kind}` : other.name } : other); }}>
+								{#each openRouterKinds as kind (kind)}<option value={kind}>{kind}</option>{/each}
+							</select>
+							<input class="input input-sm w-56 font-mono" aria-label={t('backends-pool-new-name')} value={newPool.name} oninput={(event) => newPools = newPools.map((other, i) => i === index ? { ...other, name: event.currentTarget.value } : other)} />
+							<button type="button" class="btn btn-ghost btn-xs" aria-label={t('backends-pool-new-remove')} onclick={() => removeNewPool(index)}>×</button>
+						</div>
+					{/each}
+					<button type="button" class="btn btn-ghost btn-xs self-start" onclick={addNewPool}>+ {t('backends-pool-new')}</button>
+				</div>
+				<span class="text-xs text-base-content/50">{t('backends-field-pools-hint')}</span>
+			</div>
+		{:else}
+			<label class="flex flex-col gap-1">
+				<span class="text-xs text-base-content/70">{t('backends-field-pool')}</span>
+				<SearchableSelect options={poolOptions} bind:value={poolName} ariaLabel={t('backends-field-pool')} size="sm" class="w-full" />
+				<span class="text-xs text-base-content/50">{t('backends-field-pool-hint')}</span>
+			</label>
+		{/if}
 		<label class="flex flex-col gap-1">
 			<span class="text-xs text-base-content/70">{t('backends-field-weight')}</span>
 			<input class="input w-full" type="number" min="1" bind:value={weight} />

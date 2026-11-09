@@ -877,50 +877,74 @@ pub async fn delete_pool(db: &Pool, name: &str) -> Result<bool, DbError> {
     Ok(deleted.rows_affected() > 0)
 }
 
-/// Set a backend's pool membership to *exactly* `pool` (or none). Backs the
-/// single "Pool" select on the backend editor, which trades the DB's
-/// many-to-many capability for a simpler UI: a backend in several pools
-/// collapses to the one selected here. Pool-side editing (the pool's backend
-/// checkboxes) still supports multi-pool membership.
-pub async fn set_backend_pool(
+/// The next free pool sort order: one past the current maximum.
+pub async fn next_pool_sort_order(db: &Pool) -> Result<i64, DbError> {
+    Ok(
+        sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM pools")
+            .fetch_one(db)
+            .await?,
+    )
+}
+
+/// Set a backend's pool membership to *exactly* `pool_names`. Backs the
+/// backend editor's pool assignment, where an OpenRouter backend serves one
+/// pool per kind, so a single save joins several. Every named pool must
+/// exist; an empty list unassigns the backend. Membership the target set
+/// keeps keeps its sort order — a save must not shuffle the pool's display
+/// order.
+pub async fn set_backend_pools(
     db: &Pool,
     backend_name: &str,
-    pool: Option<&str>,
+    pool_names: &[String],
 ) -> Result<(), DbError> {
-    if let Some(pool_name) = pool {
-        let pool_id = sqlx::query_scalar::<_, i64>("SELECT id FROM pools WHERE name = ?")
-            .bind(pool_name)
-            .fetch_optional(db)
-            .await?
-            .ok_or(DbError::Query(sqlx::Error::RowNotFound))?;
+    let backend_id = sqlx::query_scalar::<_, i64>("SELECT id FROM backends WHERE name = ?")
+        .bind(backend_name)
+        .fetch_optional(db)
+        .await?
+        .ok_or(DbError::Query(sqlx::Error::RowNotFound))?;
+    let mut pool_ids: Vec<i64> = Vec::with_capacity(pool_names.len());
+    for pool_name in pool_names {
+        pool_ids.push(
+            sqlx::query_scalar::<_, i64>("SELECT id FROM pools WHERE name = ?")
+                .bind(pool_name)
+                .fetch_optional(db)
+                .await?
+                .ok_or(DbError::Query(sqlx::Error::RowNotFound))?,
+        );
+    }
+    if pool_ids.is_empty() {
+        sqlx::query("DELETE FROM pool_backends WHERE backend_id = ?")
+            .bind(backend_id)
+            .execute(db)
+            .await?;
+    } else {
+        let placeholders = "?, ".repeat(pool_ids.len() - 1);
+        let sql = format!(
+            "DELETE FROM pool_backends WHERE backend_id = ? AND pool_id NOT IN ({placeholders}?)"
+        );
+        let mut delete = sqlx::query(&sql).bind(backend_id);
+        for pool_id in &pool_ids {
+            delete = delete.bind(pool_id);
+        }
+        delete.execute(db).await?;
+    }
+    for pool_id in &pool_ids {
         let linked = sqlx::query_scalar::<_, bool>(
-            r#"SELECT EXISTS(
-                   SELECT 1 FROM pool_backends
-                    WHERE pool_id = ?
-                      AND backend_id = (SELECT id FROM backends WHERE name = ?)
-               )"#,
+            "SELECT EXISTS(SELECT 1 FROM pool_backends WHERE pool_id = ? AND backend_id = ?)",
         )
         .bind(pool_id)
-        .bind(backend_name)
+        .bind(backend_id)
         .fetch_one(db)
-        .await?;
-        sqlx::query(
-            "DELETE FROM pool_backends WHERE backend_id = (SELECT id FROM backends WHERE name = ?) AND pool_id != ?",
-        )
-        .bind(backend_name)
-        .bind(pool_id)
-        .execute(db)
         .await?;
         if !linked {
             let inserted = sqlx::query(
                 r#"INSERT INTO pool_backends (pool_id, backend_id, sort_order)
-               SELECT p.id, b.id, COALESCE(
-                   (SELECT MAX(sort_order) + 1 FROM pool_backends WHERE pool_id = p.id), 0)
-                 FROM pools p, backends b
-                WHERE p.name = ? AND b.name = ?"#,
+                   SELECT ?, ?, COALESCE(
+                       (SELECT MAX(sort_order) + 1 FROM pool_backends WHERE pool_id = ?), 0)"#,
             )
-            .bind(pool_name)
-            .bind(backend_name)
+            .bind(pool_id)
+            .bind(backend_id)
+            .bind(pool_id)
             .execute(db)
             .await?
             .rows_affected();
@@ -928,13 +952,6 @@ pub async fn set_backend_pool(
                 return Err(DbError::Query(sqlx::Error::RowNotFound));
             }
         }
-    } else {
-        sqlx::query(
-            "DELETE FROM pool_backends WHERE backend_id = (SELECT id FROM backends WHERE name = ?)",
-        )
-        .bind(backend_name)
-        .execute(db)
-        .await?;
     }
     Ok(())
 }
@@ -2035,14 +2052,121 @@ mod tests {
         assert_eq!(p.models, vec!["pool-fallback-model"]);
         assert!(!load_snapshot(&pool).await.unwrap().pools.is_empty());
 
-        set_backend_pool(&pool, "b2", Some("chat-pool"))
+        set_backend_pools(&pool, "b2", &["chat-pool".into()])
             .await
             .unwrap();
-        set_backend_pool(&pool, "b1", Some("chat-pool"))
+        set_backend_pools(&pool, "b1", &["chat-pool".into()])
             .await
             .unwrap();
         let snap = load_snapshot(&pool).await.unwrap();
         assert_eq!(snap.pools[0].backends, ["b1", "b2"]);
+    }
+
+    #[tokio::test]
+    async fn set_backend_pools_replaces_the_whole_membership() {
+        use super::{set_backend_pools, upsert_backend, upsert_pool};
+
+        let pool = test_pool().await;
+        let mut backend = BackendRow {
+            provider: Default::default(),
+            priority: Default::default(),
+            name: "multi".into(),
+            base_url: "http://multi".into(),
+            api_key_env: None,
+            api_key_ct: None,
+            api_key_nonce: None,
+            weight: 1,
+            max_inflight: 16,
+            health_path: "/models".into(),
+            supports_edit: false,
+            extra_headers: BTreeMap::new(),
+            enabled: true,
+            models: vec![],
+            aliases: vec![],
+            created_at: Timestamp::now(),
+            updated_at: Timestamp::now(),
+        };
+        upsert_backend(&pool, &backend).await.unwrap();
+        for (name, kind) in [
+            ("chat-a", "chat"),
+            ("stt-a", "transcription"),
+            ("tts-a", "speech"),
+        ] {
+            let row = PoolRow {
+                name: name.into(),
+                kind: kind.into(),
+                strategy: "least_inflight".into(),
+                fallback_offline: None,
+                enforce_limits: true,
+                sort_order: 0,
+                allowed_groups: Vec::new(),
+                backends: Vec::new(),
+                models: Vec::new(),
+                voices: Vec::new(),
+                offer_voices: Vec::new(),
+                created_at: Timestamp::now(),
+                updated_at: Timestamp::now(),
+            };
+            upsert_pool(&pool, &row).await.unwrap();
+        }
+
+        // One backend in three pools at once.
+        set_backend_pools(
+            &pool,
+            "multi",
+            &["chat-a".into(), "stt-a".into(), "tts-a".into()],
+        )
+        .await
+        .unwrap();
+        let snap = load_snapshot(&pool).await.unwrap();
+        let members = |name: &str| {
+            snap.pools
+                .iter()
+                .find(|p| p.name == name)
+                .map(|p| p.backends.clone())
+                .unwrap()
+        };
+        assert_eq!(members("chat-a"), ["multi"]);
+        assert_eq!(members("stt-a"), ["multi"]);
+        assert_eq!(members("tts-a"), ["multi"]);
+
+        // A later save collapses the membership to exactly what it names.
+        set_backend_pools(&pool, "multi", &["chat-a".into()])
+            .await
+            .unwrap();
+        let snap = load_snapshot(&pool).await.unwrap();
+        assert_eq!(members("chat-a"), ["multi"]);
+        assert!(
+            snap.pools
+                .iter()
+                .filter(|p| p.name != "chat-a")
+                .all(|p| p.backends.is_empty())
+        );
+
+        // An empty list unassigns.
+        set_backend_pools(&pool, "multi", &[]).await.unwrap();
+        assert!(
+            load_snapshot(&pool)
+                .await
+                .unwrap()
+                .pools
+                .iter()
+                .all(|p| p.backends.is_empty())
+        );
+
+        // A pool name that does not exist is an error, and nothing is written.
+        backend.name = "multi".into();
+        set_backend_pools(&pool, "multi", &["no-such-pool".into()])
+            .await
+            .unwrap_err();
+        assert!(
+            load_snapshot(&pool)
+                .await
+                .unwrap()
+                .pools
+                .iter()
+                .all(|p| p.backends.is_empty())
+        );
     }
 
     #[tokio::test]

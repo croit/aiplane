@@ -88,7 +88,7 @@
 		{#if backends.length}
 			<div class="flex flex-col gap-2">
 				{#each poolBackends as backend (backend.name)}
-					<BackendCard {backend} currentPool={pool.name} {pools} backendNames={allBackends.map((candidate) => candidate.name)} usage={usage[backend.name] ?? []} onChanged={onChanged} />
+					<BackendCard {backend} currentPool={pool.name} {pools} {poolKinds} backendNames={allBackends.map((candidate) => candidate.name)} usage={usage[backend.name] ?? []} onChanged={onChanged} />
 				{/each}
 			</div>
 		{:else}

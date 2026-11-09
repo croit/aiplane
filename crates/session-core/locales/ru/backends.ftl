@@ -12,6 +12,12 @@ backends-field-name = Название
 backends-field-base-url = Базовый URL
 backends-field-pool = Пул
 backends-field-pool-none = (нет)
+backends-field-pools = Пулы
+backends-field-pools-hint = По одному пулу на каждый тип моделей, которые обслуживает аккаунт. Отмеченные пулы добавляются; новые пулы создаются со значениями по умолчанию и добавляются в том же сохранении.
+backends-pool-new = Новый пул
+backends-pool-new-kind = Тип пула
+backends-pool-new-name = Имя пула
+backends-pool-new-remove = Удалить пул
 backends-save-backend = Сохранить бэкенд
 backends-delete-backend = Удалить
 

@@ -2547,13 +2547,24 @@ pub struct BackendSaveBody {
     pub models: Vec<String>,
     #[serde(default)]
     pub aliases: Vec<AliasBody>,
-    /// Pool membership to set. `null` unassigns the backend.
+    /// The backend's full pool membership after this save. An OpenRouter
+    /// backend serves one pool per kind, so a save can name several.
     #[serde(default)]
-    pub pool: Option<String>,
+    pub pools: Vec<String>,
+    /// Pools to create before joining them: name + kind, created with
+    /// defaults (least_inflight, limits on, no groups, no fallbacks).
+    #[serde(default)]
+    pub new_pools: Vec<NewPoolBody>,
     /// Guard against the accidental-overwrite the form path guards: the
     /// caller confirms when the name already exists.
     #[serde(default)]
     pub overwrite: bool,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+pub struct NewPoolBody {
+    pub name: String,
+    pub kind: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -2997,12 +3008,63 @@ pub async fn backends_save(State(state): State<Arc<RamaState>>, req: Request) ->
         created_at: jiff::Timestamp::now(),
         updated_at: jiff::Timestamp::now(),
     };
+    // The editor may create the pools a fresh OpenRouter account serves
+    // (one per kind) in the same save: validate them first, then create them
+    // with defaults.
+    let mut pool_names = parsed.pools;
+    for new_pool in &parsed.new_pools {
+        let pool_name = new_pool.name.trim().to_string();
+        if pool_name.is_empty() {
+            return bad_request("a new pool needs a name");
+        }
+        if !pool_kind_exists(&new_pool.kind) {
+            return bad_request(format!("unknown pool kind: {}", new_pool.kind));
+        }
+        if pool_names.contains(&pool_name) {
+            return bad_request(format!(
+                "pool {pool_name} is listed more than once — pick existing or new, not both"
+            ));
+        }
+        if matches!(
+            upstreams_config::pool_exists(&state.db, &pool_name).await,
+            Ok(true)
+        ) {
+            return json_error(
+                StatusCode::CONFLICT,
+                "name_exists",
+                &format!(
+                    "a pool named {pool_name} already exists — select it instead of creating it"
+                ),
+            );
+        }
+        let sort_order = match upstreams_config::next_pool_sort_order(&state.db).await {
+            Ok(value) => value,
+            Err(err) => return internal(err),
+        };
+        let row = PoolRow {
+            name: pool_name,
+            kind: new_pool.kind.clone(),
+            strategy: "least_inflight".into(),
+            fallback_offline: None,
+            enforce_limits: true,
+            sort_order,
+            allowed_groups: Vec::new(),
+            backends: Vec::new(),
+            models: Vec::new(),
+            voices: Vec::new(),
+            offer_voices: Vec::new(),
+            created_at: jiff::Timestamp::now(),
+            updated_at: jiff::Timestamp::now(),
+        };
+        if let Err(err) = upstreams_config::upsert_pool(&state.db, &row).await {
+            return internal(err);
+        }
+        pool_names.push(row.name.clone());
+    }
     if let Err(err) = upstreams_config::upsert_backend(&state.db, &row).await {
         return internal(err);
     }
-    if let Err(err) =
-        upstreams_config::set_backend_pool(&state.db, &name, parsed.pool.as_deref()).await
-    {
+    if let Err(err) = upstreams_config::set_backend_pools(&state.db, &name, &pool_names).await {
         return internal(err);
     }
     let dirty = state.topology_dirty_bump();

@@ -12,6 +12,12 @@ backends-field-name = 名称
 backends-field-base-url = 基础 URL
 backends-field-pool = 池
 backends-field-pool-none = （无）
+backends-field-pools = 资源池
+backends-field-pools-hint = 账号提供的每种模型类型对应一个资源池。勾选的池将被加入；新池将以默认值创建并在同一次保存中加入。
+backends-pool-new = 新建池
+backends-pool-new-kind = 池类型
+backends-pool-new-name = 池名称
+backends-pool-new-remove = 移除池
 backends-save-backend = 保存后端
 backends-delete-backend = 删除
 

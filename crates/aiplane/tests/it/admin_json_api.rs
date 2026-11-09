@@ -518,6 +518,125 @@ async fn admin_revoke_stops_a_foreign_token() {
 }
 
 #[tokio::test]
+async fn backend_save_creates_new_pools_and_joins_them_all() {
+    let (state, cookie) = setup().await;
+    let app = common::app((*state).clone());
+
+    // An existing pool to join, plus two new pools created by the same save.
+    let resp = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/pools",
+            &cookie,
+            Some(r#"{"name":"chat-a","kind":"chat"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = app
+        .serve(
+            req(
+                Method::PUT,
+                "/api/v0/admin/backends",
+                &cookie,
+                Some(
+                    r#"{
+                        "name":"openrouter","provider":"openrouter","base_url":"https://openrouter.ai/api/v1",
+                        "pools":["chat-a"],
+                        "new_pools":[{"name":"openrouter-stt","kind":"transcription"},{"name":"openrouter-tts","kind":"speech"}]
+                    }"#
+                    .into(),
+                ),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let listed: serde_json::Value = serde_json::from_str(
+        &body(
+            app.serve(req(Method::GET, "/api/v0/admin/upstreams", &cookie, None))
+                .await
+                .unwrap(),
+        )
+        .await,
+    )
+    .unwrap();
+    let pools = listed["pools"].as_array().unwrap();
+    for name in ["chat-a", "openrouter-stt", "openrouter-tts"] {
+        let pool = pools
+            .iter()
+            .find(|p| p["name"] == name)
+            .unwrap_or_else(|| panic!("pool {name} missing"));
+        assert!(
+            pool["backends"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m == "openrouter"),
+            "backend not a member of {name}"
+        );
+    }
+    let stt = pools
+        .iter()
+        .find(|p| p["name"] == "openrouter-stt")
+        .unwrap();
+    assert_eq!(stt["kind"], "transcription");
+    assert_eq!(stt["strategy"], "least_inflight");
+
+    // A new pool that collides with an existing name is a conflict.
+    let resp = app
+        .serve(
+            req(
+                Method::PUT,
+                "/api/v0/admin/backends",
+                &cookie,
+                Some(
+                    r#"{"name":"openrouter","base_url":"https://openrouter.ai/api/v1","overwrite":true,"new_pools":[{"name":"chat-a","kind":"chat"}]}"#
+                        .into(),
+                ),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    // An unknown kind is rejected before anything is written.
+    let resp = app
+        .serve(
+            req(
+                Method::PUT,
+                "/api/v0/admin/backends",
+                &cookie,
+                Some(
+                    r#"{"name":"openrouter","base_url":"https://openrouter.ai/api/v1","overwrite":true,"new_pools":[{"name":"openrouter-x","kind":"no-such-kind"}]}"#
+                        .into(),
+                ),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let listed: serde_json::Value = serde_json::from_str(
+        &body(
+            app.serve(req(Method::GET, "/api/v0/admin/upstreams", &cookie, None))
+                .await
+                .unwrap(),
+        )
+        .await,
+    )
+    .unwrap();
+    assert!(
+        listed["pools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|p| p["name"] != "openrouter-x")
+    );
+}
+
+#[tokio::test]
 async fn backend_connection_test_uses_unsaved_fields_and_discovers_models() {
     let upstream = MockServer::start().await;
     Mock::given(method("GET"))
@@ -1584,7 +1703,7 @@ async fn topology_save_apply_and_stream() {
             "/api/v0/admin/backends",
             &cookie,
             Some(
-                r#"{"name":"b1","base_url":"http://upstream.invalid","pool":null,"overwrite":true}"#
+                r#"{"name":"b1","base_url":"http://upstream.invalid","pools":[],"overwrite":true}"#
                     .into(),
             ),
         ))
@@ -1598,7 +1717,7 @@ async fn topology_save_apply_and_stream() {
             "/api/v0/admin/backends",
             &cookie,
             Some(
-                r#"{"name":"b1","base_url":"http://upstream.invalid","pool":"p1","overwrite":true}"#
+                r#"{"name":"b1","base_url":"http://upstream.invalid","pools":["p1"],"overwrite":true}"#
                     .into(),
             ),
         ))

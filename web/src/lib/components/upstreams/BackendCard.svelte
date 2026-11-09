@@ -9,13 +9,14 @@
 		backend: Backend;
 		currentPool?: string | null;
 		pools: Pool[];
+		poolKinds: string[];
 		/** Every backend name, so the editor can refuse a rename onto one. */
 		backendNames?: string[];
 		usage: number[];
 		onChanged: () => void | Promise<void>;
 	}
 
-	let { backend, currentPool = null, pools, backendNames = [], usage, onChanged }: Props = $props();
+	let { backend, currentPool = null, pools, poolKinds, backendNames = [], usage, onChanged }: Props = $props();
 	// The server sorts these by byte so the status payload is stable; display
 	// order is a separate, human question.
 	let models = $derived(naturalSort(backend.live?.models ?? []));
@@ -123,6 +124,6 @@
 		description={backend.name}
 		cancellabel={t('upstreams-cancel')}
 	>
-		<BackendEditor {backend} {currentPool} {pools} existingNames={backendNames} onSaved={onChanged} onCancel={() => (editing = false)} />
+		<BackendEditor {backend} {currentPool} {pools} {poolKinds} existingNames={backendNames} onSaved={onChanged} onCancel={() => (editing = false)} />
 	</EditModal>
 </section>

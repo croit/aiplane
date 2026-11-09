@@ -12,6 +12,12 @@ backends-field-name = Name
 backends-field-base-url = Basis-URL
 backends-field-pool = Pool
 backends-field-pool-none = (keiner)
+backends-field-pools = Pools
+backends-field-pools-hint = Je eine Pool pro Typ, den das Konto bedient. Angehakkte Pools werden beigetreten; neue Pools werden mit Standardwerten angelegt und im selben Save beigetreten.
+backends-pool-new = Neue Pool
+backends-pool-new-kind = Pool-Typ
+backends-pool-new-name = Pool-Name
+backends-pool-new-remove = Pool entfernen
 backends-save-backend = Backend speichern
 backends-delete-backend = Löschen
 

@@ -12,6 +12,12 @@ backends-field-name = Nom
 backends-field-base-url = URL de base
 backends-field-pool = Pool
 backends-field-pool-none = (aucun)
+backends-field-pools = Pools
+backends-field-pools-hint = Un pool par type de modèle servi par le compte. Les pools cochées sont rejointes ; les pools nouvelles sont créées avec des valeurs par défaut et rejointes dans le même enregistrement.
+backends-pool-new = Nouveau pool
+backends-pool-new-kind = Type de pool
+backends-pool-new-name = Nom du pool
+backends-pool-new-remove = Retirer le pool
 backends-save-backend = Enregistrer le backend
 backends-delete-backend = Supprimer
 
