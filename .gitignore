@@ -50,3 +50,7 @@ __pycache__/
 # A token from .codex/config.toml once leaked into the public history; keep
 # these untracked so it cannot happen again.
 .codex/
+
+# The Impeccable design skill, vendored locally for /impeccable (third-party,
+# Apache 2.0). Deliberately not part of the repo.
+.opencode/
