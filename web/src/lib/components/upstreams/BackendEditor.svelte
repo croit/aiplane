@@ -27,22 +27,25 @@
 	let weight = $state(untrack(() => backend?.weight ?? 1));
 	let maxInflight = $state(untrack(() => backend?.max_inflight ?? 16));
 	let poolName = $state(untrack(() => currentPool ?? ''));
-	// OpenRouter serves one pool per kind: the checked existing pools plus
-	// the new pools this save creates.
-	let selectedPools = $state<string[]>(
-		untrack(() => backend ? pools.filter((pool) => pool.backends.includes(backend.name)).map((pool) => pool.name) : currentPool ? [currentPool] : [])
+	// OpenRouter serves one pool per kind: per kind, join an existing empty
+	// pool of that kind, create openrouter-<kind>, or not serve the kind.
+	let kindSelection = $state<Record<string, string>>(
+		untrack(() => {
+			const selection: Record<string, string> = {};
+			for (const pool of pools ?? []) {
+				if (backend && pool.backends.includes(backend.name)) selection[pool.kind] = pool.name;
+			}
+			if (currentPool && !backend) {
+				const pool = (pools ?? []).find((candidate) => candidate.name === currentPool);
+				if (pool) selection[pool.kind] = pool.name;
+			}
+			return selection;
+		})
 	);
-	let newPools = $state<{ kind: string; name: string }[]>([]);
 	let openRouterKinds = $derived(poolKinds.filter((kind) => kind !== 'ocr'));
-	function togglePool(poolName: string) {
-		selectedPools = selectedPools.includes(poolName) ? selectedPools.filter((name) => name !== poolName) : [...selectedPools, poolName];
-	}
-	function addNewPool() {
-		const kind = openRouterKinds[0] ?? 'chat';
-		newPools = [...newPools, { kind, name: `openrouter-${kind}` }];
-	}
-	function removeNewPool(index: number) {
-		newPools = newPools.filter((_, i) => i !== index);
+	/** Existing pools of a kind that hold no other backend — safe to adopt. */
+	function adoptablePools(kind: string) {
+		return (pools ?? []).filter((pool) => pool.kind === kind && pool.backends.length === 0);
 	}
 	let models = $state(untrack(() => backend?.models.join(', ') ?? ''));
 	let aliases = $state(
@@ -94,10 +97,10 @@
 				aliases: parseAliases(aliases),
 				extra_headers: parseHeaders(extraHeaders),
 				pools: provider === 'openrouter'
-					? [...selectedPools, ...newPools.map((newPool) => newPool.name.trim())]
+					? Object.values(kindSelection).filter((value) => value !== '' && value !== 'new')
 					: poolName ? [poolName] : [],
 				new_pools: provider === 'openrouter'
-					? newPools.map((newPool) => ({ name: newPool.name.trim(), kind: newPool.kind }))
+					? openRouterKinds.filter((kind) => kindSelection[kind] === 'new').map((kind) => ({ name: `openrouter-${kind}`, kind }))
 					: [],
 				overwrite
 			});
@@ -238,24 +241,24 @@
 		{#if provider === 'openrouter'}
 			<div class="flex flex-col gap-2">
 				<span class="text-xs text-base-content/70">{t('backends-field-pools')}</span>
-				<div class="flex flex-col gap-1">
-					{#each pools as pool (pool.name)}
-						<label class="flex items-center gap-2 text-sm">
-							<input type="checkbox" class="checkbox checkbox-sm" checked={selectedPools.includes(pool.name)} onchange={() => togglePool(pool.name)} />
-							<span>{pool.name}</span>
-							<span class="badge badge-ghost badge-sm">{pool.kind}</span>
-						</label>
-					{/each}
-					{#each newPools as newPool, index (index + newPool.kind + newPool.name)}
-						<div class="flex items-center gap-2">
-							<select class="select select-sm w-44" aria-label={t('backends-pool-new-kind')} value={newPool.kind} onchange={(event) => { const kind = event.currentTarget.value; newPools = newPools.map((other, i) => i === index ? { kind, name: other.name === `openrouter-${other.kind}` ? `openrouter-${kind}` : other.name } : other); }}>
-								{#each openRouterKinds as kind (kind)}<option value={kind}>{kind}</option>{/each}
+				<div class="flex flex-col gap-1.5">
+					{#each openRouterKinds as kind (kind)}
+						<div class="flex items-center gap-3">
+							<span class="w-36 flex-none text-sm">{kind}</span>
+							<select
+								class="select select-sm w-full"
+								aria-label={kind}
+								value={kindSelection[kind] ?? ''}
+								onchange={(event) => kindSelection = { ...kindSelection, [kind]: event.currentTarget.value }}
+							>
+								<option value="">{t('backends-pool-not-served')}</option>
+								<option value="new">+ {t('backends-pool-new', { kind })}</option>
+								{#each adoptablePools(kind) as pool (pool.name)}
+									<option value={pool.name}>{pool.name}</option>
+								{/each}
 							</select>
-							<input class="input input-sm w-56 font-mono" aria-label={t('backends-pool-new-name')} value={newPool.name} oninput={(event) => newPools = newPools.map((other, i) => i === index ? { ...other, name: event.currentTarget.value } : other)} />
-							<button type="button" class="btn btn-ghost btn-xs" aria-label={t('backends-pool-new-remove')} onclick={() => removeNewPool(index)}>×</button>
 						</div>
 					{/each}
-					<button type="button" class="btn btn-ghost btn-xs self-start" onclick={addNewPool}>+ {t('backends-pool-new')}</button>
 				</div>
 				<span class="text-xs text-base-content/50">{t('backends-field-pools-hint')}</span>
 			</div>

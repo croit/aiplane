@@ -87,15 +87,17 @@ A model the upstream stops serving stays advertised until it is removed from the
 
 ## OpenRouter
 
-OpenRouter is a **provider type** on a backend, not a second topology. Set
-**Provider → OpenRouter** in the backend editor, enter one OpenRouter key, and
-join that one backend to as many pools as it should serve (chat, embedding,
-transcription, speech, image, rerank, System One) — one pool per kind. The
-editor's Pools section lists the existing pools to check and offers a row to
-create a missing one (kind + name, default `openrouter-<kind>`); new pools are
-created with defaults and joined in the same save, so a fresh account and its
-pools come into existence together. Its catalog is the
-account-filtered `GET /models/user`, read once per pool kind with the matching
+OpenRouter is a **provider type** on a backend, not a second topology. The
+**+ OpenRouter** button on `/admin/upstreams` is the setup path: enter a name
+(default `openrouter`) and one key, and the same save creates the backend plus
+a pool for every model kind it serves (chat, embedding, transcription, speech,
+image, rerank, System One), named `openrouter-<kind>`; a pool already existing
+under that name is joined instead. Editing an existing OpenRouter backend
+offers the per-kind pool selection — a kind joins an existing empty pool of
+that kind, gets a new pool, or is not served. Pools that already hold another
+backend are never offered: a pool has one model list, and mixing would pin the
+other backend to this allowlist. The catalog is the account-filtered
+`GET /models/user`, read once per pool kind with the matching
 `output_modalities` value, so the models the account can actually use appear
 without being typed in.
 
