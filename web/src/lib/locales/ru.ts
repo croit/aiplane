@@ -2422,6 +2422,7 @@ export const ru: Catalog = {
  "openrouter-throughput": "Tokens/s",
  "openrouter-tools": "Tools",
  "openrouter-uptime": "Uptime",
+ "openrouter-voices": "Голоса",
  "organization-active-count": "Активно агентов: {count} из {limit}",
  "organization-agents-empty": "В этой организации вам не предоставлен доступ к агентам.",
  "organization-configuration-only": "Участники с правом записи могут настраивать этого командного агента, общаться с его сохранённым черновиком или опубликованной версией в приватной беседе и автоматизировать выбранную опубликованную версию с помощью расписаний и вебхуков. Агент использует собственные права и выбранные подключённые учётные записи.",

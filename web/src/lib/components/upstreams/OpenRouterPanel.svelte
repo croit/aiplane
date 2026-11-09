@@ -320,7 +320,12 @@
 											</td>
 											<td class="max-w-md">
 												<div class="font-mono text-xs break-all">{model.id}</div>
-												<div class="text-xs text-base-content/60">{model.name}</div>
+												<div class="flex items-center gap-2 text-xs text-base-content/60">
+													{model.name}
+													{#if model.supported_voices.length > 0}
+														<span class="badge badge-outline badge-xs">{model.supported_voices.length} {t('openrouter-voices')}</span>
+													{/if}
+												</div>
 												{#if model.description}<div class="mt-1 line-clamp-2 text-xs text-base-content/50">{model.description}</div>{/if}
 											</td>
 											<td class="text-end font-mono text-xs tabular-nums">

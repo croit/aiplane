@@ -2404,6 +2404,7 @@ export const fr: Catalog = {
  "openrouter-throughput": "Tokens/s",
  "openrouter-tools": "Tools",
  "openrouter-uptime": "Uptime",
+ "openrouter-voices": "Voix",
  "organization-active-count": "{count} agents actifs sur {limit}",
  "organization-agents-empty": "Aucun agent n’est partagé avec vous dans cette organisation.",
  "organization-configuration-only": "Les membres disposant d’un accès en écriture peuvent configurer cet agent d’équipe, discuter en privé avec son brouillon enregistré ou une version publiée, et automatiser une version publiée sélectionnée avec des tâches planifiées et des webhooks. L’agent utilise ses propres autorisations et les comptes connectés sélectionnés.",

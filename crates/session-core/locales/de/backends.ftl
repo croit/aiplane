@@ -124,3 +124,4 @@ openrouter-ceiling-required = Every selected model needs both price ceilings.
 openrouter-pool-empty = This backend is not in a pool yet. Add it to a chat, embedding, speech, transcription, image, rerank or System One pool first.
 openrouter-mixed-pool = This pool also contains { $backends }. A pool has one model list, so saving here pins theirs too; put OpenRouter in its own pool.
 openrouter-max-price = Max $/1M
+openrouter-voices = Stimmen

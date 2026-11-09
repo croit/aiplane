@@ -1416,6 +1416,18 @@ pub async fn set_pool_models(db: &Pool, pool_name: &str, models: &[String]) -> R
     replace_pool_models(db, pool_name, models).await
 }
 
+/// Replace one pool's voice menu without touching anything else about it.
+/// The OpenRouter catalog syncs it with the selected TTS models'
+/// `supported_voices`, so the read-aloud picker offers what the account
+/// can actually speak.
+pub async fn set_pool_offer_voices(
+    db: &Pool,
+    pool_name: &str,
+    voices: &[String],
+) -> Result<(), DbError> {
+    replace_pool_offer_voices(db, pool_name, voices).await
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

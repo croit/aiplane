@@ -319,6 +319,8 @@ export interface OpenRouterModel {
 	output_modalities: string[];
 	supports_tools: boolean;
 	supports_structured_output: boolean;
+	/** The voices this TTS model speaks; empty for non-speech models. */
+	supported_voices: string[];
 	/** The model's list price in USD per 1M tokens. */
 	prompt_price: number;
 	completion_price: number;

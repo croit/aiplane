@@ -2404,6 +2404,7 @@ export const es: Catalog = {
  "openrouter-throughput": "Tokens/s",
  "openrouter-tools": "Tools",
  "openrouter-uptime": "Uptime",
+ "openrouter-voices": "Voces",
  "organization-active-count": "{count} de {limit} agentes activos",
  "organization-agents-empty": "No hay agentes compartidos contigo en esta organización.",
  "organization-configuration-only": "Los miembros con acceso de escritura pueden configurar este agente de equipo, conversar en privado con su borrador guardado o una versión publicada y automatizar una versión publicada seleccionada mediante tareas programadas y webhooks. El agente utiliza sus propios permisos y las cuentas conectadas seleccionadas.",

@@ -687,8 +687,9 @@ pub struct Pool {
     pub voices: Arc<std::collections::HashMap<String, String>>,
     /// Voices this pool offers users to choose from, in the operator's order
     /// (speech pools only). See [`UpstreamPoolConfig::offer_voices`] — this is
-    /// the menu, `voices` is the resolution.
-    pub offer_voices: Vec<String>,
+    /// the menu, `voices` is the resolution. An `RwLock` because the OpenRouter
+    /// catalog refresh replaces it live, without a topology reload.
+    pub offer_voices: RwLock<Vec<String>>,
     /// Pool-level configured model ids (the pool's `models` list). Retained so
     /// the speech default-model pick can prefer the operator's declared TTS
     /// model over the `/models` probe — a cloud provider like OpenAI reports
@@ -1024,6 +1025,15 @@ impl Pool {
         self.level_rank.load(Ordering::Relaxed)
     }
 
+    /// Replace the voice menu live. The OpenRouter catalog refresh calls this
+    /// with the selected TTS models' `supported_voices`, so the read-aloud
+    /// picker follows the account without a topology reload.
+    pub fn set_offer_voices(&self, voices: Vec<String>) {
+        if let Ok(mut menu) = self.offer_voices.write() {
+            *menu = voices;
+        }
+    }
+
     fn new(name: String, cfg: &UpstreamPoolConfig) -> Self {
         let backends = cfg
             .backend
@@ -1038,7 +1048,7 @@ impl Pool {
             level_rank: AtomicU32::new(cfg.level_rank),
             enforce_limits: cfg.enforce_limits,
             voices: Arc::new(cfg.voices.clone()),
-            offer_voices: cfg.offer_voices.clone(),
+            offer_voices: RwLock::new(cfg.offer_voices.clone()),
             configured_models: cfg.models.clone(),
             fallback_offline: cfg.fallback_offline.clone(),
             allowed_groups: cfg.allowed_groups.clone(),
@@ -2102,9 +2112,11 @@ impl UpstreamRegistry {
         // house voice belongs at the top, not wherever the alphabet puts it.
         let mut voices: Vec<String> = Vec::new();
         for p in pools.clone() {
-            for v in &p.offer_voices {
-                if !voices.contains(v) {
-                    voices.push(v.clone());
+            if let Ok(menu) = p.offer_voices.read() {
+                for v in menu.iter() {
+                    if !voices.contains(v) {
+                        voices.push(v.clone());
+                    }
                 }
             }
         }

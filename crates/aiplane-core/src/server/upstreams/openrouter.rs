@@ -132,6 +132,9 @@ pub struct CatalogEntry {
     /// The admin UI uses them to group a model under the right pool kind.
     #[serde(default)]
     pub endpoints: Vec<String>,
+    /// The voices this TTS model speaks. Empty for non-speech models.
+    #[serde(default)]
+    pub supported_voices: Vec<String>,
 }
 
 impl CatalogEntry {
@@ -367,6 +370,23 @@ pub fn cheapest_allowed(
         })
 }
 
+/// The voice menu a speech pool should offer: the union of the `selected`
+/// models' `supported_voices`, de-duplicated in catalog order.
+pub fn selection_voices(catalog: &[CatalogEntry], selected: &HashSet<String>) -> Vec<String> {
+    let mut voices: Vec<String> = Vec::new();
+    for model in catalog {
+        if !selected.contains(&model.id) {
+            continue;
+        }
+        for voice in &model.supported_voices {
+            if !voices.contains(voice) {
+                voices.push(voice.clone());
+            }
+        }
+    }
+    voices
+}
+
 /// Fetch the catalog and endpoints for every selected model, persist what was
 /// seen, and update each pool view's availability overlay. A model with no
 /// provider under its ceiling is hidden from routing and `/v1/models`; the
@@ -546,6 +566,15 @@ pub async fn refresh_backend(
         }
         report.available = report.available.max(available.len());
         backend.set_available_models(Some(available));
+
+        // The speech pool's voice menu is the union of what the selected TTS
+        // models can speak: the picker must offer voices the account can
+        // actually synthesise, and nothing it cannot.
+        if pool.kind == PoolKind::Speech {
+            let voices = selection_voices(&catalog, &selected);
+            upstreams_config::set_pool_offer_voices(db, &pool.name, &voices).await?;
+            pool.set_offer_voices(voices);
+        }
     }
     report.selected = selected_seen.len();
     Ok(report)
@@ -585,6 +614,9 @@ pub async fn refresh_all(
 }
 
 #[cfg(test)]
+// Tests build plain clients and drain bodies to talk to their in-process
+// mocks; the outbound and body rules are about production paths.
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 
@@ -639,6 +671,190 @@ mod tests {
         let endpoints = vec![endpoint("0.0000001", "0.0000100", "cheap-in")];
         assert!(cheapest_allowed(&endpoints, 0.30, 0.50).is_none());
         assert!(cheapest_allowed(&endpoints, 0.30, 20.0).is_some());
+    }
+
+    fn tts_model(id: &str, voices: &[&str]) -> CatalogEntry {
+        CatalogEntry {
+            id: id.into(),
+            name: id.into(),
+            description: String::new(),
+            context_length: None,
+            architecture: None,
+            pricing: Pricing::default(),
+            supported_parameters: Vec::new(),
+            top_provider: None,
+            endpoints: Vec::new(),
+            supported_voices: voices.iter().map(|v| v.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn the_voice_menu_is_the_deduplicated_union_of_the_selected_models_voices() {
+        let catalog = vec![
+            tts_model("openai/gpt-4o-mini-tts", &["alloy", "onyx", "alloy"]),
+            tts_model("google/gemini-flash-tts", &["nova", "alloy"]),
+            tts_model("not-selected/tts", &["shimmer"]),
+            tts_model("plain/chat-model", &[]),
+        ];
+        let selected = HashSet::from([
+            "openai/gpt-4o-mini-tts".to_string(),
+            "google/gemini-flash-tts".to_string(),
+            "plain/chat-model".to_string(),
+        ]);
+        assert_eq!(
+            selection_voices(&catalog, &selected),
+            vec!["alloy", "onyx", "nova"]
+        );
+    }
+
+    #[test]
+    fn an_empty_selection_offers_no_voices() {
+        let catalog = vec![tts_model("openai/gpt-4o-mini-tts", &["alloy"])];
+        assert!(selection_voices(&catalog, &HashSet::new()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_refresh_syncs_the_speech_pool_voice_menu_from_the_catalog() {
+        use crate::server::db;
+        use crate::server::upstreams::config::{
+            BackendConfig, PickerStrategy, PoolKind, ProviderKind, UpstreamPoolConfig,
+        };
+        use crate::server::upstreams::registry::UpstreamRegistry;
+        use std::collections::HashMap;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/models/user"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [
+                    {
+                        "id": "openai/gpt-4o-mini-tts",
+                        "name": "GPT-4o Mini TTS",
+                        "pricing": { "prompt": "0.000000015", "completion": "0.00000006" },
+                        "supported_voices": ["alloy", "onyx", "alloy"]
+                    },
+                    {
+                        "id": "not-selected/tts",
+                        "name": "Not selected",
+                        "pricing": { "prompt": "0.000000015", "completion": "0.00000006" },
+                        "supported_voices": ["shimmer"]
+                    }
+                ]
+            })))
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/models/openai/gpt-4o-mini-tts/endpoints"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": { "endpoints": [
+                    {
+                        "name": "OpenAI", "provider_name": "OpenAI", "tag": "openai",
+                        "pricing": { "prompt": "0.000000015", "completion": "0.00000006" }
+                    }
+                ] }
+            })))
+            .mount(&mock)
+            .await;
+
+        let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
+        upstreams_config::upsert_backend(
+            &pool,
+            &upstreams_config::BackendRow {
+                provider: ProviderKind::OpenRouter,
+                priority: Default::default(),
+                name: "or".into(),
+                base_url: mock.uri(),
+                api_key_env: None,
+                api_key_ct: None,
+                api_key_nonce: None,
+                weight: 1,
+                max_inflight: 16,
+                health_path: "/models".into(),
+                supports_edit: false,
+                enabled: true,
+                extra_headers: Default::default(),
+                models: Vec::new(),
+                aliases: Vec::new(),
+                created_at: jiff::Timestamp::now(),
+                updated_at: jiff::Timestamp::now(),
+            },
+        )
+        .await
+        .unwrap();
+        upstreams_config::upsert_pool(
+            &pool,
+            &upstreams_config::PoolRow {
+                name: "speech".into(),
+                kind: "speech".into(),
+                strategy: "round_robin".into(),
+                fallback_offline: None,
+                enforce_limits: true,
+                sort_order: 0,
+                allowed_groups: Vec::new(),
+                backends: vec!["or".into()],
+                models: vec!["openai/gpt-4o-mini-tts".into()],
+                voices: Vec::new(),
+                // A stale menu from before the model was selected: the refresh
+                // must replace it, not append to it.
+                offer_voices: vec!["stale-voice".into()],
+                created_at: jiff::Timestamp::now(),
+                updated_at: jiff::Timestamp::now(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let pools: HashMap<String, UpstreamPoolConfig> = HashMap::from([(
+            "speech".to_string(),
+            UpstreamPoolConfig {
+                voices: Default::default(),
+                offer_voices: vec!["stale-voice".into()],
+                allowed_groups: Vec::new(),
+                fallback_offline: None,
+                level_rank: 0,
+                enforce_limits: true,
+                kind: PoolKind::Speech,
+                strategy: PickerStrategy::RoundRobin,
+                models: vec!["openai/gpt-4o-mini-tts".into()],
+                backend: vec![BackendConfig {
+                    provider: ProviderKind::OpenRouter,
+                    priority: Default::default(),
+                    alias: Default::default(),
+                    supports_edit: false,
+                    extra_headers: Default::default(),
+                    enabled: true,
+                    name: "or".into(),
+                    base_url: mock.uri(),
+                    api_key_env: None,
+                    api_key: None,
+                    weight: 1,
+                    max_inflight: 16,
+                    health_path: "/models".into(),
+                    models: Vec::new(),
+                }],
+            },
+        )]);
+        let registry = UpstreamRegistry::new(&pools).unwrap();
+
+        let report = refresh_backend(&pool, &registry, &reqwest::Client::new(), "or")
+            .await
+            .unwrap();
+        assert!(report.errors.is_empty());
+
+        let snapshot = upstreams_config::load_snapshot(&pool).await.unwrap();
+        assert_eq!(
+            snapshot.pools[0].offer_voices,
+            vec!["alloy".to_string(), "onyx".to_string()],
+            "the menu is the selected model's voices, de-duplicated, replacing the stale list"
+        );
+        // The running registry follows without a topology reload.
+        use crate::server::upstreams::registry::PoolAccess;
+        assert_eq!(
+            registry.speech_voices_for(&PoolAccess::all()),
+            vec!["alloy".to_string(), "onyx".to_string()]
+        );
     }
 
     #[test]

@@ -2404,6 +2404,7 @@ export const de: Catalog = {
  "openrouter-throughput": "Tokens/s",
  "openrouter-tools": "Tools",
  "openrouter-uptime": "Uptime",
+ "openrouter-voices": "Stimmen",
  "organization-active-count": "{count} von {limit} Agenten aktiv",
  "organization-agents-empty": "In dieser Organisation sind keine Agenten für Sie freigegeben.",
  "organization-configuration-only": "Mitglieder mit Schreibzugriff können diesen Team-Agenten konfigurieren, mit seinem gespeicherten Entwurf oder einer veröffentlichten Version privat chatten und eine ausgewählte veröffentlichte Version über Zeitpläne und Webhooks automatisieren. Der Agent verwendet seine eigenen Berechtigungen und die ausgewählten verbundenen Konten.",

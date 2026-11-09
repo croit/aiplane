@@ -2389,6 +2389,7 @@ export const zh: Catalog = {
  "openrouter-throughput": "Tokens/s",
  "openrouter-tools": "Tools",
  "openrouter-uptime": "Uptime",
+ "openrouter-voices": "声音",
  "organization-active-count": "已激活 {count} 个智能体，上限 {limit} 个",
  "organization-agents-empty": "此组织中没有与你共享的智能体。",
  "organization-configuration-only": "拥有写入权限的成员可以配置此团队智能体，与其已保存的草稿或已发布版本进行私密对话，并通过定时任务和 Webhook 自动运行选定的已发布版本。智能体使用自己的权限和所选的已连接账户。",

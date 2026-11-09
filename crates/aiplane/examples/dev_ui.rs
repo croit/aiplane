@@ -369,6 +369,23 @@ async fn main() -> anyhow::Result<()> {
                     "supported_parameters": ["tools", "temperature"],
                     "top_provider": { "context_length": 131072, "max_completion_tokens": 4096, "is_moderated": false },
                     "endpoints": ["/api/v1/chat/completions"]
+                },
+                {
+                    "id": "openai/gpt-4o-mini-tts",
+                    "canonical_slug": "openai/gpt-4o-mini-tts",
+                    "name": "GPT-4o Mini TTS",
+                    "description": "A text-to-speech model.",
+                    "context_length": 32000,
+                    "architecture": {
+                        "input_modalities": ["text"],
+                        "output_modalities": ["speech"],
+                        "modality": "text->speech"
+                    },
+                    "pricing": { "prompt": "0.000000015", "completion": "0.00000006", "request": "0", "image": "0" },
+                    "supported_parameters": ["temperature"],
+                    "top_provider": { "context_length": 32000, "max_completion_tokens": 4096, "is_moderated": false },
+                    "endpoints": ["/api/v1/audio/speech"],
+                    "supported_voices": ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
                 }
             ]
         })))
@@ -410,6 +427,33 @@ async fn main() -> anyhow::Result<()> {
                         "uptime_last_30m": 99.2,
                         "quantization": "bf16",
                         "supported_parameters": ["tools", "tool_choice", "structured_outputs"]
+                    }
+                ]
+            }
+        })))
+        .mount(&openrouter_mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/models/openai/gpt-4o-mini-tts/endpoints"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "id": "openai/gpt-4o-mini-tts",
+                "name": "GPT-4o Mini TTS",
+                "endpoints": [
+                    {
+                        "name": "OpenAI",
+                        "provider_name": "OpenAI",
+                        "tag": "openai",
+                        "model_id": "openai/gpt-4o-mini-tts",
+                        "model_name": "GPT-4o Mini TTS",
+                        "context_length": 32000,
+                        "max_completion_tokens": 4096,
+                        "pricing": { "prompt": "0.000000015", "completion": "0.00000006", "request": "0", "image": "0" },
+                        "throughput_last_30m": { "p50": 60.0, "p90": 30.0 },
+                        "latency_last_30m": { "p50": 0.5, "p90": 1.4 },
+                        "uptime_last_30m": 99.5,
+                        "quantization": "fp8",
+                        "supported_parameters": ["temperature"]
                     }
                 ]
             }
@@ -622,6 +666,39 @@ async fn main() -> anyhow::Result<()> {
             level_rank: 0,
             enforce_limits: true,
             kind: PoolKind::Chat,
+            strategy: PickerStrategy::RoundRobin,
+            models: Vec::new(),
+            backend: vec![BackendConfig {
+                provider: ProviderKind::OpenRouter,
+                priority: Default::default(),
+                alias: Default::default(),
+                supports_edit: false,
+                extra_headers: BTreeMap::new(),
+                enabled: true,
+                name: "openrouter".into(),
+                base_url: openrouter_mock.uri(),
+                api_key_env: None,
+                api_key: Some("sk-or-dev-ui".into()),
+                weight: 1,
+                max_inflight: 16,
+                health_path: "/models".into(),
+                models: Vec::new(),
+            }],
+        },
+    );
+    // The same backend serves a speech pool too: one OpenRouter connection,
+    // two modalities. Its voice menu is filled by the catalog refresh from
+    // the selected TTS model's `supported_voices`.
+    pools.insert(
+        "openrouter-speech".to_string(),
+        UpstreamPoolConfig {
+            voices: Default::default(),
+            offer_voices: Vec::new(),
+            allowed_groups: Vec::new(),
+            fallback_offline: None,
+            level_rank: 0,
+            enforce_limits: true,
+            kind: PoolKind::Speech,
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![BackendConfig {

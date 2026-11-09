@@ -3572,6 +3572,8 @@ pub struct OpenRouterModelView {
     pub output_modalities: Vec<String>,
     pub supports_tools: bool,
     pub supports_structured_output: bool,
+    /// The voices this TTS model speaks; empty for non-speech models.
+    pub supported_voices: Vec<String>,
     pub prompt_price: f64,
     pub completion_price: f64,
     pub selected: bool,
@@ -3780,6 +3782,7 @@ pub async fn openrouter_catalog(State(state): State<Arc<RamaState>>, req: Reques
             output_modalities,
             supports_tools,
             supports_structured_output,
+            supported_voices: model.supported_voices,
             prompt_price,
             completion_price,
             selected: selected.contains(&model.id),

@@ -2404,6 +2404,7 @@ export const en: Catalog = {
  "openrouter-throughput": "Tokens/s",
  "openrouter-tools": "Tools",
  "openrouter-uptime": "Uptime",
+ "openrouter-voices": "Voices",
  "organization-active-count": "{count} of {limit} agents active",
  "organization-agents-empty": "No agents are shared with you in this organization.",
  "organization-configuration-only": "Members with Write access can configure this team agent, chat privately using its saved draft or a published version, and automate a selected published version with schedules and webhooks. The agent uses its own permissions and selected connected accounts.",

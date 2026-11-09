@@ -126,6 +126,14 @@ refreshes. `max_price` does not cover cache read/write prices or conditional
 long-context overrides, so a provider whose cache price exceeds the ceiling is
 not excluded by it.
 
+Speech pools get their voice menu from the account too: on every selection save
+and catalog refresh, the pool's `offer_voices` is replaced with the
+de-duplicated union of the selected TTS models' `supported_voices` (the field
+the OpenRouter models API carries for every speech model). The read-aloud
+picker therefore offers exactly what the account can synthesise — no manual
+voice list to maintain. Transcription models need no such list: the STT
+picker is the model list itself.
+
 ## Model discovery
 
 Every 5 s, each backend gets a `GET <base_url>/models` probe (with the backend's bearer token, if configured). A backend linked into several pools is probed **once** per tick, and identified once per apply; every pool's view of it takes the answer by its own model rule. On 200 + a parseable model envelope, the backend's advertised-model set is **replaced wholesale** with the names it lists: OpenAI's `{"data": [{"id": ...}, ...]}` (`data[].id`), or TypeSafe System One's `{"models": [{"name": ...}, ...]}` (`models[].name`), so a TypeSafe-native server such as jeff is discovered without speaking OpenAI's shape. On 401 or non-parseable 200, the backend is marked alive but its model set is left as-is (so a previously-populated set survives a transient parser failure). On network error, timeout, or 5xx, the probe counts toward the unhealthy threshold.
