@@ -615,6 +615,7 @@ Debug fixture routes exist only in development builds.
 | `GET /api/v0/admin/upstreams/openrouter` |
 | `POST /api/v0/admin/upstreams/openrouter/refresh` |
 | `POST /api/v0/admin/upstreams/openrouter/select` |
+| `POST /api/v0/admin/upstreams/openrouter/kind` |
 | `POST /api/v0/admin/upstreams/reload` |
 | `GET /api/v0/admin/users` |
 | `POST /api/v0/admin/users/{id}/impersonate` |

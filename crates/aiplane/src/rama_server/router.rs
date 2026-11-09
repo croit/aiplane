@@ -655,6 +655,10 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
             pages::json_admin::openrouter_select,
         )
         .with_post(
+            "/api/v0/admin/upstreams/openrouter/kind",
+            pages::json_admin::openrouter_kind,
+        )
+        .with_post(
             "/api/v0/admin/upstreams/openrouter/refresh",
             pages::json_admin::openrouter_refresh,
         )

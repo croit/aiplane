@@ -4138,6 +4138,153 @@ pub struct OpenRouterRefreshBody {
     pub backend: String,
 }
 
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+pub struct OpenRouterKindBody {
+    pub backend: String,
+    pub kind: String,
+    pub enabled: bool,
+}
+
+/// POST /api/v0/admin/upstreams/openrouter/kind — enable or disable one model
+/// kind on an OpenRouter account. Enabling joins the account to the
+/// `openrouter-<kind>` pool, created with defaults when missing; disabling
+/// leaves it, and a pool auto-created for the account (default name) with no
+/// other backend is removed with it. Applied immediately, like a selection.
+pub async fn openrouter_kind(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_session, _admin) = require_admin_json!(state, req);
+    let (_, body) = req.into_parts();
+    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+        Ok(b) => b,
+        Err(msg) => return bad_request(msg),
+    };
+    let parsed: OpenRouterKindBody = match serde_json::from_slice(&bytes) {
+        Ok(p) => p,
+        Err(err) => return bad_request(format!("parsing the kind body: {err}")),
+    };
+    let backend = match upstreams_config::get_backend(&state.db, &parsed.backend).await {
+        Ok(Some(backend)) => backend,
+        Ok(None) => return not_found(format!("no backend `{}`", parsed.backend)),
+        Err(err) => return internal(err),
+    };
+    if backend.provider != upstreams::config::ProviderKind::OpenRouter {
+        return bad_request(format!("`{}` is not an OpenRouter backend", parsed.backend));
+    }
+    if !pool_kind_exists(&parsed.kind) {
+        return bad_request(format!("unknown pool kind: {}", parsed.kind));
+    }
+    let pool_name = format!("openrouter-{}", parsed.kind);
+    let snapshot = match upstreams_config::load_snapshot(&state.db).await {
+        Ok(snapshot) => snapshot,
+        Err(err) => return internal(err),
+    };
+    let pool = snapshot.pools.iter().find(|pool| pool.name == pool_name);
+    if parsed.enabled {
+        match pool {
+            None => {
+                let sort_order = match upstreams_config::next_pool_sort_order(&state.db).await {
+                    Ok(value) => value,
+                    Err(err) => return internal(err),
+                };
+                let row = PoolRow {
+                    name: pool_name.clone(),
+                    kind: parsed.kind.clone(),
+                    strategy: "least_inflight".into(),
+                    fallback_offline: None,
+                    enforce_limits: true,
+                    sort_order,
+                    allowed_groups: Vec::new(),
+                    backends: vec![parsed.backend.clone()],
+                    models: Vec::new(),
+                    voices: Vec::new(),
+                    offer_voices: Vec::new(),
+                    created_at: jiff::Timestamp::now(),
+                    updated_at: jiff::Timestamp::now(),
+                };
+                if let Err(err) = upstreams_config::upsert_pool(&state.db, &row).await {
+                    return internal(err);
+                }
+            }
+            Some(pool) if !pool.backends.iter().any(|name| name == &parsed.backend) => {
+                let mut membership: Vec<String> = snapshot
+                    .pools
+                    .iter()
+                    .filter(|pool| pool.backends.iter().any(|name| name == &parsed.backend))
+                    .map(|pool| pool.name.clone())
+                    .collect();
+                membership.push(pool_name.clone());
+                if let Err(err) =
+                    upstreams_config::set_backend_pools(&state.db, &parsed.backend, &membership)
+                        .await
+                {
+                    return internal(err);
+                }
+            }
+            Some(_) => {}
+        }
+    } else if let Some(pool) = pool {
+        let others: Vec<String> = pool
+            .backends
+            .iter()
+            .filter(|name| *name != &parsed.backend)
+            .cloned()
+            .collect();
+        if others.is_empty() {
+            // An auto-created pool with no other backend goes with the kind.
+            if let Err(err) = upstreams_config::delete_pool(&state.db, &pool_name).await {
+                return internal(err);
+            }
+        } else {
+            let membership: Vec<String> = snapshot
+                .pools
+                .iter()
+                .filter(|pool| {
+                    pool.name != pool_name
+                        && pool.backends.iter().any(|name| name == &parsed.backend)
+                })
+                .map(|pool| pool.name.clone())
+                .collect();
+            if let Err(err) =
+                upstreams_config::set_backend_pools(&state.db, &parsed.backend, &membership).await
+            {
+                return internal(err);
+            }
+        }
+    }
+    // Applied immediately, like a selection: the kind is live, or gone.
+    let snapshot = match upstreams_config::load_snapshot(&state.db).await {
+        Ok(snapshot) => snapshot,
+        Err(err) => return internal(err),
+    };
+    if let Err(err) = state.upstreams.reload(&snapshot, &state.crypto) {
+        return internal(err);
+    }
+    let armed = tokio::spawn(aiplane_core::server::upstreams::health::spawn(
+        state.upstreams.clone(),
+        Some(state.db.clone()),
+    ));
+    if let Err(err) = armed.await {
+        tracing::error!(error = %err, "arming the health probes after an OpenRouter kind change panicked");
+    }
+    state.topology_dirty_reset();
+    json_ok(
+        StatusCode::OK,
+        OpenRouterKindResult {
+            backend: parsed.backend,
+            kind: parsed.kind,
+            enabled: parsed.enabled,
+            pool: pool_name,
+        },
+    )
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct OpenRouterKindResult {
+    pub backend: String,
+    pub kind: String,
+    pub enabled: bool,
+    pub pool: String,
+}
+
 /// POST /api/v0/admin/upstreams/openrouter/refresh — re-read prices and
 /// provider performance, and update what the gateway offers.
 pub async fn openrouter_refresh(State(state): State<Arc<RamaState>>, req: Request) -> Response {

@@ -9,7 +9,7 @@
 	import EditModal from '#lib/components/EditModal.svelte';
 	import PoolEditor from '#lib/components/upstreams/PoolEditor.svelte';
 	import OpenRouterEditor from '#lib/components/upstreams/OpenRouterEditor.svelte';
-	import OpenRouterPanel from '#lib/components/upstreams/OpenRouterPanel.svelte';
+	import OpenRouterAccountPanel from '#lib/components/upstreams/OpenRouterAccountPanel.svelte';
 	import SearchableSelect from '#lib/components/SearchableSelect.svelte';
 
 	interface StatusEvent extends LiveBackend { name: string; dirty: number; usage: number[]; }
@@ -89,7 +89,7 @@
 	<EditModal bind:open={addingPool} wide footer="none" title={t('pools-add-heading')} cancellabel={t('upstreams-cancel')}><PoolEditor backends={data.backends} poolKinds={data.pool_kinds} poolStrategies={data.pool_strategies} groups={data.groups} existingNames={data.pools.map((pool) => pool.name)} sortOrder={Math.max(-1, ...data.pools.map((pool) => pool.sort_order)) + 1} onSaved={() => { addingPool = false; return refresh(); }} onCancel={() => (addingPool = false)} /></EditModal>
 	<EditModal bind:open={addingBackend} wide footer="none" title={t('backends-add-heading')} cancellabel={t('upstreams-cancel')}><BackendEditor pools={data.pools} poolKinds={data.pool_kinds} existingNames={data.backends.map((backend) => backend.name)} onSaved={() => { addingBackend = false; return refresh(); }} onCancel={() => (addingBackend = false)} /></EditModal>
 	<EditModal bind:open={addingOpenRouter} wide footer="none" title={t('openrouter-add-heading')} cancellabel={t('upstreams-cancel')}><OpenRouterEditor pools={data.pools} poolKinds={data.pool_kinds} existingNames={data.backends.map((backend) => backend.name)} onSaved={() => { addingOpenRouter = false; return refresh(); }} onCancel={() => (addingOpenRouter = false)} /></EditModal>
-	<OpenRouterPanel backends={data.backends} pools={data.pools} onChanged={refresh} />
+	<OpenRouterAccountPanel backends={data.backends} pools={data.pools} poolKinds={data.pool_kinds} onChanged={refresh} />
 	<div class="flex flex-col gap-4">
 		{#each sortedPools as pool (pool.name)}<PoolCard {pool} backends={assignments.byPool.get(pool.name) ?? []} allBackends={data.backends} pools={data.pools} usage={data.usage_last_hour} coverage={data.coverage?.[pool.name]} poolKinds={data.pool_kinds} poolStrategies={data.pool_strategies} groups={data.groups} onChanged={refresh} />{/each}
 		{#if assignments.unassigned.length}<section class="card card-border"><div class="card-body gap-3"><header><h3 class="card-title text-base">{t('upstreams-unassigned-heading')}</h3><p class="text-sm text-base-content/70">{t('upstreams-unassigned-description')}</p></header>{#each assignments.unassigned as backend (backend.name)}<BackendCard {backend} pools={data.pools} poolKinds={data.pool_kinds} backendNames={data.backends.map((candidate) => candidate.name)} usage={data.usage_last_hour[backend.name] ?? []} onChanged={refresh} />{/each}</div></section>{/if}

@@ -36,7 +36,13 @@
 		else if (live.length && live.every((backend) => !backend.live?.healthy || !backend.live?.enabled)) result.push(t('upstreams-problem-all-down'));
 		const rejected = live.filter((backend) => backend.live?.auth_failed).map((backend) => backend.name);
 		if (rejected.length) result.push(t('upstreams-problem-auth', { backends: rejected.join(', ') }));
-		const modelless = live.filter((backend) => backend.live?.models.length === 0).map((backend) => backend.name);
+		// An OpenRouter backend with an empty allowlist is unconfigured, not
+		// broken — its selection happens in the OpenRouter panel.
+		const modelless = live.filter((backend) => {
+			if ((backend.live?.models.length ?? 0) > 0) return false;
+			if (backend.provider === 'openrouter' && pool.models.length === 0) return false;
+			return true;
+		}).map((backend) => backend.name);
 		if (modelless.length) result.push(t('upstreams-problem-no-models', { backends: modelless.join(', ') }));
 		const brokenAliases = live.flatMap((backend) => backend.aliases
 			.filter(({ target }) => target ? !backend.live?.models.includes(target) : backend.live?.models.length !== 1)

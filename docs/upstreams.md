@@ -89,17 +89,21 @@ A model the upstream stops serving stays advertised until it is removed from the
 
 OpenRouter is a **provider type** on a backend, not a second topology. The
 **+ OpenRouter** button on `/admin/upstreams` is the setup path: enter a name
-(default `openrouter`) and one key, and the same save creates the backend plus
-a pool for every model kind it serves (chat, embedding, transcription, speech,
-image, rerank, System One), named `openrouter-<kind>`; a pool already existing
-under that name is joined instead. Editing an existing OpenRouter backend
-offers the per-kind pool selection — a kind joins an existing empty pool of
-that kind, gets a new pool, or is not served. Pools that already hold another
-backend are never offered: a pool has one model list, and mixing would pin the
-other backend to this allowlist. The catalog is the account-filtered
-`GET /models/user`, read once per pool kind with the matching
-`output_modalities` value, so the models the account can actually use appear
-without being typed in.
+(default `openrouter`) and one key, and the save creates the backend. The
+**OpenRouter panel** at the top of the page is the account view: the stored
+key (change it in one field, it applies to every kind), the account's credit
+state, and one row per model kind it serves — chat, embedding, transcription,
+speech, image, rerank, System One. Ticking a kind joins the account to the
+`openrouter-<kind>` pool, created with defaults when missing; unticking
+leaves it, and a pool auto-created under that name with no other backend is
+removed with it. Pools that already hold another backend are never joined
+from the panel: a pool has one model list, and mixing would pin the other
+backend to this allowlist — for that, edit the pool's backend list. Expanding
+a kind opens its model table: selection plus per-model price ceilings and
+provider strategy, saved per kind. The catalog is the account-filtered
+`GET /models/user`, read once per kind with the matching `output_modalities`
+value, so the models the account can actually use appear without being typed
+in.
 
 Selecting a model is an explicit allowlist, not discovery: an OpenRouter
 backend with nothing selected serves nothing. The selection is stored per pool,

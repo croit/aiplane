@@ -637,6 +637,163 @@ async fn backend_save_creates_new_pools_and_joins_them_all() {
 }
 
 #[tokio::test]
+async fn openrouter_kind_toggles_the_pool_round_trip() {
+    let (state, cookie) = setup().await;
+    let app = common::app((*state).clone());
+
+    // An OpenRouter account without any pools.
+    let resp = app
+        .serve(
+            req(
+                Method::PUT,
+                "/api/v0/admin/backends",
+                &cookie,
+                Some(
+                    r#"{"name":"openrouter","provider":"openrouter","base_url":"https://openrouter.ai/api/v1"}"#
+                        .into(),
+                ),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Enabling a kind creates the default-named pool and joins it.
+    let resp = app
+        .serve(req(
+            Method::POST,
+            "/api/v0/admin/upstreams/openrouter/kind",
+            &cookie,
+            Some(r#"{"backend":"openrouter","kind":"chat","enabled":true}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let listed: serde_json::Value = serde_json::from_str(
+        &body(
+            app.serve(req(Method::GET, "/api/v0/admin/upstreams", &cookie, None))
+                .await
+                .unwrap(),
+        )
+        .await,
+    )
+    .unwrap();
+    let chat = listed["pools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "openrouter-chat")
+        .expect("openrouter-chat pool missing");
+    assert_eq!(chat["kind"], "chat");
+    assert_eq!(chat["backends"], serde_json::json!(["openrouter"]));
+
+    // Enabling again is a no-op, not a duplicate.
+    let resp = app
+        .serve(req(
+            Method::POST,
+            "/api/v0/admin/upstreams/openrouter/kind",
+            &cookie,
+            Some(r#"{"backend":"openrouter","kind":"chat","enabled":true}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let listed: serde_json::Value = serde_json::from_str(
+        &body(
+            app.serve(req(Method::GET, "/api/v0/admin/upstreams", &cookie, None))
+                .await
+                .unwrap(),
+        )
+        .await,
+    )
+    .unwrap();
+    assert_eq!(
+        listed["pools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|p| p["name"] == "openrouter-chat")
+            .count(),
+        1
+    );
+
+    // Disabling the kind removes the auto-created pool again.
+    let resp = app
+        .serve(req(
+            Method::POST,
+            "/api/v0/admin/upstreams/openrouter/kind",
+            &cookie,
+            Some(r#"{"backend":"openrouter","kind":"chat","enabled":false}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let listed: serde_json::Value = serde_json::from_str(
+        &body(
+            app.serve(req(Method::GET, "/api/v0/admin/upstreams", &cookie, None))
+                .await
+                .unwrap(),
+        )
+        .await,
+    )
+    .unwrap();
+    assert!(
+        listed["pools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|p| p["name"] != "openrouter-chat")
+    );
+
+    // An unknown kind is refused.
+    let resp = app
+        .serve(req(
+            Method::POST,
+            "/api/v0/admin/upstreams/openrouter/kind",
+            &cookie,
+            Some(r#"{"backend":"openrouter","kind":"no-such-kind","enabled":true}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // A non-OpenRouter backend is refused.
+    let resp = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/pools",
+            &cookie,
+            Some(r#"{"name":"plain-chat","kind":"chat"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/backends",
+            &cookie,
+            Some(
+                r#"{"name":"plain","base_url":"http://plain.invalid","pools":["plain-chat"]}"#
+                    .into(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = app
+        .serve(req(
+            Method::POST,
+            "/api/v0/admin/upstreams/openrouter/kind",
+            &cookie,
+            Some(r#"{"backend":"plain","kind":"chat","enabled":true}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn backend_connection_test_uses_unsaved_fields_and_discovers_models() {
     let upstream = MockServer::start().await;
     Mock::given(method("GET"))

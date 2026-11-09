@@ -192,6 +192,10 @@ pub(super) fn operations() -> Vec<Op> {
             .body(json::<admin::OpenRouterSelectBody>())
             .ok(json::<admin::OpenRouterSelectResult>())
             .errors(&[400, 404]),
+        post("/api/v0/admin/upstreams/openrouter/kind", Access::Admin)
+            .body(json::<admin::OpenRouterKindBody>())
+            .ok(json::<admin::OpenRouterKindResult>())
+            .errors(&[400, 404]),
         post("/api/v0/admin/upstreams/openrouter/refresh", Access::Admin)
             .body(json::<admin::OpenRouterRefreshBody>())
             .ok(json::<admin::OpenRouterRefreshView>())
