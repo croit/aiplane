@@ -19,5 +19,6 @@ admin-tokens-models-cleared-toast = Betreiber-Beschränkung entfernt.
 admin-tokens-models-save = Modelle speichern
 admin-tokens-models-edit = Modelle bearbeiten
 admin-tokens-models-cancel = Abbrechen
+admin-tokens-revoke-toast = Token widerrufen. Clients, die ihn verwenden, funktionieren sofort nicht mehr.
 
 # Token-Register der SPA: Überschrift des Allowlist-Editors und die kompakten Tabellenzellen.

@@ -276,6 +276,24 @@ pub async fn revoke(pool: &Pool, user_id: &str, token_id: &str) -> Result<bool, 
     Ok(result.rows_affected() > 0)
 }
 
+/// Admin-scoped revoke: marks any active token revoked, owner-independent.
+/// The admin token register governs every token on the installation, so a
+/// leaked key or an ex-employee's token must be stoppable from there even
+/// when the owner is absent. Returns `Ok(false)` when no active row matched.
+pub async fn revoke_by_admin(pool: &Pool, token_id: &str) -> Result<bool, DbError> {
+    let result = sqlx::query(
+        r#"UPDATE tokens
+              SET revoked_at = ?
+            WHERE id = ?
+              AND revoked_at IS NULL"#,
+    )
+    .bind(Timestamp::now().to_string())
+    .bind(token_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 /// Hard-deletes an already-revoked token from the table. Only deletes if
 /// the token belongs to `user_id` *and* is already revoked — active tokens
 /// must be revoked first so we keep the user's authentication-history
@@ -619,6 +637,25 @@ mod tests {
         let t = fixture(&uid, "t5", "hash-eee");
         insert(&pool, &t).await.unwrap();
         assert!(!revoke(&pool, "other-user", "t5").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn revoke_by_admin_ignores_the_owner() {
+        let (pool, uid) = setup().await;
+        let t = fixture(&uid, "t-admin", "hash-admin");
+        insert(&pool, &t).await.unwrap();
+
+        // No owner id involved: the admin register stops any active token.
+        assert!(revoke_by_admin(&pool, "t-admin").await.unwrap());
+        assert!(
+            find_active_by_hash(&pool, "hash-admin")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        // A second call finds no active row to flip.
+        assert!(!revoke_by_admin(&pool, "t-admin").await.unwrap());
+        assert!(!revoke_by_admin(&pool, "t-unknown").await.unwrap());
     }
 
     #[tokio::test]

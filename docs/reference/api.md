@@ -607,6 +607,7 @@ Debug fixture routes exist only in development builds.
 | `GET /api/v0/admin/skills/{name}/archive` |
 | `GET /api/v0/admin/tokens` |
 | `PUT /api/v0/admin/tokens/{id}/models` |
+| `POST /api/v0/admin/tokens/{id}/revoke` |
 | `PUT /api/v0/admin/tokens/{id}/priority` |
 | `GET /api/v0/admin/upstreams` |
 | `GET /api/v0/admin/upstreams/events` |

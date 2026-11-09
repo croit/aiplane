@@ -17,5 +17,6 @@ admin-tokens-models-cleared-toast = Operator restriction removed.
 admin-tokens-models-save = Save models
 admin-tokens-models-edit = Edit models
 admin-tokens-models-cancel = Cancel
+admin-tokens-revoke-toast = Token revoked. Clients using it stop working immediately.
 
 # SPA token register: the allowlist editor's heading and the compact table cells.

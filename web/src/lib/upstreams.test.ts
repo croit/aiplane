@@ -16,6 +16,7 @@ import {
 const backends: Backend[] = [
 	{
 		priority: { mode: 'auto' },
+		provider: 'openai_compatible',
 		name: 'gpu-0',
 		base_url: 'http://gpu-0/v1',
 		api_key_env: null,
@@ -47,6 +48,7 @@ const backends: Backend[] = [
 	},
 	{
 		priority: { mode: 'auto' },
+		provider: 'openai_compatible',
 		name: 'gpu-1',
 		base_url: 'http://gpu-1/v1',
 		api_key_env: null,
@@ -78,6 +80,7 @@ const backends: Backend[] = [
 	},
 	{
 		priority: { mode: 'auto' },
+		provider: 'openai_compatible',
 		name: 'orphan',
 		base_url: 'http://orphan/v1',
 		api_key_env: null,

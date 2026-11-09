@@ -215,6 +215,7 @@ export const ru: Catalog = {
  "admin-tokens-models-summary-all": "Модели: все (без ограничения оператора)",
  "admin-tokens-models-summary-restricted": "Модели: оператор разрешает {count}",
  "admin-tokens-none": "API-токены ещё не создавались.",
+ "admin-tokens-revoke-toast": "Токен отозван. Клиенты, использующие его, перестанут работать немедленно.",
  "admin-toml-defaults-label": "Значения сэмплирования (TOML)",
  "admin-toml-placeholder-header": "# Общие ключи (vLLM/OpenAI):",
  "admin-users-audit-col-action": "Действие",

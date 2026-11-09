@@ -215,6 +215,7 @@ export const zh: Catalog = {
  "admin-tokens-models-summary-all": "模型：全部（无运营方限制）",
  "admin-tokens-models-summary-restricted": "模型：运营方允许 {count} 个",
  "admin-tokens-none": "尚未创建任何 API 令牌。",
+ "admin-tokens-revoke-toast": "令牌已吊销。使用它的客户端将立即停止工作。",
  "admin-toml-defaults-label": "采样默认值（TOML）",
  "admin-toml-placeholder-header": "# 常用键（vLLM/OpenAI）：",
  "admin-users-audit-col-action": "操作",

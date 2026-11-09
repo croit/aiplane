@@ -19,5 +19,6 @@ admin-tokens-models-cleared-toast = Restricción del operador eliminada.
 admin-tokens-models-save = Guardar modelos
 admin-tokens-models-edit = Editar modelos
 admin-tokens-models-cancel = Cancelar
+admin-tokens-revoke-toast = Token revocado. Los clientes que lo usen dejarán de funcionar de inmediato.
 
 # Registro de tokens de la SPA: título del editor de lista permitida y celdas compactas.

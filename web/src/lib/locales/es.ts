@@ -215,6 +215,7 @@ export const es: Catalog = {
  "admin-tokens-models-summary-all": "Modelos: todos (sin restricción del operador)",
  "admin-tokens-models-summary-restricted": "Modelos: el operador permite {count}",
  "admin-tokens-none": "Todavía no se ha creado ningún token de API.",
+ "admin-tokens-revoke-toast": "Token revocado. Los clientes que lo usen dejarán de funcionar de inmediato.",
  "admin-toml-defaults-label": "Valores de muestreo (TOML)",
  "admin-toml-placeholder-header": "# Claves comunes (vLLM/OpenAI):",
  "admin-users-audit-col-action": "Acción",

@@ -1971,6 +1971,48 @@ pub async fn tokens_models(
     }
 }
 
+/// POST /api/v0/admin/tokens/{id}/revoke — invalidate any active token,
+/// owner-independent. The register's status column shows a "revoked" state;
+/// this is the control that produces it on someone else's token (a leaked
+/// key, an ex-employee). The owner-scoped `POST /api/v0/tokens/{id}/revoke`
+/// stays untouched.
+pub async fn tokens_revoke(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_session, _admin) = require_admin_json!(state, req);
+    let Some(id) = raw_path_segment(&req, 1) else {
+        return json_error(StatusCode::BAD_REQUEST, "no_token_id", "no token id");
+    };
+    match db::tokens::find_by_id(&state.db, &id).await {
+        Ok(Some(token)) if token.revoked_at.is_some() => {
+            return json_error(
+                StatusCode::CONFLICT,
+                "token_already_revoked",
+                "this token is already revoked",
+            );
+        }
+        Ok(Some(_)) => {}
+        Ok(None) => return json_error(StatusCode::NOT_FOUND, "not_found", "no such token"),
+        Err(err) => return internal(err),
+    }
+    match db::tokens::revoke_by_admin(&state.db, &id).await {
+        Ok(true) => json_ok(StatusCode::OK, AdminTokenRevoked { revoked: true }),
+        // Lost a race with a concurrent revoke between the read and the write.
+        Ok(false) => json_error(
+            StatusCode::CONFLICT,
+            "token_already_revoked",
+            "this token is already revoked",
+        ),
+        Err(err) => {
+            tracing::warn!(error = %err, %id, "admin revoke token");
+            internal(err)
+        }
+    }
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct AdminTokenRevoked {
+    pub revoked: bool,
+}
+
 pub async fn tokens_priority(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = require_admin_json!(state, req);
     let lang = session_core::i18n::Lang::from_headers(req.headers());

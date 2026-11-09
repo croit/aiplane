@@ -19,5 +19,6 @@ admin-tokens-models-cleared-toast = Restriction de l'opérateur supprimée.
 admin-tokens-models-save = Enregistrer les modèles
 admin-tokens-models-edit = Modifier les modèles
 admin-tokens-models-cancel = Annuler
+admin-tokens-revoke-toast = Jeton révoqué. Les clients qui l’utilisent cessent immédiatement de fonctionner.
 
 # Registre des jetons de la SPA : titre de l'éditeur de liste blanche et cellules compactes.

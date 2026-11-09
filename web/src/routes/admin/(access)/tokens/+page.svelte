@@ -3,7 +3,7 @@
 	import { onMount } from 'svelte';
 	import type { AdminToken } from '#lib/admin-tokens.js';
 	import type { TokenModel } from '#lib/token-models.js';
-	import { adminJson, adminPut } from '#lib/admin-client.js';
+	import { adminJson, adminPost, adminPut } from '#lib/admin-client.js';
 	import AdminTokenRow from '#lib/components/admin/AdminTokenRow.svelte';
 	import { t } from '#lib/i18n.svelte.js';
 
@@ -48,6 +48,12 @@
 		notice = t('priority-saved');
 		await refresh();
 	}
+
+	async function revoke(id: string) {
+		await adminPost(`/api/v0/admin/tokens/${encodeURIComponent(id)}/revoke`);
+		notice = t('admin-tokens-revoke-toast');
+		await refresh();
+	}
 	onMount(refresh);
 </script>
 
@@ -73,7 +79,7 @@
 							<th class="w-64">{t('admin-tokens-col-name')}</th><th class="w-56">{t('admin-tokens-col-owner')}</th><th class="w-28">{t('admin-tokens-col-state')}</th><th>{t('priority-label')}</th><th class="w-64">{t('admin-tokens-col-dates')}</th>
 							<th class="w-24 text-right">{t('usage-col-requests')}</th><th class="w-24 text-right">{t('usage-col-tokens')}</th><th class="w-28 text-right">{t('usage-col-cost')}</th><th>{t('admin-tokens-col-scope')}</th>
 						</tr></thead>
-						<tbody>{#each data.tokens as token (token.id)}<AdminTokenRow {token} models={data.models} usageEnabled={data.usage_enabled} currency={data.currency} timezone={data.timezone} onsave={saveModels} onpriority={savePriority} />{/each}</tbody>
+						<tbody>{#each data.tokens as token (token.id)}<AdminTokenRow {token} models={data.models} usageEnabled={data.usage_enabled} currency={data.currency} timezone={data.timezone} onsave={saveModels} onpriority={savePriority} onrevoke={revoke} />{/each}</tbody>
 					</table></div>
 					<p class="text-xs text-base-content/60">{t('admin-tokens-count', { count: data.tokens.length })}</p>
 				{/if}

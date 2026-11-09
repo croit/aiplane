@@ -215,6 +215,7 @@ export const fr: Catalog = {
  "admin-tokens-models-summary-all": "Modèles : tous (aucune restriction de l'opérateur)",
  "admin-tokens-models-summary-restricted": "Modèles : l'opérateur en autorise {count}",
  "admin-tokens-none": "Aucun jeton d'API n'a encore été créé.",
+ "admin-tokens-revoke-toast": "Jeton révoqué. Les clients qui l’utilisent cessent immédiatement de fonctionner.",
  "admin-toml-defaults-label": "Valeurs d'échantillonnage (TOML)",
  "admin-toml-placeholder-header": "# Clés courantes (vLLM/OpenAI) :",
  "admin-users-audit-col-action": "Action",

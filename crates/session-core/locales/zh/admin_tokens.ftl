@@ -19,5 +19,6 @@ admin-tokens-models-cleared-toast = 已移除运营方限制。
 admin-tokens-models-save = 保存模型
 admin-tokens-models-edit = 编辑模型
 admin-tokens-models-cancel = 取消
+admin-tokens-revoke-toast = 令牌已吊销。使用它的客户端将立即停止工作。
 
 # SPA 令牌总览：白名单编辑器标题与紧凑表格单元格。

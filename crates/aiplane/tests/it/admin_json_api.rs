@@ -103,6 +103,7 @@ async fn admin_routes_gate_with_json_envelopes() {
         (Method::POST, "/api/v0/admin/settings"),
         (Method::GET, "/api/v0/admin/tokens"),
         (Method::PUT, "/api/v0/admin/tokens/example/priority"),
+        (Method::POST, "/api/v0/admin/tokens/example/revoke"),
         (Method::GET, "/api/v0/admin/upstreams"),
         (Method::PUT, "/api/v0/admin/backends"),
         (Method::POST, "/api/v0/admin/backends/test"),
@@ -425,6 +426,95 @@ async fn admin_tokens_include_dates_and_preserve_the_independent_operator_allowl
         listed["tokens"][0]["admin_models"],
         serde_json::json!(["model-a"])
     );
+}
+
+#[tokio::test]
+async fn admin_revoke_stops_a_foreign_token() {
+    use aiplane_core::server::db::tokens;
+
+    let (state, cookie) = setup().await;
+    let pleb = common::seed_session(&state, "pleb", "pleb@example.com").await;
+    let now = jiff::Timestamp::now();
+    tokens::insert(
+        &state.db,
+        &tokens::Token {
+            priority: None,
+            id: "pleb-token".into(),
+            user_id: "pleb".into(),
+            name: "Pleb key".into(),
+            hash: "pleb-hash".into(),
+            created_at: now,
+            last_used_at: None,
+            expires_at: now + jiff::Span::new().hours(30 * 24),
+            revoked_at: None,
+            tools_enabled: false,
+        },
+    )
+    .await
+    .unwrap();
+    let app = common::app((*state).clone());
+
+    // The owner of the token is not the admin: revoke needs the admin gate.
+    let forbidden = app
+        .serve(req(
+            Method::POST,
+            "/api/v0/admin/tokens/pleb-token/revoke",
+            &pleb,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+    assert!(
+        tokens::find_by_id(&state.db, "pleb-token")
+            .await
+            .unwrap()
+            .unwrap()
+            .revoked_at
+            .is_none()
+    );
+
+    let revoked = app
+        .serve(req(
+            Method::POST,
+            "/api/v0/admin/tokens/pleb-token/revoke",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(revoked.status(), StatusCode::OK);
+    assert!(
+        tokens::find_by_id(&state.db, "pleb-token")
+            .await
+            .unwrap()
+            .unwrap()
+            .revoked_at
+            .is_some()
+    );
+
+    // Revoking a token that is already revoked is a conflict, not a silent success.
+    let again = app
+        .serve(req(
+            Method::POST,
+            "/api/v0/admin/tokens/pleb-token/revoke",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(again.status(), StatusCode::CONFLICT);
+
+    let missing = app
+        .serve(req(
+            Method::POST,
+            "/api/v0/admin/tokens/no-such-token/revoke",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

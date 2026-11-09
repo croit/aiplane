@@ -19,5 +19,6 @@ admin-tokens-models-cleared-toast = Ограничение оператора с
 admin-tokens-models-save = Сохранить модели
 admin-tokens-models-edit = Изменить модели
 admin-tokens-models-cancel = Отмена
+admin-tokens-revoke-toast = Токен отозван. Клиенты, использующие его, перестанут работать немедленно.
 
 # Реестр токенов в SPA: заголовок редактора списка разрешённых моделей и ячейки таблицы.

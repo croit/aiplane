@@ -143,6 +143,9 @@ pub(super) fn operations() -> Vec<Op> {
             .body(json::<admin::AdminTokenModelsBody>())
             .ok(json::<admin::AdminTokenModels>())
             .errors(&[400, 404]),
+        post("/api/v0/admin/tokens/{id}/revoke", Access::Admin)
+            .ok(json::<admin::AdminTokenRevoked>())
+            .errors(&[400, 404, 409]),
         put("/api/v0/admin/tokens/{id}/priority", Access::Admin)
             .body(json::<json_tokens::TokenPriorityRequest>())
             .ok(json::<json_tokens::TokenPriorityRequest>())

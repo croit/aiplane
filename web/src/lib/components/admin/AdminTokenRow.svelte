@@ -11,7 +11,7 @@
 	import { tokenDate } from '#lib/tokens.js';
 	import { usageCost, usageInteger } from '#lib/usage.js';
 
-	let { token, models, usageEnabled, currency, timezone, onsave, onpriority }: {
+	let { token, models, usageEnabled, currency, timezone, onsave, onpriority, onrevoke }: {
 		token: AdminToken;
 		models: TokenModel[];
 		usageEnabled: boolean;
@@ -19,6 +19,7 @@
 		timezone: string;
 		onpriority: (id: string, priority: Priority | null) => Promise<void>;
 		onsave: (id: string, restrict: boolean, models: string[]) => Promise<void>;
+		onrevoke: (id: string) => Promise<void>;
 	} = $props();
 	let priorityDraft = $state<Priority | null>(null);
 	$effect(() => { priorityDraft = token.priority; });
@@ -79,6 +80,24 @@
 
 	const credentialState = $derived(tokenState(token));
 	const ownerModels = $derived(visibleTokenModels(token.owner_models));
+
+	let revoking = $state(false);
+	let revokeError = $state<string | null>(null);
+	/** Two-step like the pool delete: first click arms, second executes. */
+	async function doRevoke() {
+		if (!revoking) {
+			revoking = true;
+			revokeError = null;
+			return;
+		}
+		try {
+			await onrevoke(token.id);
+		} catch (caught) {
+			revokeError = String(caught);
+		} finally {
+			revoking = false;
+		}
+	}
 </script>
 
 <tr>
@@ -107,7 +126,11 @@
 			<div class="flex items-center gap-2">
 				<span class="text-xs text-base-content/70">{token.admin_models === null ? t('admin-tokens-models-summary-all') : t('admin-tokens-models-summary-restricted', { count: token.admin_models.length })}</span>
 				<button type="button" class="btn btn-ghost btn-xs" onclick={openEditor}>{t('admin-tokens-models-edit')}</button>
+				{#if credentialState !== 'revoked'}
+					<button type="button" class="btn btn-ghost btn-xs text-error" onclick={() => void doRevoke()} aria-live="polite">{revoking ? t('tokens-revoke-confirm') : t('tokens-revoke-button')}</button>
+				{/if}
 			</div>
+			{#if revokeError}<p class="text-error text-xs" role="alert">{revokeError}</p>{/if}
 			<EditModal
 				bind:open={editing}
 				wide

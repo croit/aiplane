@@ -215,6 +215,7 @@ export const en: Catalog = {
  "admin-tokens-models-summary-all": "Models: all (no operator restriction)",
  "admin-tokens-models-summary-restricted": "Models: operator allows {count}",
  "admin-tokens-none": "No API tokens have been created yet.",
+ "admin-tokens-revoke-toast": "Token revoked. Clients using it stop working immediately.",
  "admin-toml-defaults-label": "Sampling defaults (TOML)",
  "admin-toml-placeholder-header": "# Common keys (vLLM/OpenAI):",
  "admin-users-audit-col-action": "Action",
