@@ -59,7 +59,7 @@
 	let priorityMedium = $state(untrack(() => backend?.priority.mode === 'custom' ? backend.priority.mapping.medium : 0));
 	let priorityHigh = $state(untrack(() => backend?.priority.mode === 'custom' ? backend.priority.mapping.high : -1));
 	let overwrite = $state(untrack(() => backend !== null));
-	let deleting = $state(false);
+	let advancedOpen = $state(false);
 	let busy = $state(false);
 	let error = $state<string | null>(null);
 	let errorAlert: HTMLDivElement | undefined = $state();
@@ -117,20 +117,17 @@
 
 	async function remove() {
 		if (!backend) return;
-		if (!deleting) {
-			deleting = true;
-			return;
-		}
+		if (!confirm(t('backends-delete-confirm', { name: backend.name }))) return;
 		busy = true;
 		error = null;
 		try {
 			await adminDelete(`/api/v0/admin/backends/${encodeURIComponent(backend.name)}`);
 			await onSaved();
+			onCancel?.();
 		} catch (err) {
 			error = String(err);
 		} finally {
 			busy = false;
-			deleting = false;
 		}
 	}
 
@@ -206,21 +203,23 @@
 			<span class="text-xs text-base-content/70">{t('backends-field-name')}</span>
 			<input class="input font-mono w-full" bind:value={name} required />
 		</label>
-		<label class="flex flex-col gap-1">
-			<span class="text-xs text-base-content/70">{t('openrouter-provider-field')}</span>
-			<select
-				class="select w-full"
-				aria-label={t('openrouter-provider-field')}
-				bind:value={provider}
-				onchange={() => {
-					if (provider === 'openrouter' && !baseUrl.trim()) baseUrl = 'https://openrouter.ai/api/v1';
-				}}
-			>
-				<option value="openai_compatible">{t('openrouter-provider-openai')}</option>
-				<option value="openrouter">{t('openrouter-provider-openrouter')}</option>
-			</select>
-			<span class="text-xs text-base-content/50">{t('openrouter-provider-hint')}</span>
-		</label>
+		{#if backend}
+			<label class="flex flex-col gap-1">
+				<span class="text-xs text-base-content/70">{t('openrouter-provider-field')}</span>
+				<select
+					class="select w-full"
+					aria-label={t('openrouter-provider-field')}
+					bind:value={provider}
+					onchange={() => {
+						if (provider === 'openrouter' && !baseUrl.trim()) baseUrl = 'https://openrouter.ai/api/v1';
+					}}
+				>
+					<option value="openai_compatible">{t('openrouter-provider-openai')}</option>
+					<option value="openrouter">{t('openrouter-provider-openrouter')}</option>
+				</select>
+				<span class="text-xs text-base-content/50">{t('openrouter-provider-hint')}</span>
+			</label>
+		{/if}
 		<label class="flex flex-col gap-1">
 			<span class="text-xs text-base-content/70">{t('backends-field-base-url')}</span>
 			<input class="input font-mono w-full" bind:value={baseUrl} required />
@@ -230,87 +229,13 @@
 			<input class="input font-mono w-full" type="password" autocomplete="off" bind:value={apiKey} placeholder={backend?.has_stored_key ? t('backends-field-api-key-keep') : t('backends-field-api-key-placeholder')} />
 			{#if backend?.api_key_hint}<span class="text-xs text-base-content/50">{t('backends-field-api-key-stored', { hint: backend.api_key_hint })}</span>{/if}
 		</label>
-		<label class="flex flex-col gap-1">
-			<span class="text-xs text-base-content/70">{t('backends-field-api-key-env')}</span>
-			<input class="input font-mono w-full" bind:value={apiKeyEnv} />
-		</label>
-		<label class="flex flex-col gap-1">
-			<span class="text-xs text-base-content/70">{t('backends-field-health-path')}</span>
-			<input class="input font-mono w-full" bind:value={healthPath} />
-		</label>
-		{#if provider === 'openrouter'}
-			<div class="flex flex-col gap-2">
-				<span class="text-xs text-base-content/70">{t('backends-field-pools')}</span>
-				<div class="flex flex-col gap-1.5">
-					{#each openRouterKinds as kind (kind)}
-						<div class="flex items-center gap-3">
-							<span class="w-36 flex-none text-sm">{kind}</span>
-							<select
-								class="select select-sm w-full"
-								aria-label={kind}
-								value={kindSelection[kind] ?? ''}
-								onchange={(event) => kindSelection = { ...kindSelection, [kind]: event.currentTarget.value }}
-							>
-								<option value="">{t('backends-pool-not-served')}</option>
-								<option value="new">+ {t('backends-pool-new', { kind })}</option>
-								{#each adoptablePools(kind) as pool (pool.name)}
-									<option value={pool.name}>{pool.name}</option>
-								{/each}
-							</select>
-						</div>
-					{/each}
-				</div>
-				<span class="text-xs text-base-content/50">{t('backends-field-pools-hint')}</span>
-			</div>
-		{:else}
+		{#if provider !== 'openrouter'}
 			<label class="flex flex-col gap-1">
 				<span class="text-xs text-base-content/70">{t('backends-field-pool')}</span>
 				<SearchableSelect options={poolOptions} bind:value={poolName} ariaLabel={t('backends-field-pool')} size="sm" class="w-full" />
 				<span class="text-xs text-base-content/50">{t('backends-field-pool-hint')}</span>
 			</label>
 		{/if}
-		<label class="flex flex-col gap-1">
-			<span class="text-xs text-base-content/70">{t('backends-field-weight')}</span>
-			<input class="input w-full" type="number" min="1" bind:value={weight} />
-		</label>
-		<label class="flex flex-col gap-1">
-			<span class="text-xs text-base-content/70">{t('backends-field-max-inflight')}</span>
-			<input class="input w-full" type="number" min="1" bind:value={maxInflight} />
-		</label>
-	</div>
-	<fieldset class="fieldset">
-		<legend class="fieldset-legend">{t('priority-backend-label')}</legend>
-		<select aria-label={t('priority-backend-label')} class="select w-full" bind:value={priorityMode}>
-			<option value="auto">{t('priority-mode-auto')}</option>
-			<option value="gateway">{t('priority-mode-gateway')}</option>
-			<option value="custom">{t('priority-mode-custom')}</option>
-		</select>
-		<p class="text-xs text-base-content/60">{t('priority-backend-help')}</p>
-		{#if priorityMode === 'auto'}<p class="text-xs text-base-content/60">{backend?.live?.detected_priority ? t('priority-detected') : t('priority-unreported')}</p>{/if}
-		{#if priorityMode === 'custom'}
-			<label class="fieldset"><span class="fieldset-legend">{t('priority-field')}</span><input class="input w-full font-mono" bind:value={priorityField} required /></label>
-			<div class="grid grid-cols-3 gap-2">
-				<label class="fieldset"><span class="fieldset-legend">{t('priority-low')}</span><input class="input w-full" type="number" step="1" bind:value={priorityLow} required /></label>
-				<label class="fieldset"><span class="fieldset-legend">{t('priority-medium')}</span><input class="input w-full" type="number" step="1" bind:value={priorityMedium} required /></label>
-				<label class="fieldset"><span class="fieldset-legend">{t('priority-high')}</span><input class="input w-full" type="number" step="1" bind:value={priorityHigh} required /></label>
-			</div>
-		{/if}
-	</fieldset>
-	<label class="flex flex-col gap-1">
-		<span class="text-xs text-base-content/70">{t('backends-field-models')}</span>
-		<input class="input font-mono w-full" bind:value={models} />
-	</label>
-	<label class="flex flex-col gap-1">
-		<span class="text-xs text-base-content/70">{t('backends-field-aliases')}</span>
-		<textarea bind:this={aliasesInput} class="textarea font-mono w-full" rows="3" bind:value={aliases}></textarea>
-	</label>
-	<label class="flex flex-col gap-1">
-		<span class="text-xs text-base-content/70">{t('backends-field-extra-headers')}</span>
-		<textarea class="textarea font-mono w-full" rows="3" bind:value={extraHeaders}></textarea>
-		<span class="text-xs text-base-content/50">{t('backends-field-extra-headers-hint')}</span>
-	</label>
-	<div class="flex flex-wrap gap-4">
-		<label class="label gap-2"><input class="checkbox checkbox-sm" type="checkbox" bind:checked={supportsEdit} /><span>{t('backends-field-supports-edit')}</span></label>
 	</div>
 	<div class="flex flex-col gap-2">
 		<div class="flex flex-wrap items-center gap-2">
@@ -342,16 +267,98 @@
 				<div class="flex flex-col gap-1">
 					<span class="text-xs text-base-content/60">{t('backends-test-insert-hint')}</span>
 					<div class="flex flex-wrap gap-1">
-						{#each testResult.models as model (model)}<button class="badge badge-outline badge-sm cursor-pointer font-mono" type="button" onclick={() => void insertModel(model)}>{model}</button>{/each}
+						{#each testResult.models as model (model)}<button class="badge badge-outline badge-sm cursor-pointer font-mono" type="button" onclick={() => { advancedOpen = true; void insertModel(model); }}>{model}</button>{/each}
 					</div>
 				</div>
 			{/if}
 		{/if}
 	</div>
-	<div class="flex items-center gap-2">
+	<details class="advanced" bind:open={advancedOpen}>
+		<summary>{t('backends-advanced')}</summary>
+		<div class="flex flex-col gap-3 pt-3">
+			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+				<label class="flex flex-col gap-1">
+					<span class="text-xs text-base-content/70">{t('backends-field-api-key-env')}</span>
+					<input class="input font-mono w-full" bind:value={apiKeyEnv} />
+				</label>
+				<label class="flex flex-col gap-1">
+					<span class="text-xs text-base-content/70">{t('backends-field-health-path')}</span>
+					<input class="input font-mono w-full" bind:value={healthPath} />
+				</label>
+				<label class="flex flex-col gap-1">
+					<span class="text-xs text-base-content/70">{t('backends-field-weight')}</span>
+					<input class="input w-full" type="number" min="1" bind:value={weight} />
+				</label>
+				<label class="flex flex-col gap-1">
+					<span class="text-xs text-base-content/70">{t('backends-field-max-inflight')}</span>
+					<input class="input w-full" type="number" min="1" bind:value={maxInflight} />
+				</label>
+			</div>
+			{#if provider === 'openrouter'}
+				<div class="flex flex-col gap-2">
+					<span class="text-xs text-base-content/70">{t('backends-field-pools')}</span>
+					<div class="flex flex-col gap-1.5">
+						{#each openRouterKinds as kind (kind)}
+							<div class="flex items-center gap-3">
+								<span class="w-36 flex-none text-sm">{kind}</span>
+								<select
+									class="select select-sm w-full"
+									aria-label={kind}
+									value={kindSelection[kind] ?? ''}
+									onchange={(event) => kindSelection = { ...kindSelection, [kind]: event.currentTarget.value }}
+								>
+									<option value="">{t('backends-pool-not-served')}</option>
+									<option value="new">+ {t('backends-pool-new', { kind })}</option>
+									{#each adoptablePools(kind) as pool (pool.name)}
+										<option value={pool.name}>{pool.name}</option>
+									{/each}
+								</select>
+							</div>
+						{/each}
+					</div>
+					<span class="text-xs text-base-content/50">{t('backends-field-pools-hint')}</span>
+				</div>
+			{/if}
+			<fieldset class="fieldset">
+				<legend class="fieldset-legend">{t('priority-backend-label')}</legend>
+				<select aria-label={t('priority-backend-label')} class="select w-full" bind:value={priorityMode}>
+					<option value="auto">{t('priority-mode-auto')}</option>
+					<option value="gateway">{t('priority-mode-gateway')}</option>
+					<option value="custom">{t('priority-mode-custom')}</option>
+				</select>
+				<p class="text-xs text-base-content/60">{t('priority-backend-help')}</p>
+				{#if priorityMode === 'auto'}<p class="text-xs text-base-content/60">{backend?.live?.detected_priority ? t('priority-detected') : t('priority-unreported')}</p>{/if}
+				{#if priorityMode === 'custom'}
+					<label class="fieldset"><span class="fieldset-legend">{t('priority-field')}</span><input class="input w-full font-mono" bind:value={priorityField} required /></label>
+					<div class="grid grid-cols-3 gap-2">
+						<label class="fieldset"><span class="fieldset-legend">{t('priority-low')}</span><input class="input w-full" type="number" step="1" bind:value={priorityLow} required /></label>
+						<label class="fieldset"><span class="fieldset-legend">{t('priority-medium')}</span><input class="input w-full" type="number" step="1" bind:value={priorityMedium} required /></label>
+						<label class="fieldset"><span class="fieldset-legend">{t('priority-high')}</span><input class="input w-full" type="number" step="1" bind:value={priorityHigh} required /></label>
+					</div>
+				{/if}
+			</fieldset>
+			<label class="flex flex-col gap-1">
+				<span class="text-xs text-base-content/70">{t('backends-field-models')}</span>
+				<input class="input font-mono w-full" bind:value={models} />
+			</label>
+			<label class="flex flex-col gap-1">
+				<span class="text-xs text-base-content/70">{t('backends-field-aliases')}</span>
+				<textarea bind:this={aliasesInput} class="textarea font-mono w-full" rows="3" bind:value={aliases}></textarea>
+			</label>
+			<label class="flex flex-col gap-1">
+				<span class="text-xs text-base-content/70">{t('backends-field-extra-headers')}</span>
+				<textarea class="textarea font-mono w-full" rows="3" bind:value={extraHeaders}></textarea>
+				<span class="text-xs text-base-content/50">{t('backends-field-extra-headers-hint')}</span>
+			</label>
+			<div class="flex flex-wrap gap-4">
+				<label class="label gap-2"><input class="checkbox checkbox-sm" type="checkbox" bind:checked={supportsEdit} /><span>{t('backends-field-supports-edit')}</span></label>
+			</div>
+		</div>
+	</details>
+	<div class="sticky bottom-0 z-10 flex items-center gap-2 border-t border-base-300 bg-base-100 py-3">
 		{#if backend}
 			<button class="btn btn-ghost btn-sm text-error" type="button" disabled={busy} onclick={() => void remove()}>
-				{deleting ? t('upstreams-delete-confirm') : t('backends-delete-backend')}
+				{t('backends-delete-backend')}
 			</button>
 		{/if}
 		<span class="flex-1"></span>
@@ -361,3 +368,17 @@
 		</button>
 	</div>
 </form>
+
+<style>
+	.advanced summary {
+		cursor: pointer;
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.03em;
+		text-transform: uppercase;
+		color: color-mix(in oklab, var(--color-base-content) 60%, transparent);
+	}
+	.advanced summary:hover {
+		color: var(--color-base-content);
+	}
+</style>

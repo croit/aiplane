@@ -225,6 +225,103 @@ export function poolCoverage(pool: Pool, backends: Backend[]): Coverage[] {
 		}));
 }
 
+export interface BoardGroup {
+	pool: Pool | null;
+	backends: Backend[];
+}
+
+/**
+ * The board's grouping: every pool in its declared order, then the backends
+ * no pool holds. An empty pool still gets a band — it is a topology row that
+ * needs editing, not one that can be hidden.
+ */
+export function boardGroups(pools: Pool[], backends: Backend[]): BoardGroup[] {
+	const byName = new Map(backends.map((backend) => [backend.name, backend]));
+	const assigned = new Set(pools.flatMap((pool) => pool.backends));
+	const groups: BoardGroup[] = [...pools]
+		.sort((left, right) => left.sort_order - right.sort_order || left.name.localeCompare(right.name))
+		.map((pool) => ({
+			pool,
+			backends: pool.backends.flatMap((name) => {
+				const backend = byName.get(name);
+				return backend ? [backend] : [];
+			})
+		}));
+	const unassigned = backends
+		.filter((backend) => !assigned.has(backend.name))
+		.sort((left, right) => left.name.localeCompare(right.name));
+	if (unassigned.length) groups.push({ pool: null, backends: unassigned });
+	return groups;
+}
+
+/**
+ * The live view of a backend *within* one pool. A backend's status event
+ * carries the pool the gateway currently routes it through; when that is a
+ * different pool, its own counters say nothing about this one.
+ */
+export function liveForPool(pool: Pool, backend: Backend): LiveBackend | null {
+	if (backend.live?.pool === pool.name) return backend.live;
+	return pool.live_backends?.[backend.name] ?? backend.live;
+}
+
+export interface PoolProblem {
+	key: string;
+	params: Record<string, string>;
+}
+
+/**
+ * Every way a pool can be configured but not work, as message keys. The board
+ * renders these inline under the pool's band; the copy lives in the catalogs.
+ */
+export function poolProblems(pool: Pool, backends: Backend[], coverage: Coverage[]): PoolProblem[] {
+	const members = pool.backends.flatMap((name) => {
+		const backend = backends.find((candidate) => candidate.name === name);
+		return backend ? [backend] : [];
+	});
+	const resolved = members.map((backend) => ({ backend, live: liveForPool(pool, backend) }));
+	const withLive = resolved.flatMap(({ backend, live }) => (live ? [{ backend, live }] : []));
+	const problems: PoolProblem[] = [];
+	if (pool.backends.length === 0) problems.push({ key: 'upstreams-problem-no-backends', params: {} });
+	if (withLive.length && withLive.every(({ live }) => !live.enabled)) {
+		problems.push({ key: 'upstreams-problem-all-drained', params: {} });
+	} else if (withLive.length && withLive.every(({ live }) => !live.healthy || !live.enabled)) {
+		problems.push({ key: 'upstreams-problem-all-down', params: {} });
+	}
+	const rejected = withLive.filter(({ live }) => live.auth_failed).map(({ backend }) => backend.name);
+	if (rejected.length) problems.push({ key: 'upstreams-problem-auth', params: { backends: rejected.join(', ') } });
+	// An OpenRouter backend with an empty allowlist is unconfigured, not
+	// broken — its selection happens in the account panel.
+	const modelless = withLive
+		.filter(({ backend, live }) => {
+			if (live.models.length > 0) return false;
+			return !(backend.provider === 'openrouter' && pool.models.length === 0);
+		})
+		.map(({ backend }) => backend.name);
+	if (modelless.length) problems.push({ key: 'upstreams-problem-no-models', params: { backends: modelless.join(', ') } });
+	const brokenAliases = members.flatMap((backend) => {
+		const live = liveForPool(pool, backend);
+		return backend.aliases
+			.filter(({ target }) => (target ? !live?.models.includes(target) : live?.models.length !== 1))
+			.map(({ alias }) => `${backend.name}:${alias}`);
+	});
+	if (brokenAliases.length) {
+		problems.push({ key: 'upstreams-problem-broken-aliases', params: { aliases: brokenAliases.join(', ') } });
+	}
+	const partial = coverage
+		.filter(({ serving, total }) => serving > 0 && serving < total)
+		.map(({ name, serving, total }) => `${name} (${serving}/${total})`);
+	if (partial.length) {
+		problems.push({ key: 'upstreams-problem-partial-coverage', params: { models: partial.join(', ') } });
+	}
+	const unserved = coverage.filter(({ serving }) => serving === 0).map(({ name }) => name);
+	if (unserved.length && withLive.length) {
+		problems.push({ key: 'upstreams-problem-unserved-allowlist', params: { models: unserved.join(', ') } });
+	}
+	const missing = pool.backends.filter((name) => !backends.some((backend) => backend.name === name));
+	if (missing.length) problems.push({ key: 'upstreams-problem-missing-backends', params: { backends: missing.join(', ') } });
+	return problems;
+}
+
 export function splitList(value: string): string[] {
 	return value.split(',').map((item) => item.trim()).filter(Boolean);
 }

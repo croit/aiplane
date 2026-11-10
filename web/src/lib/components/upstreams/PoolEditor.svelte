@@ -9,16 +9,18 @@
 	interface Props {
 		pool?: Pool | null;
 		backends: Backend[];
+		knownModels?: string[];
 		poolKinds: string[];
 		poolStrategies: string[];
 		groups: string[];
 		existingNames: string[];
 		sortOrder: number;
 		onSaved: () => void | Promise<void>;
+		onDelete?: () => void | Promise<void>;
 		onCancel?: () => void;
 	}
 
-	let { pool = null, backends, poolKinds, poolStrategies, groups, existingNames, sortOrder, onSaved, onCancel }: Props = $props();
+	let { pool = null, backends, knownModels = [], poolKinds, poolStrategies, groups, existingNames, sortOrder, onSaved, onDelete, onCancel }: Props = $props();
 	let name = $state(untrack(() => pool?.name ?? ''));
 	let kind = $state(untrack(() => pool?.kind ?? 'chat'));
 	let strategy = $state(untrack(() => pool?.strategy ?? 'least_inflight'));
@@ -34,6 +36,29 @@
 	let error = $state<string | null>(null);
 	// A new pool, or an existing one being renamed onto a name in use.
 	let nameTaken = $derived(name.trim() !== pool?.name && existingNames.includes(name.trim()));
+	let pinned = $derived(splitList(models));
+
+	function toggleModel(model: string, checked: boolean) {
+		const current = splitList(models);
+		const next = checked
+			? current.includes(model) ? current : [...current, model]
+			: current.filter((candidate) => candidate !== model);
+		models = next.join(', ');
+	}
+
+	async function remove() {
+		if (!pool || !onDelete) return;
+		if (!confirm(t('pools-delete-confirm', { name: pool.name }))) return;
+		busy = true;
+		error = null;
+		try {
+			await onDelete();
+		} catch (err) {
+			error = String(err);
+		} finally {
+			busy = false;
+		}
+	}
 
 	function setAssigned(backendName: string, checked: boolean) {
 		assigned = checked
@@ -110,11 +135,26 @@
 		<span class="text-xs text-base-content/70">{t('pools-field-fallback-offline')}</span>
 		<input class="input font-mono w-full" bind:value={fallbackOffline} placeholder={t('pools-field-fallback-offline-placeholder')} />
 	</label>
-	<label class="flex flex-col gap-1">
-		<span class="text-xs text-base-content/70">{t('pools-field-models')}</span>
-		<input class="input font-mono w-full" bind:value={models} />
-		<span class="text-xs text-base-content/50">{t('pools-field-models-hint')}</span>
-	</label>
+	<div class="flex flex-col gap-2">
+		<label class="flex flex-col gap-1">
+			<span class="text-xs text-base-content/70">{t('pools-field-models')}</span>
+			<input class="input font-mono w-full" bind:value={models} />
+			<span class="text-xs text-base-content/50">{t('pools-field-models-hint')}</span>
+		</label>
+		{#if knownModels.length}
+			<div class="flex flex-col gap-1">
+				<span class="text-xs text-base-content/60">{t('pools-field-models-chips')}</span>
+				<div class="flex flex-wrap gap-1.5">
+					{#each knownModels as model (model)}
+						<label class="chip-choice" title={model}>
+							<input class="checkbox checkbox-xs" type="checkbox" checked={pinned.includes(model)} onchange={(event) => toggleModel(model, event.currentTarget.checked)} />
+							<span class="font-mono">{model}</span>
+						</label>
+					{/each}
+				</div>
+			</div>
+		{/if}
+	</div>
 	<div class="flex flex-col gap-1">
 		<span class="text-xs text-base-content/70">{t('pools-field-allowed-groups')}</span>
 		<GroupSelect {groups} bind:values={allowedGroups} label={t('pools-field-allowed-groups')} />
@@ -150,10 +190,33 @@
 	<div class="flex flex-wrap gap-4">
 		<label class="label gap-2"><input class="checkbox checkbox-sm" type="checkbox" bind:checked={enforceLimits} /><span>{t('pools-field-enforce-limits')}</span></label>
 	</div>
-	<div class="flex justify-end gap-2">
+	<div class="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-2 border-t border-base-300 bg-base-100 py-3">
+		{#if pool && onDelete}
+			<button class="btn btn-ghost btn-sm text-error me-auto" type="button" disabled={busy} onclick={() => void remove()}>{t('pools-delete-pool')}</button>
+		{/if}
 		{#if onCancel}<button class="btn btn-ghost btn-sm" type="button" onclick={onCancel}>{t('upstreams-cancel')}</button>{/if}
 		<button class="btn btn-primary btn-sm" type="submit" disabled={busy || !name.trim() || (nameTaken && !overwrite)}>
 			{t('pools-save-pool')}
 		</button>
 	</div>
 </form>
+
+<style>
+	.chip-choice {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		max-width: 100%;
+		border: 1px solid var(--color-base-300);
+		border-radius: calc(var(--radius-box) / 3);
+		padding: 0.125rem 0.5rem;
+		font-size: 0.6875rem;
+		cursor: pointer;
+	}
+	.chip-choice:hover {
+		background-color: color-mix(in oklab, var(--color-base-content) 5%, transparent);
+	}
+	.chip-choice span {
+		overflow-wrap: anywhere;
+	}
+</style>

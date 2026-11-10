@@ -98,10 +98,59 @@
 		};
 	}
 
+	/**
+	 * Draft guard: the baseline a kind loaded with. A kind is dirty when its
+	 * draft diverges from that baseline — disabling a dirty kind, or leaving
+	 * the page with a dirty kind, asks before discarding.
+	 */
+	let baselines = $state<Record<string, Record<string, Draft>>>({});
+
+	function draftDiverges(kind: string, id: string): boolean {
+		const draft = (drafts[kind] ?? {})[id];
+		const base = (baselines[kind] ?? {})[id];
+		if (!draft) return false;
+		if (!base) return draft.selected;
+		return (
+			draft.selected !== base.selected ||
+			draft.prompt !== base.prompt ||
+			draft.completion !== base.completion ||
+			draft.strategy !== base.strategy ||
+			draft.min !== base.min
+		);
+	}
+
+	function changedCount(kind: string): number {
+		return Object.keys(drafts[kind] ?? {}).filter((id) => draftDiverges(kind, id)).length;
+	}
+
+	function isDirty(kind: string): boolean {
+		return changedCount(kind) > 0;
+	}
+
+	let dirtyKinds = $derived(kinds.filter((kind) => isDirty(kind)));
+
+	$effect(() => {
+		dirtyKinds;
+		const handler = (event: BeforeUnloadEvent) => {
+			if (dirtyKinds.length > 0) {
+				event.preventDefault();
+				event.returnValue = '';
+			}
+		};
+		window.addEventListener('beforeunload', handler);
+		return () => window.removeEventListener('beforeunload', handler);
+	});
+
 	function resetDraft(next: OpenRouterView, kind: string) {
 		const nextDraft: Record<string, Draft> = {};
 		for (const model of next.catalog) nextDraft[model.id] = draftFor(model);
 		drafts = { ...drafts, [kind]: nextDraft };
+		// Deep copy per entry: the baseline must not share the draft's objects,
+		// or a bound mutation (bind:checked) would move both and the diff
+		// would never be seen.
+		const base: Record<string, Draft> = {};
+		for (const [id, entry] of Object.entries(nextDraft)) base[id] = { ...entry };
+		baselines = { ...baselines, [kind]: base };
 	}
 
 	async function loadKind(kind: string) {
@@ -133,6 +182,7 @@
 
 	async function setKind(kind: string, enabled: boolean) {
 		if (!backendName) return;
+		if (!enabled && isDirty(kind) && !confirm(t('openrouter-dirty-confirm', { kind }))) return;
 		togglingKind = kind;
 		error = null;
 		savedKind = null;
@@ -140,6 +190,8 @@
 			await adminPost('/api/v0/admin/upstreams/openrouter/kind', { backend: backendName, kind, enabled });
 			expanded = null;
 			views = { ...views, [kind]: null };
+			drafts = { ...drafts, [kind]: {} };
+			baselines = { ...baselines, [kind]: {} };
 			await onChanged();
 		} catch (err) {
 			error = String(err);
@@ -150,6 +202,7 @@
 
 	async function refreshPrices() {
 		if (!backendName) return;
+		if (expanded && isDirty(expanded) && !confirm(t('openrouter-dirty-confirm', { kind: expanded }))) return;
 		refreshing = true;
 		error = null;
 		try {
@@ -283,18 +336,18 @@
 </script>
 
 {#if openrouterBackends.length > 0}
-	<section class="card card-border bg-base-100" data-testid="openrouter-panel">
+	<section class="card card-border bg-base-100" data-testid="openrouter-panel" id="openrouter-account">
 		<div class="card-body gap-4">
 			<header class="flex flex-wrap items-start justify-between gap-3">
 				<div class="max-w-3xl">
-					<h3 class="card-title text-base">{t('openrouter-heading')}</h3>
+					<h3 class="card-title text-base" tabindex="-1" data-openrouter-heading>{t('openrouter-heading')}</h3>
 					<p class="text-sm text-base-content/70">{t('openrouter-description')}</p>
 				</div>
 				<div class="flex flex-wrap items-end gap-2">
 					{#if openrouterBackends.length > 1}
 						<label class="flex flex-col gap-1">
 							<span class="text-xs text-base-content/70">{t('openrouter-backend')}</span>
-							<select class="select select-sm" bind:value={backendName} onchange={() => { expanded = null; views = {}; drafts = {}; }}>
+							<select class="select select-sm" bind:value={backendName} onchange={() => { expanded = null; views = {}; drafts = {}; baselines = {}; }}>
 								{#each openrouterBackends as backend (backend.name)}
 									<option value={backend.name}>{backend.name}</option>
 								{/each}
@@ -508,7 +561,7 @@
 
 							<div class="flex items-center justify-end gap-2">
 								<button class="btn btn-primary btn-sm" type="button" disabled={savingKind === kind || loadingKind === kind} onclick={() => void saveKind()}>
-									{savingKind === kind ? '…' : t('openrouter-save')}
+									{savingKind === kind ? '…' : (isDirty(kind) ? t('openrouter-save-changed', { count: changedCount(kind) }) : t('openrouter-save'))}
 								</button>
 							</div>
 						</div>

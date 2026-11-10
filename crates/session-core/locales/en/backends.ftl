@@ -1,11 +1,6 @@
-# Strings owned by `gateway/src/rama_server/pages/backends.rs` — the
-# read-only `/admin/backends` operator view of the upstream pools.
-
-
-backends-status-down = down
+# The upstream board and the backend editor: the pool band's status word, the
+# editor's fields, and the connection-test outcomes.
 backends-status-up = up
-
-backends-inflight-label = inflight { $load }
 
 # Backend CRUD editor (add/edit/delete backends stored in the DB topology).
 backends-apply-changes = Apply changes
@@ -22,18 +17,9 @@ backends-pool-not-served = Not served
 backends-pool-new = New: openrouter-{ $kind }
 backends-save-backend = Save backend
 backends-delete-backend = Delete
+backends-delete-confirm = Delete backend “{ $name }”? Its pool keeps the other backends.
+backends-advanced = Advanced settings
 
-# An alias that is configured but would not route. The tooltip names the models
-# the backend actually advertises, because the usual cause is a target id typed
-# from memory ("qwen-32b") against a server that reports its full repo path.
-# Save-time check on the aliases textarea.
-# Save-time check on the aliases textarea.
-# Two states that leave a backend green but unusable.
-# Maintenance switch.
-backends-status-drained = maintenance
-
-# SPA backend rows: the drain switch, the per-hour load figure, and the
-# delete confirmation.
 backends-add-heading = Add backend
 backends-name-taken = A backend with this name already exists — saving would overwrite it, including its base URL, key, models and pool. Pick a different name to add a second backend.
 backends-field-api-key-placeholder = API key (stored encrypted)
@@ -47,18 +33,15 @@ backends-field-aliases = Aliases (name=target per line)
 backends-field-extra-headers = Extra headers (name: value per line)
 backends-field-extra-headers-hint = Sent with every request to this backend, after the API key. For example the anthropic-version: 2023-06-01 that Anthropic requires.
 backends-field-supports-edit = Supports image editing
-backends-status-saturated = saturated
-backends-auth-failed-title = The upstream rejected the health probe's credentials (401/403), so model discovery is off — nothing new can become routable through this backend. Check the API key; if it uses an env var, check that the variable is actually set.
-backends-auth-failed = key rejected
 backends-no-models-title = This backend advertises no models, so nothing routes to it and a bare alias has nothing to bind to. Usually a health probe that never returned data.
-backends-no-models = no models advertised
+backends-no-models = no models
 backends-key-env-badge = key: env { $var }
 backends-key-env-unset-badge = env { $var } NOT SET
 backends-enabled-hint = Turn off to drain this backend for maintenance. Takes effect immediately — no "Apply changes" needed. Its models stay known, so the pool's other backends take over and clients see a temporary outage, never "model not found".
 backends-enabled-label = Serving traffic
 backends-activity-summary = 15m { $m15 } · 30m { $m30 } · 60m { $m60 }
-backends-aliases-label = aliases:
 backends-alias-target-title = alias → { $target }
+backends-alias-missing-title = alias → { $target } — this backend does not advertise that model
 backends-alias-disabled-title = bare alias disabled — this backend serves multiple models; give it an explicit target (map form)
 backends-alias-disabled-label = { $name } (disabled)
 backends-fallback-offline-title = fallback_offline: served when every backend for a known model in this pool is down
@@ -131,6 +114,8 @@ openrouter-key-placeholder = New API key
 openrouter-key-save = Save key
 openrouter-key-saved = Key updated
 openrouter-sort = Sort
+openrouter-save-changed = Save selection · { $count } changed
+openrouter-dirty-confirm = { $kind } has unsaved changes. Discard them?
 openrouter-provider-field = Provider
 openrouter-provider-openai = OpenAI-compatible
 openrouter-provider-openrouter = OpenRouter

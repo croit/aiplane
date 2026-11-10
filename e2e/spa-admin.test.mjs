@@ -67,6 +67,7 @@ test("backend priority errors are focused, visible and use the chosen UI languag
         await page.goto(`${BASE}/admin/models?tab=upstreams`);
         await page.getByRole("button", { name: "Edit backend", exact: true }).first().click();
         const modal = page.locator("dialog[open]");
+        await modal.getByText("Advanced settings", { exact: true }).click();
         await modal.getByLabel("Backend prioritization", { exact: true }).selectOption("custom");
         for (const label of ["Low", "Medium", "High"]) await modal.getByLabel(label, { exact: true }).fill("0");
         const rejected = page.waitForResponse((response) => response.url().endsWith("/api/v0/admin/backends") && response.request().method() === "PUT");
@@ -522,17 +523,21 @@ test("upstreams keeps pool topology, backend controls, and fallbacks together", 
     await page.getByRole("heading", { name: "Unknown-model fallbacks" }).waitFor();
 
     for (const pool of topology.pools) {
-        const card = page.getByTestId(`upstream-pool-${pool.name}`);
-        assert.equal(await card.count(), 1, `pool ${pool.name} must have one card`);
+        const band = page.getByTestId(`upstream-pool-${pool.name}`);
+        assert.equal(await band.count(), 1, `pool ${pool.name} must have one band`);
+        assert.equal(await band.getByRole("heading", { name: pool.name, exact: true }).count(), 1);
         for (const backendName of pool.backends) {
             assert.equal(
-                await card.getByTestId(`upstream-backend-${backendName}`).count(),
+                await band.getByTestId(`upstream-backend-${backendName}`).count(),
                 1,
-                `${backendName} must be nested in pool ${pool.name}`,
+                `${backendName} must sit inside pool ${pool.name}`,
             );
         }
-        assert.equal(await card.getByText("Edit pool", { exact: true }).count(), 1);
-        assert.equal(await card.getByText("What clients see", { exact: true }).count(), 1);
+        if (pool.name.startsWith("openrouter-")) {
+            assert.equal(await band.getByRole("button", { name: "Account", exact: true }).count(), 1);
+        } else {
+            assert.equal(await band.getByRole("button", { name: "Edit pool", exact: true }).count(), 1);
+        }
     }
 
     const firstBackend = topology.backends.find((backend) => backend.live);

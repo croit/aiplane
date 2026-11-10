@@ -1,10 +1,8 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
-
-
-backends-status-down = ausgefallen
+# The upstream board and the backend editor: the pool band's status word, the
+# editor's fields, and the connection-test outcomes.
 backends-status-up = aktiv
 
-backends-inflight-label = aktiv { $load }
 
 # Backend-CRUD-Editor (Backends in der DB-Topologie hinzufügen/bearbeiten/löschen).
 backends-apply-changes = Änderungen anwenden
@@ -18,6 +16,8 @@ backends-pool-not-served = Nicht bedient
 backends-pool-new = Neu: openrouter-{ $kind }
 backends-save-backend = Backend speichern
 backends-delete-backend = Löschen
+backends-delete-confirm = Backend „{ $name }“ löschen? Sein Pool behält die übrigen Backends.
+backends-advanced = Erweiterte Einstellungen
 
 backends-field-api-key = API-Schlüssel
 backends-field-api-key-keep = leer lassen, um den aktuellen Schlüssel zu behalten
@@ -28,7 +28,6 @@ backends-field-api-key-stored = Gespeicherter Key: { $hint }
 # Save-time check on the aliases textarea.
 # Two states that leave a backend green but unusable.
 # Maintenance switch.
-backends-status-drained = Wartung
 
 # Backend-Zeilen der SPA: Wartungsschalter, Last pro Stunde und Löschbestätigung.
 backends-add-heading = Backend hinzufügen
@@ -44,18 +43,15 @@ backends-field-aliases = Aliase (name=target pro Zeile)
 backends-field-extra-headers = Zusätzliche Header (name: value pro Zeile)
 backends-field-extra-headers-hint = Wird mit jeder Anfrage an dieses Backend gesendet, nach dem API-Schlüssel. Beispiel: anthropic-version: 2023-06-01, den Anthropic verlangt.
 backends-field-supports-edit = Unterstützt Bildbearbeitung
-backends-status-saturated = ausgelastet
-backends-auth-failed-title = Der Upstream hat die Zugangsdaten des Health-Probes abgelehnt (401/403), damit ist die Modell-Erkennung aus — über dieses Backend kann nichts Neues routbar werden. API-Schlüssel prüfen; bei einer Env-Var prüfen, ob die Variable überhaupt gesetzt ist.
-backends-auth-failed = Key abgelehnt
 backends-no-models-title = Dieses Backend meldet keine Modelle, also routet nichts dorthin und ein nackter Alias hat nichts, woran er binden könnte. Meist ein Health-Probe, der nie Daten geliefert hat.
-backends-no-models = keine Modelle verfügbar
+backends-no-models = keine Modelle
 backends-key-env-badge = Key: env { $var }
 backends-key-env-unset-badge = env { $var } NICHT GESETZT
 backends-enabled-hint = Ausschalten, um dieses Backend für Wartungsarbeiten zu leeren. Wirkt sofort — kein „Änderungen anwenden“ nötig. Die Modelle bleiben bekannt, also übernehmen die anderen Backends des Pools und Clients sehen einen temporären Ausfall, nie „Modell nicht gefunden“.
 backends-enabled-label = Nimmt Traffic an
 backends-activity-summary = 15m { $m15 } · 30m { $m30 } · 60m { $m60 }
-backends-aliases-label = Aliase:
 backends-alias-target-title = Alias → { $target }
+backends-alias-missing-title = Alias → { $target } — dieses Backend meldet dieses Modell nicht
 backends-alias-disabled-title = Bare-Alias deaktiviert — dieses Backend bedient mehrere Modelle; geben Sie ihm ein explizites Ziel (Zuordnungsformular)
 backends-alias-disabled-label = { $name } (deaktiviert)
 backends-fallback-offline-title = fallback_offline: wird ausgeliefert, wenn jedes Backend für ein bekanntes Modell in diesem Pool ausgefallen ist
@@ -127,6 +123,8 @@ openrouter-key-placeholder = Neuer API-Key
 openrouter-key-save = Key speichern
 openrouter-key-saved = Key aktualisiert
 openrouter-sort = Sortierung
+openrouter-save-changed = Auswahl speichern · { $count } geändert
+openrouter-dirty-confirm = { $kind } hat ungespeicherte Änderungen. Verwerfen?
 openrouter-provider-field = Provider
 openrouter-provider-openai = OpenAI-compatible
 openrouter-provider-openrouter = OpenRouter

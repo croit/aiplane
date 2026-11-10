@@ -7,23 +7,20 @@ pools-field-models = 提供的模型（逗号分隔）
 pools-field-backends = 后端
 pools-save-pool = 保存池
 pools-delete-pool = 删除
+pools-delete-confirm = 删除资源池“{ $name }”？其中的后端会保留，并变为未分配。
 
 # SPA 池卡片：两行摘要与删除确认。
 pools-add-heading = 添加池
 pools-fallbacks-heading = 未知模型回退
 pools-fallbacks-description = 当请求指定了网关从未见过的模型时，为该类型替换使用此模型。留空 = 未命中时返回 404。
 upstreams-problems-heading = 该池未完全正常工作
-upstreams-coverage-heading = 客户端看到的内容
-upstreams-coverage-hint = 正是 GET /v1/models 为该池返回的名称，并附上当前有多少后端能够提供它。任何低于“全部”的情况都意味着该名称让你的一部分硬件在空转。
-upstreams-coverage-none-title = 当前没有后端能提供这个名称。相关请求会收到临时不可用错误。
-upstreams-coverage-partial-title = 只有部分后端提供这个名称——相关请求只用到池的一部分，其余在空转。通常是别名的目标与某个后端公布的模型不一致。
-upstreams-coverage-full-title = 该池的每个后端都提供这个名称。
 pools-name-taken = 同名的池已存在——保存会替换它，包括其后端和模型。请换一个名称以创建新池。
 pools-field-strategy = 策略
 pools-field-strategy-hint = prefix_affinity 让同一会话继续落在已持有其 KV 缓存的副本上（多 GPU 的聊天/智能体流量首选——其他策略会把相邻回合分散到不同副本，每次都要重付一次完整 prefill），同时在某个后端确实更繁忙时仍会分流。least_inflight 按当前负载均衡；round_robin 按权重轮转。
 pools-field-fallback-offline = 离线回退模型
 pools-field-fallback-offline-placeholder = 当所有后端都离线时提供服务
 pools-field-models-hint = 设置后，只提供这些 id，且不再询问后端有哪些模型 — 适用于 /models 列出的是别的内容或遗漏了某个模型的情况。留空 = 通过每个后端的 /models 发现模型。
+pools-field-models-chips = 由此资源池的后端上报 — 点击可固定或取消
 pools-field-allowed-groups = 允许的组
 pools-field-allowed-groups-hint = 允许查看和使用此池模型的 AIplane 组。未选择 = 所有人。管理员始终有权限。在 管理 → 组 中管理组。
 pools-field-voices = 语音（每行 lang=voice）

@@ -5,12 +5,17 @@ import {
 	activityCounts,
 	backendTestFailure,
 	backendAssignments,
+	boardGroups,
+	liveForPool,
+	poolProblems,
 	parallelismMismatch,
 	completeAliasLine,
 	poolCoverage,
 	parseHeaders,
 	formatHeaders,
 	type Backend,
+	type Coverage,
+	type LiveBackend,
 	type Pool, naturalSort } from './upstreams.ts';
 
 const backends: Backend[] = [
@@ -234,4 +239,105 @@ test('extra headers format back to the editor field', () => {
 		'anthropic-version: 2023-06-01\nx-trace-id: abc'
 	);
 	assert.equal(formatHeaders({}), '');
+});
+
+function liveView(overrides: Partial<LiveBackend> = {}): LiveBackend {
+	return {
+		detected_priority: null,
+		healthy: true,
+		enabled: true,
+		auth_failed: false,
+		inflight: 0,
+		max_inflight: 8,
+		models: ['model-a'],
+		pool: 'chat',
+		profile: 'generic',
+		detected_version: null,
+		detected_max_parallel: null,
+		detected_at: null,
+		...overrides
+	};
+}
+
+function backendWith(overrides: Partial<Backend> = {}): Backend {
+	return { ...backends[0], aliases: [], ...overrides };
+}
+
+test('the board groups backends by pool order and keeps an empty pool visible', () => {
+	const later: Pool = { ...pool, name: 'gpu', sort_order: -1, backends: [] };
+	const groups = boardGroups([pool, later], backends);
+	assert.deepEqual(groups.map((group) => group.pool?.name ?? null), ['gpu', 'chat', null]);
+	// A pool without members is still a topology row that needs editing.
+	assert.deepEqual(groups[0].backends, []);
+	assert.deepEqual(groups[1].backends.map((backend) => backend.name), ['gpu-0', 'gpu-1']);
+	// Backends no pool holds land in one trailing band.
+	assert.deepEqual(groups[2].backends.map((backend) => backend.name), ['orphan']);
+});
+
+test('a status event from another pool never overrides the view this pool has', () => {
+	const poolView: Pool = { ...pool, live_backends: { 'gpu-0': liveView({ inflight: 2 }) } };
+	const moved = backendWith({ live: liveView({ pool: 'other', inflight: 9 }) });
+	assert.equal(liveForPool(poolView, moved)?.inflight, 2);
+	// The pool's own view is used as-is.
+	assert.equal(liveForPool(pool, backends[0])?.inflight, 2);
+	// Without a per-pool view, the last status is better than an empty row.
+	assert.equal(liveForPool({ ...pool, live_backends: undefined }, moved)?.inflight, 9);
+});
+
+test('a healthy pool with full coverage and working aliases has nothing to report', () => {
+	const coverage: Coverage[] = [{ name: 'model-a', serving: 2, total: 2 }];
+	assert.deepEqual(poolProblems(pool, backends, coverage), []);
+});
+
+test('an empty pool says nothing can serve a request', () => {
+	assert.deepEqual(poolProblems({ ...pool, backends: [] }, backends, []), [
+		{ key: 'upstreams-problem-no-backends', params: {} }
+	]);
+});
+
+test('a pool whose every backend is drained is named as paused, not down', () => {
+	const drained = [backendWith({ name: 'gpu-0', live: liveView({ enabled: false }) })];
+	assert.deepEqual(poolProblems({ ...pool, backends: ['gpu-0'] }, drained, []).map((problem) => problem.key), [
+		'upstreams-problem-all-drained'
+	]);
+	const down = [backendWith({ name: 'gpu-0', live: liveView({ healthy: false }) })];
+	assert.deepEqual(poolProblems({ ...pool, backends: ['gpu-0'] }, down, []).map((problem) => problem.key), [
+		'upstreams-problem-all-down'
+	]);
+});
+
+test('a rejected key and an empty model list name the backends they affect', () => {
+	const rejected = [backendWith({ name: 'gpu-0', live: liveView({ auth_failed: true, models: [] }) })];
+	const problems = poolProblems({ ...pool, backends: ['gpu-0'] }, rejected, []);
+	assert.deepEqual(problems.find((problem) => problem.key === 'upstreams-problem-auth')?.params, {
+		backends: 'gpu-0'
+	});
+	assert.deepEqual(problems.find((problem) => problem.key === 'upstreams-problem-no-models')?.params, {
+		backends: 'gpu-0'
+	});
+});
+
+test('an OpenRouter account with no allowlist is unconfigured, not broken', () => {
+	const account = [
+		backendWith({ name: 'openrouter', provider: 'openrouter', live: liveView({ models: [] }) })
+	];
+	const problems = poolProblems({ ...pool, backends: ['openrouter'], models: [] }, account, []);
+	assert.deepEqual(problems.map((problem) => problem.key), []);
+});
+
+test('partial coverage, unserved allowlist entries and ghost members are reported', () => {
+	const coverage: Coverage[] = [
+		{ name: 'model-a', serving: 1, total: 2 },
+		{ name: 'model-b', serving: 0, total: 2 }
+	];
+	const problems = poolProblems({ ...pool, backends: ['gpu-0', 'gpu-1', 'ghost'] }, backends, coverage);
+	assert.deepEqual(problems.find((problem) => problem.key === 'upstreams-problem-partial-coverage')?.params, {
+		models: 'model-a (1/2)'
+	});
+	assert.deepEqual(problems.find((problem) => problem.key === 'upstreams-problem-unserved-allowlist')?.params, {
+		models: 'model-b'
+	});
+	assert.deepEqual(problems.find((problem) => problem.key === 'upstreams-problem-missing-backends')?.params, {
+		backends: 'ghost'
+	});
 });

@@ -225,7 +225,7 @@ Where nothing was detected there is no ceiling to compare against, so the field 
 
 ### Concurrency
 
-llama.cpp reports its slot count; where that is **below** the configured `max_inflight`, the backend card says so.
+llama.cpp reports its slot count; where that is **below** the configured `max_inflight`, the backend's board row marks it with `▲` and its expanded details name the server's figure.
 
 Ollama has the more dangerous default — one request per model (`OLLAMA_NUM_PARALLEL`), queueing up to 512 rather than rejecting, so the picker sees free slots, keeps dispatching, and back-pressure quietly stops applying, with nothing erroring and everything getting slower. It reports that number nowhere, so **the badge cannot warn about it**. Set `max_inflight` to match `OLLAMA_NUM_PARALLEL` by hand.
 
@@ -261,9 +261,9 @@ When a request routes through an alias AIplane **rewrites the outgoing request b
 
 ### The two ways an alias goes quiet
 
-Both of these produce an alias that is configured, listed in the editor, and routes nowhere. Together they caused a production outage, so `/admin/upstreams` now renders each one as an **amber chip** (`⇸` rather than `→`) whose tooltip names both the problem and the ids the backend actually serves.
+Both of these produce an alias that is configured, listed in the editor, and routes nowhere. Together they caused a production outage, so the upstream board flags them twice: the pool band's problem strip names every alias that routes nowhere (`backend:alias`), and the backend's expanded row shows the affected chip in amber, with a tooltip naming the target that the backend does not advertise.
 
-- **A bare alias with nothing to bind to.** The classic cause is an `api_key_env` naming a variable that isn't set: `/models` answers `401`, which counts as *reachable* — so the backend shows a green "up" badge — while the model set stays empty, so the alias binds to nothing and clients get `404`. The page now also flags the rejected credential ("key rejected"), the empty model set ("no models advertised"), and an env var that isn't set, in red.
+- **A bare alias with nothing to bind to.** The classic cause is an `api_key_env` naming a variable that isn't set: `/models` answers `401`, which counts as *reachable* — so the row shows its green lamp — while the model set stays empty, so the alias binds to nothing and clients get `404`. The row also names the rejected credential (*Key rejected*) and the empty model set (*No models advertised*), and the pool band lists the backends whose key was rejected or which advertise nothing.
 - **A map alias whose target isn't served.** `default=qwen-32b` against a server that advertises `unsloth/Qwen3.8-27B-NVFP4` looks completely correct in the editor. Self-hosted servers report full repo paths, not the short name anyone would guess, so use **Test connection** in the backend editor: it calls the upstream with the credentials currently typed in, reports the HTTP status and whether authentication was accepted, and lists the exact model ids — each one click-to-insert into the aliases field.
 
 ## Fallback models
@@ -352,7 +352,7 @@ The triples are `(replica, total matched blocks, conversation-specific blocks)`.
 
 **What is not implemented.** Token-exact matching (llm-d's "precise" mode reads vLLM's KV-cache events over ZMQ) and prefill/decode disaggregation. Both need model-server cooperation this AIplane deliberately does not require.
 
-Note that a **broken alias silently removes a backend from every strategy's candidate set**: `serves_model` is false for it, so the picker never considers it. A pool of two replicas where one backend's alias points at a model it does not serve keeps answering every request, on half the hardware. The `/admin/upstreams` page reports this per advertised name as `1/2` under "What clients see".
+Note that a **broken alias silently removes a backend from every strategy's candidate set**: `serves_model` is false for it, so the picker never considers it. A pool of two replicas where one backend's alias points at a model it does not serve keeps answering every request, on half the hardware. The upstream board shows this on the pool band: its models stat drops to `1/2 models`, and the band's problem strip names each advertised model that not every backend can serve.
 
 ## In-flight accounting + back-pressure
 

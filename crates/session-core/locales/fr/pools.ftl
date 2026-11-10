@@ -7,23 +7,20 @@ pools-field-models = Modèles servis (séparés par des virgules)
 pools-field-backends = Backends
 pools-save-pool = Enregistrer le pool
 pools-delete-pool = Supprimer
+pools-delete-confirm = Supprimer le pool « { $name } » ? Ses backends restent et deviennent non attribués.
 
 # Cartes de pool de la SPA : les deux résumés d'une ligne et la suppression.
 pools-add-heading = Ajouter un pool
 pools-fallbacks-heading = Replis pour modèles inconnus
 pools-fallbacks-description = Lorsqu'une requête nomme un modèle que la gateway n'a jamais rencontré, ce modèle est substitué pour ce type. Vide = l'absence renvoie 404.
 upstreams-problems-heading = Ce pool ne fonctionne pas complètement
-upstreams-coverage-heading = Ce que voient les clients
-upstreams-coverage-hint = Exactement les noms que GET /v1/models renvoie pour ce pool, chacun avec le nombre de backends capables de le servir maintenant. Tout ce qui n'est pas complet signifie qu'une partie de votre matériel est inactive pour ce nom.
-upstreams-coverage-none-title = Aucun backend ne peut servir ce nom actuellement. Les requêtes reçoivent une erreur de panne temporaire.
-upstreams-coverage-partial-title = Seuls certains backends servent ce nom : les requêtes n'utilisent qu'une partie du pool, le reste reste inactif. Généralement un alias dont la cible ne correspond pas à ce qu'annonce un backend.
-upstreams-coverage-full-title = Tous les backends de ce pool servent ce nom.
 pools-name-taken = Un pool portant ce nom existe déjà — enregistrer le remplacerait, backends et modèles compris. Choisissez un autre nom pour créer un nouveau pool.
 pools-field-strategy = Stratégie
 pools-field-strategy-hint = prefix_affinity garde une conversation sur la réplique qui détient déjà son cache KV (idéal pour le trafic chat/agent réparti sur plusieurs GPU — les autres alternent les tours entre répliques et repaient un prefill complet chaque fois), tout en répartissant si un backend est réellement plus chargé. least_inflight équilibre selon la charge actuelle ; round_robin tourne selon le poids.
 pools-field-fallback-offline = Modèle de repli hors ligne
 pools-field-fallback-offline-placeholder = servi lorsque tous les backends sont hors service
 pools-field-models-hint = Si défini, exactement ces ids sont servis et les backends ne sont pas interrogés sur ce qu'ils proposent — nécessaire lorsque /models liste autre chose ou omet un modèle. Vide = découvrir les modèles via le /models de chaque backend.
+pools-field-models-chips = Annoncés par les backends de ce pool — cliquez pour épingler ou retirer
 pools-field-allowed-groups = Groupes autorisés
 pools-field-allowed-groups-hint = Groupes AIplane autorisés à voir et utiliser les modèles de ce pool. Aucune sélection = tout le monde. Les admins ont toujours accès. Gérez les groupes dans Admin → Groupes.
 pools-field-voices = Voix (lang=voice par ligne)

@@ -1,10 +1,8 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
-
-
-backends-status-down = недоступен
+# The upstream board and the backend editor: the pool band's status word, the
+# editor's fields, and the connection-test outcomes.
 backends-status-up = активен
 
-backends-inflight-label = в обработке { $load }
 
 # Backend CRUD editor (add/edit/delete backends stored in the DB topology).
 backends-apply-changes = Применить изменения
@@ -18,6 +16,8 @@ backends-pool-not-served = Не обслуживается
 backends-pool-new = Новый: openrouter-{ $kind }
 backends-save-backend = Сохранить бэкенд
 backends-delete-backend = Удалить
+backends-delete-confirm = Удалить бэкенд «{ $name }»? Остальные бэкенды пула сохранятся.
+backends-advanced = Дополнительные настройки
 
 backends-field-api-key = Ключ API
 backends-field-api-key-keep = оставьте пустым, чтобы сохранить текущий ключ
@@ -28,7 +28,6 @@ backends-field-api-key-stored = Сохранённый ключ: { $hint }
 # Save-time check on the aliases textarea.
 # Two states that leave a backend green but unusable.
 # Maintenance switch.
-backends-status-drained = обслуживание
 
 # Строки бэкендов в SPA: переключатель обслуживания, нагрузка за час и удаление.
 backends-add-heading = Добавить бэкенд
@@ -44,18 +43,15 @@ backends-field-aliases = Алиасы (name=target по одному в стро
 backends-field-extra-headers = Дополнительные заголовки (имя: значение на строку)
 backends-field-extra-headers-hint = Отправляется с каждым запросом к этому бэкенду, после API-ключа. Например anthropic-version: 2023-06-01, который требует Anthropic.
 backends-field-supports-edit = Поддерживает редактирование изображений
-backends-status-saturated = перегружен
-backends-auth-failed-title = Upstream отклонил учётные данные health-пробы (401/403), поэтому обнаружение моделей отключено — через этот бэкенд не станет доступно ничего нового. Проверьте ключ API; если он берётся из переменной окружения, проверьте, что она задана.
-backends-auth-failed = ключ отклонён
 backends-no-models-title = Этот бэкенд не объявляет ни одной модели, поэтому на него ничего не маршрутизируется, а голому псевдониму не к чему привязаться. Обычно это проба, которая ни разу не вернула данные.
-backends-no-models = модели не заявлены
+backends-no-models = нет моделей
 backends-key-env-badge = ключ: env { $var }
 backends-key-env-unset-badge = env { $var } НЕ ЗАДАНА
 backends-enabled-hint = Выключите, чтобы вывести бэкенд на обслуживание. Действует сразу — «Применить изменения» не нужно. Его модели остаются известными, поэтому нагрузку берут другие бэкенды пула, а клиенты видят временную недоступность, а не «модель не найдена».
 backends-enabled-label = Принимает трафик
 backends-activity-summary = 15м { $m15 } · 30м { $m30 } · 60м { $m60 }
-backends-aliases-label = алиасы:
 backends-alias-target-title = алиас → { $target }
+backends-alias-missing-title = алиас → { $target } — этот бэкенд не сообщает такую модель
 backends-alias-disabled-title = простой алиас отключён — этот бэкенд обслуживает несколько моделей; укажите явную цель (форма сопоставления)
 backends-alias-disabled-label = { $name } (отключён)
 backends-fallback-offline-title = fallback_offline: используется, когда все бэкенды известной модели в этом пуле недоступны
@@ -126,6 +122,8 @@ openrouter-key-placeholder = Новый API-ключ
 openrouter-key-save = Сохранить ключ
 openrouter-key-saved = Ключ обновлён
 openrouter-sort = Сортировка
+openrouter-save-changed = Сохранить выбор · изменено: { $count }
+openrouter-dirty-confirm = У «{ $kind }» есть несохранённые изменения. Отменить?
 openrouter-provider-field = Provider
 openrouter-provider-openai = OpenAI-compatible
 openrouter-provider-openrouter = OpenRouter

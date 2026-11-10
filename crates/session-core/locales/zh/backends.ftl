@@ -1,10 +1,8 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
-
-
-backends-status-down = 离线
+# The upstream board and the backend editor: the pool band's status word, the
+# editor's fields, and the connection-test outcomes.
 backends-status-up = 正常
 
-backends-inflight-label = 处理中 { $load }
 
 # Backend CRUD editor (add/edit/delete backends stored in the DB topology).
 backends-apply-changes = 应用更改
@@ -18,6 +16,8 @@ backends-pool-not-served = 不提供
 backends-pool-new = 新建：openrouter-{ $kind }
 backends-save-backend = 保存后端
 backends-delete-backend = 删除
+backends-delete-confirm = 删除后端“{ $name }”？其资源池会保留其余后端。
+backends-advanced = 高级设置
 
 backends-field-api-key = API 密钥
 backends-field-api-key-keep = 留空以保留当前密钥
@@ -28,7 +28,6 @@ backends-field-api-key-stored = 已存储密钥：{ $hint }
 # Save-time check on the aliases textarea.
 # Two states that leave a backend green but unusable.
 # Maintenance switch.
-backends-status-drained = 维护中
 
 # SPA 后端行：分流开关、每小时负载与删除确认。
 backends-add-heading = 添加后端
@@ -44,18 +43,15 @@ backends-field-aliases = 别名（每行 name=target）
 backends-field-extra-headers = 额外请求头（每行 name: value）
 backends-field-extra-headers-hint = 附加到发往该后端的每个请求，在 API 密钥之后。例如 Anthropic 要求的 anthropic-version: 2023-06-01。
 backends-field-supports-edit = 支持图像编辑
-backends-status-saturated = 已饱和
-backends-auth-failed-title = 上游拒绝了健康探测的凭据（401/403），因此模型发现已关闭——不会有新模型通过该后端变为可路由。请检查 API 密钥；若使用环境变量，请确认该变量确实已设置。
-backends-auth-failed = 密钥被拒绝
 backends-no-models-title = 该后端未公布任何模型，因此不会有请求路由到它，裸别名也无从绑定。通常是探测始终未返回数据。
-backends-no-models = 未提供任何模型
+backends-no-models = 无模型
 backends-key-env-badge = 密钥：环境变量 { $var }
 backends-key-env-unset-badge = 环境变量 { $var } 未设置
 backends-enabled-hint = 关闭以将该后端排空进行维护。立即生效，无需“应用更改”。其模型仍为已知，因此池中其他后端会接管，客户端只会看到临时不可用，而不是“找不到模型”。
 backends-enabled-label = 接收流量
 backends-activity-summary = 15分钟 { $m15 } · 30分钟 { $m30 } · 60分钟 { $m60 }
-backends-aliases-label = 别名：
 backends-alias-target-title = 别名 → { $target }
+backends-alias-missing-title = 别名 → { $target } — 此后端未上报该模型
 backends-alias-disabled-title = 裸别名已禁用 — 此后端提供多个模型，请为其指定明确的目标（映射表单）
 backends-alias-disabled-label = { $name }（已禁用）
 backends-fallback-offline-title = fallback_offline：当此池中某已知模型的所有后端都离线时使用
@@ -126,6 +122,8 @@ openrouter-key-placeholder = 新的 API 密钥
 openrouter-key-save = 保存密钥
 openrouter-key-saved = 密钥已更新
 openrouter-sort = 排序
+openrouter-save-changed = 保存选择 · { $count } 项已更改
+openrouter-dirty-confirm = { $kind} 有未保存的更改。放弃？
 openrouter-provider-field = Provider
 openrouter-provider-openai = OpenAI-compatible
 openrouter-provider-openrouter = OpenRouter
