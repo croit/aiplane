@@ -6,7 +6,7 @@ You need a signed-in account with [administrator rights](access.md). Open **Admi
 
 The **Upstreams** tab is one board: each pool is a band, each backend a row inside it. A row's summary carries the state lamp, in-flight load against the configured maximum, requests in the last hour and the serving switch; open the row (the name is the disclosure) for a sentence describing its state, its endpoint, key source, advertised models, aliases and traffic history. A pool band whose configuration cannot work names the problem at the top of the band, and a backend that belongs to no pool appears in a trailing **Unassigned** band.
 
-The board's search narrows rows by backend name, endpoint, advertised model, alias or pool. The summary lamps double as filters: clicking **down** keeps only the failing rows, and a search plus a lamp stack to "the red rows serving qwen". **Clear** returns to the whole board, and a filter that matches nothing says so instead of showing an empty page.
+The board's search narrows rows by backend name, endpoint, advertised model, alias or pool. The summary lamps double as filters: clicking **down** keeps only the failing rows, and a search plus a lamp stack to "the red rows serving qwen". **Clear** returns to the whole board, and a filter that matches nothing says so instead of showing an empty page. The summary counts each backend once, at its worst state across the pools it serves — the rows are per pool, so a backend in several pools appears in several bands but counts once.
 
 
 ## Add a backend and pool

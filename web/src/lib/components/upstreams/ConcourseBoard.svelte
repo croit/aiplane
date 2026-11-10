@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import { t, n } from '#lib/i18n.svelte.js';
 	import FlapValue from './FlapValue.svelte';
-	import { boardTone, type BoardTone } from './board-state.js';
+	import { boardTone, summaryCounts, type BoardTone } from './board-state.js';
 	import {
 		activityCounts,
 		boardGroups,
@@ -151,11 +151,13 @@
 		})
 	);
 
-	const summary = $derived.by(() => {
-		const counts: Record<BoardTone, number> = { green: 0, amber: 0, red: 0, gray: 0 };
-		for (const backend of backends) counts[boardTone(backend)] += 1;
-		return counts;
-	});
+	const summary = $derived(
+		summaryCounts(
+			bands.flatMap((band) =>
+				band.rows.map((row) => ({ backend: row.backend.name, tone: row.state.tone }))
+			)
+		)
+	);
 
 	const summaryItems: { tone: BoardTone; key: string }[] = [
 		{ tone: 'green', key: 'board-summary-on-time' },
@@ -227,7 +229,7 @@
 
 <section class="board-wrap" data-testid="concourse-board">
 	<header class="board-summary">
-		<div class="summary-lamps">
+		<div class="summary-lamps" title={t('board-summary-hint')}>
 			{#each summaryItems as item (item.tone)}
 				{#if item.tone !== 'gray' || summary.gray > 0 || toneFilter === 'gray'}
 					<button

@@ -1434,6 +1434,7 @@ export const en: Catalog = {
  "board-saturated-detail": "{inflight} of {max} inflight requests in use",
  "board-summary-degraded": "degraded",
  "board-summary-down": "down",
+ "board-summary-hint": "One count per backend, across every pool it serves.",
  "board-summary-maintenance": "maintenance",
  "board-summary-on-time": "on time",
  "branding-error-empty": "The upload carried no file.",

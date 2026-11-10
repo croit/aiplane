@@ -21,6 +21,7 @@ board-summary-on-time = on time
 board-summary-degraded = degraded
 board-summary-down = down
 board-summary-maintenance = maintenance
+board-summary-hint = One count per backend, across every pool it serves.
 board-on-time = On time
 board-on-time-detail = Healthy, serving traffic
 board-saturated = Saturated
