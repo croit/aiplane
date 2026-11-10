@@ -7,6 +7,7 @@ admin-models-routing-intro = Настройте инфраструктуру м�
 admin-models-tab-upstreams = Апстримы
 admin-models-tab-catalog = Каталог моделей
 admin-models-tab-defaults = Модели по умолчанию
+admin-models-tab-fallbacks = Резерв
 admin-models-tab-routing = Автоматическая маршрутизация
 
 admin-col-model = Модель

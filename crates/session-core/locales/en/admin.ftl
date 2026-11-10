@@ -9,6 +9,7 @@ admin-models-routing-intro = Configure model infrastructure, catalog behavior, d
 admin-models-tab-upstreams = Upstreams
 admin-models-tab-catalog = Model catalog
 admin-models-tab-defaults = Default models
+admin-models-tab-fallbacks = Fallbacks
 admin-models-tab-routing = Automatic routing
 
 # List column headers.

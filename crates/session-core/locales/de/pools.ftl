@@ -12,7 +12,7 @@ pools-delete-confirm = Pool „{ $name }“ löschen? Seine Backends bleiben erh
 # Pool-Karten der SPA: die beiden Kurzübersichten und die Löschbestätigung.
 pools-add-heading = Pool hinzufügen
 pools-fallbacks-heading = Fallbacks für unbekannte Modelle
-pools-fallbacks-description = Ersatz, wenn eine Anfrage ein Modell benennt, das kein Pool bereitstellt (anders als der Feature-Standard auf der Modelle-Seite, der greift, wenn eine Anfrage gar kein Modell nennt). Leer = der Fehltreffer gibt 404 zurück.
+pools-fallbacks-description = Ersatz, wenn eine Anfrage ein Modell benennt, das kein Pool bereitstellt (anders als der Feature-Standard im Tab „Defaults“, der greift, wenn eine Anfrage gar kein Modell nennt). Leer = der Fehltreffer gibt 404 zurück.
 upstreams-problems-heading = Dieser Pool arbeitet nicht vollständig
 pools-name-taken = Ein Pool mit diesem Namen existiert bereits — Speichern würde ihn ersetzen, samt Backends und Modellen. Wähle einen anderen Namen, um einen neuen Pool anzulegen.
 pools-field-strategy = Strategie

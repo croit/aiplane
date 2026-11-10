@@ -7,6 +7,7 @@
 	import AdminModelRow from '#lib/components/admin/AdminModelRow.svelte';
 	import DefaultModelsCard from '#lib/components/admin/DefaultModelsCard.svelte';
 	import AutomaticRoutesCard from '#lib/components/admin/AutomaticRoutesCard.svelte';
+	import UnknownModelFallbacksCard from '#lib/components/admin/UnknownModelFallbacksCard.svelte';
 	import UpstreamsPanel from '#lib/components/admin/UpstreamsPanel.svelte';
 	import { t } from '#lib/i18n.svelte.js';
 
@@ -80,6 +81,7 @@
 			<a class:tab-active={selected === 'upstreams'} class="tab whitespace-nowrap" href="/admin/models?tab=upstreams">{t('admin-models-tab-upstreams')}</a>
 			<a class:tab-active={selected === 'catalog'} class="tab whitespace-nowrap" href="/admin/models?tab=catalog">{t('admin-models-tab-catalog')}</a>
 			<a class:tab-active={selected === 'defaults'} class="tab whitespace-nowrap" href="/admin/models?tab=defaults">{t('admin-models-tab-defaults')}</a>
+			<a class:tab-active={selected === 'fallbacks'} class="tab whitespace-nowrap" href="/admin/models?tab=fallbacks">{t('admin-models-tab-fallbacks')}</a>
 			<a class:tab-active={selected === 'routing'} class="tab whitespace-nowrap" href="/admin/models?tab=routing">{t('admin-models-tab-routing')}</a>
 		</nav>
 	</header>
@@ -88,6 +90,8 @@
 	{#if notice}<div class="alert alert-success"><span>{notice}</span></div>{/if}
 	{#if selected === 'upstreams'}
 		<UpstreamsPanel initialQuery={page.url.searchParams.get('q') ?? ''} />
+	{:else if selected === 'fallbacks'}
+		<UnknownModelFallbacksCard />
 	{:else if data}
 		{#if selected === 'defaults'}
 			<DefaultModelsCard defaults={data.feature_defaults} onsave={saveDefault} />

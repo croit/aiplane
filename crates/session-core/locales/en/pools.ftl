@@ -13,7 +13,7 @@ pools-delete-confirm = Delete pool “{ $name }”? Its backends stay and become
 # SPA pool cards: the two one-line summaries and the delete confirmation.
 pools-add-heading = Add pool
 pools-fallbacks-heading = Unknown-model fallbacks
-pools-fallbacks-description = The substitute when a request names a model no pool serves (unlike the per-feature default on the Models page, which applies when a request names nothing). Blank = the miss returns 404.
+pools-fallbacks-description = The substitute when a request names a model no pool serves (unlike the per-feature default on the Defaults tab, which applies when a request names nothing). Blank = the miss returns 404.
 upstreams-problems-heading = This pool is not fully working
 pools-name-taken = A pool with this name already exists — saving would replace it, including its backends and models. Pick a different name to create a new pool.
 pools-field-strategy = Strategy

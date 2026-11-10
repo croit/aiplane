@@ -9,6 +9,7 @@ admin-models-routing-intro = Konfigurieren Sie Modellinfrastruktur, Katalogverha
 admin-models-tab-upstreams = Upstreams
 admin-models-tab-catalog = Modellkatalog
 admin-models-tab-defaults = Standardmodelle
+admin-models-tab-fallbacks = Fallbacks
 admin-models-tab-routing = Automatisches Routing
 
 # Spaltenüberschriften der Liste.

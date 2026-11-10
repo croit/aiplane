@@ -2,7 +2,7 @@
 
 An **upstream backend** is a model server or provider endpoint. A **pool** groups backends for a purpose such as chat, embeddings, reranking, transcription or OCR. The **model catalog** is the set of models and aliases exposed by that topology. Configure these before selecting models for chat, agents or optional features.
 
-You need a signed-in account with [administrator rights](access.md). Open **Administration → Models and routing** (`/admin/models`), which opens on **Upstreams**. Its tabs are **Upstreams**, **Catalog**, **Defaults** and **Automatic routing**. `/admin/upstreams` also opens the upstream manager.
+You need a signed-in account with [administrator rights](access.md). Open **Administration → Models and routing** (`/admin/models`), which opens on **Upstreams**. Its tabs are **Upstreams**, **Catalog**, **Defaults**, **Fallbacks** and **Automatic routing**. `/admin/upstreams` also opens the upstream manager.
 
 The **Upstreams** tab is one board: each pool is a band, each backend a row inside it. A row's summary carries the state lamp, in-flight load against the configured maximum, requests in the last hour and the serving switch; open the row (the name is the disclosure) for a sentence describing its state, its endpoint, key source, advertised models, aliases and traffic history. A pool band whose configuration cannot work names the problem at the top of the band, and a backend that belongs to no pool appears in a trailing **Unassigned** band.
 
@@ -61,7 +61,7 @@ A pool's **classification level** is the most sensitive data its models are clea
 
 Backend and pool names can be changed through their editors. Deletion removes the configured resource and applies immediately; the pool editor and the backend editor each ask for confirmation. Do not overwrite another resource's name without reviewing the editor's explicit overwrite warning.
 
-Use a row's serving switch to drain or re-enable a backend. The switch changes admission immediately; inspect the row's in-flight count when draining for maintenance. The upstream manager also has a fallback per pool kind for unknown-model requests. Changing that fallback is live immediately and is distinct from a pool's offline fallback or a feature's default model.
+Use a row's serving switch to drain or re-enable a backend. The switch changes admission immediately; inspect the row's in-flight count when draining for maintenance. The **Fallbacks** tab sets one substitute per pool kind for unknown-model requests. Changing that substitute is live immediately and is distinct from a pool's offline fallback or a feature's default model.
 
 ### Fallbacks and temporary outages
 

@@ -510,7 +510,7 @@ test("settings preserve category navigation, feature disclosure, typed fields, a
     await ctx.close();
 });
 
-test("upstreams keeps pool topology, backend controls, and fallbacks together", async () => {
+test("upstreams keeps pool topology and backend controls, and the fallbacks tab carries the unknown-model substitute", async () => {
     const topology = await fetch(`${BASE}/api/v0/admin/upstreams`, {
         headers: { cookie: `id=${cookie}` },
     }).then((response) => response.json());
@@ -520,7 +520,6 @@ test("upstreams keeps pool topology, backend controls, and fallbacks together", 
     await page.goto(`${BASE}/admin/upstreams`, { waitUntil: "domcontentloaded" });
 
     await page.getByRole("heading", { name: "Upstreams", exact: true }).waitFor();
-    await page.getByRole("heading", { name: "Unknown-model fallbacks" }).waitFor();
 
     for (const pool of topology.pools) {
         const band = page.getByTestId(`upstream-pool-${pool.name}`);
@@ -544,11 +543,23 @@ test("upstreams keeps pool topology, backend controls, and fallbacks together", 
     if (firstBackend) {
         const row = page.getByTestId(`upstream-backend-${firstBackend.name}`);
         assert.equal(await row.getByLabel("Serving traffic").count(), 1);
-        await row.getByRole("button", { name: "Edit backend", exact: true }).click();
+        await row.getByRole("button", { name: "Edit backend" }).click();
         const editor = page.locator("dialog[open]");
         await editor.waitFor();
         assert.equal(await editor.locator('button:has-text("Test connection")').count(), 1);
         assert.equal(await editor.getByText("Calls this URL with the credentials above. Nothing is saved.", { exact: true }).count(), 1);
+    }
+
+    // The unknown-model fallback lives on its own tab, one auto-saving picker
+    // per pool kind.
+    await page.goto(`${BASE}/admin/models?tab=fallbacks`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: "Unknown-model fallbacks", exact: true }).waitFor();
+    for (const kind of topology.fallback_kinds) {
+        assert.equal(
+            await page.getByRole("combobox", { name: kind, exact: true }).count(),
+            1,
+            `the ${kind} fallback picker must be on the tab`,
+        );
     }
     await ctx.close();
 });

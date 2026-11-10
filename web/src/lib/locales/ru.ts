@@ -139,6 +139,7 @@ export const ru: Catalog = {
  "admin-models-routing-intro": "Настройте инфраструктуру моделей, каталог, модели по умолчанию и автоматическую маршрутизацию в одном месте.",
  "admin-models-tab-catalog": "Каталог моделей",
  "admin-models-tab-defaults": "Модели по умолчанию",
+ "admin-models-tab-fallbacks": "Резерв",
  "admin-models-tab-routing": "Автоматическая маршрутизация",
  "admin-models-tab-upstreams": "Апстримы",
  "admin-needs-admin-role": "Для этих страниц нужны права администратора.",

@@ -2024,6 +2024,61 @@ async fn topology_save_is_live_and_streams() {
     drop(resp);
 }
 
+/// Unknown-model fallback: one auto-saving picker per pool kind, live now.
+#[tokio::test]
+async fn unknown_model_fallback_round_trips_and_clears() {
+    let (state, cookie) = setup().await;
+    let app = router(state);
+
+    let resp = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/upstreams/fallback",
+            &cookie,
+            Some(r#"{"kind":"chat","model":"model-a"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let listed: serde_json::Value = serde_json::from_str(
+        &body(
+            app.serve(req(Method::GET, "/api/v0/admin/upstreams", &cookie, None))
+                .await
+                .unwrap(),
+        )
+        .await,
+    )
+    .unwrap();
+    assert_eq!(listed["fallbacks"]["chat"], "model-a");
+    assert_eq!(
+        listed["fallback_kinds"],
+        serde_json::json!(["chat", "transcription", "embedding", "image"])
+    );
+
+    // An empty model clears the fallback; the kind stays in the picker list.
+    let resp = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/upstreams/fallback",
+            &cookie,
+            Some(r#"{"kind":"chat","model":""}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let listed: serde_json::Value = serde_json::from_str(
+        &body(
+            app.serve(req(Method::GET, "/api/v0/admin/upstreams", &cookie, None))
+                .await
+                .unwrap(),
+        )
+        .await,
+    )
+    .unwrap();
+    assert!(listed["fallbacks"].get("chat").is_none());
+}
+
 /// The workspace API: memories + scheduled + webhooks CRUD
 /// under /api/v0, session-gated.
 #[tokio::test]

@@ -28,7 +28,7 @@ the environment variables it already supports.
    Aliases are also what makes a model **discoverable** (see below), so one
    piece of configuration does both jobs.
 
-   As a safety net, the per-kind unknown-model fallback (`/admin/upstreams`)
+   As a safety net, the per-kind unknown-model fallback (`/admin/models?tab=fallbacks`)
    catches any id you didn't alias: with a chat fallback configured, a model
    name AIplane has never heard of resolves to it rather than 404ing.
 

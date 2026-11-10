@@ -139,6 +139,7 @@ export const es: Catalog = {
  "admin-models-routing-intro": "Configura la infraestructura de modelos, el catálogo, los modelos predeterminados y el enrutamiento automático en un solo lugar.",
  "admin-models-tab-catalog": "Catálogo de modelos",
  "admin-models-tab-defaults": "Modelos predeterminados",
+ "admin-models-tab-fallbacks": "Alternativas",
  "admin-models-tab-routing": "Enrutamiento automático",
  "admin-models-tab-upstreams": "Upstreams",
  "admin-needs-admin-role": "Estas páginas requieren permisos de administrador.",

@@ -7,6 +7,7 @@ admin-models-routing-intro = Configurez l’infrastructure des modèles, le cata
 admin-models-tab-upstreams = Amonts
 admin-models-tab-catalog = Catalogue de modèles
 admin-models-tab-defaults = Modèles par défaut
+admin-models-tab-fallbacks = Replis
 admin-models-tab-routing = Routage automatique
 
 admin-col-model = Modèle

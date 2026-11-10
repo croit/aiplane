@@ -502,7 +502,7 @@ model.
   itself an alias reaches its target the same way. Compaction compacts on
   the target the route pinned for the session, else its fallback
   (`compaction::compaction_target`).
-- **Fallback.** The kind's unknown-model fallback (the **Unknown-model fallbacks** editor on `/admin/upstreams`)
+- **Fallback.** The kind's unknown-model fallback (the **Fallbacks** tab on `/admin/models?tab=fallbacks`)
   applies to an agent only when it is granted as well, and to a person's
   token only when its allowlist lets the fallback through.
 

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { adminDelete, adminJson, adminPost, adminPut } from '#lib/admin-client.js';
+	import { adminDelete, adminJson, adminPost } from '#lib/admin-client.js';
 	import { t } from '#lib/i18n.svelte.js';
 	import { naturalSort, type Backend, type LiveBackend, type Pool, type Topology } from '#lib/upstreams.js';
 	import BackendEditor from '#lib/components/upstreams/BackendEditor.svelte';
@@ -9,7 +9,6 @@
 	import OpenRouterEditor from '#lib/components/upstreams/OpenRouterEditor.svelte';
 	import OpenRouterAccountPanel from '#lib/components/upstreams/OpenRouterAccountPanel.svelte';
 	import ConcourseBoard from '#lib/components/upstreams/ConcourseBoard.svelte';
-	import SearchableSelect from '#lib/components/SearchableSelect.svelte';
 
 	interface StatusEvent extends LiveBackend { name: string; usage: number[]; }
 
@@ -63,14 +62,6 @@
 	async function refresh() {
 		try { data = await adminJson<Topology>('/api/v0/admin/upstreams'); error = null; }
 		catch (caught) { error = String(caught); }
-	}
-
-	async function saveFallback(kind: string, model: string) {
-		try {
-			await adminPut('/api/v0/admin/upstreams/fallback', { kind, model });
-			if (data) data = { ...data, fallbacks: { ...data.fallbacks, [kind]: model } };
-			markSaved();
-		} catch (caught) { notice = String(caught); }
 	}
 
 	function editPool(pool: Pool) {
@@ -153,7 +144,6 @@
 			/>
 		{/if}
 		<OpenRouterAccountPanel backends={data.backends} pools={data.pools} poolKinds={data.pool_kinds} onChanged={refresh} />
-		<section class="card card-border"><div class="card-body gap-3"><h3 class="card-title text-base">{t('pools-fallbacks-heading')}</h3><p class="text-sm text-base-content/70">{t('pools-fallbacks-description')}</p><div class="grid grid-cols-1 gap-3 sm:grid-cols-2">{#each data.fallback_kinds as kind (kind)}<label class="flex flex-col gap-1"><span class="font-mono text-xs text-base-content/70">{kind}</span><SearchableSelect options={[{ value: '', label: t('admin-cap-no-fallback') }, ...(data.all_models ?? []).map((model) => ({ value: model, label: model }))]} value={data.fallbacks[kind] ?? ''} onchange={(value) => void saveFallback(kind, value)} ariaLabel={kind} size="sm" class="w-full" /></label>{/each}</div></div></section>
 	</div>
 	<EditModal bind:open={editModalOpen} wide footer="none" title={t('upstreams-edit-backend')} cancellabel={t('upstreams-cancel')}>{#if editingBackend}{@const editTarget = editingBackend}<BackendEditor backend={editTarget} focus={editFocus} currentPool={data.pools.find((pool) => pool.backends.includes(editTarget.name))?.name ?? null} pools={data.pools} poolKinds={data.pool_kinds} existingNames={data.backends.map((backend) => backend.name)} onSaved={() => { markSaved(); return refresh(); }} onCancel={() => { editModalOpen = false; editingBackend = null; editFocus = null; }} />{/if}</EditModal>
 	<EditModal bind:open={addingPool} wide footer="none" title={t('pools-add-heading')} cancellabel={t('upstreams-cancel')}><PoolEditor backends={data.backends} knownModels={[]} poolKinds={data.pool_kinds} poolStrategies={data.pool_strategies} groups={data.groups} existingNames={data.pools.map((pool) => pool.name)} sortOrder={Math.max(-1, ...data.pools.map((pool) => pool.sort_order)) + 1} onSaved={() => { addingPool = false; markSaved(); return refresh(); }} onCancel={() => (addingPool = false)} /></EditModal>
