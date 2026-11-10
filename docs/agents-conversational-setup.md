@@ -77,7 +77,7 @@ connector OAuth and generation pinning, existing memory and automation APIs,
 the agent profile's owner brief renderer, `ToolBinds`/`BoundTool` for selected
 knowledge arguments, draft revisions, `forward_request`, directed consent, `RunChain`, shared
 budgets, `chat_turn_suspensions` and Inbox. Use the existing Modal, chat
-components, daisyUI and six Fluent catalogs.
+components, the token layer and six Fluent catalogs.
 
 Do not introduce a second model catalog, connector catalog, settings store,
 approval queue, run dispatcher or memory store. Any proposed common contract

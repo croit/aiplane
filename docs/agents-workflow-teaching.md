@@ -58,7 +58,7 @@ The current active-skill rendering reads the body fresh. This workflow-drafting 
 3. Generate the draft. Review and edit the `SKILL.md` in the existing editor. Cancel discards it; **Save** stores it as a normal personal Skill.
 4. Use the saved skill in a conversation or eligible agent where it is available. Set tool access and approval rules through their existing controls.
 
-Product text uses the six Fluent catalogues. The UI reuses the existing daisyUI modal, searchable model selector and Skill editor. Browser verification should cover keyboard/mobile use, cancellation, model refusal, generation errors and explicit saving.
+Product text uses the six Fluent catalogues. The UI reuses the existing modal, searchable model selector and Skill editor. Browser verification should cover keyboard/mobile use, cancellation, model refusal, generation errors and explicit saving.
 
 ## State-based acceptance tests
 

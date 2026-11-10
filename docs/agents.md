@@ -560,7 +560,7 @@ upward.
 | The prompt assistant (`agents::assist`) and the architect's persona hook (`persona`, `TurnPolicy::Persona`, `assist::apply_changes`) | `aiplane-runtime` | the review needs the validator and the test-case parser; the driver only knows "a prompt and a tool source" |
 | `/api/v0/agents/*`, `/api/v0/system-principals/*`, the inbox, resume, test chat, tests, activity, analytics, assistant, architect (its tools and `draft/restore`), `/api/v0/embed/*`, `/a2a/agents/*` | `aiplane-api` | JSON handlers; the architect's tools need the route functions (share checks, grant cap, test chat), so the API builds the persona per turn and hands it down |
 | Routing, the embed CORS layer (`rama_server::embed_cors`), `gws_`/`gwv_` bearer dispatch | `gateway` | routing glue; the embed CORS layer reads embed keys, so it cannot sit in `aiplane-core` beside the `/v1` one |
-| Builder UI, test chat, inbox | `web/` (SPA) | daisyUI + Tailwind, all strings through Fluent |
+| Builder UI, test chat, inbox | `web/` (SPA) | token layer + Tailwind, all strings through Fluent |
 | Embed widget | `web/embed/`, its own Vite entry built to `target/frontend/build/embed.js` | must not pull in the SPA; strings come from the shared catalogs |
 
 No agent feature needs a Cargo dependency of its own. Host-JWT verification

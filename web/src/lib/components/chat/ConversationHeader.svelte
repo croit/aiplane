@@ -102,7 +102,7 @@
 		</div>
 	{/if}
 	<div class="ml-auto flex min-w-0 items-center gap-2">
-		<div class="dropdown dropdown-end">
+		<div class="dropdown">
 			<button
 				class="btn btn-ghost btn-sm gap-1"
 				popovertarget="export-menu"

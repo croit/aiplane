@@ -1407,7 +1407,7 @@
 </div>
 
 {#if editingTurn}
-	<dialog class="modal modal-open" aria-label={t('render-edit-prompt')}>
+	<dialog class="modal" aria-label={t('render-edit-prompt')}>
 		<!-- The dialog is a sibling of the conversation, not a child, so the
 		     page-wide dropzone above never sees a drop landing on it. Same
 		     handlers, and `stageFiles` routes them to this message's files. -->
@@ -1442,7 +1442,7 @@
 {/if}
 
 {#if voiceOpen.open && voice}
-	<dialog class="modal modal-open" aria-label={t('voice-modal-title')}>
+	<dialog class="modal" aria-label={t('voice-modal-title')}>
 		<div class="modal-box max-w-sm">
 			<div class="flex flex-col items-center gap-4 py-4">
 				<button

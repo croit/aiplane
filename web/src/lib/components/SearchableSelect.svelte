@@ -253,7 +253,7 @@
 						<li class="list-none">
 							<button
 								type="button"
-								class="card card-xs w-full border text-left transition-colors {index === activeIndex ? 'border-base-300 bg-base-200' : 'border-transparent bg-base-100'} {isChosen(option.value) ? 'font-semibold' : ''}"
+								class="card w-full border text-left transition-colors {index === activeIndex ? 'border-base-300 bg-base-200' : 'border-transparent bg-base-100'} {isChosen(option.value) ? 'font-semibold' : ''}"
 								role="option"
 								aria-selected={isChosen(option.value)}
 								data-option-index={index}

@@ -638,28 +638,28 @@ left a checkout stale, `git reset --hard <branch>` in that checkout repairs it
 a stale index makes genuine local edits indistinguishable from the inverse of
 the incoming commits.
 
-### daisyUI 5 deleted classes that daisyUI 4 relied on
+### Classes the token layer does not define
 
 **Symptom.** A form looks like its spacing is broken: label and input sit side
 by side (`Name [input]`), help text is wedged between a label and its own box,
 and the vertical gaps are enormous. Adjusting `gap-*` utilities changes
 nothing, because the gaps are the line height of a wrapping inline paragraph.
 
-**Cause.** `form-control` was daisyUI 4's label-plus-control wrapper and does
-not exist in 5 — the label component's stylesheet under
-`web/node_modules/daisyui/components` declares two selectors and that is not
-one of them. A label carrying it gets no layout at all, so its children fall
-back to `inline`. `label-text-alt` is gone the same way, and it carried the
-shrink and dim that make a hint read as an aside rather than another paragraph.
+**Cause.** `form-control` (the label-plus-control wrapper) and `label-text-alt`
+(the dimmed, shrunk hint) are not selectors in `web/src/app.css`, so an element
+carrying one gets NO layout. The label and its input fall back to `inline` and
+sit side by side, help text wedges between a label and its box, and the
+vertical rhythm turns into wrapped-paragraph line height.
 
 **Prevention.** The house pattern for a labelled control is
 `<label class="flex flex-col gap-1">` with the help `<span class="text-xs">`
-**after** the input. `label-text` is inert too but harmless: daisyUI 4 gave it
+**after** the input. `label-text` is inert too but harmless: it carried
 `text-sm`, which bare uses inherit anyway.
 
 Pinned by `web/src/lib/markup-drift.test.ts` (`mise run test-web`), which greps
-every `.svelte` file for the dropped classes — the replacement for the two Rust
-drift tests that died with the page stack.
+every `.svelte` file for the dropped classes — and, over the component
+vocabulary as a whole, fails if a source carries any class `app.css` does not
+define.
 
 ### Tailwind scans source text, including comments
 
@@ -667,7 +667,7 @@ drift tests that died with the page stack.
 nothing on screen uses.
 
 **Cause.** The Tailwind scanner reads source files looking for class-name
-candidates and cannot tell a comment from markup. Naming a daisyUI class in
+candidates and cannot tell a comment from markup. Naming a component class in
 prose inside a scanned file is enough to emit its CSS. Under the SPA the
 scanned set is `web/src` (the Tailwind v4 Vite plugin picks it up
 automatically — no `@source` globs needed), so this now bites in Svelte and TS
