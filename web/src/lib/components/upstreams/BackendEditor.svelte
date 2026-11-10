@@ -10,6 +10,8 @@
 	interface Props {
 		backend?: Backend | null;
 		currentPool?: string | null;
+		/** The field the operator was sent here to fix, opened and focused. */
+		focus?: 'models' | null;
 		pools: Pool[];
 		poolKinds: string[];
 		existingNames: string[];
@@ -17,11 +19,13 @@
 		onCancel?: () => void;
 	}
 
-	let { backend = null, currentPool = null, pools, poolKinds, existingNames, onSaved, onCancel }: Props = $props();
+	let { backend = null, currentPool = null, focus = null, pools, poolKinds, existingNames, onSaved, onCancel }: Props = $props();
 	let name = $state(untrack(() => backend?.name ?? ''));
 	let provider = $state<'openai_compatible' | 'openrouter'>(untrack(() => backend?.provider ?? 'openai_compatible'));
 	let baseUrl = $state(untrack(() => backend?.base_url ?? ''));
 	let apiKey = $state('');
+	/** Delete the sealed key on save — a blank field means "keep it". */
+	let clearKey = $state(false);
 	let apiKeyEnv = $state(untrack(() => backend?.api_key_env ?? ''));
 	let healthPath = $state(untrack(() => backend?.health_path ?? '/models'));
 	let weight = $state(untrack(() => backend?.weight ?? 1));
@@ -59,7 +63,7 @@
 	let priorityMedium = $state(untrack(() => backend?.priority.mode === 'custom' ? backend.priority.mapping.medium : 0));
 	let priorityHigh = $state(untrack(() => backend?.priority.mode === 'custom' ? backend.priority.mapping.high : -1));
 	let overwrite = $state(untrack(() => backend !== null));
-	let advancedOpen = $state(false);
+	let advancedOpen = $state(untrack(() => focus === 'models'));
 	let busy = $state(false);
 	let error = $state<string | null>(null);
 	let errorAlert: HTMLDivElement | undefined = $state();
@@ -88,6 +92,7 @@
 				base_url: baseUrl,
 				api_key_env: apiKeyEnv,
 				api_key: apiKey,
+				clear_key: clearKey,
 				priority: priorityMode === 'custom' ? { mode: priorityMode, mapping: { field: priorityField, low: priorityLow, medium: priorityMedium, high: priorityHigh } } : { mode: priorityMode },
 				weight,
 				max_inflight: maxInflight,
@@ -224,11 +229,19 @@
 			<span class="text-xs text-base-content/70">{t('backends-field-base-url')}</span>
 			<input class="input font-mono w-full" bind:value={baseUrl} required />
 		</label>
-		<label class="flex flex-col gap-1">
-			<span class="text-xs text-base-content/70">{t('backends-field-api-key')}</span>
-			<input class="input font-mono w-full" type="password" autocomplete="off" bind:value={apiKey} placeholder={backend?.has_stored_key ? t('backends-field-api-key-keep') : t('backends-field-api-key-placeholder')} />
+		<div class="flex flex-col gap-1">
+			<label class="flex flex-col gap-1">
+				<span class="text-xs text-base-content/70">{t('backends-field-api-key')}</span>
+				<input class="input font-mono w-full" type="password" autocomplete="off" bind:value={apiKey} oninput={() => (clearKey = false)} placeholder={backend?.has_stored_key ? t('backends-field-api-key-keep') : t('backends-field-api-key-placeholder')} />
+			</label>
 			{#if backend?.api_key_hint}<span class="text-xs text-base-content/50">{t('backends-field-api-key-stored', { hint: backend.api_key_hint })}</span>{/if}
-		</label>
+			{#if backend?.has_stored_key}
+				<label class="label justify-start gap-2 p-0">
+					<input class="checkbox checkbox-sm" type="checkbox" bind:checked={clearKey} />
+					<span class="text-xs">{t('backends-field-api-key-clear')}</span>
+				</label>
+			{/if}
+		</div>
 		{#if provider !== 'openrouter'}
 			<label class="flex flex-col gap-1">
 				<span class="text-xs text-base-content/70">{t('backends-field-pool')}</span>
@@ -339,7 +352,7 @@
 			</fieldset>
 			<label class="flex flex-col gap-1">
 				<span class="text-xs text-base-content/70">{t('backends-field-models')}</span>
-				<input class="input font-mono w-full" bind:value={models} />
+				<input class="input font-mono w-full" data-autofocus={focus === 'models' ? '' : undefined} bind:value={models} />
 			</label>
 			<label class="flex flex-col gap-1">
 				<span class="text-xs text-base-content/70">{t('backends-field-aliases')}</span>

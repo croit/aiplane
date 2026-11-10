@@ -65,7 +65,7 @@ test("backend priority errors are focused, visible and use the chosen UI languag
     try {
         const page = await ctx.newPage();
         await page.goto(`${BASE}/admin/models?tab=upstreams`);
-        await page.getByRole("button", { name: "Edit backend", exact: true }).first().click();
+        await page.getByRole("button", { name: "Edit backend" }).first().click();
         const modal = page.locator("dialog[open]");
         await modal.getByText("Advanced settings", { exact: true }).click();
         await modal.getByLabel("Backend prioritization", { exact: true }).selectOption("custom");

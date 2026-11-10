@@ -52,7 +52,12 @@
 	<div class="border-b border-base-300" data-testid={`model-row-${model.name}`}>
 		<div class="py-2">
 			<div class="grid min-w-[752px] grid-cols-[minmax(170px,1.6fr)_82px_150px_84px_128px_minmax(110px,1.1fr)_64px] items-center gap-2.5">
-				<span class="break-all font-mono text-sm font-semibold">{model.name}</span>
+				<span class="flex min-w-0 flex-col gap-0.5">
+					<span class="break-all font-mono text-sm font-semibold">{model.name}</span>
+					{#if model.served_by.length}
+						<a class="truncate text-[11px] leading-tight text-base-content/50 hover:text-primary" href={`/admin/models?tab=upstreams&q=${encodeURIComponent(model.name)}`} title={t('admin-served-by-open')}>{t('admin-served-by', { pools: model.served_by.map((entry) => `${entry.pool} (${entry.backends.join(', ')})`).join(' · ') })}</a>
+					{/if}
+				</span>
 				<span><span class="badge badge-secondary badge-sm">{model.kind}</span></span>
 				<span class="text-xs font-mono tabular-nums {priceSummary() === '—' ? 'text-base-content/40' : ''}">{priceSummary()}</span>
 				<span class="text-xs font-mono tabular-nums {isChat && defaults?.context_window != null ? '' : 'text-base-content/40'}">{isChat ? contextSummary() : t('admin-value-na')}</span>

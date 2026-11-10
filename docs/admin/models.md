@@ -2,19 +2,22 @@
 
 An **upstream backend** is a model server or provider endpoint. A **pool** groups backends for a purpose such as chat, embeddings, reranking, transcription or OCR. The **model catalog** is the set of models and aliases exposed by that topology. Configure these before selecting models for chat, agents or optional features.
 
-You need a signed-in account with [administrator rights](access.md). Open **Administration → Models and routing** (`/admin/models`). Its tabs are **Upstreams**, **Catalog**, **Defaults** and **Automatic routing**. `/admin/upstreams` also opens the upstream manager.
+You need a signed-in account with [administrator rights](access.md). Open **Administration → Models and routing** (`/admin/models`), which opens on **Upstreams**. Its tabs are **Upstreams**, **Catalog**, **Defaults** and **Automatic routing**. `/admin/upstreams` also opens the upstream manager.
 
-The **Upstreams** tab is one board: each pool is a band, each backend a row inside it. A row's summary carries the state lamp, in-flight load against the configured maximum, requests in the last hour and the serving switch; open the row (the name is the disclosure) for its endpoint, key source, advertised models, aliases and traffic history. A pool band whose configuration cannot work names the problem at the top of the band, and a backend that belongs to no pool appears in a trailing **Unassigned** band.
+The **Upstreams** tab is one board: each pool is a band, each backend a row inside it. A row's summary carries the state lamp, in-flight load against the configured maximum, requests in the last hour and the serving switch; open the row (the name is the disclosure) for a sentence describing its state, its endpoint, key source, advertised models, aliases and traffic history. A pool band whose configuration cannot work names the problem at the top of the band, and a backend that belongs to no pool appears in a trailing **Unassigned** band.
+
+The board's search narrows rows by backend name, endpoint, advertised model, alias or pool. The summary lamps double as filters: clicking **down** keeps only the failing rows, and a search plus a lamp stack to "the red rows serving qwen". **Clear** returns to the whole board, and a filter that matches nothing says so instead of showing an empty page.
+
 
 ## Add a backend and pool
 
 ![The upstream board: one band per pool, one row per backend with state, load and requests.](../img/guide/upstream-pool.png)
 
 1. In **Upstreams**, add a pool with **+ Pool**. Choose its name, kind and selection strategy. Set allowed groups to match the actual provider arrangement. Backend membership, explicit models, offline fallback and usage-limit enforcement are in the same editor, which also carries **Delete**.
-2. Add a backend with **+ Backend**. Enter a unique name, its API base URL, its pool and the API key. That is the whole normal case; everything else sits under **Advanced settings**.
+2. Add a backend with **+ Backend** at the top of the board, or with **+ Backend** on a pool band to pre-select that pool; an empty band offers the same button. Enter a unique name, its API base URL, its pool and the API key. That is the whole normal case; everything else sits under **Advanced settings**.
 3. Use **Test connection** before saving. Read which credential source was used, the HTTP result and the discovered models. A connection test does not save anything.
 4. Under **Advanced settings**, set the health path, request weight, maximum in-flight requests, an environment-variable key fallback, explicit models when the upstream cannot advertise them, aliases when clients need stable model names, extra headers and image-editing support.
-5. Save the editor. The topology applies to the running gateway immediately — there is no apply step.
+5. Save the editor. The topology applies to the running gateway immediately — there is no apply step, and the board confirms the save with a short **Saved — live now.** line.
 6. Confirm that the backend's row reports on time and that its models appear in **Catalog**. A drained or unreachable backend keeps its row and its known models, so the board still shows what is wrong.
 
 To use OpenRouter, choose **+ Add OpenRouter** on the board: enter one key and keep the base URL `https://openrouter.ai/api/v1`. The account panel below the board is the one place that manages it. Its rows are the kinds the account serves; switch a kind on or off, and open a kind to select models with the checkboxes or **Select all**, filter and sort by price, then give each one an input and output ceiling in USD per 1M tokens and a provider strategy. A model with no provider under both ceilings is not offered. Each kind's selection is the model list of its own `openrouter-<kind>` pool, so one OpenRouter backend serves chat, embeddings, speech, transcription, image, rerank and System One with different lists; the pool's board band links back to the account instead of offering a pool editor. The key is replaced in the same panel, and unsaved selection changes are confirmed before a kind is disabled or the page is left. For a speech pool the voice menu follows the selection automatically: it is the union of the selected TTS models' `supported_voices`, so there is no voice list to maintain by hand. See [upstreams](../upstreams.md#openrouter).
@@ -28,7 +31,7 @@ The editor keeps the connection fields in front — name, base URL, API key and 
 | Field | Why configure it? |
 |---|---|
 | Base URL | Address of the upstream API, including its API prefix where required |
-| API key / environment variable | Authentication for that upstream; a stored key is not displayed back as plaintext — only a head/tail fingerprint where the key is long enough for one |
+| API key / environment variable | Authentication for that upstream; a stored key is not displayed back as plaintext — only a head/tail fingerprint where the key is long enough for one. Leave the field empty to keep the stored key, or tick **Remove the stored key** to delete it — the way to move a backend onto an environment variable or retire a leaked key |
 | Health path | Endpoint used to check availability; the new-backend form proposes `/models` |
 | Weight | Relative weighting used by strategies that consider weight |
 | Maximum in-flight | Concurrent requests admitted to this backend; the form proposes 16 |
@@ -74,7 +77,7 @@ For a known model, AIplane skips unhealthy or drained backends and routes to a h
 
 ## Configure a model
 
-1. Open **Catalog**. Search by model name or use the chat, other, aliases or configured filter.
+1. Open **Catalog**. Search by model name or use the chat, other, aliases or configured filter. A model row's **served by** line names the pool and the backends carrying it right now and opens **Upstreams** filtered to that model; the board's model chips link the other way, into the catalog. A model nothing serves has no such line, which is what the **inactive** filter is for.
 2. Open the model editor (`/admin/models/edit`).
 3. Set input/output prices in the unit shown for that model kind. Configure prices before treating monetary usage totals as complete. With a per-token price, embedding and rerank calls are charged at the input price; when a backend reports only a total token count, those tokens count as input. A rerank backend that reports no token usage (Text Embeddings Inference) or reports search units instead (Cohere) records its calls with no tokens and no cost; see [reranking](../reference/api.md#reranking).
 4. Optionally set the **description**: the one-line subtext the chat picker shows under the model or alias. It is limited to 240 characters and is searchable in the picker.

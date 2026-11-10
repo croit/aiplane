@@ -21,6 +21,7 @@ backends-advanced = Ajustes avanzados
 backends-field-api-key = Clave API
 backends-field-api-key-keep = dejar en blanco para conservar la clave actual
 backends-field-api-key-stored = Clave almacenada: { $hint }
+backends-field-api-key-clear = Eliminar la clave guardada
 
 # An alias that is configured but would not route.
 # Save-time check on the aliases textarea.
@@ -47,7 +48,7 @@ backends-no-models = sin modelos
 backends-key-env-badge = clave: env { $var }
 backends-key-env-unset-badge = env { $var } NO DEFINIDA
 backends-enabled-hint = Desactiva para vaciar este backend por mantenimiento. Surte efecto de inmediato. Sus modelos siguen siendo conocidos, así que los otros backends del pool asumen la carga y los clientes ven una interrupción temporal, nunca «modelo no encontrado».
-backends-enabled-label = Acepta tráfico
+backends-enabled-label = Recibe tráfico ({ $name })
 backends-activity-summary = 15m { $m15 } · 30m { $m30 } · 60m { $m60 }
 backends-alias-target-title = alias → { $target }
 backends-alias-missing-title = alias → { $target } — este backend no anuncia ese modelo

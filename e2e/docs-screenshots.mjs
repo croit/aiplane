@@ -228,7 +228,7 @@ async function englishFileInputs(page) {
 
 /** The backend form refusing a priority mapping whose values are not strictly ordered. */
 async function showPriorityError(page) {
-    await page.getByTestId('upstream-backend-wiremock-chat').getByRole('button', { name: 'Edit backend', exact: true }).click();
+    await page.getByTestId('upstream-backend-wiremock-chat').getByRole('button', { name: 'Edit backend' }).click();
     const dialog = page.getByRole('dialog');
     await dialog.getByText('Advanced settings', { exact: true }).click();
     await dialog.getByRole('combobox', { name: 'Backend prioritization' }).selectOption({ label: 'Custom mapping' });

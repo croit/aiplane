@@ -52,3 +52,10 @@ board-models-none = 未发现
 board-models-more = +{ $count } 个
 board-pool-account = 账户
 board-pool-managed = 此资源池在下方 OpenRouter 账户中管理。
+
+board-filter-placeholder = 筛选后端、模型、别名…
+board-filter-clear = 清除
+board-filter-empty = 没有后端或资源池匹配此筛选条件。
+board-edit-named = 编辑后端 { $name }
+upstreams-saved = 已保存 — 立即生效。
+board-model-open-catalog = 在目录中打开此模型

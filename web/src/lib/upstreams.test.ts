@@ -6,6 +6,8 @@ import {
 	backendTestFailure,
 	backendAssignments,
 	boardGroups,
+	boardPoolMatches,
+	boardRowMatches,
 	liveForPool,
 	poolProblems,
 	parallelismMismatch,
@@ -340,4 +342,23 @@ test('partial coverage, unserved allowlist entries and ghost members are reporte
 	assert.deepEqual(problems.find((problem) => problem.key === 'upstreams-problem-missing-backends')?.params, {
 		backends: 'ghost'
 	});
+});
+
+test('the board filter matches a row by name, endpoint, model or alias', () => {
+	const row = { backend: backends[0], live: backends[0].live };
+	assert.equal(boardRowMatches(row, ''), true, 'no query shows every row');
+	assert.equal(boardRowMatches(row, 'GPU'), true, 'name matching ignores case');
+	assert.equal(boardRowMatches(row, 'gpu-0/v1'), true, 'the endpoint is part of the row');
+	assert.equal(boardRowMatches(row, 'model-a'), true, 'an advertised model matches');
+	assert.equal(boardRowMatches(row, 'default'), true, 'an alias matches');
+	assert.equal(boardRowMatches(row, 'model-b'), false);
+});
+
+test('a pool name keeps its whole band, including an empty one', () => {
+	const rows = [{ backend: backends[0], live: backends[0].live }];
+	assert.equal(boardPoolMatches('chat', rows, 'cha'), true);
+	assert.equal(boardPoolMatches('chat', rows, 'model-a'), true, 'one matching row keeps the band');
+	assert.equal(boardPoolMatches('chat', rows, 'embedding'), false);
+	assert.equal(boardPoolMatches('chat', [], 'chat'), true, 'an empty pool is still findable by name');
+	assert.equal(boardPoolMatches('chat', [], 'anything'), false);
 });

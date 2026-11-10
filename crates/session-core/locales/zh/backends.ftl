@@ -21,6 +21,7 @@ backends-advanced = 高级设置
 backends-field-api-key = API 密钥
 backends-field-api-key-keep = 留空以保留当前密钥
 backends-field-api-key-stored = 已存储密钥：{ $hint }
+backends-field-api-key-clear = 删除已保存的密钥
 
 # An alias that is configured but would not route.
 # Save-time check on the aliases textarea.
@@ -47,7 +48,7 @@ backends-no-models = 无模型
 backends-key-env-badge = 密钥：环境变量 { $var }
 backends-key-env-unset-badge = 环境变量 { $var } 未设置
 backends-enabled-hint = 关闭以将该后端排空进行维护。立即生效。其模型仍为已知，因此池中其他后端会接管，客户端只会看到临时不可用，而不是“找不到模型”。
-backends-enabled-label = 接收流量
+backends-enabled-label = 接收流量（{ $name }）
 backends-activity-summary = 15分钟 { $m15 } · 30分钟 { $m30 } · 60分钟 { $m60 }
 backends-alias-target-title = 别名 → { $target }
 backends-alias-missing-title = 别名 → { $target } — 此后端未上报该模型

@@ -355,3 +355,6 @@ admin-error-unknown-groups = { $count ->
     [one] No such group here: { $groups }. Create it under Admin → Groups first, or pick from the list.
    *[other] No such groups here: { $groups }. Create them under Admin → Groups first, or pick from the list.
 }
+
+admin-served-by = served by { $pools }
+admin-served-by-open = Open this model on the upstream board

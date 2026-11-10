@@ -363,7 +363,10 @@ label; the reusable `SourceLink` component renders that metadata in both places.
 
 The model administration read model lives at `GET /api/v0/admin/models`; model
 override writes use `PUT /api/v0/admin/models` and
-`DELETE /api/v0/admin/models/{name}`. Feature defaults and web-search settings
+`DELETE /api/v0/admin/models/{name}`. Each catalog row carries `served_by` — the
+pools routing that name and the backends available for it right now — which is
+what the row's provenance line and its link to the upstream board are built
+from. Feature defaults and web-search settings
 are independent resources at `PUT /api/v0/admin/model-defaults` and
 `PUT /api/v0/admin/search-settings`. Keep those mutation paths at the top level
 of the admin namespace: rama treats sibling parameterized route shapes as one

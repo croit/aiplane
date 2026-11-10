@@ -21,6 +21,7 @@ backends-advanced = Дополнительные настройки
 backends-field-api-key = Ключ API
 backends-field-api-key-keep = оставьте пустым, чтобы сохранить текущий ключ
 backends-field-api-key-stored = Сохранённый ключ: { $hint }
+backends-field-api-key-clear = Удалить сохранённый ключ
 
 # An alias that is configured but would not route.
 # Save-time check on the aliases textarea.
@@ -47,7 +48,7 @@ backends-no-models = нет моделей
 backends-key-env-badge = ключ: env { $var }
 backends-key-env-unset-badge = env { $var } НЕ ЗАДАНА
 backends-enabled-hint = Выключите, чтобы вывести бэкенд на обслуживание. Действует сразу. Его модели остаются известными, поэтому нагрузку берут другие бэкенды пула, а клиенты видят временную недоступность, а не «модель не найдена».
-backends-enabled-label = Принимает трафик
+backends-enabled-label = Принимает трафик ({ $name })
 backends-activity-summary = 15м { $m15 } · 30м { $m30 } · 60м { $m60 }
 backends-alias-target-title = алиас → { $target }
 backends-alias-missing-title = алиас → { $target } — этот бэкенд не сообщает такую модель

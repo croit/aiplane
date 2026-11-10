@@ -1,10 +1,13 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { t, n } from '#lib/i18n.svelte.js';
 	import FlapValue from './FlapValue.svelte';
 	import { boardTone, type BoardTone } from './board-state.js';
 	import {
 		activityCounts,
 		boardGroups,
+		boardPoolMatches,
+		boardRowMatches,
 		liveForPool,
 		naturalSort,
 		parallelismMismatch,
@@ -22,8 +25,12 @@
 		pools: Pool[];
 		usage: Record<string, number[]>;
 		coverage: Record<string, Coverage[]>;
+		/** A model name from a catalog deep link, applied to the search field. */
+		initialQuery?: string;
 		onEdit: (backend: Backend) => void;
 		onEditPool: (pool: Pool) => void;
+		onAddBackend: (pool: Pool) => void;
+		onFixModels: (backend: Backend) => void;
 		onToggleEnabled: (backend: Backend) => void;
 		onOpenRouterAccount: () => void;
 		toggling: string | null;
@@ -34,14 +41,27 @@
 		pools,
 		usage,
 		coverage,
+		initialQuery = '',
 		onEdit,
 		onEditPool,
+		onAddBackend,
+		onFixModels,
 		onToggleEnabled,
 		onOpenRouterAccount,
 		toggling
 	}: Props = $props();
 
 	let expanded = $state<string | null>(null);
+	// Two lenses over the same list: free text over name, endpoint, model and
+	// alias, and a lamp that keeps only the rows in that state. They stack, so
+	// "the red rows serving qwen" is one query and one click.
+	let query = $state(untrack(() => initialQuery));
+	let toneFilter = $state<BoardTone | null>(null);
+
+	function clearFilter() {
+		query = '';
+		toneFilter = null;
+	}
 
 	interface RowState {
 		tone: BoardTone;
@@ -139,6 +159,32 @@
 		return counts;
 	});
 
+	const summaryItems: { tone: BoardTone; key: string }[] = [
+		{ tone: 'green', key: 'board-summary-on-time' },
+		{ tone: 'amber', key: 'board-summary-degraded' },
+		{ tone: 'red', key: 'board-summary-down' },
+		{ tone: 'gray', key: 'board-summary-maintenance' }
+	];
+
+	const visibleBands = $derived.by<Band[]>(() => {
+		const searching = query.trim() !== '';
+		if (!searching && toneFilter === null) return bands;
+		return bands.flatMap((band) => {
+			const poolMatches = boardPoolMatches(band.pool?.name ?? null, band.rows, query);
+			const rows = band.rows.filter(
+				(row) =>
+					(poolMatches || boardRowMatches(row, query)) &&
+					(toneFilter === null || row.state.tone === toneFilter)
+			);
+			if (rows.length) return [{ ...band, rows }];
+			// An empty pool is a topology row that may still need its first
+			// backend — it stays while the query names the pool, never under a
+			// lamp it cannot carry.
+			if (!band.rows.length && poolMatches && toneFilter === null) return [band];
+			return [];
+		});
+	});
+
 	function keySource(backend: Backend): string {
 		if (backend.has_stored_key) {
 			return t('backends-field-api-key-stored', { hint: backend.api_key_hint ?? '—' });
@@ -183,10 +229,33 @@
 
 <section class="board-wrap" data-testid="concourse-board">
 	<header class="board-summary">
-		<span class="summary-item"><span class="lamp lamp-green"></span>{summary.green}&nbsp;{t('board-summary-on-time')}</span>
-		<span class="summary-item"><span class="lamp lamp-amber"></span>{summary.amber}&nbsp;{t('board-summary-degraded')}</span>
-		<span class="summary-item"><span class="lamp lamp-red"></span>{summary.red}&nbsp;{t('board-summary-down')}</span>
-		{#if summary.gray > 0}<span class="summary-item"><span class="lamp lamp-gray"></span>{summary.gray}&nbsp;{t('board-summary-maintenance')}</span>{/if}
+		<div class="summary-lamps">
+			{#each summaryItems as item (item.tone)}
+				{#if item.tone !== 'gray' || summary.gray > 0 || toneFilter === 'gray'}
+					<button
+						type="button"
+						class="summary-item"
+						aria-pressed={toneFilter === item.tone}
+						disabled={summary[item.tone] === 0 && toneFilter !== item.tone}
+						onclick={() => (toneFilter = toneFilter === item.tone ? null : item.tone)}
+					>
+						<span class="lamp lamp-{item.tone}"></span>{summary[item.tone]}&nbsp;{t(item.key)}
+					</button>
+				{/if}
+			{/each}
+		</div>
+		<div class="board-filter">
+			<input
+				type="search"
+				class="input input-sm"
+				bind:value={query}
+				placeholder={t('board-filter-placeholder')}
+				aria-label={t('board-filter-placeholder')}
+			/>
+			{#if query || toneFilter}
+				<button class="btn btn-ghost btn-xs" type="button" onclick={clearFilter}>{t('board-filter-clear')}</button>
+			{/if}
+		</div>
 	</header>
 
 	<div class="board">
@@ -198,7 +267,7 @@
 			<div class="cell cell-actions"></div>
 		</div>
 
-		{#each bands as band (band.key)}
+		{#each visibleBands as band (band.key)}
 			<section
 				class="pool-band"
 				class:unassigned={!band.pool}
@@ -226,6 +295,9 @@
 							<span class="pool-stat"><span class="lamp lamp-{band.tone}"></span>{band.up}/{band.rows.length} {t('backends-status-up')}</span>
 							{#if band.models.total}
 								<span class="pool-stat" class:text-warning={band.models.serving < band.models.total}>{band.models.serving}/{band.models.total} {t('board-models-unit')}</span>
+							{/if}
+							{#if !band.openRouter}
+								<button class="btn btn-ghost btn-xs" type="button" onclick={() => { if (band.pool) onAddBackend(band.pool); }}>+ {t('upstreams-add-backend')}</button>
 							{/if}
 							{#if band.openRouter}
 								<button class="btn btn-ghost btn-xs" type="button" onclick={onOpenRouterAccount} title={t('board-pool-managed')}>{t('board-pool-account')}</button>
@@ -267,7 +339,7 @@
 							<span class="lamp lamp-{row.state.tone}"></span>
 							<span class="state-word state-{row.state.tone}">{t(row.state.key)}</span>
 							{#if row.live && row.live.models.length === 0}
-								<span class="badge badge-warning badge-sm" title={t('backends-no-models-title')}>{t('backends-no-models')}</span>
+								<button class="badge badge-warning badge-sm" type="button" title={t('backends-no-models-title')} onclick={() => (row.backend.provider === 'openrouter' ? onOpenRouterAccount() : onFixModels(row.backend))}>{t('backends-no-models')}</button>
 							{/if}
 						</div>
 						<div class="cell cell-load">
@@ -289,16 +361,17 @@
 									type="checkbox"
 									checked={row.backend.enabled}
 									disabled={toggling === row.backend.name}
-									aria-label={t('backends-enabled-label')}
+									aria-label={t('backends-enabled-label', { name: row.backend.name })}
 									onchange={() => onToggleEnabled(row.backend)}
 								/>
 								<span>{row.backend.enabled ? t('board-enabled') : t('board-drained')}</span>
 							</label>
-							<button class="btn btn-ghost btn-sm" type="button" aria-label={t('upstreams-edit-backend')} onclick={() => onEdit(row.backend)}>{t('board-edit')}</button>
+							<button class="btn btn-ghost btn-sm" type="button" aria-label={t('board-edit-named', { name: row.backend.name })} onclick={() => onEdit(row.backend)}>{t('board-edit')}</button>
 						</div>
 					</div>
 					{#if open}
 						<div class="row-detail">
+							<p class="detail-sentence">{row.state.detail}</p>
 							<div class="detail-block">
 								<span class="detail-label">{t('board-detail-endpoint')}</span>
 								<span class="detail-value">{row.backend.base_url}</span>
@@ -307,7 +380,9 @@
 							<div class="detail-block">
 								<span class="detail-label">{t('board-detail-models')}</span>
 								<div class="chips">
-									{#each shown as model (model)}<span class="chip">{model}</span>{/each}
+									{#each shown as model (model)}
+										<a class="chip chip-link" href={`/admin/models?tab=catalog&q=${encodeURIComponent(model)}`} title={t('board-model-open-catalog')}>{model}</a>
+									{/each}
 									{#if more > 0}<span class="chip chip-dim">{t('board-models-more', { count: more })}</span>{/if}
 									{#if models.length === 0}<span class="detail-dim">{t('board-models-none')}</span>{/if}
 								</div>
@@ -336,9 +411,19 @@
 						</div>
 					{/if}
 				{:else}
-					<p class="pool-empty">{t('backends-pool-empty')}</p>
+					<div class="pool-empty">
+						<span>{t('backends-pool-empty')}</span>
+						{#if band.pool}
+							<button class="btn btn-ghost btn-xs" type="button" onclick={() => { if (band.pool) onAddBackend(band.pool); }}>+ {t('upstreams-add-backend')}</button>
+						{/if}
+					</div>
 				{/each}
 			</section>
+		{:else}
+			<div class="board-empty">
+				<span>{t('board-filter-empty')}</span>
+				<button class="btn btn-ghost btn-xs" type="button" onclick={clearFilter}>{t('board-filter-clear')}</button>
+			</div>
 		{/each}
 	</div>
 
@@ -370,10 +455,41 @@
 		text-transform: uppercase;
 		color: color-mix(in oklab, var(--color-base-content) 70%, transparent);
 	}
+	.summary-lamps {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 1.25rem;
+	}
 	.summary-item {
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
+		padding: 0;
+		border: none;
+		background: none;
+		font: inherit;
+		letter-spacing: inherit;
+		text-transform: inherit;
+		color: inherit;
+		cursor: pointer;
+	}
+	.summary-item[aria-pressed='true'] {
+		color: var(--color-base-content);
+		box-shadow: inset 0 -2px 0 var(--color-primary);
+	}
+	.summary-item:disabled {
+		cursor: default;
+	}
+	.board-filter {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		margin-left: auto;
+	}
+	.board-filter .input {
+		width: 18rem;
+		max-width: 45vw;
 	}
 	.board {
 		border: 1px solid var(--color-base-300);
@@ -632,6 +748,12 @@
 		gap: 0.25rem;
 		min-width: 0;
 	}
+	.detail-sentence {
+		grid-column: 1 / -1;
+		margin: 0;
+		font-size: 0.8125rem;
+		color: color-mix(in oklab, var(--color-base-content) 70%, transparent);
+	}
 	.detail-label {
 		font-size: 0.625rem;
 		font-weight: 600;
@@ -681,14 +803,34 @@
 		border-color: color-mix(in oklab, var(--color-warning) 60%, var(--color-base-300));
 		color: var(--color-warning);
 	}
+	.chip-link:hover,
+	.chip-link:focus-visible {
+		border-color: var(--color-primary);
+		color: var(--color-primary);
+	}
 	.sparkline {
 		width: 88px;
 		height: 20px;
 		color: var(--color-primary);
 	}
 	.pool-empty {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.75rem;
 		margin: 0;
 		padding: 0.75rem 0.875rem;
+		border-top: 1px solid var(--color-base-300);
+		font-size: 0.8125rem;
+		color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+	}
+	.board-empty {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: center;
+		gap: 0.75rem;
+		padding: 1.5rem 0.875rem;
 		border-top: 1px solid var(--color-base-300);
 		font-size: 0.8125rem;
 		color: color-mix(in oklab, var(--color-base-content) 55%, transparent);

@@ -51,3 +51,10 @@ board-models-none = none discovered
 board-models-more = +{ $count } more
 board-pool-account = Account
 board-pool-managed = This pool is managed in the OpenRouter account below.
+
+board-filter-placeholder = Filter backends, models, aliases…
+board-filter-clear = Clear
+board-filter-empty = No backend and no pool matches this filter.
+board-edit-named = Edit backend { $name }
+upstreams-saved = Saved — live now.
+board-model-open-catalog = Open this model in the catalog

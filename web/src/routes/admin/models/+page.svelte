@@ -23,10 +23,21 @@
 		else if (kind === 'cleared') notice = t('admin-cleared-defaults', { model });
 	});
 
-	let query = $state('');
+	let query = $state(page.url.searchParams.get('q') ?? '');
 	// The catalog opens on the models that are actually served; aliases and
-	// dead overrides are one click away.
-	let filter = $state<ModelFilter>('active');
+	// dead overrides are one click away. A `q` deep link asks for one model by
+	// name, so the filter must not hide it in another section.
+	let filter = $state<ModelFilter>(page.url.searchParams.get('q') ? 'all' : 'active');
+
+	// A `q` deep link arrives from the board's model chips; the catalog's
+	// "served by" line goes the other way. SPA navigation keeps this component
+	// mounted, so the URL is the trigger, not the initial state above.
+	$effect(() => {
+		const deepLink = page.url.searchParams.get('q') ?? '';
+		if (!deepLink) return;
+		query = deepLink;
+		filter = 'all';
+	});
 
 	async function refresh() {
 		try {
@@ -76,7 +87,7 @@
 	{#if error}<div class="alert alert-error"><span>{error}</span></div>{/if}
 	{#if notice}<div class="alert alert-success"><span>{notice}</span></div>{/if}
 	{#if selected === 'upstreams'}
-		<UpstreamsPanel />
+		<UpstreamsPanel initialQuery={page.url.searchParams.get('q') ?? ''} />
 	{:else if data}
 		{#if selected === 'defaults'}
 			<DefaultModelsCard defaults={data.feature_defaults} onsave={saveDefault} />

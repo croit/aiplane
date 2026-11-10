@@ -1252,6 +1252,11 @@ async fn model_overrides_validate_and_save() {
     assert_eq!(offered["kind"], "chat");
     assert_eq!(offered["alias_target"], serde_json::Value::Null);
     assert_eq!(offered["served"], true);
+    assert_eq!(
+        offered["served_by"],
+        serde_json::json!([{"pool": "pool", "backends": ["mock"]}]),
+        "the catalog names the pool and backend that carry the model"
+    );
     assert_eq!(offered["resolved_reasoning_style"], "none");
     assert_eq!(offered["uses_token_budget"], false);
     assert_eq!(offered["effort_levels"], serde_json::json!([]));
@@ -1272,6 +1277,11 @@ async fn model_overrides_validate_and_save() {
     assert_eq!(
         configured["served"], false,
         "nothing advertises `m` any more, so the page files it as inactive"
+    );
+    assert_eq!(
+        configured["served_by"],
+        serde_json::json!([]),
+        "a model nothing serves has no provenance"
     );
     assert_eq!(configured["resolved_reasoning_style"], "qwen");
     // Nothing serves `m`, so no server would enforce a Qwen budget: the
@@ -1934,6 +1944,51 @@ async fn topology_save_is_live_and_streams() {
             .as_array()
             .is_some_and(|kinds| kinds.iter().any(|kind| kind == "system_one"))
     );
+
+    // Clearing the stored key is explicit: `clear_key` deletes it, and a body
+    // carrying both a new key and the flag is refused rather than guessing
+    // which one the operator meant.
+    let resp = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/backends",
+            &cookie,
+            Some(r#"{"name":"b1","base_url":"http://upstream.invalid","api_key":"sk-new-1234567890-wxyz","clear_key":true,"overwrite":true}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let resp = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/backends",
+            &cookie,
+            Some(r#"{"name":"b1","base_url":"http://upstream.invalid","pools":["p1"],"clear_key":true,"overwrite":true}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let listed: serde_json::Value = serde_json::from_str(
+        &body(
+            app.serve(req(Method::GET, "/api/v0/admin/upstreams", &cookie, None))
+                .await
+                .unwrap(),
+        )
+        .await,
+    )
+    .unwrap();
+    let cleared = listed["backends"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["name"] == "b1")
+        .expect("b1 is still configured");
+    assert_eq!(
+        cleared["has_stored_key"],
+        serde_json::json!(false),
+        "clear_key deletes the sealed key"
+    );
+    assert_eq!(cleared["api_key_hint"], serde_json::Value::Null);
 
     // There is no apply step any more: the old route is gone. A POST to a
     // path nothing serves errors out (the SPA catch-all only answers GET).

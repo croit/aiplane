@@ -52,3 +52,10 @@ board-models-none = ничего не обнаружено
 board-models-more = +{ $count } ещё
 board-pool-account = Аккаунт
 board-pool-managed = Этот пул управляется в аккаунте OpenRouter ниже.
+
+board-filter-placeholder = Фильтр по бэкендам, моделям, алиасам…
+board-filter-clear = Сбросить
+board-filter-empty = Ни один бэкенд и ни один пул не подходят под этот фильтр.
+board-edit-named = Изменить бэкенд { $name }
+upstreams-saved = Сохранено — уже действует.
+board-model-open-catalog = Открыть эту модель в каталоге

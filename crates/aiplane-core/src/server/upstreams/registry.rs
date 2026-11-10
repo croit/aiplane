@@ -1744,6 +1744,36 @@ impl UpstreamRegistry {
             .collect()
     }
 
+    /// The pools of `kind` that currently route `model`, each with the names of
+    /// the backends in it that can serve the model right now.
+    ///
+    /// The catalog's answer to "who carries this model". Availability is part
+    /// of the answer, exactly like [`Self::pool_model_coverage`]: a drained or
+    /// unhealthy backend is not where an operator should look when a model
+    /// misbehaves. Sorted by pool name then backend name; empty when nothing
+    /// serves the model, which is the state of a leftover override.
+    pub fn serving_pools(&self, model: &str, kind: PoolKind) -> Vec<(String, Vec<String>)> {
+        let d = self.data();
+        let mut out: Vec<(String, Vec<String>)> = d
+            .pools
+            .values()
+            .filter(|pool| pool.kind == kind)
+            .filter_map(|pool| {
+                let mut backends: Vec<String> = pool
+                    .backends
+                    .iter()
+                    .filter(|b| b.is_available() && b.serves_model(model))
+                    .map(|b| b.name.clone())
+                    .collect();
+                backends.sort();
+                backends.dedup();
+                (!backends.is_empty()).then(|| (pool.name.clone(), backends))
+            })
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
     /// Flip one backend's maintenance switch on the **running** registry, by
     /// name. Returns `false` if no backend by that name is registered.
     ///
@@ -4640,6 +4670,72 @@ mod tests {
         assert_eq!(map["smart"], Some("glm-4.6".to_string()));
         // Exactly the two reals plus the one alias, nothing else.
         assert_eq!(map.len(), 3);
+    }
+
+    /// The catalog's "served by" line: pool → the backends that can serve the
+    /// model *right now*, of the asked kind only, sorted for a stable render.
+    #[test]
+    fn serving_pools_names_the_pools_and_available_backends() {
+        let reg = build(vec![
+            (
+                "local",
+                pool_config(
+                    PoolKind::Chat,
+                    PickerStrategy::RoundRobin,
+                    vec![backend("c", 16)],
+                ),
+            ),
+            (
+                "cloud",
+                pool_config(
+                    PoolKind::Chat,
+                    PickerStrategy::RoundRobin,
+                    vec![backend("a", 16), backend("b", 16)],
+                ),
+            ),
+            (
+                "embed",
+                pool_config(
+                    PoolKind::Embedding,
+                    PickerStrategy::RoundRobin,
+                    vec![backend("e", 16)],
+                ),
+            ),
+        ]);
+        seed_models(&reg, "local", 0, &["m"]);
+        seed_models(&reg, "cloud", 0, &["m"]);
+        seed_models(&reg, "cloud", 1, &["m"]);
+        seed_models(&reg, "embed", 0, &["m"]);
+
+        assert_eq!(
+            reg.serving_pools("m", PoolKind::Chat),
+            vec![
+                ("cloud".to_string(), vec!["a".to_string(), "b".to_string()]),
+                ("local".to_string(), vec!["c".to_string()]),
+            ],
+            "both chat pools sorted by name; the embedding pool has no say here"
+        );
+
+        // Availability is part of the answer: a drained backend is not where
+        // the operator should look. The pool stays while a sibling serves.
+        set_health(&reg, "cloud", 0, false);
+        assert_eq!(
+            reg.serving_pools("m", PoolKind::Chat),
+            vec![
+                ("cloud".to_string(), vec!["b".to_string()]),
+                ("local".to_string(), vec!["c".to_string()]),
+            ]
+        );
+
+        // No backend left in the pool → the pool leaves the answer entirely.
+        set_health(&reg, "cloud", 1, false);
+        assert_eq!(
+            reg.serving_pools("m", PoolKind::Chat),
+            vec![("local".to_string(), vec!["c".to_string()])]
+        );
+
+        // A model nothing serves has no provenance — a leftover override.
+        assert!(reg.serving_pools("gone", PoolKind::Chat).is_empty());
     }
 
     #[test]

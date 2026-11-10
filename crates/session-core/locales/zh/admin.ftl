@@ -341,3 +341,6 @@ admin-error-unknown-groups = { $count ->
     [one] 此处不存在以下组：{ $groups }。请先在“管理 → 组”中创建，或从列表中选择。
    *[other] 此处不存在以下组：{ $groups }。请先在“管理 → 组”中创建，或从列表中选择。
 }
+
+admin-served-by = 由 { $pools } 提供
+admin-served-by-open = 在上游面板中打开此模型

@@ -581,6 +581,14 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
                 serving.dialect,
                 &name,
             );
+            // Who carries it, for the row's provenance line and a jump to the
+            // board. Computed before the push borrows `name`.
+            let served_by: Vec<ServedByView> = state
+                .upstreams
+                .serving_pools(&name, kind)
+                .into_iter()
+                .map(|(pool, backends)| ServedByView { pool, backends })
+                .collect();
             models.push(ModelView {
                 // What the serving backend says this model's context is, if it
                 // says anything. The page puts it beside the operator's own
@@ -593,6 +601,7 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
                 kind: kind_label,
                 alias_target,
                 served: true,
+                served_by,
                 configured: defaults.is_some(),
                 resolved_reasoning_style: reasoning.as_str(),
                 uses_token_budget: reasoning.budget_enforced(serving.thinking_budget),
@@ -624,6 +633,7 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
             // Nothing advertises this model any more — the page files the row
             // under *inactive* so the operator can clear it.
             served: false,
+            served_by: Vec::new(),
             configured: true,
             resolved_reasoning_style: reasoning.as_str(),
             // Nothing serves this model, so only a budget in the model's own
@@ -700,6 +710,9 @@ pub struct ModelView {
     /// An upstream pool currently advertises this model. `false` only for
     /// stored overrides of a model nothing serves any more.
     pub served: bool,
+    /// The pools routing this name right now, each with the backends behind
+    /// it. Empty exactly when [`Self::served`] is `false`.
+    pub served_by: Vec<ServedByView>,
     /// The model has stored overrides.
     pub configured: bool,
     pub resolved_reasoning_style: &'static str,
@@ -711,6 +724,17 @@ pub struct ModelView {
     /// The context window the serving backend reports.
     pub detected_context_window: Option<i64>,
     pub defaults: Option<ModelDefaultsView>,
+}
+
+/// One line of a model row's provenance: the pool that routes the model and
+/// the backends in it that can serve it right now.
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct ServedByView {
+    /// The pool's name, as the board bands it.
+    pub pool: String,
+    /// Backends in that pool available for this model — a drained or
+    /// unhealthy backend is left out, because it is not where traffic goes.
+    pub backends: Vec<String>,
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
@@ -2355,6 +2379,11 @@ pub struct BackendSaveBody {
     /// (the API never echoes secrets).
     #[serde(default)]
     pub api_key: String,
+    /// Delete the stored key instead of keeping it. A blank `api_key` means
+    /// "unchanged", so this is the only way to retire a key — moving the
+    /// backend onto `api_key_env`, or removing a leaked one.
+    #[serde(default)]
+    pub clear_key: bool,
     #[serde(default)]
     pub weight: u32,
     #[serde(default)]
@@ -2782,6 +2811,11 @@ pub async fn backends_save(State(state): State<Arc<RamaState>>, req: Request) ->
     if parsed.base_url.trim().is_empty() {
         return bad_request("a backend needs a base URL");
     }
+    if parsed.clear_key && !parsed.api_key.trim().is_empty() {
+        return bad_request(
+            "send either a new API key or clear_key, not both — a new key replaces the stored one",
+        );
+    }
     let (api_key_ct, api_key_nonce) = {
         let entered = parsed.api_key.trim();
         if !entered.is_empty() {
@@ -2789,6 +2823,8 @@ pub async fn backends_save(State(state): State<Arc<RamaState>>, req: Request) ->
                 Ok(s) => (Some(s.ciphertext), Some(s.nonce)),
                 Err(err) => return internal(err),
             }
+        } else if parsed.clear_key {
+            (None, None)
         } else {
             match upstreams_config::get_backend(&state.db, &name).await {
                 Ok(Some(existing)) => (existing.api_key_ct, existing.api_key_nonce),

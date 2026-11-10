@@ -354,3 +354,6 @@ admin-error-unknown-groups = { $count ->
     [one] Diese Gruppe existiert hier nicht: { $groups }. Legen Sie sie zuerst unter Administration → Gruppen an oder wählen Sie aus der Liste.
    *[other] Diese Gruppen existieren hier nicht: { $groups }. Legen Sie sie zuerst unter Administration → Gruppen an oder wählen Sie aus der Liste.
 }
+
+admin-served-by = bedient von { $pools }
+admin-served-by-open = Dieses Modell auf dem Upstream-Board öffnen

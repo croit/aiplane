@@ -218,6 +218,39 @@ export interface BoardGroup {
 	backends: Backend[];
 }
 
+/** One board row as the filter sees it: the backend and its live state. */
+export interface BoardRow {
+	backend: Backend;
+	live: LiveBackend | null;
+}
+
+/**
+ * Whether a backend row matches the board's free-text filter: its name, its
+ * endpoint, every model it advertises, or any alias it answers to.
+ */
+export function boardRowMatches(row: BoardRow, query: string): boolean {
+	const needle = query.trim().toLowerCase();
+	if (!needle) return true;
+	return [
+		row.backend.name,
+		row.backend.base_url,
+		...(row.live?.models ?? []),
+		...row.backend.aliases.map((alias) => alias.alias)
+	].some((value) => value.toLowerCase().includes(needle));
+}
+
+/**
+ * Whether a band survives the query: its pool name matches, or one of its rows
+ * does. Kept separate from [`boardRowMatches`] so typing a pool name shows the
+ * whole band, including the empty pool the operator may be hunting for.
+ */
+export function boardPoolMatches(pool: string | null, rows: BoardRow[], query: string): boolean {
+	const needle = query.trim().toLowerCase();
+	if (!needle) return true;
+	if ((pool ?? '').toLowerCase().includes(needle)) return true;
+	return rows.some((row) => boardRowMatches(row, query));
+}
+
 /**
  * The board's grouping: every pool in its declared order, then the backends
  * no pool holds. An empty pool still gets a band — it is a topology row that
