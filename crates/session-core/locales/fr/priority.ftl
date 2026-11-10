@@ -19,7 +19,6 @@ priority-error-body = Requête de priorité invalide. Choisissez low, medium, hi
 priority-error-not-found = Ce jeton n’existe pas. Actualisez la liste des jetons.
 priority-error-internal = Impossible de traiter la priorité. Réessayez ou contactez un administrateur.
 priority-error-mapping = Correspondance invalide. Utilisez un paramètre distinct de premier niveau et trois entiers strictement ordonnés.
-priority-backend-changed = Backend { $backend } : correspondance de priorité modifiée
 priority-disabled = La priorisation des requêtes est désactivée. Activez-la dans les paramètres système pour appliquer ces priorités.
 priority-inherit-value = Hériter des groupes ({ $priority })
 priority-admin-only = Administrateur uniquement

@@ -1,15 +1,8 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
-
-upstreams-apply-count = 项未应用的更改
-upstreams-apply-note = —— 运行时注册表仍在提供旧的拓扑。
-
-# SPA 应用待生效拓扑后的提示。
-upstreams-applied = 拓扑已应用。
-
 # 上游界面：资源池的含义以及看板的列标题。
 
 upstreams-heading = 上游
-upstreams-description = 池按类型和选择策略对后端分组。健康状况、负载和提供的模型均实时探测。拓扑更改会保存到数据库，并在“应用更改”后生效。
+upstreams-description = 池按类型和选择策略对后端分组。健康状况、负载和提供的模型均实时探测。拓扑更改会保存到数据库，并立即应用于运行中的注册表。
 upstreams-add-pool = 池
 upstreams-add-backend = 后端
 upstreams-unassigned-heading = 未分配

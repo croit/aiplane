@@ -1,13 +1,6 @@
-# Sticky apply bar (shown while there are unapplied topology edits).
-upstreams-apply-count = unapplied changes
-upstreams-apply-note = — the runtime registry still serves the previous topology.
-
-# Toast after the SPA applies the pending topology.
-upstreams-applied = Topology applied.
-
 # The upstreams surface: what a pool is, and the board's column heads.
 upstreams-heading = Upstreams
-upstreams-description = Pools group backends by kind and picker strategy. Health, load and served models are probed live. Topology edits are saved to the database and take effect on Apply changes.
+upstreams-description = Pools group backends by kind and picker strategy. Health, load and served models are probed live. Topology edits are saved to the database and applied to the running registry immediately.
 upstreams-add-pool = Pool
 upstreams-add-backend = Backend
 upstreams-unassigned-heading = Unassigned

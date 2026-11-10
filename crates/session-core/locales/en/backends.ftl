@@ -3,7 +3,6 @@
 backends-status-up = up
 
 # Backend CRUD editor (add/edit/delete backends stored in the DB topology).
-backends-apply-changes = Apply changes
 backends-field-name = Name
 backends-field-base-url = Base URL
 backends-field-api-key = API key
@@ -37,7 +36,7 @@ backends-no-models-title = This backend advertises no models, so nothing routes 
 backends-no-models = no models
 backends-key-env-badge = key: env { $var }
 backends-key-env-unset-badge = env { $var } NOT SET
-backends-enabled-hint = Turn off to drain this backend for maintenance. Takes effect immediately — no "Apply changes" needed. Its models stay known, so the pool's other backends take over and clients see a temporary outage, never "model not found".
+backends-enabled-hint = Turn off to drain this backend for maintenance. Takes effect immediately. Its models stay known, so the pool's other backends take over and clients see a temporary outage, never "model not found".
 backends-enabled-label = Serving traffic
 backends-activity-summary = 15m { $m15 } · 30m { $m30 } · 60m { $m60 }
 backends-alias-target-title = alias → { $target }

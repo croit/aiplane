@@ -150,29 +150,17 @@ export function backendTestFailure(body: string | undefined): BackendTestResult 
 	};
 }
 
-export interface PendingChange {
-	code: 'pool_added' | 'pool_removed' | 'pool_kind' | 'pool_strategy' | 'backend_joins' | 'backend_leaves' | 'backend_url' | 'backend_limits' | 'backend_health_path' | 'backend_priority';
-	pool?: string;
-	backend?: string;
-	from?: string;
-	to?: string;
-	weight?: number;
-	inflight?: number;
-}
-
 export interface Topology {
 	pools: Pool[];
 	backends: Backend[];
 	fallbacks: Record<string, string>;
 	usage_last_hour: Record<string, number[]>;
-	dirty: number;
 	pool_kinds: string[];
 	pool_strategies: string[];
 	groups: string[];
 	fallback_kinds: string[];
 	all_models?: string[];
 	coverage?: Record<string, Coverage[]>;
-	pending_changes: PendingChange[];
 }
 
 export function backendAssignments(pools: Pool[], backends: Backend[]) {

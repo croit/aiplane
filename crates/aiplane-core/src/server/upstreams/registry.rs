@@ -960,37 +960,6 @@ fn in_scope(pools: &Option<HashSet<String>>, pool: &Pool) -> bool {
     pools.as_ref().is_none_or(|p| p.contains(&pool.name))
 }
 
-/// What the running registry is serving right now — the "before" side of the
-/// apply diff. See [`UpstreamRegistry::live_topology`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LiveTopology {
-    /// Sorted by pool name.
-    pub pools: Vec<LivePool>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LivePool {
-    pub name: String,
-    pub kind: PoolKind,
-    pub strategy: PickerStrategy,
-    /// Sorted by backend name.
-    pub backends: Vec<LiveBackend>,
-}
-
-/// The backend fields worth diffing: the ones a reload actually changes about
-/// how requests are dispatched. Secrets are deliberately absent — a diff must
-/// never be a place a key can leak, and "the key changed" is not something an
-/// operator needs spelled out.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LiveBackend {
-    pub priority: crate::server::priority::BackendPriority,
-    pub name: String,
-    pub base_url: String,
-    pub weight: u32,
-    pub max_inflight: u32,
-    pub health_path: String,
-}
-
 /// Minimum share of a prompt's blocks that must match before cache locality
 /// outranks load — SGLang's `cache_threshold`, same default.
 ///
@@ -1738,44 +1707,6 @@ impl UpstreamRegistry {
         self.generation.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
-
-    /// A comparable summary of what the registry is *currently serving*, for
-    /// diffing against the edited DB topology.
-    ///
-    /// Deliberately a plain data snapshot rather than a diff method: the DB side
-    /// lives in `db::upstreams_config` and the web layer owns the wording, so
-    /// the registry's job is only to say what it has.
-    pub fn live_topology(&self) -> LiveTopology {
-        let d = self.data();
-        let mut pools: Vec<LivePool> = d
-            .pools
-            .values()
-            .map(|p| {
-                let mut backends: Vec<LiveBackend> = p
-                    .backends
-                    .iter()
-                    .map(|b| LiveBackend {
-                        priority: b.priority.clone(),
-                        name: b.name.clone(),
-                        base_url: b.base_url.clone(),
-                        weight: b.weight,
-                        max_inflight: b.max_inflight,
-                        health_path: b.health_path.clone(),
-                    })
-                    .collect();
-                backends.sort_by(|a, b| a.name.cmp(&b.name));
-                LivePool {
-                    name: p.name.clone(),
-                    kind: p.kind,
-                    strategy: p.strategy,
-                    backends,
-                }
-            })
-            .collect();
-        pools.sort_by(|a, b| a.name.cmp(&b.name));
-        LiveTopology { pools }
-    }
-
     /// For one pool: every name it currently advertises to clients, each with
     /// how many of the pool's backends can actually serve it and how many exist.
     ///

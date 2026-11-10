@@ -19,7 +19,6 @@ priority-error-body = Ungültige Prioritätsanfrage. Wählen Sie low, medium, hi
 priority-error-not-found = Dieses Token existiert nicht. Aktualisieren Sie die Token-Liste.
 priority-error-internal = Die Priorität konnte nicht verarbeitet werden. Versuchen Sie es erneut oder kontaktieren Sie einen Administrator.
 priority-error-mapping = Ungültige Prioritätszuordnung. Verwenden Sie einen separaten Parameter auf oberster Ebene und drei streng geordnete Ganzzahlen.
-priority-backend-changed = Backend { $backend }: Prioritätszuordnung geändert
 priority-disabled = Die Anfragepriorisierung ist deaktiviert. Aktivieren Sie sie in den Systemeinstellungen, damit diese Prioritäten gelten.
 priority-inherit-value = Von Gruppen erben ({ $priority })
 priority-admin-only = Nur durch Administrator

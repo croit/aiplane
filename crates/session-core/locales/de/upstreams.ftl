@@ -1,13 +1,6 @@
-# Angeheftete Anwenden-Leiste (sichtbar bei nicht angewendeten Änderungen).
-upstreams-apply-count = nicht angewendete Änderungen
-upstreams-apply-note = — die Laufzeit-Registry liefert noch die vorherige Topologie.
-
-# Hinweis, nachdem die SPA die ausstehende Topologie übernommen hat.
-upstreams-applied = Topologie übernommen.
-
 # Die Upstreams-Oberfläche: was ein Pool ist, und die Spaltenköpfe des Boards.
 upstreams-heading = Upstreams
-upstreams-description = Pools gruppieren Backends nach Art und Auswahlstrategie. Gesundheit, Last und bereitgestellte Modelle werden live geprüft. Topologie-Änderungen werden in der Datenbank gespeichert und mit „Änderungen anwenden“ wirksam.
+upstreams-description = Pools gruppieren Backends nach Art und Auswahlstrategie. Gesundheit, Last und bereitgestellte Modelle werden live geprüft. Topologie-Änderungen werden in der Datenbank gespeichert und sofort in der laufenden Registry wirksam.
 upstreams-add-pool = Pool
 upstreams-add-backend = Backend
 upstreams-unassigned-heading = Nicht zugewiesen

@@ -5,7 +5,6 @@ backends-status-up = активен
 
 
 # Backend CRUD editor (add/edit/delete backends stored in the DB topology).
-backends-apply-changes = Применить изменения
 backends-field-name = Название
 backends-field-base-url = Базовый URL
 backends-field-pool = Пул
@@ -47,7 +46,7 @@ backends-no-models-title = Этот бэкенд не объявляет ни о
 backends-no-models = нет моделей
 backends-key-env-badge = ключ: env { $var }
 backends-key-env-unset-badge = env { $var } НЕ ЗАДАНА
-backends-enabled-hint = Выключите, чтобы вывести бэкенд на обслуживание. Действует сразу — «Применить изменения» не нужно. Его модели остаются известными, поэтому нагрузку берут другие бэкенды пула, а клиенты видят временную недоступность, а не «модель не найдена».
+backends-enabled-hint = Выключите, чтобы вывести бэкенд на обслуживание. Действует сразу. Его модели остаются известными, поэтому нагрузку берут другие бэкенды пула, а клиенты видят временную недоступность, а не «модель не найдена».
 backends-enabled-label = Принимает трафик
 backends-activity-summary = 15м { $m15 } · 30м { $m30 } · 60м { $m60 }
 backends-alias-target-title = алиас → { $target }

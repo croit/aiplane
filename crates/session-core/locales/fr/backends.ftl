@@ -5,7 +5,6 @@ backends-status-up = actif
 
 
 # Éditeur CRUD des backends (ajout/modification/suppression de backends stockés dans la topologie en base).
-backends-apply-changes = Appliquer les modifications
 backends-field-name = Nom
 backends-field-base-url = URL de base
 backends-field-pool = Pool
@@ -47,7 +46,7 @@ backends-no-models-title = Ce backend n'annonce aucun modèle : rien n'y est rou
 backends-no-models = aucun modèle
 backends-key-env-badge = clé : env { $var }
 backends-key-env-unset-badge = env { $var } NON DÉFINIE
-backends-enabled-hint = Désactivez pour vider ce backend en vue d'une maintenance. Effet immédiat — pas besoin d'« Appliquer les modifications ». Ses modèles restent connus : les autres backends du pool prennent le relais et les clients voient une panne temporaire, jamais « modèle introuvable ».
+backends-enabled-hint = Désactivez pour vider ce backend en vue d'une maintenance. Effet immédiat. Ses modèles restent connus : les autres backends du pool prennent le relais et les clients voient une panne temporaire, jamais « modèle introuvable ».
 backends-enabled-label = Accepte du trafic
 backends-activity-summary = 15 min { $m15 } · 30 min { $m30 } · 60 min { $m60 }
 backends-alias-target-title = alias → { $target }

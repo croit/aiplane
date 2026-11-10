@@ -19,7 +19,6 @@ priority-error-body = Solicitud de prioridad inválida. Elija low, medium, high 
 priority-error-not-found = Este token no existe. Actualice la lista de tokens.
 priority-error-internal = No se pudo procesar la prioridad. Reinténtelo o contacte con un administrador.
 priority-error-mapping = Asignación inválida. Use un parámetro independiente de primer nivel y tres enteros estrictamente ordenados.
-priority-backend-changed = Backend { $backend }: asignación de prioridad modificada
 priority-disabled = La priorización de solicitudes está desactivada. Actívela en los ajustes del sistema para aplicar estas prioridades.
 priority-inherit-value = Heredar de los grupos ({ $priority })
 priority-admin-only = Solo administradores

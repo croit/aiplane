@@ -284,11 +284,10 @@ async fn seed_remembered_models(registry: &UpstreamRegistry, db: &Pool) {
 /// Identify every backend once, in parallel, and record what it said.
 ///
 /// Runs here rather than in the 5 s probe loop because this is exactly the
-/// moment the operator means by "save": the admin UI applies a topology by
-/// calling `topology_reload`, which rebuilds the registry and calls [`spawn`].
-/// What a server *is* changes when someone reconfigures it, which is to say
-/// almost never — five requests per backend per tick would be five requests to
-/// learn nothing.
+/// moment the operator means by "save": every topology write reloads the
+/// registry and calls [`spawn`]. What a server *is* changes when someone
+/// reconfigures it, which is to say almost never — five requests per backend
+/// per tick would be five requests to learn nothing.
 ///
 /// What a server currently *has loaded* is a different question on a different
 /// clock, and [`probe_once`] reads that every tick. So a context setting

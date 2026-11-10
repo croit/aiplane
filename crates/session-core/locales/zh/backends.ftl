@@ -5,7 +5,6 @@ backends-status-up = 正常
 
 
 # Backend CRUD editor (add/edit/delete backends stored in the DB topology).
-backends-apply-changes = 应用更改
 backends-field-name = 名称
 backends-field-base-url = 基础 URL
 backends-field-pool = 池
@@ -47,7 +46,7 @@ backends-no-models-title = 该后端未公布任何模型，因此不会有请�
 backends-no-models = 无模型
 backends-key-env-badge = 密钥：环境变量 { $var }
 backends-key-env-unset-badge = 环境变量 { $var } 未设置
-backends-enabled-hint = 关闭以将该后端排空进行维护。立即生效，无需“应用更改”。其模型仍为已知，因此池中其他后端会接管，客户端只会看到临时不可用，而不是“找不到模型”。
+backends-enabled-hint = 关闭以将该后端排空进行维护。立即生效。其模型仍为已知，因此池中其他后端会接管，客户端只会看到临时不可用，而不是“找不到模型”。
 backends-enabled-label = 接收流量
 backends-activity-summary = 15分钟 { $m15 } · 30分钟 { $m30 } · 60分钟 { $m60 }
 backends-alias-target-title = 别名 → { $target }

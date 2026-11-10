@@ -86,11 +86,11 @@ the output.
 | `aiplane_backend_enabled` | gauge | `1` when the backend may take traffic, `0` when it is switched off for maintenance under Models & routing. |
 | `aiplane_backend_auth_failed` | gauge | `1` when the backend rejected the gateway's credentials on the last health probe. |
 | `aiplane_backend_inflight` | gauge | Requests the gateway has in flight at the backend right now. |
-| `aiplane_backend_dispatched_total` | counter | Requests dispatched to the backend since it was loaded: at process start, or when a topology change was applied. |
+| `aiplane_backend_dispatched_total` | counter | Requests dispatched to the backend since it was loaded: at process start, or when a topology change was saved. |
 | `aiplane_usage_records_dropped_total` | counter | Usage records dropped since the process started because the usage writer could not keep up. Usage and cost reports miss these requests. |
 
 The metrics reflect the running upstream registry. A pool or backend edit
-appears after **Apply changes** in Models & routing, which reloads every
+appears as soon as it is saved in Models & routing, which reloads every
 backend: its dispatched counter restarts at zero, and it reports up until its
 next health probe. Both counters also restart at zero when the process
 restarts; Prometheus `rate()` and `increase()` handle such resets. A backend

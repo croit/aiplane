@@ -6,7 +6,7 @@
 //! The gating contract (401 anonymous, 403 non-admin, full data for admin)
 //! plus one write round-trip per surface family: groups (RBAC reload),
 //! limits, settings (hot reload), model defaults (shared validation), and
-//! the topology (upsert → dirty → apply → clean).
+//! the topology (upsert → live → stream).
 
 use crate::common;
 
@@ -108,7 +108,7 @@ async fn admin_routes_gate_with_json_envelopes() {
         (Method::PUT, "/api/v0/admin/backends"),
         (Method::POST, "/api/v0/admin/backends/test"),
         (Method::PUT, "/api/v0/admin/pools"),
-        (Method::POST, "/api/v0/admin/upstreams/reload"),
+        (Method::POST, "/api/v0/admin/upstreams/openrouter/kind"),
     ] {
         let anon = app
             .serve(req(method.clone(), uri, "bogus", None))
@@ -1817,10 +1817,10 @@ async fn compaction_and_voice_prompt_fields_save_and_clear() {
     );
 }
 
-/// Topology: save a backend + pool (dirty bumps), apply (dirty resets),
-/// and the live stream answers with status events.
+/// Topology: save a backend + pool (live now, no apply step), and the live
+/// stream answers with status events.
 #[tokio::test]
-async fn topology_save_apply_and_stream() {
+async fn topology_save_is_live_and_streams() {
     let (state, cookie) = setup().await;
     let app = router(state.clone());
 
@@ -1837,11 +1837,7 @@ async fn topology_save_apply_and_stream() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let saved: serde_json::Value = serde_json::from_str(&body(resp).await).unwrap();
-    assert_eq!(
-        saved["dirty"],
-        serde_json::json!(1),
-        "save marks the topology dirty"
-    );
+    assert_eq!(saved["name"], serde_json::json!("b1"));
 
     let resp = app
         .serve(req(
@@ -1903,14 +1899,13 @@ async fn topology_save_apply_and_stream() {
         .await,
     )
     .unwrap();
-    assert_eq!(listed["dirty"], serde_json::json!(4));
+    assert!(
+        listed.get("dirty").is_none(),
+        "the topology no longer stages changes"
+    );
+    assert!(listed.get("pending_changes").is_none());
     assert!(listed["all_models"].is_array());
     assert!(listed["coverage"].is_object());
-    assert!(
-        listed["pending_changes"]
-            .as_array()
-            .is_some_and(|changes| changes.iter().any(|change| change["code"] == "pool_added"))
-    );
     assert!(
         listed["backends"]
             .as_array()
@@ -1926,12 +1921,22 @@ async fn topology_save_apply_and_stream() {
     );
     assert_eq!(listed["pools"][0]["backends"], serde_json::json!(["b1"]));
     assert_eq!(listed["pools"][0]["kind"], "system_one");
+    // Live-now: the pool the operator just saved is running in the registry
+    // without any apply step.
+    assert!(
+        listed["pools"][0]["live_backends"]
+            .as_object()
+            .is_some_and(|live| live.contains_key("b1")),
+        "a saved pool is live in the running registry"
+    );
     assert!(
         listed["pool_kinds"]
             .as_array()
             .is_some_and(|kinds| kinds.iter().any(|kind| kind == "system_one"))
     );
 
+    // There is no apply step any more: the old route is gone. A POST to a
+    // path nothing serves errors out (the SPA catch-all only answers GET).
     let resp = app
         .serve(req(
             Method::POST,
@@ -1939,22 +1944,8 @@ async fn topology_save_apply_and_stream() {
             &cookie,
             None,
         ))
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let applied: serde_json::Value = serde_json::from_str(&body(resp).await).unwrap();
-    assert_eq!(applied["dirty"], serde_json::json!(0));
-
-    let listed: serde_json::Value = serde_json::from_str(
-        &body(
-            app.serve(req(Method::GET, "/api/v0/admin/upstreams", &cookie, None))
-                .await
-                .unwrap(),
-        )
-        .await,
-    )
-    .unwrap();
-    assert_eq!(listed["pending_changes"], serde_json::json!([]));
+        .await;
+    assert!(resp.is_err(), "the apply route must not exist any more");
 
     // The live stream opens (200 + SSE content type). Its body never ends
     // by design — drop the response, which drops the channel and ends the

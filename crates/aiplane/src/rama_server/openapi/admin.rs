@@ -200,6 +200,5 @@ pub(super) fn operations() -> Vec<Op> {
             .body(json::<admin::OpenRouterRefreshBody>())
             .ok(json::<admin::OpenRouterRefreshView>())
             .errors(&[400]),
-        post("/api/v0/admin/upstreams/reload", Access::Admin).ok(json::<admin::TopologyApplied>()),
     ]
 }

@@ -146,7 +146,7 @@ picker is the model list itself.
 
 ## Model discovery
 
-Every 5 s, each backend gets a `GET <base_url>/models` probe (with the backend's bearer token, if configured). A backend linked into several pools is probed **once** per tick, and identified once per apply; every pool's view of it takes the answer by its own model rule. On 200 + a parseable model envelope, the backend's advertised-model set is **replaced wholesale** with the names it lists: OpenAI's `{"data": [{"id": ...}, ...]}` (`data[].id`), or TypeSafe System One's `{"models": [{"name": ...}, ...]}` (`models[].name`), so a TypeSafe-native server such as jeff is discovered without speaking OpenAI's shape. On 401 or non-parseable 200, the backend is marked alive but its model set is left as-is (so a previously-populated set survives a transient parser failure). On network error, timeout, or 5xx, the probe counts toward the unhealthy threshold.
+Every 5 s, each backend gets a `GET <base_url>/models` probe (with the backend's bearer token, if configured). A backend linked into several pools is probed **once** per tick, and identified once per topology write; every pool's view of it takes the answer by its own model rule. On 200 + a parseable model envelope, the backend's advertised-model set is **replaced wholesale** with the names it lists: OpenAI's `{"data": [{"id": ...}, ...]}` (`data[].id`), or TypeSafe System One's `{"models": [{"name": ...}, ...]}` (`models[].name`), so a TypeSafe-native server such as jeff is discovered without speaking OpenAI's shape. On 401 or non-parseable 200, the backend is marked alive but its model set is left as-is (so a previously-populated set survives a transient parser failure). On network error, timeout, or 5xx, the probe counts toward the unhealthy threshold.
 
 At startup, `health::spawn` runs an initial parallel probe round and awaits it before returning, so the first request lands on a registry that already knows what each backend serves. Worst case (every backend unreachable): AIplane waits the 2 s probe timeout and starts serving with empty model sets, returning `400 invalid_request` until the looping probe populates them. [Backend identification](#backend-profiles-what-kind-of-server-is-this) runs concurrently with that round, on the same 2 s budget, so it costs no extra startup time.
 
@@ -197,15 +197,15 @@ A per-level token budget (`/admin/models`) caps how long a model may think. Anth
 | SGLang | `custom_params.thinking_budget` | the server was started with `--enable-strict-thinking`, which its `/server_info` reports |
 | others | — | never: no budget is sent and the admin page hides the fields |
 
-A model is offered budget fields only when every backend serving it enforces the same spelling; a pool where one replica would ignore the cap gets none. The answer is read at identification, so after relaunching an SGLang with or without the flag, apply the topology again (or restart AIplane) to re-identify it. Budgets below 1024 tokens are refused: measured on Qwen3.8 under SGLang, a 300-token cap made the model carry on thinking in its visible answer (90 KB of it), while 1000 and more ended cleanly.
+A model is offered budget fields only when every backend serving it enforces the same spelling; a pool where one replica would ignore the cap gets none. The answer is read at identification, so after relaunching an SGLang with or without the flag, save the topology again (or restart AIplane) to re-identify it. Budgets below 1024 tokens are refused: measured on Qwen3.8 under SGLang, a 300-token cap made the model carry on thinking in its visible answer (90 KB of it), while 1000 and more ended cleanly.
 
 `tool_choice` is the third consequence. The final tool round normally keeps the tool definitions in the request and sends `tool_choice: "none"`, because some templates need the definitions present to render an explicit no-tools turn. Ollama has no `tool_choice` field, so on that profile the definitions are **withheld** instead — cruder, and the only thing that actually stops a model calling a tool on the round meant to end the turn.
 
 ### Two cadences, because two different things are being learned
 
-**What a server *is*** — its profile, version, slot count — changes only when someone reconfigures it. That is read on topology **apply** (the admin UI's *Apply changes* → `topology_reload` → `health::spawn`), and previewed by the backend editor's **Test** button. Results are persisted (`backend_detected`, migration 0067) and re-seeded at boot, so an instance that starts while a backend is down still knows what that backend is rather than reading back as `generic`.
+**What a server *is*** — its profile, version, slot count — changes only when someone reconfigures it. That is read on every topology **write** (the admin save → `apply_topology` → `health::spawn`), and previewed by the backend editor's **Test** button. Results are persisted (`backend_detected`, migration 0067) and re-seeded at boot, so an instance that starts while a backend is down still knows what that backend is rather than reading back as `generic`.
 
-**What a server currently *has loaded*** is runtime state, and is read by the existing 5 s health probe, on the same tick and concurrently with `/models` (`BackendProfile::context_endpoint` says where). This is not a refinement: Ollama loads models on first use, so at apply time `/api/ps` reports nothing at all. Reading the context only at identification would leave every model with no window and drop it onto the 32768 guess against a 4096 allocation — the failure this feature exists to remove, arriving through its own refresh policy. A model used for the first time now has its real window within five seconds.
+**What a server currently *has loaded*** is runtime state, and is read by the existing 5 s health probe, on the same tick and concurrently with `/models` (`BackendProfile::context_endpoint` says where). This is not a refinement: Ollama loads models on first use, so at save time `/api/ps` reports nothing at all. Reading the context only at identification would leave every model with no window and drop it onto the 32768 guess against a 4096 allocation — the failure this feature exists to remove, arriving through its own refresh policy. A model used for the first time now has its real window within five seconds.
 
 Because the probe keeps the readings current, nothing needs applying after a server is reconfigured: raise `OLLAMA_CONTEXT_LENGTH`, restart, and AIplane follows within a tick. The **Test** button is a preview against the address being *typed*, which is the one thing the probe cannot offer — it only knows about backends that are already saved.
 
@@ -404,7 +404,7 @@ The last model set each backend was seen serving is therefore persisted (`backen
 
 Each backend has a **Serving traffic** toggle on `/admin/upstreams`. Off means "do not route here", and nothing else: the row keeps every setting, the health probe keeps running (so the page still shows whether the box is back), and the models it serves stay *known* to AIplane. A request for one therefore lands on a sibling backend, or — if this was the last one — waits out the drain as a temporary outage rather than a missing model.
 
-It takes effect on the **next request**, not on "Apply changes": a maintenance switch that needs a second confirmation step is not a maintenance switch. The flip is written to the database as well, so it survives a restart (`backends.enabled`, migration 0063).
+It takes effect on the **next request**: a maintenance switch that needs a second confirmation step is not a maintenance switch. The flip is written to the database as well, so it survives a restart (`backends.enabled`, migration 0063).
 
 ## Streaming caveat
 
@@ -422,11 +422,11 @@ We do **not** transcode audio in AIplane — upstreams handle the formats they s
 
 ## Operator workflow
 
-- Add, edit, or remove pools and backends at `/admin/upstreams`, then click **Apply changes** to reload the runtime registry (a sticky bar counts unapplied edits). Topology edits are saved to the database and take effect without a restart.
+- Add, edit, or remove pools and backends at `/admin/upstreams`. Every save applies to the running registry immediately — no restart, no apply step.
 - Add a model on a backend → it shows up in `/v1/models` and the chat picker within 5 s.
 - Drop a model → it disappears from routing within 5 s (next probe).
-- Want to verify? Check `tracing` output: every model-set change logs `advertised models updated added=[...] removed=[...] total=N`, and every apply logs one `identified backend profile=… context_windows=N` per *enabled* backend (drained ones keep what they had).
-- Adding an Ollama or llama.cpp backend needs nothing special: point `base_url` at `…/v1`, apply, and the context window and effort spelling are worked out for you. A model shows no window until it has been used once — Ollama loads on demand — and then gets one within five seconds. A detected **4096** is Ollama's small-VRAM default and worth raising with `OLLAMA_CONTEXT_LENGTH`, not working around in AIplane.
+- Want to verify? Check `tracing` output: every model-set change logs `advertised models updated added=[...] removed=[...] total=N`, and every topology write logs one `identified backend profile=… context_windows=N` per *enabled* backend (drained ones keep what they had).
+- Adding an Ollama or llama.cpp backend needs nothing special: point `base_url` at `…/v1`, save, and the context window and effort spelling are worked out for you. A model shows no window until it has been used once — Ollama loads on demand — and then gets one within five seconds. A detected **4096** is Ollama's small-VRAM default and worth raising with `OLLAMA_CONTEXT_LENGTH`, not working around in AIplane.
 
 ## Request priority
 

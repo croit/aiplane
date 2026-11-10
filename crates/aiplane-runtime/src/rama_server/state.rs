@@ -12,7 +12,6 @@
 
 use std::ops::Deref;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 use session_core::SessionWorkers;
 
@@ -67,14 +66,6 @@ pub struct RamaState {
     /// when `limits.enabled` is off or the caller has no rules. See
     /// `server::limits`.
     pub enforcer: Arc<aiplane_core::server::limits::Enforcer>,
-    /// In-memory count of unapplied upstream-topology edits — pool/backend
-    /// saves and deletes bump it, `POST /admin/upstreams/reload` ("Apply
-    /// changes") resets it. It measures the drift between the DB topology (what
-    /// the admin has edited) and the runtime registry (what the gateway is
-    /// actually serving), which the `/admin/upstreams` page surfaces as a
-    /// sticky "N unapplied changes" bar. Not persisted: after a restart the
-    /// registry is rebuilt from the DB, so a fresh 0 is correct.
-    topology_dirty: Arc<AtomicU32>,
     /// What runs an agent conversation's turn in the background. No runner
     /// until one is installed with [`Self::with_agent_runner`]; the endpoints
     /// then refuse messages instead of accepting turns nothing runs. The
@@ -109,7 +100,6 @@ impl RamaState {
             usage,
             ocr,
             enforcer,
-            topology_dirty: Arc::new(AtomicU32::new(0)),
             agent_runner: None,
             refusals: Default::default(),
             agent_specs: Default::default(),
@@ -198,25 +188,6 @@ impl RamaState {
     pub fn with_upstream_wait(mut self, budget: std::time::Duration) -> Self {
         self.upstream_wait_override = Some(budget);
         self
-    }
-
-    /// Record one unapplied topology edit and return the new count. Called by
-    /// every pool/backend save + delete handler so the apply bar can nudge the
-    /// admin to reload the registry.
-    pub fn topology_dirty_bump(&self) -> u32 {
-        self.topology_dirty.fetch_add(1, Ordering::Relaxed) + 1
-    }
-
-    /// Clear the unapplied-edit count — the registry now matches the DB. Called
-    /// after a successful `POST /admin/upstreams/reload`.
-    pub fn topology_dirty_reset(&self) {
-        self.topology_dirty.store(0, Ordering::Relaxed);
-    }
-
-    /// The current unapplied-edit count, for the initial render of the apply
-    /// bar (datastar keeps it live thereafter).
-    pub fn topology_dirty_count(&self) -> u32 {
-        self.topology_dirty.load(Ordering::Relaxed)
     }
 
     /// Swap in a different usage sink. Mainly for tests, which build state

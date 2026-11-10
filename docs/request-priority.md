@@ -87,7 +87,7 @@ Invalid priority values return 400. Rejected saves leave the token unchanged.
 Client-supplied priority in model request bodies cannot elevate the caller.
 
 `PUT /api/v0/admin/backends` accepts `priority` alongside the existing backend
-fields. Save the complete editor and apply topology changes. Modes:
+fields. Saving applies the topology immediately. Modes:
 
 ```json
 {"mode":"auto"}

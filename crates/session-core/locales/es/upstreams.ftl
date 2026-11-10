@@ -1,15 +1,8 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
-
-upstreams-apply-count = cambios sin aplicar
-upstreams-apply-note = — el registro en tiempo de ejecución aún sirve la topología anterior.
-
-# Aviso tras aplicar la SPA la topología pendiente.
-upstreams-applied = Topología aplicada.
-
 # La superficie de upstreams: qué es un pool y las cabeceras del tablero.
 
 upstreams-heading = Upstreams
-upstreams-description = Los pools agrupan backends por clase y estrategia de selección. La salud, la carga y los modelos servidos se sondean en vivo. Los cambios de topología se guardan en la base de datos y surten efecto al aplicar los cambios.
+upstreams-description = Los pools agrupan backends por clase y estrategia de selección. La salud, la carga y los modelos servidos se sondean en vivo. Los cambios de topología se guardan en la base de datos y se aplican de inmediato al registro en ejecución.
 upstreams-add-pool = Pool
 upstreams-add-backend = Backend
 upstreams-unassigned-heading = Sin asignar
