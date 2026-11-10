@@ -42,7 +42,6 @@
 	let capPdf = $state(triValue(defaults?.capabilities.pdf_input));
 	let capParallel = $state(triValue(defaults?.capabilities.parallel_tools));
 	let fallbackVision = $state(defaults?.capabilities.fallback_vision ?? '');
-	let fallbackTools = $state(defaults?.capabilities.fallback_tools ?? '');
 	let defaultsToml = $state(defaults?.defaults_toml ?? '');
 	let saving = $state(false);
 	let error = $state<string | null>(null);
@@ -78,7 +77,6 @@
 				cap_pdf_input: capPdf,
 				cap_parallel_tools: capParallel,
 				fallback_vision: fallbackVision,
-				fallback_tools: fallbackTools,
 				defaults_toml: defaultsToml
 			});
 		} catch (caught) {
@@ -138,10 +136,7 @@
 						<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t(control[0])}</span><select class="select" aria-label={t(control[0])} value={control[1]} onchange={(event) => { const value = event.currentTarget.value; if (index === 0) capVision = value; else if (index === 1) capTools = value; else if (index === 2) capStructured = value; else if (index === 3) capAudio = value; else if (index === 4) capPdf = value; else capParallel = value; }}><option value="">{t('admin-cap-unknown')}</option><option value="true">{t('admin-cap-enabled')}</option><option value="false">{t('admin-cap-disabled')}</option></select></label>
 					{/each}
 				</div>
-				<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-					<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-cap-fallback-vision')}</span><SearchableSelect options={[{ value: '', label: t('admin-cap-no-fallback') }, ...allModels.map((name) => ({ value: name, label: name }))]} bind:value={fallbackVision} ariaLabel={t('admin-cap-fallback-vision')} class="w-full" /></label>
-					<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-cap-fallback-tools')}</span><SearchableSelect options={[{ value: '', label: t('admin-cap-no-fallback') }, ...allModels.map((name) => ({ value: name, label: name }))]} bind:value={fallbackTools} ariaLabel={t('admin-cap-fallback-tools')} class="w-full" /></label>
-				</div>
+				<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-cap-fallback-vision')}</span><SearchableSelect options={[{ value: '', label: t('admin-cap-no-fallback') }, ...allModels.map((name) => ({ value: name, label: name }))]} bind:value={fallbackVision} ariaLabel={t('admin-cap-fallback-vision')} class="w-full" /></label>
 			</div>
 			<label class="flex flex-col gap-1"><span class="text-xs opacity-70">{t('admin-toml-defaults-label')}</span><textarea class="textarea w-full font-mono text-sm leading-relaxed" rows="6" spellcheck="false" bind:value={defaultsToml} placeholder={t('admin-toml-placeholder-header')}></textarea></label>
 		{:else}

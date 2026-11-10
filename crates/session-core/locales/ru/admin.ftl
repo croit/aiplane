@@ -255,7 +255,6 @@ admin-cap-disabled = Отключено
 
 admin-cap-fallback-vision = Резерв для зрения
 
-admin-cap-fallback-tools = Резерв для инструментов
 
 admin-search-intro = Выберите бэкенд для `search_web`. SearXNG требует базовый URL; Brave и Tavily требуют ключи API, которые шифруются при хранении. Если квота провайдера исчерпана, используется другой настроенный провайдер.
 

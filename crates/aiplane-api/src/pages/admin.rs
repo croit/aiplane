@@ -203,7 +203,6 @@ pub(crate) async fn apply_model_form(
             parallel_tools: tri(&form.cap_parallel_tools),
             structured_output: tri(&form.cap_structured_output),
             fallback_vision: fb(&form.fallback_vision),
-            fallback_tools: fb(&form.fallback_tools),
         },
     };
     db::set_all(&state.db, &form.model_name, &fields)
@@ -266,8 +265,6 @@ pub(crate) struct SaveForm {
     pub(crate) cap_structured_output: String,
     #[serde(default)]
     pub(crate) fallback_vision: String,
-    #[serde(default)]
-    pub(crate) fallback_tools: String,
     #[serde(default)]
     pub(crate) defaults_toml: String,
 }

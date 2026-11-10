@@ -253,7 +253,6 @@ admin-cap-disabled = 禁用
 
 admin-cap-fallback-vision = 视觉回退
 
-admin-cap-fallback-tools = 工具回退
 
 admin-search-intro = 选择 `search_web` 的搜索后端。SearXNG 需要基础 URL；Brave 和 Tavily 需要 API 密钥，密钥会加密存储。如果某个服务商的额度已用尽，系统会尝试其他已配置的服务商。
 

@@ -25,7 +25,6 @@ export const ru: Catalog = {
  "admin-cap-audio-input": "Аудиовход",
  "admin-cap-disabled": "Отключено",
  "admin-cap-enabled": "Включено",
- "admin-cap-fallback-tools": "Резерв для инструментов",
  "admin-cap-fallback-vision": "Резерв для зрения",
  "admin-cap-no-fallback": "(нет)",
  "admin-cap-parallel-tools": "Параллельные инструменты",

@@ -25,7 +25,6 @@ export const fr: Catalog = {
  "admin-cap-audio-input": "Entrée audio",
  "admin-cap-disabled": "Désactivé",
  "admin-cap-enabled": "Activé",
- "admin-cap-fallback-tools": "Repli pour les outils",
  "admin-cap-fallback-vision": "Repli pour la vision",
  "admin-cap-no-fallback": "(aucun)",
  "admin-cap-parallel-tools": "Outils en parallèle",
