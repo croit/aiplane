@@ -3925,6 +3925,107 @@ async fn a_chat_turn_whose_model_writes_out_a_call_on_its_final_round_ends_on_an
     );
 }
 
+/// `tools = Some(false)` on the model's capability row — set by an admin or
+/// learned from an upstream rejection — keeps the chat driver from offering
+/// tools to that model at all: a backend that rejects the `tools` field
+/// answers 400 on every round otherwise. Unknown and `Some(true)` keep the
+/// normal offer.
+#[tokio::test]
+async fn chat_turn_offers_no_tools_to_a_model_marked_without_tool_support() {
+    let upstream = MockServer::start().await;
+    mount_streaming_upstream(&upstream, &["Done."], 0).await;
+    let (state, cookie) = setup_with_location_tool(&upstream.uri()).await;
+    let app = router(state.clone());
+
+    fn turn_request<'a>(text: &str, bodies: &'a [Value]) -> Option<&'a Value> {
+        bodies.iter().find(|body| {
+            body["stream"] == true
+                && body["messages"].as_array().is_some_and(|messages| {
+                    messages
+                        .iter()
+                        .any(|message| message["role"] == "user" && message["content"] == text)
+                })
+        })
+    }
+    let received = || async {
+        upstream
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter_map(|request| serde_json::from_slice::<Value>(&request.body).ok())
+            .collect::<Vec<_>>()
+    };
+
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    db::chat_session_tools::set(&state.db, &session.id, "get_user_location", true, "manual")
+        .await
+        .unwrap();
+    let resp = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"where am I"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    wait_for_idle(&state, "alice").await;
+
+    let bodies = received().await;
+    let ordinary = turn_request("where am I", &bodies).expect("the turn reached the upstream");
+    assert!(
+        ordinary["tools"].as_array().is_some_and(|tools| tools
+            .iter()
+            .any(|tool| tool["function"]["name"] == "get_user_location")),
+        "a model with unknown capabilities is offered the enabled tool: {ordinary}"
+    );
+
+    db::model_defaults::set_capabilities(
+        &state.db,
+        "model-a",
+        &db::model_defaults::ModelCapabilities {
+            tools: Some(false),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    db::chat_session_tools::set(&state.db, &session.id, "get_user_location", true, "manual")
+        .await
+        .unwrap();
+    let resp = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(r#"{"model":"model-a","message":"where are we"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    wait_for_idle(&state, "alice").await;
+    let turn = chat::list_turns(&state.db, &session.id).await.unwrap();
+    let assistant = turn.last().unwrap();
+    assert_eq!(
+        assistant.turn.status,
+        chat::TurnStatus::Completed,
+        "{:?}",
+        assistant.turn.error_message
+    );
+
+    let bodies = received().await;
+    let without_tools =
+        turn_request("where are we", &bodies).expect("the turn reached the upstream");
+    assert!(
+        without_tools.get("tools").is_none(),
+        "a model marked tools = false is offered no tools in any round: {without_tools}"
+    );
+}
+
 /// A Qwen-style chat model that loops in its reasoning whenever it thinks, and
 /// answers when thinking is off — the shape a reasoning loop has, and what a
 /// retry one effort level lower is for. Title calls (not streamed) get a

@@ -1419,6 +1419,24 @@ async fn run_one_turn(
         )
         .unwrap_or_else(|| routing_model.to_string());
 
+    // A model marked `tools = false` — by an admin or by auto-learning from an
+    // upstream rejection — rejects the `tools` field outright, so offering any
+    // tool would turn every round into a 400. Read once per turn; unknown and
+    // `Some(true)` keep the normal offer, and a failed read degrades open.
+    let model_offers_tools = match aiplane_core::server::db::model_defaults::get(
+        &d.state.db,
+        &real_model,
+    )
+    .await
+    {
+        Ok(Some(row)) => row.capabilities.tools != Some(false),
+        Ok(None) => true,
+        Err(err) => {
+            tracing::warn!(error = %err, model = %real_model, "model_defaults: capability lookup failed");
+            true
+        }
+    };
+
     // A conversation never reaches a model the operator did not clear for its
     // level — even when the client asked for one directly, and even after the
     // picker filtered the list. The check runs on the resolved model so an
@@ -1763,6 +1781,9 @@ async fn run_one_turn(
         // Resolved every round: a person's mid-turn `enable_tools` call
         // surfaces the newly-enabled schemas on the next one.
         let mut allowed_tools = policy.offer(d, &ctx.session_id, &user_mcp, &granted).await;
+        if !model_offers_tools {
+            allowed_tools.clear();
+        }
         if person_chat && live_state.scheme().is_active() {
             let rank = conversation_rank(d, &ctx.session_id).await;
             crate::classification_gate::retain_visible(

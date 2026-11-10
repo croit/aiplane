@@ -17,7 +17,6 @@ export interface ModelCapabilities {
 	parallel_tools?: boolean | null;
 	structured_output?: boolean | null;
 	fallback_vision?: string | null;
-	fallback_tools?: string | null;
 }
 
 export interface ModelDefaults {

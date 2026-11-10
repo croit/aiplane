@@ -16,8 +16,9 @@ upstream errors when it doesn't.
 The admin sets capabilities per model via `/admin/models` → expandable "Capabilities" section:
 
 - **Tri-state** per capability: `Unknown` (try and learn) / `Enabled` / `Disabled`
-- **Fallback model** dropdowns: which model to use for image description when the primary
-  model lacks vision, etc.
+- A **fallback model** dropdown for vision: which model describes images when
+  the primary model lacks vision. Tools has no fallback — a model with
+  `tools = Disabled` is offered no tools at all.
 
 ### 2. Auto-learning (safety net)
 
@@ -61,7 +62,8 @@ Migration `0042_upstream_config_db.sql` created:
 | `pool_offer_voices` | Voices a speech pool offers users to *choose* between (migration `0057`) |
 | `fallback_models` | Per-kind unknown-model fallback |
 
-Plus 9 new columns on `model_defaults` for capabilities + fallback refs.
+Plus 8 columns on `model_defaults`: the six capability flags, the vision
+fallback reference and `cap_updated_at`.
 
 ## Registry hot-reload
 
@@ -82,8 +84,9 @@ internal to the registry.
 |---|---|
 | `None` (unknown) | Try the request. If upstream returns a capability-rejection 400, auto-learn (`None` → `Some(false)`). |
 | `Some(true)` | Proceed normally — the model supports this capability. Auto-learning never overwrites this. |
-| `Some(false)` + no fallback | Tool-result images are passed through unchanged. The capability flag does not make every image request fail early. |
-| `Some(false)` + fallback configured | Tool-result images are described by the configured vision fallback and replaced with text when that call succeeds. A failure keeps the original image. Other image paths are unchanged. |
+| `Some(false)` (tools) | The chat offers that model no tools at all: the request to the upstream carries no `tools` field in any round of a turn, whatever the caller's grants. Set by the admin, or learned from an upstream "does not support tools" rejection — so the turn after a learned rejection self-heals. Client-owned tools on the `/v1` passthrough are unaffected: a client's own `tools` array is forwarded as sent. |
+| `Some(false)` (vision) + no fallback | Tool-result images are passed through unchanged. The capability flag does not make every image request fail early. |
+| `Some(false)` (vision) + fallback configured | Tool-result images are described by the configured vision fallback and replaced with text when that call succeeds. A failure keeps the original image. Other image paths are unchanged. |
 
 ## Files
 

@@ -747,7 +747,6 @@ pub struct ModelCapabilitiesView {
     pub parallel_tools: Option<bool>,
     pub structured_output: Option<bool>,
     pub fallback_vision: Option<String>,
-    pub fallback_tools: Option<String>,
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
@@ -799,7 +798,6 @@ fn model_defaults_view(d: &db::model_defaults::ModelDefaults) -> ModelDefaultsVi
             parallel_tools: d.capabilities.parallel_tools,
             structured_output: d.capabilities.structured_output,
             fallback_vision: d.capabilities.fallback_vision.clone(),
-            fallback_tools: d.capabilities.fallback_tools.clone(),
         },
     }
 }
@@ -849,7 +847,6 @@ pub async fn models_save(State(state): State<Arc<RamaState>>, req: Request) -> R
         cap_parallel_tools: form_field(raw.cap_parallel_tools),
         cap_structured_output: form_field(raw.cap_structured_output),
         fallback_vision: form_field(raw.fallback_vision),
-        fallback_tools: form_field(raw.fallback_tools),
         defaults_toml: form_field(raw.defaults_toml),
     };
     match super::admin::apply_model_form(&state, &form).await {
@@ -941,9 +938,6 @@ pub struct ModelSaveBody {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     fallback_vision: Option<serde_json::Value>,
-    #[serde(default)]
-    #[schemars(with = "Option<String>")]
-    fallback_tools: Option<serde_json::Value>,
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     defaults_toml: Option<serde_json::Value>,

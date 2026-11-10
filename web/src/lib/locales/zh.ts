@@ -25,7 +25,6 @@ export const zh: Catalog = {
  "admin-cap-audio-input": "音频输入",
  "admin-cap-disabled": "禁用",
  "admin-cap-enabled": "启用",
- "admin-cap-fallback-tools": "工具回退",
  "admin-cap-fallback-vision": "视觉回退",
  "admin-cap-no-fallback": "（无）",
  "admin-cap-parallel-tools": "并行工具",

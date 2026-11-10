@@ -255,7 +255,6 @@ admin-cap-disabled = Désactivé
 
 admin-cap-fallback-vision = Repli pour la vision
 
-admin-cap-fallback-tools = Repli pour les outils
 
 admin-search-intro = Choisissez le backend pour `search_web`. SearXNG nécessite une URL de base ; Brave et Tavily nécessitent des clés d'API chiffrées au repos. Si le quota d'un fournisseur est épuisé, un autre fournisseur configuré est essayé.
 

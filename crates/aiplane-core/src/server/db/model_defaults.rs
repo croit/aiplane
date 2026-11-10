@@ -104,9 +104,9 @@ impl PricingUnit {
 /// errors), `Some(true)` = confirmed supported, `Some(false)` = confirmed
 /// unsupported (either learned via [`mark_unsupported`] or set by an admin).
 ///
-/// `fallback_*` holds the model id to use for transparent describe-and-inject
-/// when the primary model lacks that capability. `None` = no fallback
-/// configured (the request is rejected with a clear message instead).
+/// `fallback_vision` holds the model id to use for transparent
+/// describe-and-inject when the primary model lacks vision. `None` = no
+/// fallback configured (the image is sent as-is).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ModelCapabilities {
     pub vision: Option<bool>,
@@ -116,7 +116,6 @@ pub struct ModelCapabilities {
     pub parallel_tools: Option<bool>,
     pub structured_output: Option<bool>,
     pub fallback_vision: Option<String>,
-    pub fallback_tools: Option<String>,
 }
 
 fn map_row(row: &SqliteRow) -> Result<ModelDefaults, DbError> {
@@ -181,7 +180,6 @@ fn map_capabilities(row: &SqliteRow) -> Result<ModelCapabilities, DbError> {
         parallel_tools: nb(row, "cap_parallel_tools")?,
         structured_output: nb(row, "cap_structured_output")?,
         fallback_vision: row.try_get("fallback_vision")?,
-        fallback_tools: row.try_get("fallback_tools")?,
     })
 }
 
@@ -197,7 +195,7 @@ pub async fn get(pool: &Pool, model_name: &str) -> Result<Option<ModelDefaults>,
                    context_window, input_price, output_price, cache_read_price, pricing_unit,
                   cap_vision, cap_audio_input, cap_pdf_input,
                   cap_tools, cap_parallel_tools, cap_structured_output,
-                  fallback_vision, fallback_tools,
+                  fallback_vision,
                   updated_at
            FROM model_defaults
            WHERE model_name = ?"#,
@@ -314,9 +312,9 @@ pub async fn set_capabilities(
               (model_name, defaults_toml,
                cap_vision, cap_audio_input, cap_pdf_input,
                cap_tools, cap_parallel_tools, cap_structured_output,
-               fallback_vision, fallback_tools,
+               fallback_vision,
                cap_updated_at, updated_at)
-           VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(model_name) DO UPDATE SET
                cap_vision            = excluded.cap_vision,
                cap_audio_input       = excluded.cap_audio_input,
@@ -325,7 +323,6 @@ pub async fn set_capabilities(
                cap_parallel_tools    = excluded.cap_parallel_tools,
                cap_structured_output = excluded.cap_structured_output,
                fallback_vision       = excluded.fallback_vision,
-               fallback_tools        = excluded.fallback_tools,
                cap_updated_at        = excluded.cap_updated_at,
                updated_at            = excluded.updated_at"#,
     )
@@ -337,7 +334,6 @@ pub async fn set_capabilities(
     .bind(caps.parallel_tools.map(|b| b as i64))
     .bind(caps.structured_output.map(|b| b as i64))
     .bind(&caps.fallback_vision)
-    .bind(&caps.fallback_tools)
     .bind(&now)
     .bind(&now)
     .execute(pool)
@@ -514,9 +510,9 @@ pub async fn set_all(pool: &Pool, model_name: &str, f: &AllFields) -> Result<(),
                context_window, input_price, output_price, cache_read_price, pricing_unit,
                cap_vision, cap_audio_input, cap_pdf_input,
                cap_tools, cap_parallel_tools, cap_structured_output,
-               fallback_vision, fallback_tools,
+               fallback_vision,
                cap_updated_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(model_name) DO UPDATE SET
                defaults_toml             = excluded.defaults_toml,
                description               = excluded.description,
@@ -541,7 +537,6 @@ pub async fn set_all(pool: &Pool, model_name: &str, f: &AllFields) -> Result<(),
                cap_parallel_tools        = excluded.cap_parallel_tools,
                cap_structured_output     = excluded.cap_structured_output,
                fallback_vision           = excluded.fallback_vision,
-               fallback_tools            = excluded.fallback_tools,
                cap_updated_at            = excluded.cap_updated_at,
                updated_at                = excluded.updated_at"#,
     )
@@ -569,7 +564,6 @@ pub async fn set_all(pool: &Pool, model_name: &str, f: &AllFields) -> Result<(),
     .bind(f.capabilities.parallel_tools.map(|b| b as i64))
     .bind(f.capabilities.structured_output.map(|b| b as i64))
     .bind(&f.capabilities.fallback_vision)
-    .bind(&f.capabilities.fallback_tools)
     .bind(&now)
     .bind(&now)
     .execute(pool)
@@ -642,7 +636,7 @@ pub async fn all(pool: &Pool) -> Result<Vec<ModelDefaults>, DbError> {
                    context_window, input_price, output_price, cache_read_price, pricing_unit,
                   cap_vision, cap_audio_input, cap_pdf_input,
                   cap_tools, cap_parallel_tools, cap_structured_output,
-                  fallback_vision, fallback_tools,
+                  fallback_vision,
                   updated_at
            FROM model_defaults
            ORDER BY model_name"#,
