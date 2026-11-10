@@ -460,11 +460,40 @@ export interface OpenRouterEndpoint {
 	provider: string;
 	prompt_price: number;
 	completion_price: number;
+	/** USD per 1M tokens; null when the provider does not report one. */
+	cache_read_price: number | null;
 	throughput_p50: number | null;
 	latency_p50: number | null;
 	uptime_30m: number | null;
 	quantization: string | null;
 	context_length: number | null;
+}
+
+/** Whether a provider fits both ceilings, in USD per 1M tokens. */
+export function endpointFits(
+	endpoint: OpenRouterEndpoint,
+	maxPrompt: number,
+	maxCompletion: number
+): boolean {
+	return endpoint.prompt_price <= maxPrompt && endpoint.completion_price <= maxCompletion;
+}
+
+/** The provider with the lowest input price, then output; null for no providers. */
+export function cheapestEndpoint(
+	endpoints: readonly OpenRouterEndpoint[]
+): OpenRouterEndpoint | null {
+	let best: OpenRouterEndpoint | null = null;
+	for (const endpoint of endpoints) {
+		if (
+			!best ||
+			endpoint.prompt_price < best.prompt_price ||
+			(endpoint.prompt_price === best.prompt_price &&
+				endpoint.completion_price < best.completion_price)
+		) {
+			best = endpoint;
+		}
+	}
+	return best;
 }
 
 export interface OpenRouterPool {

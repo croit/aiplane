@@ -188,6 +188,12 @@ pub(super) fn operations() -> Vec<Op> {
             .errors(&[400]),
         get("/api/v0/admin/upstreams/openrouter", Access::Admin)
             .ok(json::<admin::OpenRouterView>()),
+        get(
+            "/api/v0/admin/upstreams/openrouter/endpoints",
+            Access::Admin,
+        )
+        .ok(json::<admin::OpenRouterEndpointsView>())
+        .errors(&[400, 404, 502]),
         post("/api/v0/admin/upstreams/openrouter/select", Access::Admin)
             .body(json::<admin::OpenRouterSelectBody>())
             .ok(json::<admin::OpenRouterSelectResult>())

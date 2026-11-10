@@ -2,7 +2,8 @@
 	import { onMount } from 'svelte';
 	import { adminJson, adminPost, adminPut } from '#lib/admin-client.js';
 	import { t, n } from '#lib/i18n.svelte.js';
-	import type { Backend, OpenRouterModel, OpenRouterSelection, OpenRouterView, Pool } from '#lib/upstreams.js';
+	import type { Backend, OpenRouterEndpoint, OpenRouterModel, OpenRouterSelection, OpenRouterView, Pool } from '#lib/upstreams.js';
+	import { cheapestEndpoint, endpointFits } from '#lib/upstreams.js';
 
 	interface Props {
 		backends: Backend[];
@@ -50,6 +51,16 @@
 	let togglingKind = $state<string | null>(null);
 	let error = $state<string | null>(null);
 	let savedKind = $state<string | null>(null);
+
+	// Provider prices for one model: persisted ones exist only for models that
+	// were already selected, so an unselected row reads them on demand.
+	interface ProviderState {
+		status: 'loading' | 'ok' | 'error';
+		endpoints: OpenRouterEndpoint[];
+		error?: string;
+	}
+	let openModel = $state<string | null>(null);
+	let providerStates = $state<Record<string, ProviderState>>({});
 
 	// Key change
 	let changingKey = $state(false);
@@ -319,6 +330,60 @@
 		return value === null ? '—' : `${n(Math.round(value))} tok/s`;
 	}
 
+	/** The provider rows a row can show: fetched on demand, else the stored ones. */
+	function endpointsFor(model: OpenRouterModel): OpenRouterEndpoint[] {
+		const loaded = providerStates[model.id];
+		if (loaded?.status === 'ok') return loaded.endpoints;
+		return model.endpoints;
+	}
+
+	async function toggleModel(model: OpenRouterModel) {
+		if (openModel === model.id) {
+			openModel = null;
+			return;
+		}
+		openModel = model.id;
+		const cached = providerStates[model.id];
+		// A failed read retries on the next expand; a stored or successful one
+		// stays.
+		if ((cached && cached.status !== 'error') || model.endpoints.length > 0) return;
+		providerStates = { ...providerStates, [model.id]: { status: 'loading', endpoints: [] } };
+		try {
+			const query = new URLSearchParams({ backend: backendName, model: model.id });
+			const next = await adminJson<{ endpoints: OpenRouterEndpoint[] }>(
+				`/api/v0/admin/upstreams/openrouter/endpoints?${query.toString()}`
+			);
+			providerStates = {
+				...providerStates,
+				[model.id]: { status: 'ok', endpoints: next.endpoints }
+			};
+		} catch (err) {
+			providerStates = {
+				...providerStates,
+				[model.id]: { status: 'error', endpoints: [], error: String(err) }
+			};
+		}
+	}
+
+	/** How many known providers fit the ceilings currently in the draft. */
+	function fittingCount(model: OpenRouterModel, entry: Draft): number {
+		const prompt = Number(entry.prompt);
+		const completion = Number(entry.completion);
+		return endpointsFor(model).filter((endpoint) =>
+			endpointFits(endpoint, prompt, completion)
+		).length;
+	}
+
+	/** Ceilings carry four decimals; round up so the cheapest provider fits. */
+	function ceiling(value: number): number {
+		return Math.ceil(value * 10_000) / 10_000;
+	}
+
+	function useCheapest(entry: Draft, endpoint: OpenRouterEndpoint) {
+		entry.prompt = ceiling(endpoint.prompt_price);
+		entry.completion = ceiling(endpoint.completion_price);
+	}
+
 	onMount(() => {
 		// Open the first served kind, so the panel lands on actionable content.
 		const first = kinds.find((kind) => servedKinds[kind]);
@@ -347,7 +412,7 @@
 					{#if openrouterBackends.length > 1}
 						<label class="flex flex-col gap-1">
 							<span class="text-xs text-base-content/70">{t('openrouter-backend')}</span>
-							<select class="select select-sm" bind:value={backendName} onchange={() => { expanded = null; views = {}; drafts = {}; baselines = {}; }}>
+							<select class="select select-sm" bind:value={backendName} onchange={() => { expanded = null; views = {}; drafts = {}; baselines = {}; openModel = null; providerStates = {}; }}>
 								{#each openrouterBackends as backend (backend.name)}
 									<option value={backend.name}>{backend.name}</option>
 								{/each}
@@ -473,7 +538,7 @@
 												<th>{t('openrouter-ceiling-prompt')}</th>
 												<th>{t('openrouter-ceiling-completion')}</th>
 												<th>{t('openrouter-strategy')}</th>
-												<th>{t('openrouter-provider')}</th>
+												<th>{t('openrouter-cheapest-provider')}</th>
 												<th></th>
 											</tr>
 										</thead>
@@ -491,14 +556,19 @@
 															/>
 														</td>
 														<td class="max-w-md">
-															<div class="font-mono text-xs break-all">{model.id}</div>
-															<div class="flex items-center gap-2 text-xs text-base-content/60">
-																{model.name}
-																{#if model.supported_voices.length > 0}
-																	<span class="badge badge-outline badge-xs">{model.supported_voices.length} {t('openrouter-voices')}</span>
-																{/if}
-															</div>
-															{#if model.description}<div class="mt-1 line-clamp-2 text-xs text-base-content/50">{model.description}</div>{/if}
+															<button class="flex w-full items-start gap-1 text-left" type="button" aria-expanded={openModel === model.id} onclick={() => void toggleModel(model)}>
+																<span class="mt-0.5 text-xs text-base-content/50">{openModel === model.id ? '▾' : '▸'}</span>
+																<span class="min-w-0">
+																	<span class="block font-mono text-xs break-all">{model.id}</span>
+																	<span class="flex items-center gap-2 text-xs text-base-content/60">
+																		{model.name}
+																		{#if model.supported_voices.length > 0}
+																			<span class="badge badge-outline badge-xs">{model.supported_voices.length} {t('openrouter-voices')}</span>
+																		{/if}
+																	</span>
+																	{#if model.description}<span class="mt-1 line-clamp-2 text-xs text-base-content/50">{model.description}</span>{/if}
+																</span>
+															</button>
 														</td>
 														<td class="text-end font-mono text-xs tabular-nums">
 															<div>{price(model.prompt_price)}</div>
@@ -532,26 +602,83 @@
 															{/if}
 														</td>
 														<td>
-															{#if entry.selected && !model.available}
-																<span class="badge badge-warning badge-xs">{t('openrouter-over-ceiling')}</span>
-															{:else if entry.selected}
-																<span class="badge badge-success badge-xs">{t('openrouter-available')}</span>
-															{/if}
-															{#if model.endpoints.length > 0}
-																<details class="mt-1">
-																	<summary class="cursor-pointer text-xs text-base-content/50">{t('openrouter-endpoints')} ({model.endpoints.length})</summary>
-																	<ul class="mt-1 space-y-1">
-																		{#each model.endpoints as endpoint (endpoint.provider)}
-																			<li class="font-mono text-xs">
-																				{endpoint.provider}: {price(endpoint.prompt_price)} / {price(endpoint.completion_price)}
-																				<span class="text-base-content/50">· {throughput(endpoint.throughput_p50)} · {endpoint.uptime_30m !== null ? `${endpoint.uptime_30m.toFixed(1)}%` : '—'}</span>
-																			</li>
-																		{/each}
-																	</ul>
-																</details>
+															{#if entry.selected}
+																{#if endpointsFor(model).length === 0}
+																	<span class="badge badge-ghost badge-xs" title={t('openrouter-price-unknown-hint')}>{t('openrouter-price-unknown')}</span>
+																{:else}
+																	{@const fitting = fittingCount(model, entry)}
+																	{#if fitting === 0}
+																		<span class="badge badge-warning badge-xs">{t('openrouter-over-ceiling')}</span>
+																	{:else}
+																		<span class="badge badge-success badge-xs">{t('openrouter-providers-fit-short', { fit: fitting, total: endpointsFor(model).length })}</span>
+																	{/if}
+																{/if}
 															{/if}
 														</td>
 													</tr>
+													{#if openModel === model.id}
+														{@const providers = endpointsFor(model)}
+														{@const state = providerStates[model.id] ?? null}
+														{@const cheapest = cheapestEndpoint(providers)}
+														<tr class="bg-base-200/40">
+															<td colspan="9" class="p-3">
+																{#if state?.status === 'loading'}
+																	<span class="loading loading-spinner loading-sm"></span>
+																{:else if state?.status === 'error'}
+																	<p class="text-xs text-error">{t('openrouter-provider-error', { message: state.error ?? '' })}</p>
+																{:else if providers.length === 0}
+																	<p class="text-xs text-base-content/60">{t('openrouter-provider-none')}</p>
+																{:else}
+																	<div class="overflow-x-auto">
+																		<table class="table table-xs">
+																			<thead>
+																				<tr>
+																					<th>{t('openrouter-provider')}</th>
+																					<th class="text-end">{t('openrouter-provider-input')}</th>
+																					<th class="text-end">{t('openrouter-provider-output')}</th>
+																					<th class="text-end">{t('openrouter-provider-cache-read')}</th>
+																					<th class="text-end">{t('openrouter-context')}</th>
+																					<th class="text-end">{t('openrouter-provider-throughput')}</th>
+																					<th class="text-end">{t('openrouter-provider-latency')}</th>
+																					<th class="text-end">{t('openrouter-provider-uptime')}</th>
+																					<th>{t('openrouter-provider-limit')}</th>
+																				</tr>
+																			</thead>
+																			<tbody>
+																				{#each providers as endpoint, index (endpoint.provider + index)}
+																					{@const fits = endpointFits(endpoint, Number(entry.prompt), Number(entry.completion))}
+																					<tr class={fits ? '' : 'opacity-60'}>
+																						<td class="font-mono text-xs">
+																							{endpoint.provider}
+																							{#if endpoint.quantization}<span class="badge badge-ghost badge-xs ml-1">{endpoint.quantization}</span>{/if}
+																						</td>
+																						<td class="text-end font-mono text-xs tabular-nums">{price(endpoint.prompt_price)}</td>
+																						<td class="text-end font-mono text-xs tabular-nums">{price(endpoint.completion_price)}</td>
+																						<td class="text-end font-mono text-xs tabular-nums">{price(endpoint.cache_read_price)}</td>
+																						<td class="text-end font-mono text-xs tabular-nums">{endpoint.context_length !== null ? n(endpoint.context_length) : '—'}</td>
+																						<td class="text-end font-mono text-xs tabular-nums">{throughput(endpoint.throughput_p50)}</td>
+																						<td class="text-end font-mono text-xs tabular-nums">{endpoint.latency_p50 !== null ? `${endpoint.latency_p50.toFixed(2)} s` : '—'}</td>
+																						<td class="text-end font-mono text-xs tabular-nums">{endpoint.uptime_30m !== null ? `${Math.round(endpoint.uptime_30m)} %` : '—'}</td>
+																						<td class="text-xs">{fits ? t('openrouter-provider-fits') : t('openrouter-provider-excluded')}</td>
+																					</tr>
+																				{/each}
+																			</tbody>
+																		</table>
+																	</div>
+																	<div class="mt-2 flex flex-wrap items-center gap-2 text-xs">
+																		{#if cheapest}
+																			<span>{t('openrouter-cheapest', { provider: cheapest.provider, prompt: price(cheapest.prompt_price), completion: price(cheapest.completion_price) })}</span>
+																		{/if}
+																		<span class="text-base-content/60">{t('openrouter-providers-fit', { fit: fittingCount(model, entry), total: providers.length })}</span>
+																		{#if cheapest}
+																			<button class="btn btn-xs" type="button" onclick={() => useCheapest(entry, cheapest)}>{t('openrouter-use-cheapest')}</button>
+																		{/if}
+																		<a class="btn btn-ghost btn-xs" href={`https://openrouter.ai/${model.id}`} target="_blank" rel="noreferrer">{t('openrouter-compare')} ↗</a>
+																	</div>
+																{/if}
+															</td>
+														</tr>
+													{/if}
 												{/if}
 											{/each}
 										</tbody>

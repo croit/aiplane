@@ -14,7 +14,7 @@ use aiplane::rama_server::router::router;
 use common::Service as _;
 use rama::http::body::util::BodyExt;
 use rama::http::{Body, Method, Request, StatusCode, header};
-use wiremock::matchers::{header as header_matches, method};
+use wiremock::matchers::{header as header_matches, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 async fn setup() -> (std::sync::Arc<aiplane::rama_server::RamaState>, String) {
@@ -2077,6 +2077,68 @@ async fn unknown_model_fallback_round_trips_and_clears() {
     )
     .unwrap();
     assert!(listed["fallbacks"].get("chat").is_none());
+}
+
+#[tokio::test]
+async fn openrouter_provider_prices_are_read_on_demand() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/models/deepseek/deepseek-v4.1/endpoints"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": { "endpoints": [
+                {
+                    "provider_name": "DeepInfra",
+                    "pricing": {
+                        "prompt": "0.000000098",
+                        "completion": "0.000000294",
+                        "input_cache_read": "0.0000000029"
+                    },
+                    "context_length": 163000,
+                    "throughput_last_30m": { "p50": 78.0 },
+                    "latency_last_30m": { "p50": 0.75 },
+                    "uptime_last_30m": 100.0,
+                    "quantization": "fp8"
+                }
+            ]}
+        })))
+        .mount(&upstream)
+        .await;
+
+    let (state, cookie) = setup().await;
+    let app = router(state);
+
+    let resp = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/backends",
+            &cookie,
+            Some(format!(
+                r#"{{"name":"or","provider":"openrouter","base_url":"{}"}}"#,
+                upstream.uri()
+            )),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = app
+        .serve(req(
+            Method::GET,
+            "/api/v0/admin/upstreams/openrouter/endpoints?backend=or&model=deepseek%2Fdeepseek-v4.1",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let listed: serde_json::Value = serde_json::from_str(&body(resp).await).unwrap();
+    let endpoint = &listed["endpoints"][0];
+    assert_eq!(endpoint["provider"], "DeepInfra");
+    assert!((endpoint["prompt_price"].as_f64().unwrap() - 0.098).abs() < 1e-9);
+    assert!((endpoint["completion_price"].as_f64().unwrap() - 0.294).abs() < 1e-9);
+    assert!((endpoint["cache_read_price"].as_f64().unwrap() - 0.0029).abs() < 1e-9);
+    assert_eq!(endpoint["context_length"], 163000);
+    assert_eq!(endpoint["throughput_p50"], 78.0);
 }
 
 /// The workspace API: memories + scheduled + webhooks CRUD

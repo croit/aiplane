@@ -8,6 +8,8 @@ import {
 	boardGroups,
 	boardPoolMatches,
 	boardRowMatches,
+	cheapestEndpoint,
+	endpointFits,
 	liveForPool,
 	poolProblems,
 	parallelismMismatch,
@@ -361,4 +363,39 @@ test('a pool name keeps its whole band, including an empty one', () => {
 	assert.equal(boardPoolMatches('chat', rows, 'embedding'), false);
 	assert.equal(boardPoolMatches('chat', [], 'chat'), true, 'an empty pool is still findable by name');
 	assert.equal(boardPoolMatches('chat', [], 'anything'), false);
+});
+
+test('a provider fits only when both prices are under the ceiling', () => {
+	const endpoint = {
+		provider: 'DeepInfra',
+		prompt_price: 0.098,
+		completion_price: 0.294,
+		cache_read_price: 0.0029,
+		throughput_p50: 78,
+		latency_p50: 0.75,
+		uptime_30m: 100,
+		quantization: 'fp8',
+		context_length: 163000
+	};
+	assert.equal(endpointFits(endpoint, 0.1, 0.3), true);
+	assert.equal(endpointFits(endpoint, 0.098, 0.294), true, 'equality is inside the ceiling');
+	assert.equal(endpointFits(endpoint, 0.0979, 0.3), false, 'the input price is the limit');
+	assert.equal(endpointFits(endpoint, 0.1, 0.2939), false, 'the output price is the limit');
+});
+
+test('the cheapest provider wins on input price, then output', () => {
+	const provider = (name: string, prompt: number, completion: number) => ({
+		provider: name,
+		prompt_price: prompt,
+		completion_price: completion,
+		cache_read_price: null,
+		throughput_p50: null,
+		latency_p50: null,
+		uptime_30m: null,
+		quantization: null,
+		context_length: null
+	});
+	const endpoints = [provider('pricey', 0.2, 0.4), provider('cheap', 0.09, 0.5), provider('tie', 0.09, 0.3)];
+	assert.equal(cheapestEndpoint(endpoints)?.provider, 'tie');
+	assert.equal(cheapestEndpoint([]), null);
 });

@@ -613,6 +613,7 @@ Debug fixture routes exist only in development builds.
 | `GET /api/v0/admin/upstreams/events` |
 | `PUT /api/v0/admin/upstreams/fallback` |
 | `GET /api/v0/admin/upstreams/openrouter` |
+| `GET /api/v0/admin/upstreams/openrouter/endpoints` |
 | `POST /api/v0/admin/upstreams/openrouter/refresh` |
 | `POST /api/v0/admin/upstreams/openrouter/select` |
 | `POST /api/v0/admin/upstreams/openrouter/kind` |

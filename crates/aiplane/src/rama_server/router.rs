@@ -663,6 +663,10 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
             pages::json_admin::openrouter_refresh,
         )
         .with_get(
+            "/api/v0/admin/upstreams/openrouter/endpoints",
+            pages::json_admin::openrouter_model_endpoints,
+        )
+        .with_get(
             "/api/v0/admin/upstreams/events",
             pages::json_admin::topology_events,
         )

@@ -3481,11 +3481,18 @@ pub struct BackendStatus {
 // purchase-price ceiling per selected model.
 // ---------------------------------------------------------------------------
 
+/// One decoded query parameter.
+///
+/// The value is percent-decoded: a model id such as `author/slug` arrives as
+/// `author%2Fslug` when the client builds the query with `URLSearchParams`,
+/// and the routing helpers match on the real id.
 fn query_param(req: &Request, name: &str) -> Option<String> {
-    req.uri().query()?.split('&').find_map(|pair| {
-        let (key, value) = pair.split_once('=')?;
-        (key == name).then(|| value.to_string())
-    })
+    let query = req.uri().query()?;
+    let pairs: Vec<(String, String)> = serde_urlencoded::from_str(query).ok()?;
+    pairs
+        .into_iter()
+        .find(|(key, _)| key == name)
+        .map(|(_, value)| value)
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
@@ -3555,11 +3562,67 @@ pub struct OpenRouterEndpointView {
     pub provider: String,
     pub prompt_price: f64,
     pub completion_price: f64,
+    /// Cache-read price in USD per 1M tokens; `None` when the provider does
+    /// not report a separate read price.
+    pub cache_read_price: Option<f64>,
     pub throughput_p50: Option<f64>,
     pub latency_p50: Option<f64>,
     pub uptime_30m: Option<f64>,
     pub quantization: Option<String>,
     pub context_length: Option<i64>,
+}
+
+impl OpenRouterEndpointView {
+    fn from_stored(e: upstreams_config::OpenRouterEndpointRow) -> Self {
+        Self {
+            provider: e.provider_name,
+            prompt_price: e.prompt_price,
+            completion_price: e.completion_price,
+            cache_read_price: e.cache_read_price,
+            throughput_p50: e.throughput_p50,
+            latency_p50: e.latency_p50,
+            uptime_30m: e.uptime_30m,
+            quantization: e.quantization,
+            context_length: e.context_length,
+        }
+    }
+
+    fn from_wire(e: upstreams::openrouter::EndpointEntry) -> Self {
+        Self {
+            provider: e.provider_name,
+            prompt_price: e.pricing.prompt_per_million(),
+            completion_price: e.pricing.completion_per_million(),
+            cache_read_price: e.pricing.cache_read_per_million(),
+            throughput_p50: e.throughput_last_30m.and_then(|p| p.p50),
+            latency_p50: e.latency_last_30m.and_then(|p| p.p50),
+            uptime_30m: e.uptime_last_30m,
+            quantization: e.quantization,
+            context_length: e.context_length,
+        }
+    }
+}
+
+/// The backend's key for an outbound OpenRouter call: the sealed one, or the
+/// environment variable it is configured to read.
+fn openrouter_api_key(
+    state: &RamaState,
+    api_key_nonce: Option<&[u8]>,
+    api_key_ct: Option<&[u8]>,
+    api_key_env: Option<&str>,
+) -> Option<String> {
+    state
+        .crypto
+        .open_str(
+            api_key_nonce.unwrap_or_default(),
+            api_key_ct.unwrap_or_default(),
+        )
+        .ok()
+        .filter(|key| !key.is_empty())
+        .or_else(|| {
+            api_key_env
+                .and_then(|name| std::env::var(name).ok())
+                .filter(|key| !key.is_empty())
+        })
 }
 
 /// GET /api/v0/admin/upstreams/openrouter?backend=&pool=
@@ -3648,21 +3711,12 @@ pub async fn openrouter_catalog(State(state): State<Arc<RamaState>>, req: Reques
             },
         );
     };
-    let api_key = state
-        .crypto
-        .open_str(
-            backend.api_key_nonce.as_deref().unwrap_or_default(),
-            backend.api_key_ct.as_deref().unwrap_or_default(),
-        )
-        .ok()
-        .filter(|key| !key.is_empty())
-        .or_else(|| {
-            backend
-                .api_key_env
-                .as_deref()
-                .and_then(|name| std::env::var(name).ok())
-                .filter(|key| !key.is_empty())
-        });
+    let api_key = openrouter_api_key(
+        &state,
+        backend.api_key_nonce.as_deref(),
+        backend.api_key_ct.as_deref(),
+        backend.api_key_env.as_deref(),
+    );
     let key = upstreams::openrouter::fetch_key(
         &state.http,
         &backend.base_url,
@@ -3755,16 +3809,7 @@ pub async fn openrouter_catalog(State(state): State<Arc<RamaState>>, req: Reques
             cheapest_completion_price: policy.and_then(|p| p.cheapest_completion_price),
             endpoints: endpoints
                 .into_iter()
-                .map(|e| OpenRouterEndpointView {
-                    provider: e.provider_name,
-                    prompt_price: e.prompt_price,
-                    completion_price: e.completion_price,
-                    throughput_p50: e.throughput_p50,
-                    latency_p50: e.latency_p50,
-                    uptime_30m: e.uptime_30m,
-                    quantization: e.quantization,
-                    context_length: e.context_length,
-                })
+                .map(OpenRouterEndpointView::from_stored)
                 .collect(),
         });
     }
@@ -3786,6 +3831,70 @@ pub async fn openrouter_catalog(State(state): State<Arc<RamaState>>, req: Reques
             error: None,
         },
     )
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct OpenRouterEndpointsView {
+    pub endpoints: Vec<OpenRouterEndpointView>,
+}
+
+/// GET /api/v0/admin/upstreams/openrouter/endpoints?backend=&model=
+///
+/// The provider table for one model. Persisted endpoints exist only for the
+/// models already selected (the refresh fetches those), and the operator
+/// needs the prices *before* choosing a ceiling — so this reads them on
+/// demand and stores nothing.
+pub async fn openrouter_model_endpoints(
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let (_session, _admin) = require_admin_json!(state, req);
+    let Some(backend_name) = query_param(&req, "backend") else {
+        return bad_request("`backend` is required");
+    };
+    let Some(model) = query_param(&req, "model") else {
+        return bad_request("`model` is required");
+    };
+    let backend = match upstreams_config::get_backend(&state.db, &backend_name).await {
+        Ok(Some(backend)) => backend,
+        Ok(None) => return not_found(format!("no backend `{backend_name}`")),
+        Err(err) => return internal(err),
+    };
+    if backend.provider != upstreams::config::ProviderKind::OpenRouter {
+        return bad_request(format!(
+            "`{backend_name}` is not an OpenRouter backend — set its provider to `openrouter` first"
+        ));
+    }
+    let api_key = openrouter_api_key(
+        &state,
+        backend.api_key_nonce.as_deref(),
+        backend.api_key_ct.as_deref(),
+        backend.api_key_env.as_deref(),
+    );
+    match upstreams::openrouter::fetch_endpoints(
+        &state.http,
+        &backend.base_url,
+        api_key.as_deref(),
+        &backend.extra_headers,
+        &model,
+    )
+    .await
+    {
+        Ok(endpoints) => json_ok(
+            StatusCode::OK,
+            OpenRouterEndpointsView {
+                endpoints: endpoints
+                    .into_iter()
+                    .map(OpenRouterEndpointView::from_wire)
+                    .collect(),
+            },
+        ),
+        Err(err) => json_error(
+            StatusCode::BAD_GATEWAY,
+            "openrouter_endpoints_failed",
+            &format!("reading the providers for `{model}` from OpenRouter failed: {err}"),
+        ),
+    }
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]

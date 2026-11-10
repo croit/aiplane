@@ -331,6 +331,19 @@ pub async fn fetch_endpoints(
     let (author, slug) = model_id
         .split_once('/')
         .ok_or_else(|| anyhow::anyhow!("`{model_id}` is not an OpenRouter `author/slug` id"))?;
+    // The id becomes part of the upstream path: a `..` segment or a query
+    // marker would let a crafted selection walk somewhere else on the
+    // provider's host.
+    if [author, slug].iter().any(|part| {
+        part.is_empty()
+            || *part == "."
+            || *part == ".."
+            || part.contains('/')
+            || part.contains('?')
+            || part.contains('#')
+    }) {
+        anyhow::bail!("`{model_id}` is not a usable OpenRouter model id");
+    }
     let url = endpoint_url(base_url, &format!("models/{author}/{slug}/endpoints"));
     let envelope: EndpointsEnvelope = get_json(http, &url, api_key, extra_headers).await?;
     Ok(envelope.data.map(|d| d.endpoints).unwrap_or_default())
@@ -667,6 +680,25 @@ mod tests {
         };
         assert!((pricing.prompt_per_million() - 0.30).abs() < 1e-9);
         assert!((pricing.completion_per_million() - 1.20).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn a_model_id_with_a_path_segment_is_refused_before_the_request() {
+        // The id is interpolated into the upstream path; refusing it here
+        // keeps a crafted selection from walking the provider's host.
+        let client = reqwest::Client::new();
+        for model in ["../admin", "a/../../b", "a/b?x=1", "a/b#frag", "a/", "/b"] {
+            let error = fetch_endpoints(
+                &client,
+                "http://127.0.0.1:9/v1",
+                None,
+                &std::collections::BTreeMap::new(),
+                model,
+            )
+            .await
+            .expect_err("a malformed id is refused");
+            assert!(error.to_string().contains("model id"), "{model}: {error}");
+        }
     }
 
     #[test]
