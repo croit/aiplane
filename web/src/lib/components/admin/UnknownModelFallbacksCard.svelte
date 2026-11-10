@@ -17,6 +17,8 @@
 	let data = $state<FallbacksView | null>(null);
 	let error = $state<string | null>(null);
 	let savedKind = $state<string | null>(null);
+	let saving = $state(false);
+	let savedTimer: ReturnType<typeof setTimeout> | null = null;
 
 	async function refresh() {
 		try {
@@ -33,12 +35,19 @@
 	}
 
 	async function save(kind: string, model: string) {
+		if (saving) return;
+		saving = true;
+		savedKind = null;
 		try {
 			await adminPut('/api/v0/admin/upstreams/fallback', { kind, model });
 			if (data) data = { ...data, fallbacks: { ...data.fallbacks, [kind]: model } };
 			savedKind = kind;
+			if (savedTimer) clearTimeout(savedTimer);
+			savedTimer = setTimeout(() => (savedKind = null), 4000);
 		} catch (caught) {
 			error = String(caught);
+		} finally {
+			saving = false;
 		}
 	}
 

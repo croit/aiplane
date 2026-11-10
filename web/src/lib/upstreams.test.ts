@@ -10,6 +10,7 @@ import {
 	boardRowMatches,
 	cheapestEndpoint,
 	endpointFits,
+	applyStatusEvent,
 	liveForPool,
 	poolProblems,
 	parallelismMismatch,
@@ -20,7 +21,7 @@ import {
 	type Backend,
 	type Coverage,
 	type LiveBackend,
-	type Pool, naturalSort } from './upstreams.ts';
+	type Pool, type Topology, naturalSort } from './upstreams.ts';
 
 const backends: Backend[] = [
 	{
@@ -398,4 +399,50 @@ test('the cheapest provider wins on input price, then output', () => {
 	const endpoints = [provider('pricey', 0.2, 0.4), provider('cheap', 0.09, 0.5), provider('tie', 0.09, 0.3)];
 	assert.equal(cheapestEndpoint(endpoints)?.provider, 'tie');
 	assert.equal(cheapestEndpoint([]), null);
+});
+
+test('a status event updates only the pool band it names', () => {
+	const shared = backendWith({
+		name: 'shared',
+		live: { ...liveView({ models: ['m'] }), pool: 'chat' }
+	});
+	const embedLive = { ...liveView({ models: ['m'] }), pool: 'embed' };
+	const topology: Topology = {
+		pools: [
+			{ ...pool, name: 'chat', backends: ['shared'] },
+			{ ...pool, name: 'embed', kind: 'embedding', backends: ['shared'], live_backends: { shared: embedLive } }
+		],
+		backends: [shared],
+		fallbacks: {},
+		usage_last_hour: {},
+		pool_kinds: ['chat', 'embedding'],
+		pool_strategies: [],
+		groups: [],
+		fallback_kinds: []
+	};
+
+	const next = applyStatusEvent(topology, {
+		name: 'shared',
+		pool: 'embed',
+		healthy: false,
+		enabled: true,
+		auth_failed: false,
+		inflight: 3,
+		max_inflight: 8,
+		models: ['m'],
+		profile: 'generic',
+		detected_version: null,
+		detected_max_parallel: null,
+		detected_at: null,
+		detected_priority: null,
+		usage: [1, 2]
+	});
+
+	const chatBand = next.pools.find((candidate) => candidate.name === 'chat')!;
+	const embedBand = next.pools.find((candidate) => candidate.name === 'embed')!;
+	assert.equal(chatBand.live_backends, undefined, 'the untouched band keeps its payload');
+	assert.equal(liveForPool(chatBand, next.backends[0])?.healthy, true);
+	assert.equal(liveForPool(embedBand, next.backends[0])?.healthy, false, 'the named band takes the event');
+	assert.equal(liveForPool(embedBand, next.backends[0])?.inflight, 3);
+	assert.deepEqual(next.usage_last_hour.shared, [1, 2]);
 });

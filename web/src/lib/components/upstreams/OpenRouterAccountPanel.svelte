@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { beforeNavigate } from '$app/navigation';
 	import { adminJson, adminPost, adminPut } from '#lib/admin-client.js';
 	import { t, n } from '#lib/i18n.svelte.js';
 	import type { Backend, OpenRouterEndpoint, OpenRouterModel, OpenRouterSelection, OpenRouterView, Pool } from '#lib/upstreams.js';
@@ -69,6 +70,12 @@
 	let keySaved = $state(false);
 
 	let currentView = $derived(expanded ? views[expanded] ?? null : null);
+	// Account state belongs to the panel, not to the kind that happens to be
+	// open: the badge, key label and credits must show even before any kind is
+	// expanded, and a failed load must still be reported.
+	let statusView = $derived(
+		kinds.map((kind) => views[kind]).find((view): view is OpenRouterView => !!view) ?? null
+	);
 	let models = $derived(currentView?.catalog ?? []);
 	let filtered = $derived.by(() => {
 		const needle = search.trim().toLowerCase();
@@ -150,6 +157,18 @@
 		};
 		window.addEventListener('beforeunload', handler);
 		return () => window.removeEventListener('beforeunload', handler);
+	});
+
+	// `beforeunload` only fires when the document unloads. The tab links are
+	// client-side navigations that simply unmount this panel, so the same
+	// draft guard has to run there too — otherwise switching tabs silently
+	// discards an unsaved selection.
+	beforeNavigate((navigation) => {
+		if (dirtyKinds.length === 0) return;
+		if (navigation.to?.url.href === navigation.from?.url.href) return;
+		if (!confirm(t('openrouter-dirty-confirm', { kind: dirtyKinds.join(', ') }))) {
+			navigation.cancel();
+		}
 	});
 
 	function resetDraft(next: OpenRouterView, kind: string) {
@@ -374,6 +393,20 @@
 		).length;
 	}
 
+	function hasCeiling(value: unknown): boolean {
+		return (
+			value !== null &&
+			value !== undefined &&
+			`${value}`.trim() !== '' &&
+			Number.isFinite(Number(value))
+		);
+	}
+
+	/** Both numbers entered. Until then no provider count is meaningful. */
+	function ceilingValid(entry: Draft): boolean {
+		return hasCeiling(entry.prompt) && hasCeiling(entry.completion);
+	}
+
 	/** Ceilings carry four decimals; round up so the cheapest provider fits. */
 	function ceiling(value: number): number {
 		return Math.ceil(value * 10_000) / 10_000;
@@ -430,15 +463,15 @@
 				{#if backend}
 					<div class="flex flex-wrap items-center gap-3 text-sm">
 						<span class="font-medium">{backend.name}</span>
-						{#if currentView?.key}
+						{#if statusView?.key}
 							<span class="badge badge-success badge-sm">{t('openrouter-connected')}</span>
-							{#if currentView.key.label}<span class="font-mono text-xs">{t('openrouter-key-label')}: {currentView.key.label}</span>{/if}
-							{#if currentView.key.limit_remaining !== null}
+							{#if statusView.key.label}<span class="font-mono text-xs">{t('openrouter-key-label')}: {statusView.key.label}</span>{/if}
+							{#if statusView.key.limit_remaining !== null}
 								<span class="text-xs text-base-content/70">
-									{t('openrouter-credits')}: {n(currentView.key.limit_remaining)} / {n(currentView.key.limit ?? 0)}
+									{t('openrouter-credits')}: {n(statusView.key.limit_remaining)} / {n(statusView.key.limit ?? 0)}
 								</span>
-							{:else if currentView.key.usage !== null}
-								<span class="text-xs text-base-content/70">{t('openrouter-credits')}: {n(currentView.key.usage)}</span>
+							{:else if statusView.key.usage !== null}
+								<span class="text-xs text-base-content/70">{t('openrouter-usage')}: {n(statusView.key.usage)}</span>
 							{/if}
 						{/if}
 						<span class="text-xs text-base-content/50">{t('backends-field-api-key-stored', { hint: backend.api_key_hint ?? '—' })}</span>
@@ -458,8 +491,8 @@
 				{/if}
 			{/key}
 
-			{#if currentView?.error}
-				<div class="alert alert-warning py-2 text-sm" role="alert"><span>{t('openrouter-error', { message: currentView.error })}</span></div>
+			{#if statusView?.error}
+				<div class="alert alert-warning py-2 text-sm" role="alert"><span>{t('openrouter-error', { message: statusView.error })}</span></div>
 			{/if}
 			{#if error}
 				<div class="alert alert-error py-2 text-sm" role="alert"><span>{error}</span></div>
@@ -576,20 +609,20 @@
 														</td>
 														<td class="text-end font-mono text-xs tabular-nums">{model.context_length ? n(model.context_length) : '—'}</td>
 														<td>
-															<input class="input input-xs w-24 font-mono" type="number" min="0" step="0.0001" bind:value={entry.prompt} disabled={!entry.selected} aria-label={`${model.id} input ceiling`} />
+															<input class="input input-xs w-24 font-mono" type="number" min="0" step="0.0001" bind:value={entry.prompt} disabled={!entry.selected} aria-label={t('openrouter-aria-input-ceiling', { model: model.id })} />
 														</td>
 														<td>
-															<input class="input input-xs w-24 font-mono" type="number" min="0" step="0.0001" bind:value={entry.completion} disabled={!entry.selected} aria-label={`${model.id} output ceiling`} />
+															<input class="input input-xs w-24 font-mono" type="number" min="0" step="0.0001" bind:value={entry.completion} disabled={!entry.selected} aria-label={t('openrouter-aria-output-ceiling', { model: model.id })} />
 														</td>
 														<td>
 															<div class="flex flex-col gap-1">
-																<select class="select select-xs" bind:value={entry.strategy} disabled={!entry.selected} aria-label={`${model.id} strategy`}>
+																<select class="select select-xs" bind:value={entry.strategy} disabled={!entry.selected} aria-label={t('openrouter-aria-strategy', { model: model.id })}>
 																	<option value="cheapest">{t('openrouter-strategy-cheapest')}</option>
 																	<option value="fastest">{t('openrouter-strategy-fastest')}</option>
 																	<option value="balanced">{t('openrouter-strategy-balanced')}</option>
 																</select>
 																{#if entry.strategy === 'cheapest'}
-																	<input class="input input-xs w-24 font-mono" type="number" min="0" step="1" placeholder={t('openrouter-min-throughput')} bind:value={entry.min} disabled={!entry.selected} aria-label={`${model.id} min throughput`} />
+																	<input class="input input-xs w-24 font-mono" type="number" min="0" step="1" placeholder={t('openrouter-min-throughput')} bind:value={entry.min} disabled={!entry.selected} aria-label={t('openrouter-aria-min-throughput', { model: model.id })} />
 																{/if}
 															</div>
 														</td>
@@ -605,6 +638,8 @@
 															{#if entry.selected}
 																{#if endpointsFor(model).length === 0}
 																	<span class="badge badge-ghost badge-xs" title={t('openrouter-price-unknown-hint')}>{t('openrouter-price-unknown')}</span>
+																{:else if !ceilingValid(entry)}
+																	<span class="badge badge-ghost badge-xs">{t('openrouter-ceiling-missing')}</span>
 																{:else}
 																	{@const fitting = fittingCount(model, entry)}
 																	{#if fitting === 0}
@@ -646,7 +681,8 @@
 																			</thead>
 																			<tbody>
 																				{#each providers as endpoint, index (endpoint.provider + index)}
-																					{@const fits = endpointFits(endpoint, Number(entry.prompt), Number(entry.completion))}
+																					{@const valid = ceilingValid(entry)}
+																					{@const fits = valid && endpointFits(endpoint, Number(entry.prompt), Number(entry.completion))}
 																					<tr class={fits ? '' : 'opacity-60'}>
 																						<td class="font-mono text-xs">
 																							{endpoint.provider}
@@ -659,7 +695,7 @@
 																						<td class="text-end font-mono text-xs tabular-nums">{throughput(endpoint.throughput_p50)}</td>
 																						<td class="text-end font-mono text-xs tabular-nums">{endpoint.latency_p50 !== null ? `${endpoint.latency_p50.toFixed(2)} s` : '—'}</td>
 																						<td class="text-end font-mono text-xs tabular-nums">{endpoint.uptime_30m !== null ? `${Math.round(endpoint.uptime_30m)} %` : '—'}</td>
-																						<td class="text-xs">{fits ? t('openrouter-provider-fits') : t('openrouter-provider-excluded')}</td>
+																						<td class="text-xs">{valid ? (fits ? t('openrouter-provider-fits') : t('openrouter-provider-excluded')) : '—'}</td>
 																					</tr>
 																				{/each}
 																			</tbody>
@@ -669,7 +705,9 @@
 																		{#if cheapest}
 																			<span>{t('openrouter-cheapest', { provider: cheapest.provider, prompt: price(cheapest.prompt_price), completion: price(cheapest.completion_price) })}</span>
 																		{/if}
-																		<span class="text-base-content/60">{t('openrouter-providers-fit', { fit: fittingCount(model, entry), total: providers.length })}</span>
+																		{#if ceilingValid(entry)}
+																			<span class="text-base-content/60">{t('openrouter-providers-fit', { fit: fittingCount(model, entry), total: providers.length })}</span>
+																		{/if}
 																		{#if cheapest}
 																			<button class="btn btn-xs" type="button" onclick={() => useCheapest(entry, cheapest)}>{t('openrouter-use-cheapest')}</button>
 																		{/if}

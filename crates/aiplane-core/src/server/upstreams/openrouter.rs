@@ -320,20 +320,18 @@ pub async fn fetch_catalog(
     Ok(envelope.data)
 }
 
-/// Per-provider prices and performance for one model.
-pub async fn fetch_endpoints(
-    http: &reqwest::Client,
-    base_url: &str,
-    api_key: Option<&str>,
-    extra_headers: &std::collections::BTreeMap<String, String>,
-    model_id: &str,
-) -> anyhow::Result<Vec<EndpointEntry>> {
-    let (author, slug) = model_id
-        .split_once('/')
-        .ok_or_else(|| anyhow::anyhow!("`{model_id}` is not an OpenRouter `author/slug` id"))?;
-    // The id becomes part of the upstream path: a `..` segment or a query
-    // marker would let a crafted selection walk somewhere else on the
-    // provider's host.
+/// Why `model_id` cannot be used as an OpenRouter `author/slug` path pair.
+///
+/// The id becomes part of the upstream path, so a `..` segment or a query
+/// marker would let a crafted selection walk somewhere else on the provider's
+/// host. Shared by the on-demand provider read (which answers 400) and the
+/// catalogue refresh (which refuses to request).
+pub fn validate_model_id(model_id: &str) -> Result<(), String> {
+    let Some((author, slug)) = model_id.split_once('/') else {
+        return Err(format!(
+            "`{model_id}` is not an OpenRouter `author/slug` id"
+        ));
+    };
     if [author, slug].iter().any(|part| {
         part.is_empty()
             || *part == "."
@@ -342,8 +340,25 @@ pub async fn fetch_endpoints(
             || part.contains('?')
             || part.contains('#')
     }) {
-        anyhow::bail!("`{model_id}` is not a usable OpenRouter model id");
+        return Err(format!("`{model_id}` is not a usable OpenRouter model id"));
     }
+    Ok(())
+}
+
+/// Per-provider prices and performance for one model.
+pub async fn fetch_endpoints(
+    http: &reqwest::Client,
+    base_url: &str,
+    api_key: Option<&str>,
+    extra_headers: &std::collections::BTreeMap<String, String>,
+    model_id: &str,
+) -> anyhow::Result<Vec<EndpointEntry>> {
+    if let Err(problem) = validate_model_id(model_id) {
+        anyhow::bail!(problem);
+    }
+    let (author, slug) = model_id
+        .split_once('/')
+        .expect("validated as an author/slug pair above");
     let url = endpoint_url(base_url, &format!("models/{author}/{slug}/endpoints"));
     let envelope: EndpointsEnvelope = get_json(http, &url, api_key, extra_headers).await?;
     Ok(envelope.data.map(|d| d.endpoints).unwrap_or_default())

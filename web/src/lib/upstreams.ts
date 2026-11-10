@@ -275,6 +275,65 @@ export function boardGroups(pools: Pool[], backends: Backend[]): BoardGroup[] {
 	return groups;
 }
 
+/** One `status` event of the live topology stream: a backend's state in one
+ * pool. A backend in several pools sends one event per pool. */
+export interface BackendStatusEvent extends LiveBackend {
+	name: string;
+	usage: number[];
+}
+
+/**
+ * Fold one status event into the topology.
+ *
+ * The stream names the pool the state belongs to, so the pool's own map is
+ * updated as well as the backend's top-level view — a backend in several
+ * pools has a live instance in each, and an event for one band must not be
+ * taken for the other.
+ */
+export function applyStatusEvent(topology: Topology, status: BackendStatusEvent): Topology {
+	const withUsage: Topology = {
+		...topology,
+		usage_last_hour: { ...topology.usage_last_hour, [status.name]: status.usage }
+	};
+	if (status.pool === null) {
+		return {
+			...withUsage,
+			backends: topology.backends.map((backend) =>
+				backend.name === status.name ? { ...backend, live: null } : backend
+			)
+		};
+	}
+	const previous =
+		topology.backends.find((backend) => backend.name === status.name)?.live ?? null;
+	const live: LiveBackend = {
+		healthy: status.healthy,
+		enabled: status.enabled,
+		auth_failed: status.auth_failed,
+		inflight: status.inflight,
+		max_inflight: status.max_inflight,
+		models: status.models,
+		pool: status.pool,
+		profile: previous?.profile ?? 'generic',
+		detected_version: previous?.detected_version ?? null,
+		detected_max_parallel: previous?.detected_max_parallel ?? null,
+		detected_at: previous?.detected_at ?? null,
+		detected_priority: previous?.detected_priority ?? null
+	};
+	return {
+		...withUsage,
+		backends: topology.backends.map((backend) => {
+			if (backend.name !== status.name) return backend;
+			if (backend.live !== null && backend.live.pool !== status.pool) return backend;
+			return { ...backend, live };
+		}),
+		pools: topology.pools.map((pool) =>
+			pool.name === status.pool
+				? { ...pool, live_backends: { ...(pool.live_backends ?? {}), [status.name]: live } }
+				: pool
+		)
+	};
+}
+
 /**
  * The live view of a backend *within* one pool. A backend's status event
  * carries the pool the gateway currently routes it through; when that is a
@@ -443,7 +502,6 @@ export interface OpenRouterModel {
 	prompt_price: number;
 	completion_price: number;
 	selected: boolean;
-	available: boolean;
 	policy: {
 		max_prompt_price: number;
 		max_completion_price: number;

@@ -2139,6 +2139,18 @@ async fn openrouter_provider_prices_are_read_on_demand() {
     assert!((endpoint["cache_read_price"].as_f64().unwrap() - 0.0029).abs() < 1e-9);
     assert_eq!(endpoint["context_length"], 163000);
     assert_eq!(endpoint["throughput_p50"], 78.0);
+
+    // A malformed id is the caller's mistake, not an upstream failure.
+    let resp = app
+        .serve(req(
+            Method::GET,
+            "/api/v0/admin/upstreams/openrouter/endpoints?backend=or&model=..%2F..%2Fetc",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
 /// The workspace API: memories + scheduled + webhooks CRUD

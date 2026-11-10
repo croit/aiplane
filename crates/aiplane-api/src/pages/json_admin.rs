@@ -11,8 +11,8 @@
 //! * Every handler is admin-gated ([`require_admin_json`] → 401/403 JSON).
 //! * Writes that have live side effects replicate them exactly:
 //!   `reload_rbac` after group changes, `reload_settings` + session-policy
-//!   push after settings saves, the registry reload + health respawn +
-//!   dirty reset for topology applies.
+//!   push after settings saves, and the registry reload plus background
+//!   health probes for every topology write.
 
 use aiplane_core::server::capped_read;
 use aiplane_core::server::priority::{BackendPriority, Priority, PriorityMapping};
@@ -711,7 +711,8 @@ pub struct ModelView {
     /// stored overrides of a model nothing serves any more.
     pub served: bool,
     /// The pools routing this name right now, each with the backends behind
-    /// it. Empty exactly when [`Self::served`] is `false`.
+    /// it. Empty when nothing can serve it at this instant — a model nothing
+    /// advertises, or one whose only backend is drained or unhealthy.
     pub served_by: Vec<ServedByView>,
     /// The model has stored overrides.
     pub configured: bool,
@@ -2081,7 +2082,7 @@ pub async fn tokens_priority(State(state): State<Arc<RamaState>>, req: Request) 
 use aiplane_core::server::db::upstreams_config::{self, AliasRow, BackendRow, PoolRow, VoiceRow};
 
 /// GET /api/v0/admin/upstreams — the DB topology, the live registry health,
-/// the last hour of per-backend request counts, and the dirty counter.
+/// and the last hour of per-backend request counts.
 pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = require_admin_json!(state, req);
     let snapshot = match upstreams_config::load_snapshot(&state.db).await {
@@ -2771,7 +2772,7 @@ fn deepest_error(err: &(dyn std::error::Error + 'static)) -> String {
 
 /// PUT /api/v0/admin/backends — upsert a backend row (sealed key, preserved
 /// drain state) and set its pool membership. Marks the topology
-/// dirty; the registry picks it up on the apply.
+/// and applies to the running registry immediately.
 pub async fn backends_save(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = require_admin_json!(state, req);
     let lang = session_core::i18n::Lang::from_headers(req.headers());
@@ -3113,7 +3114,7 @@ pub struct VoiceBody {
     pub voice: String,
 }
 
-/// PUT /api/v0/admin/pools — upsert a pool row. Marks the topology dirty.
+/// PUT /api/v0/admin/pools — upsert a pool row, live on the running registry.
 pub async fn pools_save(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = require_admin_json!(state, req);
     let (parts, body) = req.into_parts();
@@ -3302,13 +3303,21 @@ async fn apply_topology(state: &RamaState) -> Option<Response> {
     if let Err(err) = state.upstreams.reload(&snapshot, &state.crypto) {
         return Some(internal(err));
     }
-    let armed = tokio::spawn(aiplane_core::server::upstreams::health::spawn(
-        state.upstreams.clone(),
-        Some(state.db.clone()),
-    ));
-    if let Err(err) = armed.await {
-        tracing::error!(error = %err, "arming the health probes after a topology write panicked");
-    }
+    // Arm the probes in the background: the write is live the moment the
+    // registry is swapped, and a full probe round (one timeout per
+    // unreachable backend) inside the request made every save as slow as the
+    // apply step it replaced. The armed loop owns the failure paths.
+    let registry = state.upstreams.clone();
+    let db = state.db.clone();
+    tokio::spawn(async move {
+        let probe = tokio::spawn(aiplane_core::server::upstreams::health::spawn(
+            registry,
+            Some(db),
+        ));
+        if let Err(err) = probe.await {
+            tracing::error!(error = %err, "arming the health probes after a topology write panicked");
+        }
+    });
     None
 }
 
@@ -3320,8 +3329,8 @@ fn sorted(set: std::collections::HashSet<String>) -> Vec<String> {
 }
 
 /// GET /api/v0/admin/upstreams/events — the live health stream as JSON
-/// events: one `status` event per backend whose state changed since it was
-/// last sent (plus the dirty counter inside each event), and a comment
+/// events: one `status` event per (pool, backend) whose state changed since it
+/// was last sent, and a comment
 /// keepalive when nothing has changed for a while. See `TICK` below and
 /// `SSE_KEEPALIVE` for the cadence. The JSON twin of the legacy
 /// `/admin/upstreams/live` HTML-patch stream.
@@ -3386,51 +3395,77 @@ pub async fn topology_events(State(state): State<Arc<RamaState>>, req: Request) 
             // registry lock and allocates.
             let pools = state.upstreams.pools();
             let mut sent_any = false;
+            // One event per (pool, backend): a backend can sit in several pools
+            // and has its own live instance in each, so a single event per name
+            // froze every band but the one it happened to name.
+            let mut emitted: std::collections::HashSet<&str> = std::collections::HashSet::new();
+            for pool in &pools {
+                for backend in &pool.backends {
+                    emitted.insert(backend.name.as_str());
+                    let payload = BackendStatus {
+                        name: backend.name.clone(),
+                        pool: Some(pool.name.clone()),
+                        healthy: backend.is_healthy(),
+                        enabled: backend.is_enabled(),
+                        auth_failed: backend.auth_failed(),
+                        inflight: backend.inflight(),
+                        max_inflight: backend.max_inflight,
+                        configured: true,
+                        // Sorted, because these come out of a `HashSet` whose
+                        // iteration order is randomized per process and reshuffles
+                        // as probes rebuild it. Unsorted, the same models
+                        // re-serialize differently on every tick: the list visibly
+                        // reorders under the operator's cursor, and — worse — the
+                        // `last` comparison below never matches, so the stream
+                        // pushes an event per backend per tick forever. Sorting is
+                        // what makes the change detection actually detect change.
+                        models: sorted(backend.models_snapshot()),
+                        usage: usage
+                            .get(&backend.name)
+                            .cloned()
+                            .unwrap_or_else(|| vec![0; 12]),
+                        requests_last_hour: usage
+                            .get(&backend.name)
+                            .map(|v| v.iter().sum::<i64>())
+                            .unwrap_or(0),
+                    };
+                    let key = format!("{}|{}", pool.name, backend.name);
+                    let encoded =
+                        serde_json::to_string(&payload).expect("wire types serialize to JSON");
+                    if last.get(&key) != Some(&encoded) {
+                        last.insert(key, encoded.clone());
+                        let frame = format!("event: status\ndata: {encoded}\n\n");
+                        if tx.send(Ok(rama::bytes::Bytes::from(frame))).await.is_err() {
+                            return;
+                        }
+                        sent_any = true;
+                    }
+                }
+            }
+            // A configured backend in no pool has no live instance; the
+            // board's trailing band still needs its row.
             for (name, backend) in &snapshot.backends {
-                let live = pools.iter().find_map(|pool| {
-                    pool.backends
-                        .iter()
-                        .find(|b| &b.name == name)
-                        .map(|b| (pool.name.clone(), b))
-                });
-                let (healthy, enabled, auth_failed, inflight, max_inflight) = match &live {
-                    Some((_, b)) => (
-                        b.is_healthy(),
-                        b.is_enabled(),
-                        b.auth_failed(),
-                        b.inflight(),
-                        b.max_inflight,
-                    ),
-                    None => (false, backend.enabled, false, 0, backend.max_inflight),
-                };
+                if emitted.contains(name.as_str()) {
+                    continue;
+                }
                 let payload = BackendStatus {
                     name: name.clone(),
-                    pool: live.as_ref().map(|(p, _)| p.clone()),
-                    healthy,
-                    enabled,
-                    auth_failed,
-                    inflight,
-                    max_inflight,
+                    pool: None,
+                    healthy: false,
+                    enabled: backend.enabled,
+                    auth_failed: false,
+                    inflight: 0,
+                    max_inflight: backend.max_inflight,
                     configured: true,
-                    // Sorted, because these come out of a `HashSet` whose
-                    // iteration order is randomized per process and reshuffles
-                    // as probes rebuild it. Unsorted, the same models
-                    // re-serialize differently on every tick: the list visibly
-                    // reorders under the operator's cursor, and — worse — the
-                    // `last` comparison below never matches, so the stream
-                    // pushes an event per backend per tick forever. Sorting is
-                    // what makes the change detection actually detect change.
-                    models: live
-                        .as_ref()
-                        .map(|(_, backend)| sorted(backend.models_snapshot()))
-                        .unwrap_or_default(),
+                    models: Vec::new(),
                     usage: usage.get(name).cloned().unwrap_or_else(|| vec![0; 12]),
                     requests_last_hour: usage.get(name).map(|v| v.iter().sum::<i64>()).unwrap_or(0),
                 };
+                let key = format!("|{name}");
                 let encoded =
                     serde_json::to_string(&payload).expect("wire types serialize to JSON");
-                if last.get(name) != Some(&encoded) {
-                    last.insert(name.clone(), encoded.clone());
+                if last.get(&key) != Some(&encoded) {
+                    last.insert(key, encoded.clone());
                     let frame = format!("event: status\ndata: {encoded}\n\n");
                     if tx.send(Ok(rama::bytes::Bytes::from(frame))).await.is_err() {
                         return;
@@ -3541,7 +3576,6 @@ pub struct OpenRouterModelView {
     pub prompt_price: f64,
     pub completion_price: f64,
     pub selected: bool,
-    pub available: bool,
     pub policy: Option<OpenRouterPolicyView>,
     pub cheapest_provider: Option<String>,
     pub cheapest_prompt_price: Option<f64>,
@@ -3797,7 +3831,6 @@ pub async fn openrouter_catalog(State(state): State<Arc<RamaState>>, req: Reques
             prompt_price,
             completion_price,
             selected: selected.contains(&model.id),
-            available: policy.map(|p| p.available).unwrap_or(false),
             policy: policy.map(|p| OpenRouterPolicyView {
                 max_prompt_price: p.max_prompt_price,
                 max_completion_price: p.max_completion_price,
@@ -3871,6 +3904,9 @@ pub async fn openrouter_model_endpoints(
         backend.api_key_ct.as_deref(),
         backend.api_key_env.as_deref(),
     );
+    if let Err(problem) = upstreams::openrouter::validate_model_id(&model) {
+        return bad_request(problem);
+    }
     match upstreams::openrouter::fetch_endpoints(
         &state.http,
         &backend.base_url,

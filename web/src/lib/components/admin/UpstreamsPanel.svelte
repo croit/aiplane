@@ -2,17 +2,14 @@
 	import { onMount } from 'svelte';
 	import { adminDelete, adminJson, adminPost } from '#lib/admin-client.js';
 	import { t } from '#lib/i18n.svelte.js';
-	import { naturalSort, type Backend, type LiveBackend, type Pool, type Topology } from '#lib/upstreams.js';
+	import { naturalSort, applyStatusEvent, type Backend, type BackendStatusEvent, type LiveBackend, type Pool, type Topology } from '#lib/upstreams.js';
 	import BackendEditor from '#lib/components/upstreams/BackendEditor.svelte';
 	import EditModal from '#lib/components/EditModal.svelte';
 	import PoolEditor from '#lib/components/upstreams/PoolEditor.svelte';
 	import OpenRouterEditor from '#lib/components/upstreams/OpenRouterEditor.svelte';
 	import ConcourseBoard from '#lib/components/upstreams/ConcourseBoard.svelte';
 
-	interface StatusEvent extends LiveBackend { name: string; usage: number[]; }
-
-	interface Props {
-		/** A `q` deep link from a catalog row, applied to the board's filter. */
+	interface Props {		/** A `q` deep link from a catalog row, applied to the board's filter. */
 		initialQuery?: string;
 	}
 
@@ -87,24 +84,15 @@
 		return naturalSort([...names]);
 	}
 
-	function applyStatus(status: StatusEvent) {		if (!data) return;
-		const previous = data.backends.find((backend) => backend.name === status.name)?.live ?? null;
-		const live = status.pool === null ? null : {
-			healthy: status.healthy, enabled: status.enabled, auth_failed: status.auth_failed,
-			inflight: status.inflight, max_inflight: status.max_inflight, models: status.models,
-			pool: status.pool, profile: previous?.profile ?? 'generic',
-			detected_version: previous?.detected_version ?? null,
-			detected_max_parallel: previous?.detected_max_parallel ?? null,
-			detected_at: previous?.detected_at ?? null,
-			detected_priority: previous?.detected_priority ?? null
-		};
-		data = { ...data, backends: data.backends.map((backend) => backend.name === status.name ? { ...backend, live } : backend), usage_last_hour: { ...data.usage_last_hour, [status.name]: status.usage } };
+	function applyStatus(status: BackendStatusEvent) {
+		if (!data) return;
+		data = applyStatusEvent(data, status);
 	}
 
 	onMount(() => {
 		void refresh();
 		const events = new EventSource('/api/v0/admin/upstreams/events');
-		events.addEventListener('status', (event) => applyStatus(JSON.parse(event.data) as StatusEvent));
+		events.addEventListener('status', (event) => applyStatus(JSON.parse(event.data) as BackendStatusEvent));
 		return () => events.close();
 	});
 </script>

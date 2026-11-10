@@ -312,6 +312,7 @@
 					<span class="text-xs text-base-content/70">{t('backends-field-pools')}</span>
 					<div class="flex flex-col gap-1.5">
 						{#each openRouterKinds as kind (kind)}
+							{@const currentPool = kindSelection[kind]}
 							<div class="flex items-center gap-3">
 								<span class="w-36 flex-none text-sm">{kind}</span>
 								<select
@@ -321,6 +322,9 @@
 									onchange={(event) => kindSelection = { ...kindSelection, [kind]: event.currentTarget.value }}
 								>
 									<option value="">{t('backends-pool-not-served')}</option>
+									{#if currentPool && currentPool !== 'new' && !adoptablePools(kind).some((pool) => pool.name === currentPool)}
+										<option value={currentPool}>{currentPool}</option>
+									{/if}
 									<option value="new">+ {t('backends-pool-new', { kind })}</option>
 									{#each adoptablePools(kind) as pool (pool.name)}
 										<option value={pool.name}>{pool.name}</option>

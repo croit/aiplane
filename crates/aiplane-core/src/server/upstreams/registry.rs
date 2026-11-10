@@ -1671,29 +1671,37 @@ impl UpstreamRegistry {
         // and trust `tool_choice` on a server that ignores it. An edited
         // base_url drops both, which is correct: it may be a different server.
         let old = self.data();
-        let mut prior: HashMap<(&str, &str), (HashSet<String>, Detected)> = HashMap::new();
+        let mut prior: HashMap<(&str, &str), (HashSet<String>, Detected, bool)> = HashMap::new();
         for pool in old.pools.values() {
             for b in &pool.backends {
                 let live = b.live_models();
                 let detected = b.detected();
                 let entry = prior
                     .entry((b.name.as_str(), b.base_url.as_str()))
-                    .or_insert_with(|| (HashSet::new(), Detected::default()));
+                    .or_insert_with(|| (HashSet::new(), Detected::default(), b.is_healthy()));
                 if b.discovers_models() && !live.is_empty() {
                     entry.0 = live;
                 }
                 if detected != Detected::default() {
                     entry.1 = detected;
                 }
+                // Health is probed state, not configuration. The freshly built
+                // backend starts `healthy` (the field's initial value), so
+                // without this carry-over a backend that was down came back as
+                // routable for the whole first probe round after every save.
+                entry.2 = b.is_healthy();
             }
         }
         for pool in data.pools.values() {
             for b in &pool.backends {
-                if let Some((live, detected)) = prior.get(&(b.name.as_str(), b.base_url.as_str())) {
+                if let Some((live, detected, healthy)) =
+                    prior.get(&(b.name.as_str(), b.base_url.as_str()))
+                {
                     if b.discovers_models() && !live.is_empty() {
                         b.set_models(live.clone());
                     }
                     b.set_detected(detected);
+                    b.set_healthy(*healthy);
                 }
             }
         }
@@ -5697,6 +5705,15 @@ mod tests {
             "a static System One model must not depend on the chat probe"
         );
 
+        // A probe proved the backend down. The freshly built backend starts
+        // `healthy`, so a reload that dropped this would route to a dead
+        // upstream for the next probe round after every save.
+        for pool in reg.pools() {
+            for backend in &pool.backends {
+                backend.set_healthy(false);
+            }
+        }
+
         // Reload the same topology: the rebuilt backend starts with an empty
         // live set, but the carry-over must keep "live-model" routable.
         reg.reload(&mk_snap(), &crate::server::crypto::Crypto::ephemeral())
@@ -5706,6 +5723,14 @@ mod tests {
             reg.knows_model("live-model", PoolKind::Chat),
             "reload must carry over the live model set for an unchanged backend"
         );
+        for pool in reg.pools() {
+            for backend in &pool.backends {
+                assert!(
+                    !backend.is_healthy(),
+                    "reload must carry over the probed-down state for an unchanged backend"
+                );
+            }
+        }
         assert!(
             reg.knows_model("typesafe/jev-1.13", PoolKind::SystemOne),
             "reloading must not copy a chat catalog over a static System One model list"
