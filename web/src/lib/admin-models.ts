@@ -1,7 +1,7 @@
 export type ModelKind = 'chat' | 'embedding' | 'image' | 'speech' | 'transcription' | 'ocr' | 'rerank' | 'system_one';
 export type ModelFilter = 'active' | 'all' | 'chat' | 'other' | 'alias' | 'inactive' | 'configured';
 export type PricingUnit = 'tokens' | 'images' | 'characters' | 'seconds';
-export const MODEL_ADMIN_TABS = ['upstreams', 'catalog', 'defaults', 'fallbacks', 'routing'] as const;
+export const MODEL_ADMIN_TABS = ['upstreams', 'openrouter', 'catalog', 'defaults', 'fallbacks', 'routing'] as const;
 export type ModelAdminTab = (typeof MODEL_ADMIN_TABS)[number];
 
 export function selectedModelAdminTab(search: string): ModelAdminTab {

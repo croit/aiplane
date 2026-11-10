@@ -9,6 +9,7 @@
 	import AutomaticRoutesCard from '#lib/components/admin/AutomaticRoutesCard.svelte';
 	import UnknownModelFallbacksCard from '#lib/components/admin/UnknownModelFallbacksCard.svelte';
 	import UpstreamsPanel from '#lib/components/admin/UpstreamsPanel.svelte';
+	import OpenRouterTab from '#lib/components/admin/OpenRouterTab.svelte';
 	import { t } from '#lib/i18n.svelte.js';
 
 	let data = $state<AdminModelsData | null>(null);
@@ -79,6 +80,7 @@
 		</div>
 		<nav class="tabs tabs-border w-full overflow-x-auto" aria-label={t('admin-models-routing-heading')}>
 			<a class:tab-active={selected === 'upstreams'} class="tab whitespace-nowrap" href="/admin/models?tab=upstreams">{t('admin-models-tab-upstreams')}</a>
+			<a class:tab-active={selected === 'openrouter'} class="tab whitespace-nowrap" href="/admin/models?tab=openrouter">{t('admin-models-tab-openrouter')}</a>
 			<a class:tab-active={selected === 'catalog'} class="tab whitespace-nowrap" href="/admin/models?tab=catalog">{t('admin-models-tab-catalog')}</a>
 			<a class:tab-active={selected === 'defaults'} class="tab whitespace-nowrap" href="/admin/models?tab=defaults">{t('admin-models-tab-defaults')}</a>
 			<a class:tab-active={selected === 'fallbacks'} class="tab whitespace-nowrap" href="/admin/models?tab=fallbacks">{t('admin-models-tab-fallbacks')}</a>
@@ -90,6 +92,8 @@
 	{#if notice}<div class="alert alert-success"><span>{notice}</span></div>{/if}
 	{#if selected === 'upstreams'}
 		<UpstreamsPanel initialQuery={page.url.searchParams.get('q') ?? ''} />
+	{:else if selected === 'openrouter'}
+		<OpenRouterTab />
 	{:else if selected === 'fallbacks'}
 		<UnknownModelFallbacksCard />
 	{:else if data}

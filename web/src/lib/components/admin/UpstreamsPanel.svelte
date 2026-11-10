@@ -7,7 +7,6 @@
 	import EditModal from '#lib/components/EditModal.svelte';
 	import PoolEditor from '#lib/components/upstreams/PoolEditor.svelte';
 	import OpenRouterEditor from '#lib/components/upstreams/OpenRouterEditor.svelte';
-	import OpenRouterAccountPanel from '#lib/components/upstreams/OpenRouterAccountPanel.svelte';
 	import ConcourseBoard from '#lib/components/upstreams/ConcourseBoard.svelte';
 
 	interface StatusEvent extends LiveBackend { name: string; usage: number[]; }
@@ -88,15 +87,7 @@
 		return naturalSort([...names]);
 	}
 
-	function openRouterAccount() {
-		const target = document.getElementById('openrouter-account');
-		if (!target) return;
-		target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-		target.querySelector<HTMLElement>('[data-openrouter-heading]')?.focus({ preventScroll: true });
-	}
-
-	function applyStatus(status: StatusEvent) {
-		if (!data) return;
+	function applyStatus(status: StatusEvent) {		if (!data) return;
 		const previous = data.backends.find((backend) => backend.name === status.name)?.live ?? null;
 		const live = status.pool === null ? null : {
 			healthy: status.healthy, enabled: status.enabled, auth_failed: status.auth_failed,
@@ -139,11 +130,9 @@
 				onAddBackend={(pool) => { addingBackendPool = pool.name; addingBackend = true; }}
 				onFixModels={(backend) => { editFocus = 'models'; editingBackend = backend; editModalOpen = true; }}
 				onToggleEnabled={(backend) => void toggleEnabled(backend)}
-				onOpenRouterAccount={openRouterAccount}
 				toggling={togglingBackend}
 			/>
 		{/if}
-		<OpenRouterAccountPanel backends={data.backends} pools={data.pools} poolKinds={data.pool_kinds} onChanged={refresh} />
 	</div>
 	<EditModal bind:open={editModalOpen} wide footer="none" title={t('upstreams-edit-backend')} cancellabel={t('upstreams-cancel')}>{#if editingBackend}{@const editTarget = editingBackend}<BackendEditor backend={editTarget} focus={editFocus} currentPool={data.pools.find((pool) => pool.backends.includes(editTarget.name))?.name ?? null} pools={data.pools} poolKinds={data.pool_kinds} existingNames={data.backends.map((backend) => backend.name)} onSaved={() => { markSaved(); return refresh(); }} onCancel={() => { editModalOpen = false; editingBackend = null; editFocus = null; }} />{/if}</EditModal>
 	<EditModal bind:open={addingPool} wide footer="none" title={t('pools-add-heading')} cancellabel={t('upstreams-cancel')}><PoolEditor backends={data.backends} knownModels={[]} poolKinds={data.pool_kinds} poolStrategies={data.pool_strategies} groups={data.groups} existingNames={data.pools.map((pool) => pool.name)} sortOrder={Math.max(-1, ...data.pools.map((pool) => pool.sort_order)) + 1} onSaved={() => { addingPool = false; markSaved(); return refresh(); }} onCancel={() => (addingPool = false)} /></EditModal>

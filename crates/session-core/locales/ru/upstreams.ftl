@@ -51,7 +51,7 @@ board-key-none = ключ не настроен
 board-models-none = ничего не обнаружено
 board-models-more = +{ $count } ещё
 board-pool-account = Аккаунт
-board-pool-managed = Этот пул управляется в аккаунте OpenRouter ниже.
+board-pool-managed = Этот пул управляется на вкладке OpenRouter.
 
 board-filter-placeholder = Фильтр по бэкендам, моделям, алиасам…
 board-filter-clear = Сбросить

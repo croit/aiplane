@@ -5,6 +5,7 @@ admin-heading = Modelos
 admin-models-routing-heading = Modelos y enrutamiento
 admin-models-routing-intro = Configura la infraestructura de modelos, el catálogo, los modelos predeterminados y el enrutamiento automático en un solo lugar.
 admin-models-tab-upstreams = Upstreams
+admin-models-tab-openrouter = OpenRouter
 admin-models-tab-catalog = Catálogo de modelos
 admin-models-tab-defaults = Modelos predeterminados
 admin-models-tab-fallbacks = Alternativas

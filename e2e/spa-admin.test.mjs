@@ -533,7 +533,7 @@ test("upstreams keeps pool topology and backend controls, and the fallbacks tab 
             );
         }
         if (pool.name.startsWith("openrouter-")) {
-            assert.equal(await band.getByRole("button", { name: "Account", exact: true }).count(), 1);
+            assert.equal(await band.getByRole("link", { name: "Account", exact: true }).count(), 1);
         } else {
             assert.equal(await band.getByRole("button", { name: "Edit pool", exact: true }).count(), 1);
         }

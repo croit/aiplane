@@ -7,6 +7,7 @@ admin-heading = Models
 admin-models-routing-heading = Models & routing
 admin-models-routing-intro = Configure model infrastructure, catalog behavior, defaults, and automatic routing in one place.
 admin-models-tab-upstreams = Upstreams
+admin-models-tab-openrouter = OpenRouter
 admin-models-tab-catalog = Model catalog
 admin-models-tab-defaults = Default models
 admin-models-tab-fallbacks = Fallbacks

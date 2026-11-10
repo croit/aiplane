@@ -51,7 +51,7 @@ board-key-none = sin clave configurada
 board-models-none = ninguno descubierto
 board-models-more = +{ $count } más
 board-pool-account = Cuenta
-board-pool-managed = Este pool se gestiona en la cuenta de OpenRouter de abajo.
+board-pool-managed = Este pool se gestiona en la pestaña OpenRouter.
 
 board-filter-placeholder = Filtrar backends, modelos, alias…
 board-filter-clear = Borrar

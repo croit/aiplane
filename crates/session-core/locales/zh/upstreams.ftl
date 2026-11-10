@@ -51,7 +51,7 @@ board-key-none = 未配置密钥
 board-models-none = 未发现
 board-models-more = +{ $count } 个
 board-pool-account = 账户
-board-pool-managed = 此资源池在下方 OpenRouter 账户中管理。
+board-pool-managed = 此资源池在 OpenRouter 标签页中管理。
 
 board-filter-placeholder = 筛选后端、模型、别名…
 board-filter-clear = 清除

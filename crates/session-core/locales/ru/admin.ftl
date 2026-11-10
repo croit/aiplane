@@ -5,6 +5,7 @@ admin-heading = Модели
 admin-models-routing-heading = Модели и маршрутизация
 admin-models-routing-intro = Настройте инфраструктуру моделей, каталог, модели по умолчанию и автоматическую маршрутизацию в одном месте.
 admin-models-tab-upstreams = Апстримы
+admin-models-tab-openrouter = OpenRouter
 admin-models-tab-catalog = Каталог моделей
 admin-models-tab-defaults = Модели по умолчанию
 admin-models-tab-fallbacks = Резерв

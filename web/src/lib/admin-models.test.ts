@@ -39,6 +39,7 @@ const model: AdminModel = {
 test('model administration defaults to the upstreams board and accepts only known tabs', () => {
 	assert.equal(selectedModelAdminTab(''), 'upstreams');
 	assert.equal(selectedModelAdminTab('?tab=upstreams'), 'upstreams');
+	assert.equal(selectedModelAdminTab('?tab=openrouter'), 'openrouter');
 	assert.equal(selectedModelAdminTab('?tab=catalog'), 'catalog');
 	assert.equal(selectedModelAdminTab('?tab=defaults'), 'defaults');
 	assert.equal(selectedModelAdminTab('?tab=fallbacks'), 'fallbacks');

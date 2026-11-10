@@ -32,7 +32,6 @@
 		onAddBackend: (pool: Pool) => void;
 		onFixModels: (backend: Backend) => void;
 		onToggleEnabled: (backend: Backend) => void;
-		onOpenRouterAccount: () => void;
 		toggling: string | null;
 	}
 
@@ -47,7 +46,6 @@
 		onAddBackend,
 		onFixModels,
 		onToggleEnabled,
-		onOpenRouterAccount,
 		toggling
 	}: Props = $props();
 
@@ -300,7 +298,7 @@
 								<button class="btn btn-ghost btn-xs" type="button" onclick={() => { if (band.pool) onAddBackend(band.pool); }}>+ {t('upstreams-add-backend')}</button>
 							{/if}
 							{#if band.openRouter}
-								<button class="btn btn-ghost btn-xs" type="button" onclick={onOpenRouterAccount} title={t('board-pool-managed')}>{t('board-pool-account')}</button>
+								<a class="btn btn-ghost btn-xs" href="/admin/models?tab=openrouter" title={t('board-pool-managed')}>{t('board-pool-account')}</a>
 							{:else}
 								<button class="btn btn-ghost btn-xs" type="button" onclick={() => { if (band.pool) onEditPool(band.pool); }}>{t('upstreams-edit-pool')}</button>
 							{/if}
@@ -339,7 +337,11 @@
 							<span class="lamp lamp-{row.state.tone}"></span>
 							<span class="state-word state-{row.state.tone}">{t(row.state.key)}</span>
 							{#if row.live && row.live.models.length === 0}
-								<button class="badge badge-warning badge-sm" type="button" title={t('backends-no-models-title')} onclick={() => (row.backend.provider === 'openrouter' ? onOpenRouterAccount() : onFixModels(row.backend))}>{t('backends-no-models')}</button>
+								{#if row.backend.provider === 'openrouter'}
+									<a class="badge badge-warning badge-sm" href="/admin/models?tab=openrouter" title={t('backends-no-models-title')}>{t('backends-no-models')}</a>
+								{:else}
+									<button class="badge badge-warning badge-sm" type="button" title={t('backends-no-models-title')} onclick={() => onFixModels(row.backend)}>{t('backends-no-models')}</button>
+								{/if}
 							{/if}
 						</div>
 						<div class="cell cell-load">

@@ -4,6 +4,7 @@ admin-heading = 模型
 admin-models-routing-heading = 模型与路由
 admin-models-routing-intro = 在一个位置配置模型基础设施、模型目录、默认模型和自动路由。
 admin-models-tab-upstreams = 上游
+admin-models-tab-openrouter = OpenRouter
 admin-models-tab-catalog = 模型目录
 admin-models-tab-defaults = 默认模型
 admin-models-tab-fallbacks = 回退
