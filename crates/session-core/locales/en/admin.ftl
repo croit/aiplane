@@ -7,8 +7,10 @@ admin-heading = Models
 admin-models-routing-heading = Models & routing
 admin-models-routing-intro = Configure model infrastructure, catalog behavior, defaults, and automatic routing in one place.
 admin-models-tab-upstreams = Upstreams
+admin-models-tab-openrouter = OpenRouter
 admin-models-tab-catalog = Model catalog
 admin-models-tab-defaults = Default models
+admin-models-tab-fallbacks = Fallbacks
 admin-models-tab-routing = Automatic routing
 
 # List column headers.
@@ -354,3 +356,6 @@ admin-error-unknown-groups = { $count ->
     [one] No such group here: { $groups }. Create it under Admin → Groups first, or pick from the list.
    *[other] No such groups here: { $groups }. Create them under Admin → Groups first, or pick from the list.
 }
+
+admin-served-by = served by { $pools }
+admin-served-by-open = Open this model on the upstream board

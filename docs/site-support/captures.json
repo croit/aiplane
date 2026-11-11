@@ -28,15 +28,14 @@
   {
     "file": "docs/img/guide/upstream-pool.png",
     "route": "/admin/models?tab=upstreams",
-    "selector": "article.card",
-    "matchingText": "wiremock-chat",
+    "selector": "[data-testid=\"concourse-board\"]",
     "viewport": {
       "width": 1400,
       "height": 950
     },
     "scale": 2,
     "width": 2128,
-    "height": 500,
+    "height": 1588,
     "data": "Synthetic dev-ui fixture; actual application components."
   },
   {

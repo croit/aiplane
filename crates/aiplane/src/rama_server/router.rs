@@ -663,6 +663,10 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
             pages::json_admin::openrouter_refresh,
         )
         .with_get(
+            "/api/v0/admin/upstreams/openrouter/endpoints",
+            pages::json_admin::openrouter_model_endpoints,
+        )
+        .with_get(
             "/api/v0/admin/upstreams/events",
             pages::json_admin::topology_events,
         )
@@ -695,10 +699,6 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         .with_put(
             "/api/v0/admin/upstreams/fallback",
             pages::json_admin::topology_fallback,
-        )
-        .with_post(
-            "/api/v0/admin/upstreams/reload",
-            pages::json_admin::topology_reload,
         )
         .with_endpoint_layer(endpoint(BodyLimitLayer::UPLOAD))
         // Workspace JSON API for the SPA: skills, connectors, integrations.

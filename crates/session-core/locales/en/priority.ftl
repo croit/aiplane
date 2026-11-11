@@ -19,7 +19,6 @@ priority-error-body = Invalid priority request. Choose low, medium, high or null
 priority-error-not-found = This token does not exist. Refresh the token list.
 priority-error-internal = The priority could not be processed. Try again or contact an administrator.
 priority-error-mapping = Invalid priority mapping. Use a separate top-level parameter and three strictly ordered integer values.
-priority-backend-changed = Backend { $backend }: priority mapping changed
 priority-disabled = Request prioritization is disabled. Enable it in system settings to apply these priorities.
 priority-inherit-value = Inherit from groups ({ $priority })
 priority-admin-only = Administrator only

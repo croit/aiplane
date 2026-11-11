@@ -11,8 +11,8 @@
 //! * Every handler is admin-gated ([`require_admin_json`] → 401/403 JSON).
 //! * Writes that have live side effects replicate them exactly:
 //!   `reload_rbac` after group changes, `reload_settings` + session-policy
-//!   push after settings saves, the registry reload + health respawn +
-//!   dirty reset for topology applies.
+//!   push after settings saves, and the registry reload plus background
+//!   health probes for every topology write.
 
 use aiplane_core::server::capped_read;
 use aiplane_core::server::priority::{BackendPriority, Priority, PriorityMapping};
@@ -581,6 +581,14 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
                 serving.dialect,
                 &name,
             );
+            // Who carries it, for the row's provenance line and a jump to the
+            // board. Computed before the push borrows `name`.
+            let served_by: Vec<ServedByView> = state
+                .upstreams
+                .serving_pools(&name, kind)
+                .into_iter()
+                .map(|(pool, backends)| ServedByView { pool, backends })
+                .collect();
             models.push(ModelView {
                 // What the serving backend says this model's context is, if it
                 // says anything. The page puts it beside the operator's own
@@ -593,6 +601,7 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
                 kind: kind_label,
                 alias_target,
                 served: true,
+                served_by,
                 configured: defaults.is_some(),
                 resolved_reasoning_style: reasoning.as_str(),
                 uses_token_budget: reasoning.budget_enforced(serving.thinking_budget),
@@ -624,6 +633,7 @@ pub async fn models_list(State(state): State<Arc<RamaState>>, req: Request) -> R
             // Nothing advertises this model any more — the page files the row
             // under *inactive* so the operator can clear it.
             served: false,
+            served_by: Vec::new(),
             configured: true,
             resolved_reasoning_style: reasoning.as_str(),
             // Nothing serves this model, so only a budget in the model's own
@@ -700,6 +710,10 @@ pub struct ModelView {
     /// An upstream pool currently advertises this model. `false` only for
     /// stored overrides of a model nothing serves any more.
     pub served: bool,
+    /// The pools routing this name right now, each with the backends behind
+    /// it. Empty when nothing can serve it at this instant — a model nothing
+    /// advertises, or one whose only backend is drained or unhealthy.
+    pub served_by: Vec<ServedByView>,
     /// The model has stored overrides.
     pub configured: bool,
     pub resolved_reasoning_style: &'static str,
@@ -711,6 +725,17 @@ pub struct ModelView {
     /// The context window the serving backend reports.
     pub detected_context_window: Option<i64>,
     pub defaults: Option<ModelDefaultsView>,
+}
+
+/// One line of a model row's provenance: the pool that routes the model and
+/// the backends in it that can serve it right now.
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct ServedByView {
+    /// The pool's name, as the board bands it.
+    pub pool: String,
+    /// Backends in that pool available for this model — a drained or
+    /// unhealthy backend is left out, because it is not where traffic goes.
+    pub backends: Vec<String>,
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
@@ -2051,7 +2076,7 @@ pub async fn tokens_priority(State(state): State<Arc<RamaState>>, req: Request) 
 use aiplane_core::server::db::upstreams_config::{self, AliasRow, BackendRow, PoolRow, VoiceRow};
 
 /// GET /api/v0/admin/upstreams — the DB topology, the live registry health,
-/// the last hour of per-backend request counts, and the dirty counter.
+/// and the last hour of per-backend request counts.
 pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = require_admin_json!(state, req);
     let snapshot = match upstreams_config::load_snapshot(&state.db).await {
@@ -2126,11 +2151,6 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
             (pool.name.clone(), models)
         })
         .collect();
-    let pending_changes = topology_pending_changes(
-        &snapshot.pools,
-        &snapshot.backends,
-        &state.upstreams.live_topology(),
-    );
     let pools = snapshot
         .pools
         .iter()
@@ -2209,9 +2229,7 @@ pub async fn topology_list(State(state): State<Arc<RamaState>>, req: Request) ->
             fallbacks: snapshot.fallbacks,
             all_models: state.upstreams.all_models(),
             coverage,
-            pending_changes,
             usage_last_hour: usage,
-            dirty: state.topology_dirty_count(),
             // The vocabulary, so the SPA renders its picker from data rather
             // than from a hardcoded <option> list that can fall behind the
             // enum (as it had — `rerank` was missing from every copy).
@@ -2241,14 +2259,9 @@ pub struct TopologyView {
     pub all_models: Vec<String>,
     /// Pool name → how many of its backends serve each of its models.
     pub coverage: std::collections::HashMap<String, Vec<ModelCoverage>>,
-    /// How the stored topology differs from the running one; applied by
-    /// `POST /api/v0/admin/upstreams/reload`.
-    pub pending_changes: Vec<PendingChange>,
     /// Backend name → its request counts over the last hour, in twelve
     /// five-minute buckets.
     pub usage_last_hour: std::collections::HashMap<String, Vec<i64>>,
-    /// The number of topology changes saved since the last apply.
-    pub dirty: u32,
     pub pool_kinds: Vec<&'static str>,
     pub pool_strategies: [&'static str; 3],
     /// The gateway group names a pool's access can name.
@@ -2346,170 +2359,6 @@ pub struct ModelCoverage {
     pub total: usize,
 }
 
-/// One difference between the stored topology and the running one.
-#[derive(serde::Serialize, schemars::JsonSchema)]
-#[serde(tag = "code", rename_all = "snake_case")]
-pub enum PendingChange {
-    BackendPriority {
-        backend: String,
-    },
-    PoolAdded {
-        pool: String,
-    },
-    PoolKind {
-        pool: String,
-        from: &'static str,
-        to: String,
-    },
-    PoolStrategy {
-        pool: String,
-        from: &'static str,
-        to: String,
-    },
-    BackendJoins {
-        backend: String,
-        pool: String,
-    },
-    BackendLeaves {
-        backend: String,
-        pool: String,
-    },
-    BackendUrl {
-        backend: String,
-        from: String,
-        to: String,
-    },
-    BackendLimits {
-        backend: String,
-        weight: u32,
-        inflight: u32,
-    },
-    BackendHealthPath {
-        backend: String,
-        to: String,
-    },
-    PoolRemoved {
-        pool: String,
-    },
-}
-
-fn topology_pending_changes(
-    pools: &[PoolRow],
-    backends: &std::collections::HashMap<String, BackendRow>,
-    live: &aiplane_core::server::upstreams::LiveTopology,
-) -> Vec<PendingChange> {
-    use std::collections::BTreeMap;
-
-    let live_pools: BTreeMap<_, _> = live
-        .pools
-        .iter()
-        .map(|pool| (pool.name.as_str(), pool))
-        .collect();
-    let db_pools: BTreeMap<_, _> = pools
-        .iter()
-        .map(|pool| (pool.name.as_str(), pool))
-        .collect();
-    let mut changes = Vec::new();
-    for (name, pool) in &db_pools {
-        let Some(live_pool) = live_pools.get(name) else {
-            changes.push(PendingChange::PoolAdded {
-                pool: name.to_string(),
-            });
-            continue;
-        };
-        if pool.kind != live_pool.kind.as_str() {
-            changes.push(PendingChange::PoolKind {
-                pool: name.to_string(),
-                from: live_pool.kind.as_str(),
-                to: pool.kind.clone(),
-            });
-        }
-        let live_strategy = picker_strategy_key(live_pool.strategy);
-        if pool.strategy != live_strategy {
-            changes.push(PendingChange::PoolStrategy {
-                pool: name.to_string(),
-                from: live_strategy,
-                to: pool.strategy.clone(),
-            });
-        }
-        let mut db_members = pool.backends.iter().map(String::as_str).collect::<Vec<_>>();
-        db_members.sort_unstable();
-        let live_members = live_pool
-            .backends
-            .iter()
-            .map(|backend| backend.name.as_str())
-            .collect::<Vec<_>>();
-        for backend in db_members
-            .iter()
-            .filter(|name| !live_members.contains(name))
-        {
-            changes.push(PendingChange::BackendJoins {
-                backend: backend.to_string(),
-                pool: name.to_string(),
-            });
-        }
-        for backend in live_members
-            .iter()
-            .filter(|name| !db_members.contains(name))
-        {
-            changes.push(PendingChange::BackendLeaves {
-                backend: backend.to_string(),
-                pool: name.to_string(),
-            });
-        }
-        for live_backend in &live_pool.backends {
-            let Some(backend) = backends.get(&live_backend.name) else {
-                continue;
-            };
-            if backend.base_url.trim_end_matches('/') != live_backend.base_url {
-                changes.push(PendingChange::BackendUrl {
-                    backend: live_backend.name.clone(),
-                    from: live_backend.base_url.clone(),
-                    to: backend.base_url.clone(),
-                });
-            }
-            if backend.weight.max(1) != live_backend.weight
-                || backend.max_inflight.max(1) != live_backend.max_inflight
-            {
-                changes.push(PendingChange::BackendLimits {
-                    backend: live_backend.name.clone(),
-                    weight: backend.weight.max(1),
-                    inflight: backend.max_inflight.max(1),
-                });
-            }
-            if backend.priority != live_backend.priority {
-                changes.push(PendingChange::BackendPriority {
-                    backend: live_backend.name.clone(),
-                });
-            }
-            if backend.health_path != live_backend.health_path {
-                changes.push(PendingChange::BackendHealthPath {
-                    backend: live_backend.name.clone(),
-                    to: backend.health_path.clone(),
-                });
-            }
-        }
-    }
-    for name in live_pools
-        .keys()
-        .filter(|name| !db_pools.contains_key(*name))
-    {
-        changes.push(PendingChange::PoolRemoved {
-            pool: name.to_string(),
-        });
-    }
-    changes
-}
-
-fn picker_strategy_key(strategy: aiplane_core::server::upstreams::PickerStrategy) -> &'static str {
-    use aiplane_core::server::upstreams::PickerStrategy;
-    match strategy {
-        PickerStrategy::RoundRobin => "round_robin",
-        PickerStrategy::LeastInflight => "least_inflight",
-        PickerStrategy::PrefixAffinity => "prefix_affinity",
-    }
-}
-
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 pub struct BackendSaveBody {
     #[serde(default)]
@@ -2525,6 +2374,11 @@ pub struct BackendSaveBody {
     /// (the API never echoes secrets).
     #[serde(default)]
     pub api_key: String,
+    /// Delete the stored key instead of keeping it. A blank `api_key` means
+    /// "unchanged", so this is the only way to retire a key — moving the
+    /// backend onto `api_key_env`, or removing a leaked one.
+    #[serde(default)]
+    pub clear_key: bool,
     #[serde(default)]
     pub weight: u32,
     #[serde(default)]
@@ -2912,7 +2766,7 @@ fn deepest_error(err: &(dyn std::error::Error + 'static)) -> String {
 
 /// PUT /api/v0/admin/backends — upsert a backend row (sealed key, preserved
 /// drain state) and set its pool membership. Marks the topology
-/// dirty; the registry picks it up on the apply.
+/// and applies to the running registry immediately.
 pub async fn backends_save(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = require_admin_json!(state, req);
     let lang = session_core::i18n::Lang::from_headers(req.headers());
@@ -2952,6 +2806,11 @@ pub async fn backends_save(State(state): State<Arc<RamaState>>, req: Request) ->
     if parsed.base_url.trim().is_empty() {
         return bad_request("a backend needs a base URL");
     }
+    if parsed.clear_key && !parsed.api_key.trim().is_empty() {
+        return bad_request(
+            "send either a new API key or clear_key, not both — a new key replaces the stored one",
+        );
+    }
     let (api_key_ct, api_key_nonce) = {
         let entered = parsed.api_key.trim();
         if !entered.is_empty() {
@@ -2959,6 +2818,8 @@ pub async fn backends_save(State(state): State<Arc<RamaState>>, req: Request) ->
                 Ok(s) => (Some(s.ciphertext), Some(s.nonce)),
                 Err(err) => return internal(err),
             }
+        } else if parsed.clear_key {
+            (None, None)
         } else {
             match upstreams_config::get_backend(&state.db, &name).await {
                 Ok(Some(existing)) => (existing.api_key_ct, existing.api_key_nonce),
@@ -3061,16 +2922,16 @@ pub async fn backends_save(State(state): State<Arc<RamaState>>, req: Request) ->
     if let Err(err) = upstreams_config::set_backend_pools(&state.db, &name, &pool_names).await {
         return internal(err);
     }
-    let dirty = state.topology_dirty_bump();
-    json_ok(StatusCode::OK, TopologySaved { name, dirty })
+    if let Some(err) = apply_topology(&state).await {
+        return err;
+    }
+    json_ok(StatusCode::OK, TopologySaved { name })
 }
 
-/// The saved topology row; the change is live after the next apply.
+/// The saved topology row; the change is live now.
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct TopologySaved {
     pub name: String,
-    /// The number of topology changes saved since the last apply.
-    pub dirty: u32,
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
@@ -3080,7 +2941,7 @@ pub struct BackendEnabled {
 }
 
 /// POST /api/v0/admin/backends/{name}/enabled — drain/undrain. Mirrors the
-/// form path: this one IS live (registry flip, no reload needed, no dirty).
+/// form path: this one IS live (registry flip, no reload needed).
 pub async fn backends_enabled(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = require_admin_json!(state, req);
     // Raw URI, not the `Path` extractor: rama lowercases path segments and
@@ -3127,10 +2988,11 @@ pub async fn backends_delete(State(state): State<Arc<RamaState>>, req: Request) 
         Ok(false) => return not_found(format!("no backend `{name}`")),
         Err(err) => return internal(err),
     }
-    let dirty = state.topology_dirty_bump();
+    if let Some(err) = apply_topology(&state).await {
+        return err;
+    }
     Response::builder()
         .status(StatusCode::NO_CONTENT)
-        .header("x-topology-dirty", dirty.to_string())
         .body(rama::http::Body::empty())
         .expect("static empty response")
 }
@@ -3195,8 +3057,10 @@ async fn rename_topology_row(state: Arc<RamaState>, req: Request, kind: Topology
     };
     match renamed {
         Ok(upstreams_config::RenameOutcome::Renamed) => {
-            let dirty = state.topology_dirty_bump();
-            json_ok(StatusCode::OK, TopologySaved { name: new, dirty })
+            if let Some(err) = apply_topology(&state).await {
+                return err;
+            }
+            json_ok(StatusCode::OK, TopologySaved { name: new })
         }
         Ok(upstreams_config::RenameOutcome::NotFound) => json_error(
             StatusCode::NOT_FOUND,
@@ -3244,7 +3108,7 @@ pub struct VoiceBody {
     pub voice: String,
 }
 
-/// PUT /api/v0/admin/pools — upsert a pool row. Marks the topology dirty.
+/// PUT /api/v0/admin/pools — upsert a pool row, live on the running registry.
 pub async fn pools_save(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = require_admin_json!(state, req);
     let (parts, body) = req.into_parts();
@@ -3329,8 +3193,10 @@ pub async fn pools_save(State(state): State<Arc<RamaState>>, req: Request) -> Re
     if let Err(err) = upstreams_config::upsert_pool(&state.db, &row).await {
         return internal(err);
     }
-    let dirty = state.topology_dirty_bump();
-    json_ok(StatusCode::OK, TopologySaved { name, dirty })
+    if let Some(err) = apply_topology(&state).await {
+        return err;
+    }
+    json_ok(StatusCode::OK, TopologySaved { name })
 }
 
 /// Is this a pool kind the config loader accepts?
@@ -3357,10 +3223,11 @@ pub async fn pools_delete(State(state): State<Arc<RamaState>>, req: Request) -> 
         Ok(false) => return not_found(format!("no pool `{name}`")),
         Err(err) => return internal(err),
     }
-    let dirty = state.topology_dirty_bump();
+    if let Some(err) = apply_topology(&state).await {
+        return err;
+    }
     Response::builder()
         .status(StatusCode::NO_CONTENT)
-        .header("x-topology-dirty", dirty.to_string())
         .body(rama::http::Body::empty())
         .expect("static empty response")
 }
@@ -3374,7 +3241,7 @@ pub struct FallbackBody {
 }
 
 /// PUT /api/v0/admin/upstreams/fallback — set/clear a kind's unknown-model
-/// fallback. Live immediately: fallbacks are re-read per model miss.
+/// fallback. Applied live now, like every other topology write.
 pub async fn topology_fallback(State(state): State<Arc<RamaState>>, req: Request) -> Response {
     let (_session, _admin) = require_admin_json!(state, req);
     let (_, body) = req.into_parts();
@@ -3394,6 +3261,9 @@ pub async fn topology_fallback(State(state): State<Arc<RamaState>>, req: Request
     if let Err(err) = upstreams_config::set_fallback(&state.db, &parsed.kind, value).await {
         return internal(err);
     }
+    if let Some(err) = apply_topology(&state).await {
+        return err;
+    }
     json_ok(
         StatusCode::OK,
         FallbackSaved {
@@ -3410,45 +3280,39 @@ pub struct FallbackSaved {
     pub model: Option<String>,
 }
 
-/// POST /api/v0/admin/upstreams/reload — apply the DB topology: rebuild the
-/// registry (unsealing keys, carrying live model sets), respawn the health
-/// probes, reset the dirty counter.
-pub async fn topology_reload(State(state): State<Arc<RamaState>>, req: Request) -> Response {
-    let (_session, _admin) = require_admin_json!(state, req);
+/// Rebuild the live registry from the DB and re-arm the health probes.
+///
+/// Every topology write is live-now: the save handlers write the DB, then call
+/// this. Spawned, then awaited, so a client that disconnects mid-write cannot
+/// cancel it. `reload` has already published the new topology and retired the
+/// old probe loops; dropping this future before it arms the new ones would
+/// leave a live registry with no health probing at all — every backend frozen
+/// at `healthy` and never re-checked, for the life of the process. `Some` is
+/// the error response to return.
+async fn apply_topology(state: &RamaState) -> Option<Response> {
     let snapshot = match upstreams_config::load_snapshot(&state.db).await {
-        Ok(s) => s,
-        Err(err) => return internal(err),
+        Ok(snapshot) => snapshot,
+        Err(err) => return Some(internal(err)),
     };
     if let Err(err) = state.upstreams.reload(&snapshot, &state.crypto) {
-        return internal(err);
+        return Some(internal(err));
     }
-    // Spawned, then awaited, so a client that disconnects mid-apply cannot
-    // cancel it. `reload` has already published the new topology and retired
-    // the old probe loops; dropping this future before it arms the new ones
-    // would leave a live registry with no health probing at all — every
-    // backend frozen at `healthy` and never re-checked, for the life of the
-    // process.
-    let armed = tokio::spawn(aiplane_core::server::upstreams::health::spawn(
-        state.upstreams.clone(),
-        Some(state.db.clone()),
-    ));
-    if let Err(err) = armed.await {
-        tracing::error!(error = %err, "arming the health probes after a topology apply panicked");
-    }
-    state.topology_dirty_reset();
-    json_ok(
-        StatusCode::OK,
-        TopologyApplied {
-            applied: true,
-            dirty: 0,
-        },
-    )
-}
-
-#[derive(serde::Serialize, schemars::JsonSchema)]
-pub struct TopologyApplied {
-    pub applied: bool,
-    pub dirty: u32,
+    // Arm the probes in the background: the write is live the moment the
+    // registry is swapped, and a full probe round (one timeout per
+    // unreachable backend) inside the request made every save as slow as the
+    // apply step it replaced. The armed loop owns the failure paths.
+    let registry = state.upstreams.clone();
+    let db = state.db.clone();
+    tokio::spawn(async move {
+        let probe = tokio::spawn(aiplane_core::server::upstreams::health::spawn(
+            registry,
+            Some(db),
+        ));
+        if let Err(err) = probe.await {
+            tracing::error!(error = %err, "arming the health probes after a topology write panicked");
+        }
+    });
+    None
 }
 
 /// A `HashSet` of model ids as a stable, sorted `Vec`.
@@ -3459,8 +3323,8 @@ fn sorted(set: std::collections::HashSet<String>) -> Vec<String> {
 }
 
 /// GET /api/v0/admin/upstreams/events — the live health stream as JSON
-/// events: one `status` event per backend whose state changed since it was
-/// last sent (plus the dirty counter inside each event), and a comment
+/// events: one `status` event per (pool, backend) whose state changed since it
+/// was last sent, and a comment
 /// keepalive when nothing has changed for a while. See `TICK` below and
 /// `SSE_KEEPALIVE` for the cadence. The JSON twin of the legacy
 /// `/admin/upstreams/live` HTML-patch stream.
@@ -3490,14 +3354,15 @@ pub async fn topology_events(State(state): State<Arc<RamaState>>, req: Request) 
         const USAGE_REFRESH: Duration = Duration::from_secs(60);
 
         // Both of these are re-read only when they can actually have changed:
-        // the topology when the dirty counter moves, the usage aggregate on
-        // its own slow cadence. A tick then touches only in-memory registry
-        // state, and sends nothing unless something actually changed.
+        // the topology when the registry's generation moves (a write reloaded
+        // it), the usage aggregate on its own slow cadence. A tick then touches
+        // only in-memory registry state, and sends nothing unless something
+        // actually changed.
         let mut snapshot = match upstreams_config::load_snapshot(&state.db).await {
             Ok(s) => s,
             Err(_) => return,
         };
-        let mut snapshot_dirty = state.topology_dirty_count();
+        let mut snapshot_generation = state.upstreams.generation();
         let mut usage =
             db::usage::recent_buckets_by_backend(&state.db, jiff::Timestamp::now(), 5, 12)
                 .await
@@ -3505,12 +3370,12 @@ pub async fn topology_events(State(state): State<Arc<RamaState>>, req: Request) 
         let mut since_usage = Duration::ZERO;
 
         loop {
-            let dirty = state.topology_dirty_count();
-            if dirty != snapshot_dirty {
+            let generation = state.upstreams.generation();
+            if generation != snapshot_generation {
                 if let Ok(s) = upstreams_config::load_snapshot(&state.db).await {
                     snapshot = s;
                 }
-                snapshot_dirty = dirty;
+                snapshot_generation = generation;
             }
             if since_usage >= USAGE_REFRESH {
                 usage =
@@ -3524,52 +3389,77 @@ pub async fn topology_events(State(state): State<Arc<RamaState>>, req: Request) 
             // registry lock and allocates.
             let pools = state.upstreams.pools();
             let mut sent_any = false;
+            // One event per (pool, backend): a backend can sit in several pools
+            // and has its own live instance in each, so a single event per name
+            // froze every band but the one it happened to name.
+            let mut emitted: std::collections::HashSet<&str> = std::collections::HashSet::new();
+            for pool in &pools {
+                for backend in &pool.backends {
+                    emitted.insert(backend.name.as_str());
+                    let payload = BackendStatus {
+                        name: backend.name.clone(),
+                        pool: Some(pool.name.clone()),
+                        healthy: backend.is_healthy(),
+                        enabled: backend.is_enabled(),
+                        auth_failed: backend.auth_failed(),
+                        inflight: backend.inflight(),
+                        max_inflight: backend.max_inflight,
+                        configured: true,
+                        // Sorted, because these come out of a `HashSet` whose
+                        // iteration order is randomized per process and reshuffles
+                        // as probes rebuild it. Unsorted, the same models
+                        // re-serialize differently on every tick: the list visibly
+                        // reorders under the operator's cursor, and — worse — the
+                        // `last` comparison below never matches, so the stream
+                        // pushes an event per backend per tick forever. Sorting is
+                        // what makes the change detection actually detect change.
+                        models: sorted(backend.models_snapshot()),
+                        usage: usage
+                            .get(&backend.name)
+                            .cloned()
+                            .unwrap_or_else(|| vec![0; 12]),
+                        requests_last_hour: usage
+                            .get(&backend.name)
+                            .map(|v| v.iter().sum::<i64>())
+                            .unwrap_or(0),
+                    };
+                    let key = format!("{}|{}", pool.name, backend.name);
+                    let encoded =
+                        serde_json::to_string(&payload).expect("wire types serialize to JSON");
+                    if last.get(&key) != Some(&encoded) {
+                        last.insert(key, encoded.clone());
+                        let frame = format!("event: status\ndata: {encoded}\n\n");
+                        if tx.send(Ok(rama::bytes::Bytes::from(frame))).await.is_err() {
+                            return;
+                        }
+                        sent_any = true;
+                    }
+                }
+            }
+            // A configured backend in no pool has no live instance; the
+            // board's trailing band still needs its row.
             for (name, backend) in &snapshot.backends {
-                let live = pools.iter().find_map(|pool| {
-                    pool.backends
-                        .iter()
-                        .find(|b| &b.name == name)
-                        .map(|b| (pool.name.clone(), b))
-                });
-                let (healthy, enabled, auth_failed, inflight, max_inflight) = match &live {
-                    Some((_, b)) => (
-                        b.is_healthy(),
-                        b.is_enabled(),
-                        b.auth_failed(),
-                        b.inflight(),
-                        b.max_inflight,
-                    ),
-                    None => (false, backend.enabled, false, 0, backend.max_inflight),
-                };
+                if emitted.contains(name.as_str()) {
+                    continue;
+                }
                 let payload = BackendStatus {
                     name: name.clone(),
-                    pool: live.as_ref().map(|(p, _)| p.clone()),
-                    healthy,
-                    enabled,
-                    auth_failed,
-                    inflight,
-                    max_inflight,
+                    pool: None,
+                    healthy: false,
+                    enabled: backend.enabled,
+                    auth_failed: false,
+                    inflight: 0,
+                    max_inflight: backend.max_inflight,
                     configured: true,
-                    dirty,
-                    // Sorted, because these come out of a `HashSet` whose
-                    // iteration order is randomized per process and reshuffles
-                    // as probes rebuild it. Unsorted, the same models
-                    // re-serialize differently on every tick: the list visibly
-                    // reorders under the operator's cursor, and — worse — the
-                    // `last` comparison below never matches, so the stream
-                    // pushes an event per backend per tick forever. Sorting is
-                    // what makes the change detection actually detect change.
-                    models: live
-                        .as_ref()
-                        .map(|(_, backend)| sorted(backend.models_snapshot()))
-                        .unwrap_or_default(),
+                    models: Vec::new(),
                     usage: usage.get(name).cloned().unwrap_or_else(|| vec![0; 12]),
                     requests_last_hour: usage.get(name).map(|v| v.iter().sum::<i64>()).unwrap_or(0),
                 };
+                let key = format!("|{name}");
                 let encoded =
                     serde_json::to_string(&payload).expect("wire types serialize to JSON");
-                if last.get(name) != Some(&encoded) {
-                    last.insert(name.clone(), encoded.clone());
+                if last.get(&key) != Some(&encoded) {
+                    last.insert(key, encoded.clone());
                     let frame = format!("event: status\ndata: {encoded}\n\n");
                     if tx.send(Ok(rama::bytes::Bytes::from(frame))).await.is_err() {
                         return;
@@ -3608,8 +3498,6 @@ pub struct BackendStatus {
     pub inflight: u32,
     pub max_inflight: u32,
     pub configured: bool,
-    /// The number of topology changes saved since the last apply.
-    pub dirty: u32,
     /// The models it serves now, sorted.
     pub models: Vec<String>,
     /// Its request counts over the last hour, in twelve five-minute buckets.
@@ -3622,11 +3510,18 @@ pub struct BackendStatus {
 // purchase-price ceiling per selected model.
 // ---------------------------------------------------------------------------
 
+/// One decoded query parameter.
+///
+/// The value is percent-decoded: a model id such as `author/slug` arrives as
+/// `author%2Fslug` when the client builds the query with `URLSearchParams`,
+/// and the routing helpers match on the real id.
 fn query_param(req: &Request, name: &str) -> Option<String> {
-    req.uri().query()?.split('&').find_map(|pair| {
-        let (key, value) = pair.split_once('=')?;
-        (key == name).then(|| value.to_string())
-    })
+    let query = req.uri().query()?;
+    let pairs: Vec<(String, String)> = serde_urlencoded::from_str(query).ok()?;
+    pairs
+        .into_iter()
+        .find(|(key, _)| key == name)
+        .map(|(_, value)| value)
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
@@ -3675,7 +3570,6 @@ pub struct OpenRouterModelView {
     pub prompt_price: f64,
     pub completion_price: f64,
     pub selected: bool,
-    pub available: bool,
     pub policy: Option<OpenRouterPolicyView>,
     pub cheapest_provider: Option<String>,
     pub cheapest_prompt_price: Option<f64>,
@@ -3696,11 +3590,67 @@ pub struct OpenRouterEndpointView {
     pub provider: String,
     pub prompt_price: f64,
     pub completion_price: f64,
+    /// Cache-read price in USD per 1M tokens; `None` when the provider does
+    /// not report a separate read price.
+    pub cache_read_price: Option<f64>,
     pub throughput_p50: Option<f64>,
     pub latency_p50: Option<f64>,
     pub uptime_30m: Option<f64>,
     pub quantization: Option<String>,
     pub context_length: Option<i64>,
+}
+
+impl OpenRouterEndpointView {
+    fn from_stored(e: upstreams_config::OpenRouterEndpointRow) -> Self {
+        Self {
+            provider: e.provider_name,
+            prompt_price: e.prompt_price,
+            completion_price: e.completion_price,
+            cache_read_price: e.cache_read_price,
+            throughput_p50: e.throughput_p50,
+            latency_p50: e.latency_p50,
+            uptime_30m: e.uptime_30m,
+            quantization: e.quantization,
+            context_length: e.context_length,
+        }
+    }
+
+    fn from_wire(e: upstreams::openrouter::EndpointEntry) -> Self {
+        Self {
+            provider: e.provider_name,
+            prompt_price: e.pricing.prompt_per_million(),
+            completion_price: e.pricing.completion_per_million(),
+            cache_read_price: e.pricing.cache_read_per_million(),
+            throughput_p50: e.throughput_last_30m.and_then(|p| p.p50),
+            latency_p50: e.latency_last_30m.and_then(|p| p.p50),
+            uptime_30m: e.uptime_last_30m,
+            quantization: e.quantization,
+            context_length: e.context_length,
+        }
+    }
+}
+
+/// The backend's key for an outbound OpenRouter call: the sealed one, or the
+/// environment variable it is configured to read.
+fn openrouter_api_key(
+    state: &RamaState,
+    api_key_nonce: Option<&[u8]>,
+    api_key_ct: Option<&[u8]>,
+    api_key_env: Option<&str>,
+) -> Option<String> {
+    state
+        .crypto
+        .open_str(
+            api_key_nonce.unwrap_or_default(),
+            api_key_ct.unwrap_or_default(),
+        )
+        .ok()
+        .filter(|key| !key.is_empty())
+        .or_else(|| {
+            api_key_env
+                .and_then(|name| std::env::var(name).ok())
+                .filter(|key| !key.is_empty())
+        })
 }
 
 /// GET /api/v0/admin/upstreams/openrouter?backend=&pool=
@@ -3789,21 +3739,12 @@ pub async fn openrouter_catalog(State(state): State<Arc<RamaState>>, req: Reques
             },
         );
     };
-    let api_key = state
-        .crypto
-        .open_str(
-            backend.api_key_nonce.as_deref().unwrap_or_default(),
-            backend.api_key_ct.as_deref().unwrap_or_default(),
-        )
-        .ok()
-        .filter(|key| !key.is_empty())
-        .or_else(|| {
-            backend
-                .api_key_env
-                .as_deref()
-                .and_then(|name| std::env::var(name).ok())
-                .filter(|key| !key.is_empty())
-        });
+    let api_key = openrouter_api_key(
+        &state,
+        backend.api_key_nonce.as_deref(),
+        backend.api_key_ct.as_deref(),
+        backend.api_key_env.as_deref(),
+    );
     let key = upstreams::openrouter::fetch_key(
         &state.http,
         &backend.base_url,
@@ -3884,7 +3825,6 @@ pub async fn openrouter_catalog(State(state): State<Arc<RamaState>>, req: Reques
             prompt_price,
             completion_price,
             selected: selected.contains(&model.id),
-            available: policy.map(|p| p.available).unwrap_or(false),
             policy: policy.map(|p| OpenRouterPolicyView {
                 max_prompt_price: p.max_prompt_price,
                 max_completion_price: p.max_completion_price,
@@ -3896,16 +3836,7 @@ pub async fn openrouter_catalog(State(state): State<Arc<RamaState>>, req: Reques
             cheapest_completion_price: policy.and_then(|p| p.cheapest_completion_price),
             endpoints: endpoints
                 .into_iter()
-                .map(|e| OpenRouterEndpointView {
-                    provider: e.provider_name,
-                    prompt_price: e.prompt_price,
-                    completion_price: e.completion_price,
-                    throughput_p50: e.throughput_p50,
-                    latency_p50: e.latency_p50,
-                    uptime_30m: e.uptime_30m,
-                    quantization: e.quantization,
-                    context_length: e.context_length,
-                })
+                .map(OpenRouterEndpointView::from_stored)
                 .collect(),
         });
     }
@@ -3927,6 +3858,73 @@ pub async fn openrouter_catalog(State(state): State<Arc<RamaState>>, req: Reques
             error: None,
         },
     )
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct OpenRouterEndpointsView {
+    pub endpoints: Vec<OpenRouterEndpointView>,
+}
+
+/// GET /api/v0/admin/upstreams/openrouter/endpoints?backend=&model=
+///
+/// The provider table for one model. Persisted endpoints exist only for the
+/// models already selected (the refresh fetches those), and the operator
+/// needs the prices *before* choosing a ceiling — so this reads them on
+/// demand and stores nothing.
+pub async fn openrouter_model_endpoints(
+    State(state): State<Arc<RamaState>>,
+    req: Request,
+) -> Response {
+    let (_session, _admin) = require_admin_json!(state, req);
+    let Some(backend_name) = query_param(&req, "backend") else {
+        return bad_request("`backend` is required");
+    };
+    let Some(model) = query_param(&req, "model") else {
+        return bad_request("`model` is required");
+    };
+    let backend = match upstreams_config::get_backend(&state.db, &backend_name).await {
+        Ok(Some(backend)) => backend,
+        Ok(None) => return not_found(format!("no backend `{backend_name}`")),
+        Err(err) => return internal(err),
+    };
+    if backend.provider != upstreams::config::ProviderKind::OpenRouter {
+        return bad_request(format!(
+            "`{backend_name}` is not an OpenRouter backend — set its provider to `openrouter` first"
+        ));
+    }
+    let api_key = openrouter_api_key(
+        &state,
+        backend.api_key_nonce.as_deref(),
+        backend.api_key_ct.as_deref(),
+        backend.api_key_env.as_deref(),
+    );
+    if let Err(problem) = upstreams::openrouter::validate_model_id(&model) {
+        return bad_request(problem);
+    }
+    match upstreams::openrouter::fetch_endpoints(
+        &state.http,
+        &backend.base_url,
+        api_key.as_deref(),
+        &backend.extra_headers,
+        &model,
+    )
+    .await
+    {
+        Ok(endpoints) => json_ok(
+            StatusCode::OK,
+            OpenRouterEndpointsView {
+                endpoints: endpoints
+                    .into_iter()
+                    .map(OpenRouterEndpointView::from_wire)
+                    .collect(),
+            },
+        ),
+        Err(err) => json_error(
+            StatusCode::BAD_GATEWAY,
+            "openrouter_endpoints_failed",
+            &format!("reading the providers for `{model}` from OpenRouter failed: {err}"),
+        ),
+    }
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -4051,26 +4049,11 @@ pub async fn openrouter_select(State(state): State<Arc<RamaState>>, req: Request
             return internal(err);
         }
     }
-    // A selection is not a draft: apply it now, so the models the operator just
-    // picked are routable without a second "Apply changes" click. The rest of
-    // the topology editor keeps its explicit apply, because it changes URLs,
-    // pools and credentials; this one only adds or removes model ids.
-    let snapshot = match upstreams_config::load_snapshot(&state.db).await {
-        Ok(snapshot) => snapshot,
-        Err(err) => return internal(err),
-    };
-    if let Err(err) = state.upstreams.reload(&snapshot, &state.crypto) {
-        return internal(err);
+    // A selection is live now, like every other topology write: the models
+    // the operator just picked are routable without a second click.
+    if let Some(err) = apply_topology(&state).await {
+        return err;
     }
-    let armed = tokio::spawn(aiplane_core::server::upstreams::health::spawn(
-        state.upstreams.clone(),
-        Some(state.db.clone()),
-    ));
-    if let Err(err) = armed.await {
-        tracing::error!(error = %err, "arming the health probes after an OpenRouter selection panicked");
-    }
-    state.topology_dirty_reset();
-    let dirty: u32 = 0;
     let refresh = upstreams::openrouter::refresh_backend(
         &state.db,
         &state.upstreams,
@@ -4091,7 +4074,6 @@ pub async fn openrouter_select(State(state): State<Arc<RamaState>>, req: Request
                 backend: parsed.backend,
                 pool: parsed.pool,
                 selected: model_ids.len(),
-                dirty,
                 refresh: Some(refresh),
                 error: None,
             },
@@ -4102,7 +4084,6 @@ pub async fn openrouter_select(State(state): State<Arc<RamaState>>, req: Request
                 backend: parsed.backend,
                 pool: parsed.pool,
                 selected: model_ids.len(),
-                dirty,
                 refresh: None,
                 error: Some(error),
             },
@@ -4115,7 +4096,6 @@ pub struct OpenRouterSelectResult {
     pub backend: String,
     pub pool: String,
     pub selected: usize,
-    pub dirty: u32,
     pub refresh: Option<OpenRouterRefreshView>,
     pub error: Option<String>,
 }
@@ -4244,22 +4224,10 @@ pub async fn openrouter_kind(State(state): State<Arc<RamaState>>, req: Request) 
             }
         }
     }
-    // Applied immediately, like a selection: the kind is live, or gone.
-    let snapshot = match upstreams_config::load_snapshot(&state.db).await {
-        Ok(snapshot) => snapshot,
-        Err(err) => return internal(err),
-    };
-    if let Err(err) = state.upstreams.reload(&snapshot, &state.crypto) {
-        return internal(err);
+    // Applied live now, like a selection: the kind is live, or gone.
+    if let Some(err) = apply_topology(&state).await {
+        return err;
     }
-    let armed = tokio::spawn(aiplane_core::server::upstreams::health::spawn(
-        state.upstreams.clone(),
-        Some(state.db.clone()),
-    ));
-    if let Err(err) = armed.await {
-        tracing::error!(error = %err, "arming the health probes after an OpenRouter kind change panicked");
-    }
-    state.topology_dirty_reset();
     json_ok(
         StatusCode::OK,
         OpenRouterKindResult {

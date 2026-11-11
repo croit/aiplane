@@ -34,9 +34,37 @@
 
 	$effect(() => {
 		if (!dialog) return;
-		if (open && !dialog.open) dialog.showModal();
-		else if (!open && dialog.open) dialog.close();
+		if (open && !dialog.open) {
+			dialog.showModal();
+			focusFirstField();
+		} else if (!open && dialog.open) dialog.close();
 	});
+
+	/**
+	 * Land the cursor where the operator can type: an explicitly marked field
+	 * first (an editor opened to fix one thing), otherwise the first real
+	 * control. The close button is in the header and would otherwise take the
+	 * focus, leaving Save enabled and the keyboard pointed at "dismiss".
+	 */
+	function focusFirstField() {
+		const scope = dialog?.querySelector<HTMLElement>('.modal-box');
+		if (!scope) return;
+		// An editor opened to fix one field says so; that mark outranks DOM
+		// order, which would land on the name input above it.
+		const marked = scope.querySelector<HTMLElement>('[data-autofocus]');
+		if (marked && !marked.hasAttribute('disabled') && marked.offsetParent !== null) {
+			marked.focus();
+			return;
+		}
+		const candidates = scope.querySelectorAll<HTMLElement>(
+			'input:not([type="hidden"]), select, textarea'
+		);
+		for (const element of candidates) {
+			if (element.hasAttribute('disabled') || element.offsetParent === null) continue;
+			element.focus();
+			return;
+		}
+	}
 
 	function closed() {
 		open = false;

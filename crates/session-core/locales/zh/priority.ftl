@@ -19,7 +19,6 @@ priority-error-body = 优先级请求无效。请选择 low、medium、high 或 
 priority-error-not-found = 此令牌不存在。请刷新令牌列表。
 priority-error-internal = 无法处理优先级。请重试或联系管理员。
 priority-error-mapping = 优先级映射无效。请使用独立的顶级参数及三个严格有序的整数。
-priority-backend-changed = 后端 { $backend }：优先级映射已更改
 priority-disabled = 请求优先级调度已禁用。请在系统设置中启用以应用这些优先级。
 priority-inherit-value = 继承群组优先级（{ $priority }）
 priority-admin-only = 仅管理员可选

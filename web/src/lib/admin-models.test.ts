@@ -9,6 +9,7 @@ const model: AdminModel = {
 	kind: 'chat',
 	alias_target: null,
 	served: true,
+	served_by: [{ pool: 'chat', backends: ['gpu-0'] }],
 	configured: true,
 	resolved_reasoning_style: 'qwen',
 	uses_token_budget: true,
@@ -35,12 +36,15 @@ const model: AdminModel = {
 	}
 };
 
-test('model administration defaults to the catalog and accepts only known tabs', () => {
-	assert.equal(selectedModelAdminTab(''), 'catalog');
+test('model administration defaults to the upstreams board and accepts only known tabs', () => {
+	assert.equal(selectedModelAdminTab(''), 'upstreams');
 	assert.equal(selectedModelAdminTab('?tab=upstreams'), 'upstreams');
+	assert.equal(selectedModelAdminTab('?tab=openrouter'), 'openrouter');
+	assert.equal(selectedModelAdminTab('?tab=catalog'), 'catalog');
 	assert.equal(selectedModelAdminTab('?tab=defaults'), 'defaults');
+	assert.equal(selectedModelAdminTab('?tab=fallbacks'), 'fallbacks');
 	assert.equal(selectedModelAdminTab('?tab=routing'), 'routing');
-	assert.equal(selectedModelAdminTab('?tab=unknown'), 'catalog');
+	assert.equal(selectedModelAdminTab('?tab=unknown'), 'upstreams');
 });
 
 test('model filters combine section, kind, configuration, and name', () => {

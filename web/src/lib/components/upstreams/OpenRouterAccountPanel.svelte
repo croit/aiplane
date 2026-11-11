@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { beforeNavigate } from '$app/navigation';
 	import { adminJson, adminPost, adminPut } from '#lib/admin-client.js';
 	import { t, n } from '#lib/i18n.svelte.js';
-	import type { Backend, OpenRouterModel, OpenRouterSelection, OpenRouterView, Pool } from '#lib/upstreams.js';
+	import type { Backend, OpenRouterEndpoint, OpenRouterModel, OpenRouterSelection, OpenRouterView, Pool } from '#lib/upstreams.js';
+	import { cheapestEndpoint, endpointFits } from '#lib/upstreams.js';
 
 	interface Props {
 		backends: Backend[];
@@ -51,6 +53,16 @@
 	let error = $state<string | null>(null);
 	let savedKind = $state<string | null>(null);
 
+	// Provider prices for one model: persisted ones exist only for models that
+	// were already selected, so an unselected row reads them on demand.
+	interface ProviderState {
+		status: 'loading' | 'ok' | 'error';
+		endpoints: OpenRouterEndpoint[];
+		error?: string;
+	}
+	let openModel = $state<string | null>(null);
+	let providerStates = $state<Record<string, ProviderState>>({});
+
 	// Key change
 	let changingKey = $state(false);
 	let newKey = $state('');
@@ -58,6 +70,12 @@
 	let keySaved = $state(false);
 
 	let currentView = $derived(expanded ? views[expanded] ?? null : null);
+	// Account state belongs to the panel, not to the kind that happens to be
+	// open: the badge, key label and credits must show even before any kind is
+	// expanded, and a failed load must still be reported.
+	let statusView = $derived(
+		kinds.map((kind) => views[kind]).find((view): view is OpenRouterView => !!view) ?? null
+	);
 	let models = $derived(currentView?.catalog ?? []);
 	let filtered = $derived.by(() => {
 		const needle = search.trim().toLowerCase();
@@ -98,10 +116,71 @@
 		};
 	}
 
+	/**
+	 * Draft guard: the baseline a kind loaded with. A kind is dirty when its
+	 * draft diverges from that baseline — disabling a dirty kind, or leaving
+	 * the page with a dirty kind, asks before discarding.
+	 */
+	let baselines = $state<Record<string, Record<string, Draft>>>({});
+
+	function draftDiverges(kind: string, id: string): boolean {
+		const draft = (drafts[kind] ?? {})[id];
+		const base = (baselines[kind] ?? {})[id];
+		if (!draft) return false;
+		if (!base) return draft.selected;
+		return (
+			draft.selected !== base.selected ||
+			draft.prompt !== base.prompt ||
+			draft.completion !== base.completion ||
+			draft.strategy !== base.strategy ||
+			draft.min !== base.min
+		);
+	}
+
+	function changedCount(kind: string): number {
+		return Object.keys(drafts[kind] ?? {}).filter((id) => draftDiverges(kind, id)).length;
+	}
+
+	function isDirty(kind: string): boolean {
+		return changedCount(kind) > 0;
+	}
+
+	let dirtyKinds = $derived(kinds.filter((kind) => isDirty(kind)));
+
+	$effect(() => {
+		dirtyKinds;
+		const handler = (event: BeforeUnloadEvent) => {
+			if (dirtyKinds.length > 0) {
+				event.preventDefault();
+				event.returnValue = '';
+			}
+		};
+		window.addEventListener('beforeunload', handler);
+		return () => window.removeEventListener('beforeunload', handler);
+	});
+
+	// `beforeunload` only fires when the document unloads. The tab links are
+	// client-side navigations that simply unmount this panel, so the same
+	// draft guard has to run there too — otherwise switching tabs silently
+	// discards an unsaved selection.
+	beforeNavigate((navigation) => {
+		if (dirtyKinds.length === 0) return;
+		if (navigation.to?.url.href === navigation.from?.url.href) return;
+		if (!confirm(t('openrouter-dirty-confirm', { kind: dirtyKinds.join(', ') }))) {
+			navigation.cancel();
+		}
+	});
+
 	function resetDraft(next: OpenRouterView, kind: string) {
 		const nextDraft: Record<string, Draft> = {};
 		for (const model of next.catalog) nextDraft[model.id] = draftFor(model);
 		drafts = { ...drafts, [kind]: nextDraft };
+		// Deep copy per entry: the baseline must not share the draft's objects,
+		// or a bound mutation (bind:checked) would move both and the diff
+		// would never be seen.
+		const base: Record<string, Draft> = {};
+		for (const [id, entry] of Object.entries(nextDraft)) base[id] = { ...entry };
+		baselines = { ...baselines, [kind]: base };
 	}
 
 	async function loadKind(kind: string) {
@@ -133,6 +212,7 @@
 
 	async function setKind(kind: string, enabled: boolean) {
 		if (!backendName) return;
+		if (!enabled && isDirty(kind) && !confirm(t('openrouter-dirty-confirm', { kind }))) return;
 		togglingKind = kind;
 		error = null;
 		savedKind = null;
@@ -140,6 +220,8 @@
 			await adminPost('/api/v0/admin/upstreams/openrouter/kind', { backend: backendName, kind, enabled });
 			expanded = null;
 			views = { ...views, [kind]: null };
+			drafts = { ...drafts, [kind]: {} };
+			baselines = { ...baselines, [kind]: {} };
 			await onChanged();
 		} catch (err) {
 			error = String(err);
@@ -150,6 +232,7 @@
 
 	async function refreshPrices() {
 		if (!backendName) return;
+		if (expanded && isDirty(expanded) && !confirm(t('openrouter-dirty-confirm', { kind: expanded }))) return;
 		refreshing = true;
 		error = null;
 		try {
@@ -266,6 +349,74 @@
 		return value === null ? '—' : `${n(Math.round(value))} tok/s`;
 	}
 
+	/** The provider rows a row can show: fetched on demand, else the stored ones. */
+	function endpointsFor(model: OpenRouterModel): OpenRouterEndpoint[] {
+		const loaded = providerStates[model.id];
+		if (loaded?.status === 'ok') return loaded.endpoints;
+		return model.endpoints;
+	}
+
+	async function toggleModel(model: OpenRouterModel) {
+		if (openModel === model.id) {
+			openModel = null;
+			return;
+		}
+		openModel = model.id;
+		const cached = providerStates[model.id];
+		// A failed read retries on the next expand; a stored or successful one
+		// stays.
+		if ((cached && cached.status !== 'error') || model.endpoints.length > 0) return;
+		providerStates = { ...providerStates, [model.id]: { status: 'loading', endpoints: [] } };
+		try {
+			const query = new URLSearchParams({ backend: backendName, model: model.id });
+			const next = await adminJson<{ endpoints: OpenRouterEndpoint[] }>(
+				`/api/v0/admin/upstreams/openrouter/endpoints?${query.toString()}`
+			);
+			providerStates = {
+				...providerStates,
+				[model.id]: { status: 'ok', endpoints: next.endpoints }
+			};
+		} catch (err) {
+			providerStates = {
+				...providerStates,
+				[model.id]: { status: 'error', endpoints: [], error: String(err) }
+			};
+		}
+	}
+
+	/** How many known providers fit the ceilings currently in the draft. */
+	function fittingCount(model: OpenRouterModel, entry: Draft): number {
+		const prompt = Number(entry.prompt);
+		const completion = Number(entry.completion);
+		return endpointsFor(model).filter((endpoint) =>
+			endpointFits(endpoint, prompt, completion)
+		).length;
+	}
+
+	function hasCeiling(value: unknown): boolean {
+		return (
+			value !== null &&
+			value !== undefined &&
+			`${value}`.trim() !== '' &&
+			Number.isFinite(Number(value))
+		);
+	}
+
+	/** Both numbers entered. Until then no provider count is meaningful. */
+	function ceilingValid(entry: Draft): boolean {
+		return hasCeiling(entry.prompt) && hasCeiling(entry.completion);
+	}
+
+	/** Ceilings carry four decimals; round up so the cheapest provider fits. */
+	function ceiling(value: number): number {
+		return Math.ceil(value * 10_000) / 10_000;
+	}
+
+	function useCheapest(entry: Draft, endpoint: OpenRouterEndpoint) {
+		entry.prompt = ceiling(endpoint.prompt_price);
+		entry.completion = ceiling(endpoint.completion_price);
+	}
+
 	onMount(() => {
 		// Open the first served kind, so the panel lands on actionable content.
 		const first = kinds.find((kind) => servedKinds[kind]);
@@ -283,18 +434,18 @@
 </script>
 
 {#if openrouterBackends.length > 0}
-	<section class="card card-border bg-base-100" data-testid="openrouter-panel">
+	<section class="card card-border bg-base-100" data-testid="openrouter-panel" id="openrouter-account">
 		<div class="card-body gap-4">
 			<header class="flex flex-wrap items-start justify-between gap-3">
 				<div class="max-w-3xl">
-					<h3 class="card-title text-base">{t('openrouter-heading')}</h3>
+					<h3 class="card-title text-base" tabindex="-1" data-openrouter-heading>{t('openrouter-heading')}</h3>
 					<p class="text-sm text-base-content/70">{t('openrouter-description')}</p>
 				</div>
 				<div class="flex flex-wrap items-end gap-2">
 					{#if openrouterBackends.length > 1}
 						<label class="flex flex-col gap-1">
 							<span class="text-xs text-base-content/70">{t('openrouter-backend')}</span>
-							<select class="select select-sm" bind:value={backendName} onchange={() => { expanded = null; views = {}; drafts = {}; }}>
+							<select class="select select-sm" bind:value={backendName} onchange={() => { expanded = null; views = {}; drafts = {}; baselines = {}; openModel = null; providerStates = {}; }}>
 								{#each openrouterBackends as backend (backend.name)}
 									<option value={backend.name}>{backend.name}</option>
 								{/each}
@@ -312,15 +463,15 @@
 				{#if backend}
 					<div class="flex flex-wrap items-center gap-3 text-sm">
 						<span class="font-medium">{backend.name}</span>
-						{#if currentView?.key}
+						{#if statusView?.key}
 							<span class="badge badge-success badge-sm">{t('openrouter-connected')}</span>
-							{#if currentView.key.label}<span class="font-mono text-xs">{t('openrouter-key-label')}: {currentView.key.label}</span>{/if}
-							{#if currentView.key.limit_remaining !== null}
+							{#if statusView.key.label}<span class="font-mono text-xs">{t('openrouter-key-label')}: {statusView.key.label}</span>{/if}
+							{#if statusView.key.limit_remaining !== null}
 								<span class="text-xs text-base-content/70">
-									{t('openrouter-credits')}: {n(currentView.key.limit_remaining)} / {n(currentView.key.limit ?? 0)}
+									{t('openrouter-credits')}: {n(statusView.key.limit_remaining)} / {n(statusView.key.limit ?? 0)}
 								</span>
-							{:else if currentView.key.usage !== null}
-								<span class="text-xs text-base-content/70">{t('openrouter-credits')}: {n(currentView.key.usage)}</span>
+							{:else if statusView.key.usage !== null}
+								<span class="text-xs text-base-content/70">{t('openrouter-usage')}: {n(statusView.key.usage)}</span>
 							{/if}
 						{/if}
 						<span class="text-xs text-base-content/50">{t('backends-field-api-key-stored', { hint: backend.api_key_hint ?? '—' })}</span>
@@ -340,8 +491,8 @@
 				{/if}
 			{/key}
 
-			{#if currentView?.error}
-				<div class="alert alert-warning py-2 text-sm" role="alert"><span>{t('openrouter-error', { message: currentView.error })}</span></div>
+			{#if statusView?.error}
+				<div class="alert alert-warning py-2 text-sm" role="alert"><span>{t('openrouter-error', { message: statusView.error })}</span></div>
 			{/if}
 			{#if error}
 				<div class="alert alert-error py-2 text-sm" role="alert"><span>{error}</span></div>
@@ -420,7 +571,7 @@
 												<th>{t('openrouter-ceiling-prompt')}</th>
 												<th>{t('openrouter-ceiling-completion')}</th>
 												<th>{t('openrouter-strategy')}</th>
-												<th>{t('openrouter-provider')}</th>
+												<th>{t('openrouter-cheapest-provider')}</th>
 												<th></th>
 											</tr>
 										</thead>
@@ -438,14 +589,19 @@
 															/>
 														</td>
 														<td class="max-w-md">
-															<div class="font-mono text-xs break-all">{model.id}</div>
-															<div class="flex items-center gap-2 text-xs text-base-content/60">
-																{model.name}
-																{#if model.supported_voices.length > 0}
-																	<span class="badge badge-outline badge-xs">{model.supported_voices.length} {t('openrouter-voices')}</span>
-																{/if}
-															</div>
-															{#if model.description}<div class="mt-1 line-clamp-2 text-xs text-base-content/50">{model.description}</div>{/if}
+															<button class="flex w-full items-start gap-1 text-left" type="button" aria-expanded={openModel === model.id} onclick={() => void toggleModel(model)}>
+																<span class="mt-0.5 text-xs text-base-content/50">{openModel === model.id ? '▾' : '▸'}</span>
+																<span class="min-w-0">
+																	<span class="block font-mono text-xs break-all">{model.id}</span>
+																	<span class="flex items-center gap-2 text-xs text-base-content/60">
+																		{model.name}
+																		{#if model.supported_voices.length > 0}
+																			<span class="badge badge-outline badge-xs">{model.supported_voices.length} {t('openrouter-voices')}</span>
+																		{/if}
+																	</span>
+																	{#if model.description}<span class="mt-1 line-clamp-2 text-xs text-base-content/50">{model.description}</span>{/if}
+																</span>
+															</button>
 														</td>
 														<td class="text-end font-mono text-xs tabular-nums">
 															<div>{price(model.prompt_price)}</div>
@@ -453,20 +609,20 @@
 														</td>
 														<td class="text-end font-mono text-xs tabular-nums">{model.context_length ? n(model.context_length) : '—'}</td>
 														<td>
-															<input class="input input-xs w-24 font-mono" type="number" min="0" step="0.0001" bind:value={entry.prompt} disabled={!entry.selected} aria-label={`${model.id} input ceiling`} />
+															<input class="input input-xs w-24 font-mono" type="number" min="0" step="0.0001" bind:value={entry.prompt} disabled={!entry.selected} aria-label={t('openrouter-aria-input-ceiling', { model: model.id })} />
 														</td>
 														<td>
-															<input class="input input-xs w-24 font-mono" type="number" min="0" step="0.0001" bind:value={entry.completion} disabled={!entry.selected} aria-label={`${model.id} output ceiling`} />
+															<input class="input input-xs w-24 font-mono" type="number" min="0" step="0.0001" bind:value={entry.completion} disabled={!entry.selected} aria-label={t('openrouter-aria-output-ceiling', { model: model.id })} />
 														</td>
 														<td>
 															<div class="flex flex-col gap-1">
-																<select class="select select-xs" bind:value={entry.strategy} disabled={!entry.selected} aria-label={`${model.id} strategy`}>
+																<select class="select select-xs" bind:value={entry.strategy} disabled={!entry.selected} aria-label={t('openrouter-aria-strategy', { model: model.id })}>
 																	<option value="cheapest">{t('openrouter-strategy-cheapest')}</option>
 																	<option value="fastest">{t('openrouter-strategy-fastest')}</option>
 																	<option value="balanced">{t('openrouter-strategy-balanced')}</option>
 																</select>
 																{#if entry.strategy === 'cheapest'}
-																	<input class="input input-xs w-24 font-mono" type="number" min="0" step="1" placeholder={t('openrouter-min-throughput')} bind:value={entry.min} disabled={!entry.selected} aria-label={`${model.id} min throughput`} />
+																	<input class="input input-xs w-24 font-mono" type="number" min="0" step="1" placeholder={t('openrouter-min-throughput')} bind:value={entry.min} disabled={!entry.selected} aria-label={t('openrouter-aria-min-throughput', { model: model.id })} />
 																{/if}
 															</div>
 														</td>
@@ -479,26 +635,88 @@
 															{/if}
 														</td>
 														<td>
-															{#if entry.selected && !model.available}
-																<span class="badge badge-warning badge-xs">{t('openrouter-over-ceiling')}</span>
-															{:else if entry.selected}
-																<span class="badge badge-success badge-xs">{t('openrouter-available')}</span>
-															{/if}
-															{#if model.endpoints.length > 0}
-																<details class="mt-1">
-																	<summary class="cursor-pointer text-xs text-base-content/50">{t('openrouter-endpoints')} ({model.endpoints.length})</summary>
-																	<ul class="mt-1 space-y-1">
-																		{#each model.endpoints as endpoint (endpoint.provider)}
-																			<li class="font-mono text-xs">
-																				{endpoint.provider}: {price(endpoint.prompt_price)} / {price(endpoint.completion_price)}
-																				<span class="text-base-content/50">· {throughput(endpoint.throughput_p50)} · {endpoint.uptime_30m !== null ? `${endpoint.uptime_30m.toFixed(1)}%` : '—'}</span>
-																			</li>
-																		{/each}
-																	</ul>
-																</details>
+															{#if entry.selected}
+																{#if endpointsFor(model).length === 0}
+																	<span class="badge badge-ghost badge-xs" title={t('openrouter-price-unknown-hint')}>{t('openrouter-price-unknown')}</span>
+																{:else if !ceilingValid(entry)}
+																	<span class="badge badge-ghost badge-xs">{t('openrouter-ceiling-missing')}</span>
+																{:else}
+																	{@const fitting = fittingCount(model, entry)}
+																	{#if fitting === 0}
+																		<span class="badge badge-warning badge-xs">{t('openrouter-over-ceiling')}</span>
+																	{:else}
+																		<span class="badge badge-success badge-xs">{t('openrouter-providers-fit-short', { fit: fitting, total: endpointsFor(model).length })}</span>
+																	{/if}
+																{/if}
 															{/if}
 														</td>
 													</tr>
+													{#if openModel === model.id}
+														{@const providers = endpointsFor(model)}
+														{@const state = providerStates[model.id] ?? null}
+														{@const cheapest = cheapestEndpoint(providers)}
+														<tr class="bg-base-200/40">
+															<td colspan="9" class="p-3">
+																{#if state?.status === 'loading'}
+																	<span class="loading loading-spinner loading-sm"></span>
+																{:else if state?.status === 'error'}
+																	<p class="text-xs text-error">{t('openrouter-provider-error', { message: state.error ?? '' })}</p>
+																{:else if providers.length === 0}
+																	<p class="text-xs text-base-content/60">{t('openrouter-provider-none')}</p>
+																{:else}
+																	<div class="overflow-x-auto">
+																		<table class="table table-xs">
+																			<thead>
+																				<tr>
+																					<th>{t('openrouter-provider')}</th>
+																					<th class="text-end">{t('openrouter-provider-input')}</th>
+																					<th class="text-end">{t('openrouter-provider-output')}</th>
+																					<th class="text-end">{t('openrouter-provider-cache-read')}</th>
+																					<th class="text-end">{t('openrouter-context')}</th>
+																					<th class="text-end">{t('openrouter-provider-throughput')}</th>
+																					<th class="text-end">{t('openrouter-provider-latency')}</th>
+																					<th class="text-end">{t('openrouter-provider-uptime')}</th>
+																					<th>{t('openrouter-provider-limit')}</th>
+																				</tr>
+																			</thead>
+																			<tbody>
+																				{#each providers as endpoint, index (endpoint.provider + index)}
+																					{@const valid = ceilingValid(entry)}
+																					{@const fits = valid && endpointFits(endpoint, Number(entry.prompt), Number(entry.completion))}
+																					<tr class={fits ? '' : 'opacity-60'}>
+																						<td class="font-mono text-xs">
+																							{endpoint.provider}
+																							{#if endpoint.quantization}<span class="badge badge-ghost badge-xs ml-1">{endpoint.quantization}</span>{/if}
+																						</td>
+																						<td class="text-end font-mono text-xs tabular-nums">{price(endpoint.prompt_price)}</td>
+																						<td class="text-end font-mono text-xs tabular-nums">{price(endpoint.completion_price)}</td>
+																						<td class="text-end font-mono text-xs tabular-nums">{price(endpoint.cache_read_price)}</td>
+																						<td class="text-end font-mono text-xs tabular-nums">{endpoint.context_length !== null ? n(endpoint.context_length) : '—'}</td>
+																						<td class="text-end font-mono text-xs tabular-nums">{throughput(endpoint.throughput_p50)}</td>
+																						<td class="text-end font-mono text-xs tabular-nums">{endpoint.latency_p50 !== null ? `${endpoint.latency_p50.toFixed(2)} s` : '—'}</td>
+																						<td class="text-end font-mono text-xs tabular-nums">{endpoint.uptime_30m !== null ? `${Math.round(endpoint.uptime_30m)} %` : '—'}</td>
+																						<td class="text-xs">{valid ? (fits ? t('openrouter-provider-fits') : t('openrouter-provider-excluded')) : '—'}</td>
+																					</tr>
+																				{/each}
+																			</tbody>
+																		</table>
+																	</div>
+																	<div class="mt-2 flex flex-wrap items-center gap-2 text-xs">
+																		{#if cheapest}
+																			<span>{t('openrouter-cheapest', { provider: cheapest.provider, prompt: price(cheapest.prompt_price), completion: price(cheapest.completion_price) })}</span>
+																		{/if}
+																		{#if ceilingValid(entry)}
+																			<span class="text-base-content/60">{t('openrouter-providers-fit', { fit: fittingCount(model, entry), total: providers.length })}</span>
+																		{/if}
+																		{#if cheapest}
+																			<button class="btn btn-xs" type="button" onclick={() => useCheapest(entry, cheapest)}>{t('openrouter-use-cheapest')}</button>
+																		{/if}
+																		<a class="btn btn-ghost btn-xs" href={`https://openrouter.ai/${model.id}`} target="_blank" rel="noreferrer">{t('openrouter-compare')} ↗</a>
+																	</div>
+																{/if}
+															</td>
+														</tr>
+													{/if}
 												{/if}
 											{/each}
 										</tbody>
@@ -508,7 +726,7 @@
 
 							<div class="flex items-center justify-end gap-2">
 								<button class="btn btn-primary btn-sm" type="button" disabled={savingKind === kind || loadingKind === kind} onclick={() => void saveKind()}>
-									{savingKind === kind ? '…' : t('openrouter-save')}
+									{savingKind === kind ? '…' : (isDirty(kind) ? t('openrouter-save-changed', { count: changedCount(kind) }) : t('openrouter-save'))}
 								</button>
 							</div>
 						</div>

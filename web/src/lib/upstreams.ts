@@ -150,29 +150,17 @@ export function backendTestFailure(body: string | undefined): BackendTestResult 
 	};
 }
 
-export interface PendingChange {
-	code: 'pool_added' | 'pool_removed' | 'pool_kind' | 'pool_strategy' | 'backend_joins' | 'backend_leaves' | 'backend_url' | 'backend_limits' | 'backend_health_path' | 'backend_priority';
-	pool?: string;
-	backend?: string;
-	from?: string;
-	to?: string;
-	weight?: number;
-	inflight?: number;
-}
-
 export interface Topology {
 	pools: Pool[];
 	backends: Backend[];
 	fallbacks: Record<string, string>;
 	usage_last_hour: Record<string, number[]>;
-	dirty: number;
 	pool_kinds: string[];
 	pool_strategies: string[];
 	groups: string[];
 	fallback_kinds: string[];
 	all_models?: string[];
 	coverage?: Record<string, Coverage[]>;
-	pending_changes: PendingChange[];
 }
 
 export function backendAssignments(pools: Pool[], backends: Backend[]) {
@@ -223,6 +211,195 @@ export function poolCoverage(pool: Pool, backends: Backend[]): Coverage[] {
 			serving: available.filter((models) => models.has(name)).length,
 			total: members.length
 		}));
+}
+
+export interface BoardGroup {
+	pool: Pool | null;
+	backends: Backend[];
+}
+
+/** One board row as the filter sees it: the backend and its live state. */
+export interface BoardRow {
+	backend: Backend;
+	live: LiveBackend | null;
+}
+
+/**
+ * Whether a backend row matches the board's free-text filter: its name, its
+ * endpoint, every model it advertises, or any alias it answers to.
+ */
+export function boardRowMatches(row: BoardRow, query: string): boolean {
+	const needle = query.trim().toLowerCase();
+	if (!needle) return true;
+	return [
+		row.backend.name,
+		row.backend.base_url,
+		...(row.live?.models ?? []),
+		...row.backend.aliases.map((alias) => alias.alias)
+	].some((value) => value.toLowerCase().includes(needle));
+}
+
+/**
+ * Whether a band survives the query: its pool name matches, or one of its rows
+ * does. Kept separate from [`boardRowMatches`] so typing a pool name shows the
+ * whole band, including the empty pool the operator may be hunting for.
+ */
+export function boardPoolMatches(pool: string | null, rows: BoardRow[], query: string): boolean {
+	const needle = query.trim().toLowerCase();
+	if (!needle) return true;
+	if ((pool ?? '').toLowerCase().includes(needle)) return true;
+	return rows.some((row) => boardRowMatches(row, query));
+}
+
+/**
+ * The board's grouping: every pool in its declared order, then the backends
+ * no pool holds. An empty pool still gets a band — it is a topology row that
+ * needs editing, not one that can be hidden.
+ */
+export function boardGroups(pools: Pool[], backends: Backend[]): BoardGroup[] {
+	const byName = new Map(backends.map((backend) => [backend.name, backend]));
+	const assigned = new Set(pools.flatMap((pool) => pool.backends));
+	const groups: BoardGroup[] = [...pools]
+		.sort((left, right) => left.sort_order - right.sort_order || left.name.localeCompare(right.name))
+		.map((pool) => ({
+			pool,
+			backends: pool.backends.flatMap((name) => {
+				const backend = byName.get(name);
+				return backend ? [backend] : [];
+			})
+		}));
+	const unassigned = backends
+		.filter((backend) => !assigned.has(backend.name))
+		.sort((left, right) => left.name.localeCompare(right.name));
+	if (unassigned.length) groups.push({ pool: null, backends: unassigned });
+	return groups;
+}
+
+/** One `status` event of the live topology stream: a backend's state in one
+ * pool. A backend in several pools sends one event per pool. */
+export interface BackendStatusEvent extends LiveBackend {
+	name: string;
+	usage: number[];
+}
+
+/**
+ * Fold one status event into the topology.
+ *
+ * The stream names the pool the state belongs to, so the pool's own map is
+ * updated as well as the backend's top-level view — a backend in several
+ * pools has a live instance in each, and an event for one band must not be
+ * taken for the other.
+ */
+export function applyStatusEvent(topology: Topology, status: BackendStatusEvent): Topology {
+	const withUsage: Topology = {
+		...topology,
+		usage_last_hour: { ...topology.usage_last_hour, [status.name]: status.usage }
+	};
+	if (status.pool === null) {
+		return {
+			...withUsage,
+			backends: topology.backends.map((backend) =>
+				backend.name === status.name ? { ...backend, live: null } : backend
+			)
+		};
+	}
+	const previous =
+		topology.backends.find((backend) => backend.name === status.name)?.live ?? null;
+	const live: LiveBackend = {
+		healthy: status.healthy,
+		enabled: status.enabled,
+		auth_failed: status.auth_failed,
+		inflight: status.inflight,
+		max_inflight: status.max_inflight,
+		models: status.models,
+		pool: status.pool,
+		profile: previous?.profile ?? 'generic',
+		detected_version: previous?.detected_version ?? null,
+		detected_max_parallel: previous?.detected_max_parallel ?? null,
+		detected_at: previous?.detected_at ?? null,
+		detected_priority: previous?.detected_priority ?? null
+	};
+	return {
+		...withUsage,
+		backends: topology.backends.map((backend) => {
+			if (backend.name !== status.name) return backend;
+			if (backend.live !== null && backend.live.pool !== status.pool) return backend;
+			return { ...backend, live };
+		}),
+		pools: topology.pools.map((pool) =>
+			pool.name === status.pool
+				? { ...pool, live_backends: { ...(pool.live_backends ?? {}), [status.name]: live } }
+				: pool
+		)
+	};
+}
+
+/**
+ * The live view of a backend *within* one pool. A backend's status event
+ * carries the pool the gateway currently routes it through; when that is a
+ * different pool, its own counters say nothing about this one.
+ */
+export function liveForPool(pool: Pool, backend: Backend): LiveBackend | null {
+	if (backend.live?.pool === pool.name) return backend.live;
+	return pool.live_backends?.[backend.name] ?? backend.live;
+}
+
+export interface PoolProblem {
+	key: string;
+	params: Record<string, string>;
+}
+
+/**
+ * Every way a pool can be configured but not work, as message keys. The board
+ * renders these inline under the pool's band; the copy lives in the catalogs.
+ */
+export function poolProblems(pool: Pool, backends: Backend[], coverage: Coverage[]): PoolProblem[] {
+	const members = pool.backends.flatMap((name) => {
+		const backend = backends.find((candidate) => candidate.name === name);
+		return backend ? [backend] : [];
+	});
+	const resolved = members.map((backend) => ({ backend, live: liveForPool(pool, backend) }));
+	const withLive = resolved.flatMap(({ backend, live }) => (live ? [{ backend, live }] : []));
+	const problems: PoolProblem[] = [];
+	if (pool.backends.length === 0) problems.push({ key: 'upstreams-problem-no-backends', params: {} });
+	if (withLive.length && withLive.every(({ live }) => !live.enabled)) {
+		problems.push({ key: 'upstreams-problem-all-drained', params: {} });
+	} else if (withLive.length && withLive.every(({ live }) => !live.healthy || !live.enabled)) {
+		problems.push({ key: 'upstreams-problem-all-down', params: {} });
+	}
+	const rejected = withLive.filter(({ live }) => live.auth_failed).map(({ backend }) => backend.name);
+	if (rejected.length) problems.push({ key: 'upstreams-problem-auth', params: { backends: rejected.join(', ') } });
+	// An OpenRouter backend with an empty allowlist is unconfigured, not
+	// broken — its selection happens in the account panel.
+	const modelless = withLive
+		.filter(({ backend, live }) => {
+			if (live.models.length > 0) return false;
+			return !(backend.provider === 'openrouter' && pool.models.length === 0);
+		})
+		.map(({ backend }) => backend.name);
+	if (modelless.length) problems.push({ key: 'upstreams-problem-no-models', params: { backends: modelless.join(', ') } });
+	const brokenAliases = members.flatMap((backend) => {
+		const live = liveForPool(pool, backend);
+		return backend.aliases
+			.filter(({ target }) => (target ? !live?.models.includes(target) : live?.models.length !== 1))
+			.map(({ alias }) => `${backend.name}:${alias}`);
+	});
+	if (brokenAliases.length) {
+		problems.push({ key: 'upstreams-problem-broken-aliases', params: { aliases: brokenAliases.join(', ') } });
+	}
+	const partial = coverage
+		.filter(({ serving, total }) => serving > 0 && serving < total)
+		.map(({ name, serving, total }) => `${name} (${serving}/${total})`);
+	if (partial.length) {
+		problems.push({ key: 'upstreams-problem-partial-coverage', params: { models: partial.join(', ') } });
+	}
+	const unserved = coverage.filter(({ serving }) => serving === 0).map(({ name }) => name);
+	if (unserved.length && withLive.length) {
+		problems.push({ key: 'upstreams-problem-unserved-allowlist', params: { models: unserved.join(', ') } });
+	}
+	const missing = pool.backends.filter((name) => !backends.some((backend) => backend.name === name));
+	if (missing.length) problems.push({ key: 'upstreams-problem-missing-backends', params: { backends: missing.join(', ') } });
+	return problems;
 }
 
 export function splitList(value: string): string[] {
@@ -325,7 +502,6 @@ export interface OpenRouterModel {
 	prompt_price: number;
 	completion_price: number;
 	selected: boolean;
-	available: boolean;
 	policy: {
 		max_prompt_price: number;
 		max_completion_price: number;
@@ -342,11 +518,40 @@ export interface OpenRouterEndpoint {
 	provider: string;
 	prompt_price: number;
 	completion_price: number;
+	/** USD per 1M tokens; null when the provider does not report one. */
+	cache_read_price: number | null;
 	throughput_p50: number | null;
 	latency_p50: number | null;
 	uptime_30m: number | null;
 	quantization: string | null;
 	context_length: number | null;
+}
+
+/** Whether a provider fits both ceilings, in USD per 1M tokens. */
+export function endpointFits(
+	endpoint: OpenRouterEndpoint,
+	maxPrompt: number,
+	maxCompletion: number
+): boolean {
+	return endpoint.prompt_price <= maxPrompt && endpoint.completion_price <= maxCompletion;
+}
+
+/** The provider with the lowest input price, then output; null for no providers. */
+export function cheapestEndpoint(
+	endpoints: readonly OpenRouterEndpoint[]
+): OpenRouterEndpoint | null {
+	let best: OpenRouterEndpoint | null = null;
+	for (const endpoint of endpoints) {
+		if (
+			!best ||
+			endpoint.prompt_price < best.prompt_price ||
+			(endpoint.prompt_price === best.prompt_price &&
+				endpoint.completion_price < best.completion_price)
+		) {
+			best = endpoint;
+		}
+	}
+	return best;
 }
 
 export interface OpenRouterPool {

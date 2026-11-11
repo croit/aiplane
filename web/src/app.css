@@ -20,116 +20,97 @@
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
+/*
+ * One design in two lightnesses, on the croit Visual Identity: Urbanist
+ * 400/600, croit violet as the single action accent, Deep Anthracite ground
+ * in dark, white in light, 18 px on boxes and cards. The utilities the app
+ * was written against (bg-base-100, text-primary, border-base-300, …) map to
+ * these tokens, so both themes stay one design. Status colours are tuned per
+ * theme so the filled form (alert, badge) and the soft form (StatusPill)
+ * keep their contrast; `lib/theme.test.ts` pins the pairs.
+ */
 @theme {
     --font-sans: "Urbanist", "DejaVu Sans", Arial, sans-serif;
-}
 
-/* Rendered markdown (chat replies, canvas documents, skill bodies) carries
- * `prose`. daisyUI only maps the `--tw-prose-*` variables onto the active
- * theme — the element rules themselves come from this plugin, so without it
- * every `prose` class was inert and markdown rendered unstyled. */
-@plugin "@tailwindcss/typography";
+    --color-base-100: var(--t-base-100);
+    --color-base-200: var(--t-base-200);
+    --color-base-300: var(--t-base-300);
+    --color-base-content: var(--t-base-content);
 
-@plugin "daisyui" {
-    themes: false;
-}
+    --color-primary: var(--t-primary);
+    --color-primary-content: var(--t-primary-content);
+    --color-secondary: var(--t-secondary);
+    --color-secondary-content: var(--t-secondary-content);
+    --color-accent: var(--t-accent);
+    --color-accent-content: var(--t-accent-content);
+    --color-neutral: var(--t-neutral);
+    --color-neutral-content: var(--t-neutral-content);
 
-/* One design in two lightnesses. The dark theme is the agent-setup mockup's
- * palette: a near-black page (base-100), slightly lifted surfaces for cards
- * and panels (base-200), and one line colour (base-300) that borders every
- * card, table and divider. Light mirrors the same three steps around white.
- * Status colours are tuned per theme so both the filled form (alert, badge)
- * and the soft form (StatusPill: tinted fill, coloured text) stay readable;
- * `lib/theme.test.ts` checks the text-on-fill pairs. Shapes are shared:
- * 10 px fields and buttons, 14 px boxes. */
-@plugin "daisyui/theme" {
-    name: "light";
-    default: false;
-    prefersdark: false;
-    color-scheme: "light";
+    --color-info: var(--t-info);
+    --color-info-content: var(--t-info-content);
+    --color-success: var(--t-success);
+    --color-success-content: var(--t-success-content);
+    --color-warning: var(--t-warning);
+    --color-warning-content: var(--t-warning-content);
+    --color-error: var(--t-error);
+    --color-error-content: var(--t-error-content);
 
-    --color-base-100: #ffffff;
-    --color-base-200: #f5f4f8;
-    --color-base-300: #dedce4;
-    --color-base-content: #1c1b22;
-
-    --color-primary: #7c3aed;
-    --color-primary-content: #ffffff;
-
-    --color-secondary: #fca68c;
-    --color-secondary-content: #1c1b22;
-
-    --color-accent: #0a7a8a;
-    --color-accent-content: #ffffff;
-
-    --color-neutral: #1c1b22;
-    --color-neutral-content: #ffffff;
-
-    --color-info: #0369a1;
-    --color-info-content: #ffffff;
-
-    --color-success: #15803d;
-    --color-success-content: #ffffff;
-
-    --color-warning: #b45309;
-    --color-warning-content: #ffffff;
-
-    --color-error: #c81e1e;
-    --color-error-content: #ffffff;
-
+    /* 8 px controls, 10 px fields, 18 px boxes and cards (croft VI). */
     --radius-selector: 0.5rem;
     --radius-field: 0.625rem;
-    --radius-box: 0.875rem;
-    --size-selector: 0.25rem;
-    --size-field: 0.25rem;
-    --border: 1px;
-    --depth: 0;
-    --noise: 0;
+    --radius-box: 1.125rem;
 }
 
-@plugin "daisyui/theme" {
-    name: "dark";
-    default: true;
-    prefersdark: true;
-    color-scheme: "dark";
+:root {
+    color-scheme: light;
+    --t-base-100: #ffffff;
+    --t-base-200: #f5f4f8;
+    --t-base-300: #dedce4;
+    --t-base-content: #1c1b22;
 
-    --color-base-100: #1b1b1d;
-    --color-base-200: #242427;
-    --color-base-300: #3a3a40;
-    --color-base-content: #ecebf0;
+    --t-primary: #8e54e9;
+    --t-primary-content: #ffffff;
+    --t-secondary: #fca68c;
+    --t-secondary-content: #1c1b22;
+    --t-accent: #0a7a8a;
+    --t-accent-content: #ffffff;
+    --t-neutral: #1c1b22;
+    --t-neutral-content: #ffffff;
 
-    --color-primary: #8558f0;
-    --color-primary-content: #ffffff;
+    --t-info: #0369a1;
+    --t-info-content: #ffffff;
+    --t-success: #15803d;
+    --t-success-content: #ffffff;
+    --t-warning: #b45309;
+    --t-warning-content: #ffffff;
+    --t-error: #c81e1e;
+    --t-error-content: #ffffff;
+}
 
-    --color-secondary: #fca68c;
-    --color-secondary-content: #1b1b1d;
+[data-theme="dark"] {
+    color-scheme: dark;
+    --t-base-100: #1d1d1b;
+    --t-base-200: #242422;
+    --t-base-300: #3a3a37;
+    --t-base-content: #efeeea;
 
-    --color-accent: #2bb3c4;
-    --color-accent-content: #0b1f22;
+    --t-primary: #8e54e9;
+    --t-primary-content: #ffffff;
+    --t-secondary: #fca68c;
+    --t-secondary-content: #1d1d1b;
+    --t-accent: #2bb3c4;
+    --t-accent-content: #0b1f22;
+    --t-neutral: #2d2d31;
+    --t-neutral-content: #efeeea;
 
-    --color-neutral: #2d2d31;
-    --color-neutral-content: #ecebf0;
-
-    --color-info: #60a5fa;
-    --color-info-content: #0b1b33;
-
-    --color-success: #4ade80;
-    --color-success-content: #052e16;
-
-    --color-warning: #fbbf24;
-    --color-warning-content: #451a03;
-
-    --color-error: #f87171;
-    --color-error-content: #450a0a;
-
-    --radius-selector: 0.5rem;
-    --radius-field: 0.625rem;
-    --radius-box: 0.875rem;
-    --size-selector: 0.25rem;
-    --size-field: 0.25rem;
-    --border: 1px;
-    --depth: 0;
-    --noise: 0;
+    --t-info: #60a5fa;
+    --t-info-content: #0b1b33;
+    --t-success: #4ade80;
+    --t-success-content: #052e16;
+    --t-warning: #fbbf24;
+    --t-warning-content: #451a03;
+    --t-error: #f87171;
+    --t-error-content: #450a0a;
 }
 
 html {
@@ -140,85 +121,956 @@ h1, h2, h3, .card-title {
     font-weight: 600;
 }
 
-/* Cards are solid surfaces edged in the line colour, the mockup's panel.
- * Written once here so every `card` matches without a per-page
- * `bg-base-200 border-base-300`. */
+/*
+ * Rendered markdown (chat replies, canvas documents, skill bodies) carries
+ * `prose`; the element rules come from the typography plugin.
+ */
+@plugin "@tailwindcss/typography";
+
+/*
+ * The component classes the app was written against (btn, card, alert,
+ * badge, input, select, checkbox, …), implemented once on the tokens above.
+ * Everything here is a plain element style — no framework layer, no theme
+ * indirection beyond the token variables.
+ */
 @layer components {
-    .card {
-        background-color: var(--color-base-200);
+    /* ============ Buttons ============ */
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        white-space: nowrap;
+        font-size: 0.875rem;
+        font-weight: 500;
+        line-height: 1.25rem;
+        padding: 0.5rem 1rem;
         border: 1px solid var(--color-base-300);
+        border-radius: var(--radius-selector);
+        background-color: var(--color-base-200);
+        color: var(--color-base-content);
+        cursor: pointer;
+        user-select: none;
+        transition: background-color 120ms, border-color 120ms, color 120ms;
     }
-}
-
-/* One field look app-wide. daisyUI rings a focused field in `base-content`
- * (white on dark) and shows no error unless a page remembers `input-error`.
- * Here a focused field rings in the primary colour, and a field marked
- * `aria-invalid="true"` (which an accessible error needs anyway) turns
- * error-coloured, focused or not. Unlayered inside `utilities` so it follows
- * daisyUI's nested sub-layers (docs/ui.md → Theming). The focus selector is
- * kept at one class of specificity by `:where`, so the error rule after it
- * wins even on a focused field. */
-@layer utilities {
-    :where(.input, .select, .textarea):is(:focus, :focus-within) {
-        --input-color: var(--color-primary);
+    .btn:hover {
+        background-color: color-mix(in oklab, var(--color-base-content) 9%, var(--color-base-200));
+    }
+    .btn:disabled,
+    .btn[aria-disabled="true"] {
+        opacity: 0.5;
+        pointer-events: none;
+    }
+    .btn:focus-visible {
+        outline: 2px solid var(--color-primary);
+        outline-offset: 2px;
+    }
+    .btn-sm {
+        font-size: 0.8125rem;
+        line-height: 1.125rem;
+        padding: 0.375rem 0.75rem;
+    }
+    .btn-xs {
+        font-size: 0.75rem;
+        line-height: 1rem;
+        padding: 0.25rem 0.5rem;
+    }
+    .btn-primary {
+        background-color: var(--color-primary);
+        border-color: var(--color-primary);
+        color: var(--color-primary-content);
+    }
+    .btn-primary:hover {
+        background-color: color-mix(in oklab, var(--color-primary) 85%, #ffffff);
+    }
+    .btn-ghost {
+        background: transparent;
+        border-color: transparent;
+    }
+    .btn-ghost:hover {
+        background-color: color-mix(in oklab, var(--color-base-content) 9%, transparent);
+    }
+    .btn-outline {
+        background: transparent;
+        border-color: var(--color-primary);
+        color: var(--color-primary);
+    }
+    .btn-outline:hover {
+        background-color: var(--color-primary);
+        color: var(--color-primary-content);
+    }
+    .btn-error {
+        background-color: var(--color-error);
+        border-color: var(--color-error);
+        color: var(--color-error-content);
+    }
+    .btn-circle {
+        aspect-ratio: 1 / 1;
+        border-radius: 9999px;
+        padding: 0.5rem;
+    }
+    .btn-sm.btn-circle {
+        padding: 0.375rem;
+    }
+    .btn-xs.btn-circle {
+        padding: 0.25rem;
+    }
+    .btn-square {
+        border-radius: 0;
+    }
+    .btn-lg {
+        font-size: 1.125rem;
+        line-height: 1.75rem;
+        padding: 0.75rem 1.25rem;
+    }
+    .btn-active {
+        background-color: color-mix(in oklab, var(--color-base-content) 12%, var(--color-base-200));
+    }
+    .btn-block {
+        display: flex;
+        width: 100%;
     }
 
-    /* daisyUI's plain `btn` is a `base-200` fill with a border of the same
-     * colour, which vanishes on a `base-200` card. The line colour gives it
-     * the mockup's edge. Zero specificity (`:where`), so a Tailwind
-     * `border-*` on a button still wins. */
-    :where(.btn:not(.btn-ghost, .btn-link, .btn-outline, .btn-dash, .btn-soft, .btn-primary, .btn-secondary, .btn-accent, .btn-neutral, .btn-info, .btn-success, .btn-warning, .btn-error)) {
+    /* ============ Cards ============ */
+    .card {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        border: 1px solid var(--color-base-300);
+        border-radius: var(--radius-box);
+        background-color: var(--color-base-200);
+    }
+    .card-body {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+        gap: 0.5rem;
+        padding: 1.5rem;
+    }
+    .card-title {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 1.125rem;
+        font-weight: 600;
+    }
+    .card-border {
         border-color: var(--color-base-300);
     }
+    .card-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+    .card-sm .card-body {
+        padding: 0.75rem;
+    }
 
-    .input[aria-invalid="true"], .input:has(> input[aria-invalid="true"]),
-    .select[aria-invalid="true"], .textarea[aria-invalid="true"],
-    .input-error, .select-error, .textarea-error {
-        --input-color: var(--color-error);
+    /* ============ Alerts ============ */
+    .alert {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 1rem 1.25rem;
+        border: 1px solid var(--color-base-300);
+        border-radius: var(--radius-field);
+        background-color: var(--color-base-200);
+        color: var(--color-base-content);
+    }
+    .alert-error {
+        background-color: color-mix(in oklab, var(--color-error) 12%, var(--color-base-200));
+        border-color: color-mix(in oklab, var(--color-error) 35%, transparent);
+    }
+    .alert-warning {
+        background-color: color-mix(in oklab, var(--color-warning) 14%, var(--color-base-200));
+        border-color: color-mix(in oklab, var(--color-warning) 35%, transparent);
+    }
+    .alert-info {
+        background-color: color-mix(in oklab, var(--color-info) 12%, var(--color-base-200));
+        border-color: color-mix(in oklab, var(--color-info) 35%, transparent);
+    }
+    .alert-success {
+        background-color: color-mix(in oklab, var(--color-success) 12%, var(--color-base-200));
+        border-color: color-mix(in oklab, var(--color-success) 35%, transparent);
+    }
+    .alert-soft {
+        background-color: color-mix(in oklab, var(--color-base-content) 6%, var(--color-base-200));
+    }
+
+    /* ============ Badges ============ */
+    .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        border: 1px solid transparent;
+        border-radius: 9999px;
+        background-color: var(--color-base-300);
+        color: var(--color-base-content);
+        font-size: 0.75rem;
+        font-weight: 500;
+        line-height: 1rem;
+        padding: 0.25rem 0.625rem;
+        white-space: nowrap;
+    }
+    .badge-sm {
+        font-size: 0.6875rem;
+        line-height: 0.875rem;
+        padding: 0.1875rem 0.5rem;
+    }
+    .badge-xs {
+        font-size: 0.625rem;
+        line-height: 0.875rem;
+        padding: 0.125rem 0.4375rem;
+    }
+    .badge-outline {
+        background: transparent;
+        border-color: var(--color-base-300);
+    }
+    .badge-ghost {
+        background: color-mix(in oklab, var(--color-base-content) 9%, transparent);
+    }
+    .badge-primary {
+        background-color: var(--color-primary);
+        color: var(--color-primary-content);
+    }
+    .badge-secondary {
+        background-color: var(--color-secondary);
+        color: var(--color-secondary-content);
+    }
+    .badge-success {
+        background-color: color-mix(in oklab, var(--color-success) 16%, var(--color-base-200));
+        color: var(--color-success);
+    }
+    .badge-error {
+        background-color: color-mix(in oklab, var(--color-error) 16%, var(--color-base-200));
+        color: var(--color-error);
+    }
+    .badge-warning {
+        background-color: color-mix(in oklab, var(--color-warning) 16%, var(--color-base-200));
+        color: var(--color-warning);
+    }
+    .badge-info {
+        background-color: color-mix(in oklab, var(--color-info) 16%, var(--color-base-200));
+        color: var(--color-info);
+    }
+    .badge-soft {
+        background-color: color-mix(in oklab, var(--color-base-content) 7%, transparent);
+    }
+
+    /* ============ Fields ============ */
+    .input,
+    .select,
+    .textarea {
+        display: block;
+        width: 100%;
+        border: 1px solid var(--color-base-300);
+        border-radius: var(--radius-field);
+        background-color: var(--color-base-100);
+        color: var(--color-base-content);
+        font-size: 0.875rem;
+        line-height: 1.25rem;
+        padding: 0.5rem 0.75rem;
+    }
+    .input::placeholder,
+    .textarea::placeholder {
+        color: color-mix(in oklab, var(--color-base-content) 40%, transparent);
+    }
+    .input:focus,
+    .select:focus,
+    .textarea:focus {
+        outline: none;
+        border-color: var(--color-primary);
+        box-shadow: 0 0 0 1px var(--color-primary);
+    }
+    .input:disabled,
+    .select:disabled,
+    .textarea:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    .input-sm,
+    .select-sm,
+    .textarea-sm {
+        font-size: 0.8125rem;
+        padding: 0.375rem 0.625rem;
+    }
+    .input-xs,
+    .select-xs,
+    .textarea-xs {
+        font-size: 0.75rem;
+        padding: 0.25rem 0.5rem;
+    }
+    .select {
+        appearance: none;
+        background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23808080' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+        background-position: right 0.625rem center;
+        background-repeat: no-repeat;
+        padding-right: 2rem;
+        cursor: pointer;
+    }
+    .textarea-ghost {
+        background: transparent;
+        border-color: transparent;
+    }
+    .input-warning {
+        border-color: var(--color-warning);
+    }
+
+    /* ============ Labels and fieldsets ============ */
+    .label {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    .label-text {
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+    fieldset {
+        display: block;
+        margin: 0;
+        padding: 0;
+        border: none;
+        min-inline-size: 0;
+    }
+    .fieldset {
+        display: block;
+        margin: 0;
+        padding: 0;
+        border: none;
+        min-inline-size: 0;
+    }
+    .fieldset-legend {
+        padding: 0;
+        margin-bottom: 0.5rem;
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        color: color-mix(in oklab, var(--color-base-content) 60%, transparent);
+    }
+
+    /* ============ Choice controls ============ */
+    .checkbox,
+    .radio {
+        width: 1.125rem;
+        height: 1.125rem;
+        accent-color: var(--color-primary);
+        cursor: pointer;
+    }
+    .radio {
+        border-radius: 9999px;
+    }
+    .checkbox-sm,
+    .radio-sm {
+        width: 1rem;
+        height: 1rem;
+    }
+    .checkbox-xs,
+    .radio-xs {
+        width: 0.875rem;
+        height: 0.875rem;
+    }
+    .toggle {
+        width: 2.25rem;
+        height: 1.25rem;
+        accent-color: var(--color-primary);
+        cursor: pointer;
+    }
+    .toggle-sm {
+        width: 1.75rem;
+        height: 1rem;
+    }
+    .toggle-primary {
+        accent-color: var(--color-primary);
+    }
+
+    /* ============ Links ============ */
+    .link {
+        color: var(--color-primary);
+        text-decoration: none;
+    }
+    .link:hover {
+        text-decoration: underline;
+    }
+    .link-primary {
+        color: var(--color-primary);
+    }
+    .link-warning {
+        color: var(--color-warning);
+    }
+    .link-neutral {
+        color: var(--color-neutral);
+    }
+    .link-hover {
+        text-decoration: none;
+    }
+    .link-hover:hover {
+        text-decoration: underline;
+    }
+
+    /* ============ Skeleton ============ */
+    .skeleton {
+        display: inline-block;
+        min-width: 3rem;
+        border-radius: var(--radius-field);
+        background-color: color-mix(in oklab, var(--color-base-content) 12%, var(--color-base-200));
+        animation: skeleton-pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes skeleton-pulse {
+        0%, 100% {
+            opacity: 1;
+        }
+        50% {
+            opacity: 0.45;
+        }
+    }
+
+    /* ============ Loading ============ */
+    .loading {
+        display: inline-block;
+        width: 1.25rem;
+        height: 1.25rem;
+    }
+    .loading-spinner::before {
+        content: "";
+        display: block;
+        width: 100%;
+        height: 100%;
+        border: 2px solid color-mix(in oklab, var(--color-base-content) 25%, transparent);
+        border-top-color: var(--color-base-content);
+        border-radius: 9999px;
+        animation: loading-spin 0.8s linear infinite;
+    }
+    .loading-dots::before {
+        content: "· · ·";
+        display: block;
+        font-weight: 600;
+        animation: skeleton-pulse 1.2s ease-in-out infinite;
+    }
+    .loading-xs {
+        width: 0.75rem;
+        height: 0.75rem;
+    }
+    .loading-sm {
+        width: 1rem;
+        height: 1rem;
+    }
+    .loading-md {
+        width: 1.25rem;
+        height: 1.25rem;
+    }
+    @keyframes loading-spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+
+    /* ============ Tabs ============ */
+    .tabs {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+    }
+    .tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        padding: 0.5rem 1rem;
+        border-bottom: 2px solid transparent;
+        color: color-mix(in oklab, var(--color-base-content) 70%, transparent);
+        font-size: 0.875rem;
+        cursor: pointer;
+        background: none;
+        border-top: none;
+        border-left: none;
+        border-right: none;
+    }
+    .tab:hover {
+        color: var(--color-base-content);
+    }
+    .tab-active,
+    .tab[aria-selected="true"] {
+        border-bottom-color: var(--color-primary);
+        color: var(--color-base-content);
+        font-weight: 500;
+    }
+    .tabs-sm .tab {
+        font-size: 0.8125rem;
+        padding: 0.375rem 0.75rem;
+    }
+    .tabs-border {
+        border-bottom: 1px solid var(--color-base-300);
+    }
+    .tabs-box {
+        border: 1px solid var(--color-base-300);
+        border-radius: var(--radius-field);
+    }
+
+    /* ============ Join ============ */
+    .join {
+        display: inline-flex;
+        align-items: stretch;
+    }
+    .join :where(.join-item):first-child {
+        border-start-end-radius: 0;
+        border-end-end-radius: 0;
+    }
+    .join :where(.join-item):not(:first-child) {
+        margin-inline-start: -1px;
+        border-start-start-radius: 0;
+        border-end-start-radius: 0;
+    }
+    .join :where(.join-item):last-child {
+        border-start-start-radius: 0;
+        border-end-start-radius: 0;
+    }
+
+    /* ============ Tables ============ */
+    .table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.875rem;
+        text-align: start;
+    }
+    .table th {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: color-mix(in oklab, var(--color-base-content) 60%, transparent);
+        padding: 0.5rem 1rem;
+        border-bottom: 1px solid var(--color-base-300);
+    }
+    .table td {
+        padding: 0.75rem 1rem;
+        border-top: 1px solid var(--color-base-300);
+    }
+    .table-sm td {
+        padding: 0.5rem 0.75rem;
+        font-size: 0.8125rem;
+    }
+    .table-sm th {
+        padding: 0.375rem 0.75rem;
+    }
+    .table-xs {
+        font-size: 0.75rem;
+    }
+    .table-xs th {
+        padding: 0.25rem 0.5rem;
+    }
+    .table-xs td {
+        padding: 0.375rem 0.5rem;
+    }
+
+    /* ============ Menus ============ */
+    .menu {
+        display: flex;
+        flex-direction: column;
+        gap: 0.125rem;
+        padding: 0.375rem;
+        font-size: 0.875rem;
+    }
+    .menu :where(a, button) {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 0.75rem;
+        border-radius: var(--radius-selector);
+        color: var(--color-base-content);
+        text-decoration: none;
+        background: none;
+        border: none;
+        font: inherit;
+        cursor: pointer;
+        text-align: start;
+        width: 100%;
+    }
+    .menu :where(a, button):hover {
+        background-color: color-mix(in oklab, var(--color-base-content) 9%, transparent);
+    }
+    .menu-sm {
+        font-size: 0.875rem;
+    }
+    .menu-sm :where(a, button) {
+        padding: 0.375rem 0.625rem;
+    }
+    .menu-active,
+    .menu :where(a, button).active {
+        background-color: color-mix(in oklab, var(--color-primary) 14%, transparent);
+        color: var(--color-primary);
+        font-weight: 500;
+    }
+
+    /* ============ Progress, divider, dropdown, stats ============ */
+    .progress {
+        appearance: none;
+        width: 100%;
+        height: 0.375rem;
+        border: none;
+        border-radius: 9999px;
+        background-color: var(--color-base-300);
+        overflow: hidden;
+        cursor: default;
+    }
+    .progress::-webkit-progress-bar {
+        background-color: var(--color-base-300);
+    }
+    .progress::-webkit-progress-value {
+        background-color: var(--color-primary);
+        border-radius: 9999px;
+    }
+    .progress::-moz-progress-bar {
+        background-color: var(--color-primary);
+        border-radius: 9999px;
+    }
+    .progress-primary {
+        color: var(--color-primary);
+    }
+    .progress-warning {
+        color: var(--color-warning);
+    }
+    .progress-error {
+        color: var(--color-error);
+    }
+    .progress-warning::-webkit-progress-value,
+    .progress-warning::-moz-progress-bar {
+        background-color: var(--color-warning);
+    }
+    .progress-error::-webkit-progress-value,
+    .progress-error::-moz-progress-bar {
+        background-color: var(--color-error);
+    }
+    .divider {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        margin: 1rem 0;
+        color: color-mix(in oklab, var(--color-base-content) 60%, transparent);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    .divider::before,
+    .divider::after {
+        content: "";
+        flex: 1;
+        border-top: 1px solid var(--color-base-300);
+    }
+    .dropdown {
+        position: relative;
+        display: inline-block;
+    }
+    /*
+     * The popover menus of the app (export menu, level picker, token menu)
+     * anchor against their trigger. Without a position-area the browser
+     * centres them on the anchor — a menu floating in the middle of the
+     * screen. This drops them below the trigger, aligned to its end, the
+     * way the menus always read.
+     */
+    .dropdown-content {
+        position-area: bottom;
+        justify-self: end;
+        margin-block-start: 0.25rem;
+    }
+    .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+        border: 1px solid var(--color-base-300);
+        border-radius: var(--radius-box);
+        background-color: var(--color-base-200);
+    }
+    .stats-vertical {
+        grid-template-columns: 1fr;
+    }
+    .stat {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        padding: 1rem 1.25rem;
+    }
+    .stat-value {
+        font-size: 1.5rem;
+        font-weight: 600;
+    }
+    .stat-title {
+        font-size: 0.75rem;
+        color: color-mix(in oklab, var(--color-base-content) 60%, transparent);
+    }
+    .stat-desc {
+        font-size: 0.75rem;
+        color: color-mix(in oklab, var(--color-base-content) 50%, transparent);
+    }
+
+    /* ============ Collapse ============ */
+    .collapse {
+        display: grid;
+        max-height: 100%;
+        overflow: hidden;
+        border-radius: var(--radius-field);
+    }
+    .collapse-title {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        grid-column-start: 1;
+        grid-row-start: 1;
+        position: relative;
+        z-index: 2;
+        margin: 0;
+        padding: 0.75rem 1rem;
+        border-radius: var(--radius-field);
+        cursor: pointer;
+        list-style: none;
+    }
+    .collapse-title::-webkit-details-marker {
+        display: none;
+    }
+    .collapse-content {
+        grid-column-start: 1;
+        grid-row-start: 2;
+        z-index: 1;
+        padding: 0 1rem 0.75rem;
+    }
+    .collapse-arrow > .collapse-title::before {
+        content: "";
+        flex: none;
+        width: 0.4em;
+        height: 0.4em;
+        margin-inline-end: 0.25rem;
+        border-top: 2px solid currentColor;
+        border-inline-end: 2px solid currentColor;
+        transform: rotate(45deg);
+        transition: transform 200ms;
+    }
+    .collapse-arrow[open] > .collapse-title::before {
+        transform: rotate(135deg);
+    }
+
+    /* ============ Chat ============ */
+    .chat {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        padding: 0.375rem 0;
+    }
+    .chat-header {
+        font-size: 0.75rem;
+    }
+    .chat-bubble {
+        max-width: 100%;
+        border-radius: var(--radius-field);
+        padding: 0.625rem 0.875rem;
+    }
+    .chat-footer {
+        font-size: 0.75rem;
+    }
+    .chat-start .chat-bubble {
+        align-self: flex-start;
+        border-start-start-radius: 0.25rem;
+    }
+    .chat-end {
+        align-items: flex-end;
+    }
+    .chat-end .chat-bubble {
+        align-self: flex-end;
+        border-end-end-radius: 0.25rem;
+    }
+
+    /* ============ Toast ============ */
+    .toast {
+        position: relative;
+        display: inline-flex;
+        width: 100%;
+        max-width: 100%;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+    .toast-top {
+        top: 0;
+    }
+    .toast-bottom {
+        bottom: 0;
+    }
+    .toast-start {
+        justify-content: flex-start;
+    }
+    .toast-center {
+        justify-content: center;
+    }
+    .toast-end {
+        justify-content: flex-end;
+    }
+
+    /* ============ Range ============ */
+    .range {
+        -webkit-appearance: none;
+        appearance: none;
+        height: 0.375rem;
+        border-radius: 9999px;
+        background-color: var(--color-base-300);
+        outline: none;
+        cursor: pointer;
+    }
+    .range::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 1.125rem;
+        height: 1.125rem;
+        border: none;
+        border-radius: 9999px;
+        background-color: var(--color-primary);
+        cursor: pointer;
+    }
+    .range::-moz-range-thumb {
+        width: 1.125rem;
+        height: 1.125rem;
+        border: none;
+        border-radius: 9999px;
+        background-color: var(--color-primary);
+        cursor: pointer;
+    }
+    .range-sm {
+        height: 0.25rem;
+    }
+    .range-sm::-webkit-slider-thumb {
+        width: 1rem;
+        height: 1rem;
+    }
+    .range-sm::-moz-range-thumb {
+        width: 1rem;
+        height: 1rem;
+    }
+
+    /* ============ Mockup ============ */
+    .mockup-browser {
+        display: flex;
+        flex-direction: column;
+        border-radius: var(--radius-box);
+        box-shadow: 0 1px 3px oklch(0% 0 0 / 0.1), 0 1px 2px oklch(0% 0 0 / 0.1);
+        overflow: hidden;
+    }
+    .mockup-browser-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 0.375rem;
+        padding: 0.5rem 0.75rem;
+        background-color: var(--color-base-200);
+    }
+    .mockup-browser-toolbar::before {
+        content: "";
+        flex: none;
+        width: 0.625rem;
+        height: 0.625rem;
+        border-radius: 9999px;
+        background-color: var(--color-error);
+    }
+    .mockup-browser-toolbar::after {
+        content: "";
+        flex: none;
+        width: 0.625rem;
+        height: 0.625rem;
+        border-radius: 9999px;
+        background-color: var(--color-warning);
     }
 }
 
-/* Modals have to read as *above* the page, and in the dark theme daisyUI's
- * defaults do not manage it: the box is `base-100` (oklch 14%), the page
- * behind it is the same `base-100`, and the scrim that separates them is only
- * `black / 0.4` — which over an already-near-black page moves it about six
- * lightness points. The drop shadow that would normally carry the elevation
- * is `black / 0.25`, i.e. invisible on black. The result is a dialog whose
- * edges you cannot find.
- *
- * So: a real border, a shadow with enough opacity to show against a dark
- * ground, and a deeper scrim. These rules sit outside `@layer daisyui`, so
- * they win without `!important` or specificity games. Written once here
- * rather than per dialog — every modal in the app has the same problem. */
+/*
+ * Field states that must beat the component layer (a focused field rings in
+ * the primary colour; a field marked aria-invalid reads as an error, focused
+ * or not). Zero specificity via :where, so a Tailwind border-* on the same
+ * element still wins.
+ */
+@layer utilities {
+    :where(.input, .select, .textarea):is(:focus, :focus-within) {
+        border-color: var(--color-primary);
+        box-shadow: 0 0 0 1px var(--color-primary);
+    }
+
+    .input[aria-invalid="true"],
+    .select[aria-invalid="true"],
+    .textarea[aria-invalid="true"],
+    .input-error,
+    .select-error,
+    .textarea-error {
+        border-color: var(--color-error);
+        box-shadow: 0 0 0 1px var(--color-error);
+    }
+}
+
+/*
+ * Tailwind ships a `.collapse` utility of its own whose only declaration is
+ * `visibility: collapse`. The disclosure component above owns that name, and
+ * utilities outrank the components layer, so without this rule every closed
+ * <details class="collapse"> hides its own summary. Unlayered on purpose.
+ */
+.collapse {
+    visibility: visible;
+}
+
+/*
+ * Modals must read as *above* the page. The native <dialog> backdrop is the
+ * scrim; the box gets a real border and a shadow deep enough to show against
+ * a dark ground. Written once here — every modal in the app shares it.
+ */
+dialog.modal[open] {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+    display: grid;
+    place-items: center;
+}
+dialog.modal[open]::backdrop {
+    background-color: oklch(0% 0 0 / 0.7);
+}
 .modal-box {
+    position: relative;
+    z-index: 1;
     border: 1px solid var(--color-base-300);
+    border-radius: var(--radius-box);
+    background-color: var(--color-base-100);
     box-shadow:
         0 0 0 1px oklch(0% 0 0 / 0.4),
         0 24px 64px -12px oklch(0% 0 0 / 0.75);
 }
-
-.modal.modal-open,
-.modal[open],
-.modal:popover-open,
-.modal:target {
-    background-color: oklch(0% 0 0 / 0.7);
+.modal-action {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 1.5rem;
+}
+dialog.modal.modal-middle[open] {
+    align-items: center;
+}
+dialog.modal.modal-bottom[open] {
+    align-items: end;
+}
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    cursor: pointer;
 }
 
-/* daisyUI paints a prose code block with `neutral`, but in these
- * shadcn-flavoured themes `neutral` is the INVERSE of the surface (near-white
- * in dark mode) — a fenced block came out as a white slab in a dark chat.
- * Keep code blocks on the surface palette instead. */
+/* daisyUI-era prose code block fix, kept: fenced blocks stay on the surface
+ * palette instead of the inverse `neutral`. */
 :root .prose {
     --tw-prose-pre-bg: var(--color-base-200);
     --tw-prose-pre-code: var(--color-base-content);
 }
 
 /* Chat replies render markdown inside a bubble that must not grow with its
- * content: long unbroken tokens (file paths, URLs, identifiers) wrap instead
- * of widening the bubble, and the prose block keeps the bubble's own padding
- * rather than adding leading/trailing margins of its own. `break-word` rather
- * than `anywhere` on purpose — `anywhere` also shrinks min-content widths,
- * which squeezes table columns into one-character-per-line slivers. */
+ * content: long unbroken tokens wrap instead of widening the bubble, and the
+ * prose block keeps the bubble's own padding. */
 .chat-prose {
     overflow-wrap: break-word;
 }
@@ -233,7 +1085,7 @@ h1, h2, h3, .card-title {
 
 /* The empty conversation's welcome card is operator markdown read as a card:
  * left-aligned, because a centred block leaves every list marker stranded at
- * the far edge, detached from the line it belongs to. */
+ * the far edge. */
 .welcome-prose {
     text-align: start;
 }

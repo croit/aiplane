@@ -46,10 +46,25 @@ pub fn modality_for_kind(kind: PoolKind) -> Option<&'static str> {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Architecture {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "list_or_empty")]
     pub input_modalities: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "list_or_empty")]
     pub output_modalities: Vec<String>,
+}
+
+/// Read an explicit `null` as an empty list.
+///
+/// `#[serde(default)]` covers a *missing* field only. OpenRouter sends
+/// `"supported_voices": null` on every model without voices (and has sent
+/// `null` for the other list fields), which a bare `Vec` rejects with
+/// "invalid type: null, expected a sequence" — and that failed the whole
+/// account catalogue, not just the entry.
+fn list_or_empty<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -124,16 +139,16 @@ pub struct CatalogEntry {
     pub architecture: Option<Architecture>,
     #[serde(default)]
     pub pricing: Pricing,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "list_or_empty")]
     pub supported_parameters: Vec<String>,
     #[serde(default)]
     pub top_provider: Option<TopProvider>,
     /// The API paths that serve this model, e.g. `/api/v1/chat/completions`.
     /// The admin UI uses them to group a model under the right pool kind.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "list_or_empty")]
     pub endpoints: Vec<String>,
     /// The voices this TTS model speaks. Empty for non-speech models.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "list_or_empty")]
     pub supported_voices: Vec<String>,
 }
 
@@ -194,7 +209,7 @@ pub struct EndpointEntry {
     pub uptime_last_30m: Option<f64>,
     #[serde(default)]
     pub quantization: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "list_or_empty")]
     pub supported_parameters: Vec<String>,
 }
 
@@ -305,6 +320,31 @@ pub async fn fetch_catalog(
     Ok(envelope.data)
 }
 
+/// Why `model_id` cannot be used as an OpenRouter `author/slug` path pair.
+///
+/// The id becomes part of the upstream path, so a `..` segment or a query
+/// marker would let a crafted selection walk somewhere else on the provider's
+/// host. Shared by the on-demand provider read (which answers 400) and the
+/// catalogue refresh (which refuses to request).
+pub fn validate_model_id(model_id: &str) -> Result<(), String> {
+    let Some((author, slug)) = model_id.split_once('/') else {
+        return Err(format!(
+            "`{model_id}` is not an OpenRouter `author/slug` id"
+        ));
+    };
+    if [author, slug].iter().any(|part| {
+        part.is_empty()
+            || *part == "."
+            || *part == ".."
+            || part.contains('/')
+            || part.contains('?')
+            || part.contains('#')
+    }) {
+        return Err(format!("`{model_id}` is not a usable OpenRouter model id"));
+    }
+    Ok(())
+}
+
 /// Per-provider prices and performance for one model.
 pub async fn fetch_endpoints(
     http: &reqwest::Client,
@@ -313,9 +353,12 @@ pub async fn fetch_endpoints(
     extra_headers: &std::collections::BTreeMap<String, String>,
     model_id: &str,
 ) -> anyhow::Result<Vec<EndpointEntry>> {
+    if let Err(problem) = validate_model_id(model_id) {
+        anyhow::bail!(problem);
+    }
     let (author, slug) = model_id
         .split_once('/')
-        .ok_or_else(|| anyhow::anyhow!("`{model_id}` is not an OpenRouter `author/slug` id"))?;
+        .expect("validated as an author/slug pair above");
     let url = endpoint_url(base_url, &format!("models/{author}/{slug}/endpoints"));
     let envelope: EndpointsEnvelope = get_json(http, &url, api_key, extra_headers).await?;
     Ok(envelope.data.map(|d| d.endpoints).unwrap_or_default())
@@ -652,6 +695,48 @@ mod tests {
         };
         assert!((pricing.prompt_per_million() - 0.30).abs() < 1e-9);
         assert!((pricing.completion_per_million() - 1.20).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn a_model_id_with_a_path_segment_is_refused_before_the_request() {
+        // The id is interpolated into the upstream path; refusing it here
+        // keeps a crafted selection from walking the provider's host.
+        let client = reqwest::Client::new();
+        for model in ["../admin", "a/../../b", "a/b?x=1", "a/b#frag", "a/", "/b"] {
+            let error = fetch_endpoints(
+                &client,
+                "http://127.0.0.1:9/v1",
+                None,
+                &std::collections::BTreeMap::new(),
+                model,
+            )
+            .await
+            .expect_err("a malformed id is refused");
+            assert!(error.to_string().contains("model id"), "{model}: {error}");
+        }
+    }
+
+    #[test]
+    fn an_explicit_null_catalogue_field_reads_as_empty() {
+        // OpenRouter answers `"supported_voices": null` for every model without
+        // voices (462 of 465 when this was written). A bare `#[serde(default)]`
+        // only covers a missing field, so one null failed the whole catalogue
+        // with "invalid type: null, expected a sequence".
+        let entry: CatalogEntry = serde_json::from_value(serde_json::json!({
+            "id": "openai/gpt-5",
+            "name": "GPT-5",
+            "supported_parameters": null,
+            "supported_voices": null,
+            "endpoints": null,
+            "architecture": { "input_modalities": null, "output_modalities": null }
+        }))
+        .expect("an explicit null list is an empty list");
+        assert!(entry.supported_voices.is_empty());
+        assert!(entry.supported_parameters.is_empty());
+        assert!(entry.endpoints.is_empty());
+        assert!(!entry.supports("tools"));
+        assert!(entry.input_modalities().is_empty());
+        assert!(entry.output_modalities().is_empty());
     }
 
     #[test]

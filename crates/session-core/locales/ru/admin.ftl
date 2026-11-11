@@ -5,8 +5,10 @@ admin-heading = Модели
 admin-models-routing-heading = Модели и маршрутизация
 admin-models-routing-intro = Настройте инфраструктуру моделей, каталог, модели по умолчанию и автоматическую маршрутизацию в одном месте.
 admin-models-tab-upstreams = Апстримы
+admin-models-tab-openrouter = OpenRouter
 admin-models-tab-catalog = Каталог моделей
 admin-models-tab-defaults = Модели по умолчанию
+admin-models-tab-fallbacks = Резерв
 admin-models-tab-routing = Автоматическая маршрутизация
 
 admin-col-model = Модель
@@ -342,3 +344,6 @@ admin-error-unknown-groups = { $count ->
     [one] Здесь нет такой группы: { $groups }. Сначала создайте её в разделе «Администрирование → Группы» или выберите из списка.
    *[other] Здесь нет таких групп: { $groups }. Сначала создайте их в разделе «Администрирование → Группы» или выберите из списка.
 }
+
+admin-served-by = обслуживается { $pools }
+admin-served-by-open = Открыть эту модель на доске апстримов

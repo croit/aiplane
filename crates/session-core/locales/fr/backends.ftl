@@ -1,13 +1,10 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
-
-
-backends-status-down = hors service
+# The upstream board and the backend editor: the pool band's status word, the
+# editor's fields, and the connection-test outcomes.
 backends-status-up = actif
 
-backends-inflight-label = en cours { $load }
 
 # Éditeur CRUD des backends (ajout/modification/suppression de backends stockés dans la topologie en base).
-backends-apply-changes = Appliquer les modifications
 backends-field-name = Nom
 backends-field-base-url = URL de base
 backends-field-pool = Pool
@@ -18,17 +15,19 @@ backends-pool-not-served = Non servi
 backends-pool-new = Nouveau : openrouter-{ $kind }
 backends-save-backend = Enregistrer le backend
 backends-delete-backend = Supprimer
+backends-delete-confirm = Supprimer le backend « { $name } » ? Son pool conserve les autres backends.
+backends-advanced = Réglages avancés
 
 backends-field-api-key = Clé API
 backends-field-api-key-keep = laisser vide pour conserver la clé actuelle
 backends-field-api-key-stored = Clé enregistrée : { $hint }
+backends-field-api-key-clear = Supprimer la clé enregistrée
 
 # An alias that is configured but would not route.
 # Save-time check on the aliases textarea.
 # Save-time check on the aliases textarea.
 # Two states that leave a backend green but unusable.
 # Maintenance switch.
-backends-status-drained = maintenance
 
 # Lignes de backend de la SPA : bascule de drainage, charge horaire, suppression.
 backends-add-heading = Ajouter un backend
@@ -44,18 +43,15 @@ backends-field-aliases = Alias (name=target par ligne)
 backends-field-extra-headers = En-têtes supplémentaires (nom : valeur par ligne)
 backends-field-extra-headers-hint = Envoyé avec chaque requête vers ce backend, après la clé API. Par exemple anthropic-version: 2023-06-01, que Anthropic exige.
 backends-field-supports-edit = Prend en charge l'édition d'images
-backends-status-saturated = saturé
-backends-auth-failed-title = L'upstream a refusé les identifiants de la sonde de santé (401/403), la découverte des modèles est donc désactivée — rien de nouveau ne peut devenir routable via ce backend. Vérifiez la clé API ; si elle vient d'une variable d'environnement, vérifiez qu'elle est bien définie.
-backends-auth-failed = clé refusée
 backends-no-models-title = Ce backend n'annonce aucun modèle : rien n'y est routé et un alias nu n'a rien à quoi se lier. Le plus souvent une sonde qui n'a jamais renvoyé de données.
-backends-no-models = aucun modèle proposé
+backends-no-models = aucun modèle
 backends-key-env-badge = clé : env { $var }
 backends-key-env-unset-badge = env { $var } NON DÉFINIE
-backends-enabled-hint = Désactivez pour vider ce backend en vue d'une maintenance. Effet immédiat — pas besoin d'« Appliquer les modifications ». Ses modèles restent connus : les autres backends du pool prennent le relais et les clients voient une panne temporaire, jamais « modèle introuvable ».
-backends-enabled-label = Accepte du trafic
+backends-enabled-hint = Désactivez pour vider ce backend en vue d'une maintenance. Effet immédiat. Ses modèles restent connus : les autres backends du pool prennent le relais et les clients voient une panne temporaire, jamais « modèle introuvable ».
+backends-enabled-label = Reçoit le trafic ({ $name })
 backends-activity-summary = 15 min { $m15 } · 30 min { $m30 } · 60 min { $m60 }
-backends-aliases-label = alias :
 backends-alias-target-title = alias → { $target }
+backends-alias-missing-title = alias → { $target } — ce backend n'annonce pas ce modèle
 backends-alias-disabled-title = alias simple désactivé — ce backend propose plusieurs modèles ; indiquez-lui une cible explicite (formulaire de correspondance)
 backends-alias-disabled-label = { $name } (désactivé)
 backends-fallback-offline-title = fallback_offline : utilisé lorsque tous les backends d'un modèle connu de ce pool sont hors service
@@ -85,35 +81,59 @@ backends-detect-profile = identifié : { $profile }
 # OpenRouter catalog: one backend, one key, the account's models, and a
 # purchase-price ceiling per selected model.
 openrouter-heading = OpenRouter
-openrouter-description = One OpenRouter connection. Pick the models this gateway may use and the maximum you will pay for each; a model with no provider under its ceiling is not offered.
-openrouter-connected = Connected
-openrouter-key-label = Key
-openrouter-credits = Credits
-openrouter-refresh = Refresh prices
+openrouter-description = Une connexion OpenRouter. Choisissez les modèles que cette gateway peut utiliser et le prix maximal pour chacun ; un modèle sans fournisseur sous sa limite n'est pas proposé.
+openrouter-connected = Connecté
+openrouter-key-label = Clé
+openrouter-credits = Crédit
+openrouter-refresh = Actualiser les prix
 openrouter-backend = Backend
-openrouter-search = Search models
-openrouter-select-all = Select all
-openrouter-deselect-all = Deselect all
-openrouter-selected-count = { $count } selected
-openrouter-model = Model
-openrouter-price = List price
-openrouter-context = Context
-openrouter-ceiling-prompt = Max input $/1M
-openrouter-ceiling-completion = Max output $/1M
-openrouter-strategy = Provider strategy
-openrouter-strategy-cheapest = Cheapest
-openrouter-strategy-fastest = Fastest
-openrouter-strategy-balanced = Balanced
-openrouter-min-throughput = Min tokens/s
-openrouter-available = Available
-openrouter-over-ceiling = Over ceiling
-openrouter-save = Save selection
-openrouter-saved = Selection saved.
-openrouter-no-models = No models match this filter.
+openrouter-search = Rechercher des modèles
+openrouter-select-all = Tout sélectionner
+openrouter-deselect-all = Tout désélectionner
+openrouter-selected-count = { $count } sélectionnés
+openrouter-model = Modèle
+openrouter-price = Prix catalogue
+openrouter-context = Contexte
+openrouter-ceiling-prompt = Max. entrée $/1M
+openrouter-ceiling-completion = Max. sortie $/1M
+openrouter-strategy = Stratégie de fournisseur
+openrouter-strategy-cheapest = La moins chère
+openrouter-strategy-fastest = La plus rapide
+openrouter-strategy-balanced = Équilibrée
+openrouter-min-throughput = Min. tokens/s
+openrouter-over-ceiling = Au-dessus de la limite
+openrouter-save = Enregistrer la sélection
+openrouter-saved = Sélection enregistrée.
+openrouter-no-models = Aucun modèle ne correspond à ce filtre.
 openrouter-error = OpenRouter: { $message }
-openrouter-select-model-first = Select at least one model.
-openrouter-endpoints = Providers
-openrouter-provider = Provider
+openrouter-select-model-first = Sélectionnez au moins un modèle.
+openrouter-endpoints = Fournisseurs
+openrouter-provider-input = Entrée $/1M
+openrouter-provider-output = Sortie $/1M
+openrouter-provider-cache-read = Lecture cache
+openrouter-provider-throughput = tok/s
+openrouter-provider-latency = Latence
+openrouter-provider-uptime = Disponibilité
+openrouter-provider-limit = Ta limite
+openrouter-ceiling-missing = limite manquante
+openrouter-usage = Consommation
+openrouter-aria-input-ceiling = { $model } limite d'entrée
+openrouter-aria-output-ceiling = { $model } limite de sortie
+openrouter-aria-strategy = { $model } stratégie de fournisseur
+openrouter-aria-min-throughput = { $model } débit minimal
+openrouter-cheapest-provider = Le moins cher
+openrouter-provider-fits = inclus
+openrouter-provider-excluded = exclu
+openrouter-providers-fit = { $fit } fournisseurs sur { $total } sous ta limite
+openrouter-providers-fit-short = { $fit } sur { $total } inclus
+openrouter-price-unknown = prix non vérifié
+openrouter-price-unknown-hint = Les prix des fournisseurs de ce modèle n'ont pas encore été lus — ouvre la ligne pour les voir.
+openrouter-cheapest = Le moins cher : { $provider } à { $prompt } / { $completion } par 1M
+openrouter-use-cheapest = Prendre le moins cher
+openrouter-compare = Comparer sur OpenRouter
+openrouter-provider-error = Impossible de lire les fournisseurs : { $message }
+openrouter-provider-none = OpenRouter ne signale aucun fournisseur pour ce modèle.
+openrouter-provider = Fournisseur
 openrouter-add-heading = Ajouter OpenRouter
 openrouter-add-description = Une clé, tout est configuré : le backend plus un pool pour chaque type de modèle servi (chat, transcription, speech, system_one, embedding, image, rerank), nommé openrouter-<type>. Les pools existantes portant ce nom sont rejointes. La sélection des modèles et les plafonds de prix suivent dans le panneau OpenRouter.
 openrouter-add-save = Ajouter OpenRouter
@@ -126,10 +146,12 @@ openrouter-key-placeholder = Nouvelle clé API
 openrouter-key-save = Enregistrer la clé
 openrouter-key-saved = Clé mise à jour
 openrouter-sort = Tri
-openrouter-provider-field = Provider
-openrouter-provider-openai = OpenAI-compatible
+openrouter-save-changed = Enregistrer la sélection · { $count } modifiés
+openrouter-dirty-confirm = { $kind } a des modifications non enregistrées. Les abandonner ?
+openrouter-provider-field = Fournisseur
+openrouter-provider-openai = Compatible OpenAI
 openrouter-provider-openrouter = OpenRouter
-openrouter-provider-hint = OpenRouter reads the account catalog and enforces the per-model price ceiling on every request. Other providers are plain OpenAI-compatible HTTP.
-openrouter-ceiling-required = Every selected model needs both price ceilings.
-openrouter-max-price = Max $/1M
+openrouter-provider-hint = OpenRouter lit le catalogue du compte et applique la limite de prix par modèle à chaque requête. Les autres fournisseurs sont du simple HTTP compatible OpenAI.
+openrouter-ceiling-required = Chaque modèle sélectionné a besoin des deux limites de prix.
+openrouter-max-price = Max. $/1M
 openrouter-voices = Voix

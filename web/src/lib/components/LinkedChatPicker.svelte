@@ -29,7 +29,7 @@
 	});
 </script>
 
-<fieldset class="fieldset w-full min-w-0">
+<fieldset class="w-full min-w-0">
 	<legend class="fieldset-legend">{t('linked-chat-label')}</legend>
 	<SearchableSelect {options} bind:value ariaLabel={t('linked-chat-label')} class="w-full" />
 	<p class="label whitespace-normal">{t('linked-chat-help')}</p>

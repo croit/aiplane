@@ -2,29 +2,36 @@
 
 An **upstream backend** is a model server or provider endpoint. A **pool** groups backends for a purpose such as chat, embeddings, reranking, transcription or OCR. The **model catalog** is the set of models and aliases exposed by that topology. Configure these before selecting models for chat, agents or optional features.
 
-You need a signed-in account with [administrator rights](access.md). Open **Administration → Models and routing** (`/admin/models`). Its tabs are **Upstreams**, **Catalog**, **Defaults** and **Automatic routing**. `/admin/upstreams` also opens the upstream manager.
+You need a signed-in account with [administrator rights](access.md). Open **Administration → Models and routing** (`/admin/models`), which opens on **Upstreams**. Its tabs are **Upstreams**, **OpenRouter**, **Catalog**, **Defaults**, **Fallbacks** and **Automatic routing**. `/admin/upstreams` also opens the upstream manager.
+
+The **Upstreams** tab is one board: each pool is a band, each backend a row inside it. A row's summary carries the state lamp, in-flight load against the configured maximum, requests in the last hour and the serving switch; open the row (the name is the disclosure) for a sentence describing its state, its endpoint, key source, advertised models, aliases and traffic history. A pool band whose configuration cannot work names the problem at the top of the band, and a backend that belongs to no pool appears in a trailing **Unassigned** band.
+
+The board's search narrows rows by backend name, endpoint, advertised model, alias or pool. The summary lamps double as filters: clicking **down** keeps only the failing rows, and a search plus a lamp stack to "the red rows serving qwen". **Clear** returns to the whole board, and a filter that matches nothing says so instead of showing an empty page. The summary counts each backend once, at its worst state across the pools it serves — the rows are per pool, so a backend in several pools appears in several bands but counts once.
+
 
 ## Add a backend and pool
 
-![An upstream pool card shows its kind, healthy backend and served models.](../img/guide/upstream-pool.png)
+![The upstream board: one band per pool, one row per backend with state, load and requests.](../img/guide/upstream-pool.png)
 
-1. In **Upstreams**, add a pool. Choose its name, kind and selection strategy. Set allowed groups to match the actual provider arrangement.
-2. Add a backend. Enter a unique name and its API base URL. Select the pool. Configure a stored API key or an environment-variable key source if required.
-3. Use the backend's connection test. Read which credential source was used, the HTTP result and the discovered models. A connection test does not save or apply the backend.
-4. Set the health path, request weight and maximum in-flight requests. Configure explicit models when the upstream cannot advertise them, and aliases when clients need stable model names.
-5. Save the editor. Inspect the pending changes banner, then **Apply** the topology changes.
-6. Confirm that the backend reports healthy and that its models appear in **Catalog**.
+1. In **Upstreams**, add a pool with **+ Pool**. Choose its name, kind and selection strategy. Set allowed groups to match the actual provider arrangement. Backend membership, explicit models, offline fallback and usage-limit enforcement are in the same editor, which also carries **Delete**.
+2. Add a backend with **+ Backend** at the top of the board, or with **+ Backend** on a pool band to pre-select that pool; an empty band offers the same button. Enter a unique name, its API base URL, its pool and the API key. That is the whole normal case; everything else sits under **Advanced settings**.
+3. Use **Test connection** before saving. Read which credential source was used, the HTTP result and the discovered models. A connection test does not save anything.
+4. Under **Advanced settings**, set the health path, request weight, maximum in-flight requests, an environment-variable key fallback, explicit models when the upstream cannot advertise them, aliases when clients need stable model names, extra headers and image-editing support.
+5. Save the editor. The topology applies to the running gateway immediately — there is no apply step, and the board confirms the save with a short **Saved — live now.** line.
+6. Confirm that the backend's row reports on time and that its models appear in **Catalog**. A drained or unreachable backend keeps its row and its known models, so the board still shows what is wrong.
 
-To use OpenRouter, set the backend's **Provider** to **OpenRouter**, enter one key and the base URL `https://openrouter.ai/api/v1`, and link that backend to each pool it should serve. The **OpenRouter** panel on `/admin/upstreams` lists the account's models for the selected pool kind. Select models with the checkboxes or **Select all**, filter and sort by price, then give each one an input and output ceiling in USD per 1M tokens and a provider strategy. A model with no provider under both ceilings is not offered. The selection is per pool; one OpenRouter backend can therefore serve chat, embeddings, speech, transcription, image, rerank and System One with different model lists. For a speech pool the voice menu follows the selection automatically: it is the union of the selected TTS models' `supported_voices`, so there is no voice list to maintain by hand. See [upstreams](../upstreams.md#openrouter).
+To use OpenRouter, choose **+ Add OpenRouter** on the board or open the **OpenRouter** tab, which offers the same action when no account is connected: enter one key and keep the base URL `https://openrouter.ai/api/v1`. The tab is the one place that manages the account. Its rows are the kinds the account serves; switch a kind on or off, and open a kind to select models with the checkboxes or **Select all**, filter and sort by price, then give each one an input and output ceiling in USD per 1M tokens and a provider strategy. A model with no provider under both ceilings is not offered. Open a model's row to see every provider that serves it — input, output and cache-read prices per 1M, context, throughput, latency and uptime — each marked against the ceilings in the row; **Use the cheapest** fills both ceilings from the cheapest provider, and **Compare on OpenRouter** opens the full public table. A selected model whose providers have not been read yet says **price not checked** instead of claiming it is over the ceiling; a cleared ceiling says **ceiling missing**. Each kind's selection is the model list of its own `openrouter-<kind>` pool, so one OpenRouter backend serves chat, embeddings, speech, transcription, image, rerank and System One with different lists; the pool's board band links to the tab instead of offering a pool editor. The key is replaced in the same tab, and unsaved selection changes are confirmed before a kind is disabled or the page is left. For a speech pool the voice menu follows the selection automatically: it is the union of the selected TTS models' `supported_voices`, so there is no voice list to maintain by hand. See [upstreams](../upstreams.md#openrouter).
 
-The saved topology and the running topology are distinct. Editing a URL, pool membership or capacity does not complete the operation until pending changes have been applied. Live status updates show health, authentication failures, in-flight requests and advertised models.
+The saved topology and the running topology are the same thing: every save and every delete reloads the running registry and re-arms the health probes in that request. Live status updates show health, authentication failures, in-flight requests and advertised models, and a status change from another administrator reaches every open board.
 
 ### Backend fields
+
+The editor keeps the connection fields in front — name, base URL, API key and pool — and the fields below under **Advanced settings**.
 
 | Field | Why configure it? |
 |---|---|
 | Base URL | Address of the upstream API, including its API prefix where required |
-| API key / environment variable | Authentication for that upstream; a stored key is not displayed back as plaintext — only a head/tail fingerprint where the key is long enough for one |
+| API key / environment variable | Authentication for that upstream; a stored key is not displayed back as plaintext — only a head/tail fingerprint where the key is long enough for one. Leave the field empty to keep the stored key, or tick **Remove the stored key** to delete it — the way to move a backend onto an environment variable or retire a leaked key |
 | Health path | Endpoint used to check availability; the new-backend form proposes `/models` |
 | Weight | Relative weighting used by strategies that consider weight |
 | Maximum in-flight | Concurrent requests admitted to this backend; the form proposes 16 |
@@ -36,7 +43,7 @@ The connection test distinguishes authentication failure, timeout, unreachable s
 
 ### Pool fields
 
-Choose the pool's purpose from the kinds offered by the server. The editor also configures backend membership, explicit pool models, allowed groups, offline fallback, and whether usage limits apply. A pool's classification level is an assignment in the database, see [data classification](settings.md#data-classification). Speech pools have language-to-voice mappings and an offered-voices list.
+Choose the pool's purpose from the kinds offered by the server. The editor configures backend membership, explicit pool models, allowed groups, offline fallback, and whether usage limits apply; **Delete** sits in its footer and removes only the pool — its backends stay and become unassigned. A pool's explicit model list accepts comma-separated names and can be pinned by clicking the chips of the models its own backends advertise. A pool's classification level is an assignment in the database, see [data classification](settings.md#data-classification). Speech pools have language-to-voice mappings and an offered-voices list.
 
 | Selection strategy | Behavior |
 |---|---|
@@ -52,9 +59,9 @@ Prefix affinity is useful for self-hosted replicas with separate prompt-prefix c
 
 A pool's **classification level** is the most sensitive data its models are cleared for; it is an operator declaration, and AIplane does not inspect contracts, verify data residency or certify compliance. A pool without a level is at the lowest level. Levels do not grant access; allowed groups govern pool access, together with [group permissions](access.md). Review an offline fallback's availability, level and user access before relying on it.
 
-Backend and pool names can be changed through their editors. Deletion removes the configured resource; inspect and apply the resulting topology change. Do not overwrite another resource's name without reviewing the editor's explicit overwrite warning.
+Backend and pool names can be changed through their editors. Deletion removes the configured resource and applies immediately; the pool editor and the backend editor each ask for confirmation. Do not overwrite another resource's name without reviewing the editor's explicit overwrite warning.
 
-Use a backend card's serving toggle to drain or re-enable it. The toggle changes admission immediately; inspect the live in-flight count when draining for maintenance. The upstream manager also has a fallback per pool kind for unknown-model requests. Changing that fallback is live immediately and is distinct from a pool's offline fallback or a feature's default model.
+Use a row's serving switch to drain or re-enable a backend. The switch changes admission immediately; inspect the row's in-flight count when draining for maintenance. The **Fallbacks** tab sets one substitute per pool kind for unknown-model requests. Changing that substitute is live immediately and is distinct from a pool's offline fallback or a feature's default model.
 
 ### Fallbacks and temporary outages
 
@@ -70,7 +77,7 @@ For a known model, AIplane skips unhealthy or drained backends and routes to a h
 
 ## Configure a model
 
-1. Open **Catalog**. Search by model name or use the chat, other, aliases or configured filter.
+1. Open **Catalog**. Search by model name or use the chat, other, aliases or configured filter. A model row's **served by** line names the pool and the backends carrying it right now and opens **Upstreams** filtered to that model; the board's model chips link the other way, into the catalog. A model nothing serves has no such line, which is what the **inactive** filter is for.
 2. Open the model editor (`/admin/models/edit`).
 3. Set input/output prices in the unit shown for that model kind. Configure prices before treating monetary usage totals as complete. With a per-token price, embedding and rerank calls are charged at the input price; when a backend reports only a total token count, those tokens count as input. A rerank backend that reports no token usage (Text Embeddings Inference) or reports search units instead (Cohere) records its calls with no tokens and no cost; see [reranking](../reference/api.md#reranking).
 4. Optionally set the **description**: the one-line subtext the chat picker shows under the model or alias. It is limited to 240 characters and is searchable in the picker.
@@ -116,7 +123,7 @@ The selector receives request content. Treat its provider as another processor o
 
 | Symptom | Check |
 |---|---|
-| Saved backend is not used | Pending changes and Apply |
+| Saved backend is not used | The row's state lamp, the pool band's problem strip, advertised models and pool kind |
 | Authentication badge/error | Test's credential source, stored key and process environment |
 | No models | Upstream model discovery, explicit model names, pool kind and health |
 | Model missing for a user | Pool allowed groups and token model restrictions |
@@ -130,4 +137,4 @@ When saving a backend fails, the error receives keyboard focus and scrolls into 
 
 ![A focused backend priority validation error, using synthetic demo data.](../img/guide/request-priority-error.png)
 
-The backend editor offers **Automatic**, **Gateway only**, and **Custom mapping**. Automatic requires reported active scheduling, supported policy and integer ordering; otherwise the editor reports that forwarding is unreported. Gateway only uses AIplane’s queue. Custom mapping specifies a top-level request parameter and ordered Low/Medium/High integer values, overriding detection. For vLLM enable `--scheduling-policy priority` and map `priority` to 1/0/-1. For SGLang enable `--enable-priority-scheduling` with `fcfs` or `lof`; its direction can be reported by `/server_info`. Save and **Apply**. Software detection alone does not enable forwarding. Unsupported backends keep the same three gateway priority levels. See [Request priority](../request-priority.md).
+The backend editor offers **Automatic**, **Gateway only**, and **Custom mapping**. Automatic requires reported active scheduling, supported policy and integer ordering; otherwise the editor reports that forwarding is unreported. Gateway only uses AIplane’s queue. Custom mapping specifies a top-level request parameter and ordered Low/Medium/High integer values, overriding detection. For vLLM enable `--scheduling-policy priority` and map `priority` to 1/0/-1. For SGLang enable `--enable-priority-scheduling` with `fcfs` or `lof`; its direction can be reported by `/server_info`. Save; the change applies to the running gateway immediately. Software detection alone does not enable forwarding. Unsupported backends keep the same three gateway priority levels. See [Request priority](../request-priority.md).

@@ -5,13 +5,23 @@ import {
 	activityCounts,
 	backendTestFailure,
 	backendAssignments,
+	boardGroups,
+	boardPoolMatches,
+	boardRowMatches,
+	cheapestEndpoint,
+	endpointFits,
+	applyStatusEvent,
+	liveForPool,
+	poolProblems,
 	parallelismMismatch,
 	completeAliasLine,
 	poolCoverage,
 	parseHeaders,
 	formatHeaders,
 	type Backend,
-	type Pool, naturalSort } from './upstreams.ts';
+	type Coverage,
+	type LiveBackend,
+	type Pool, type Topology, naturalSort } from './upstreams.ts';
 
 const backends: Backend[] = [
 	{
@@ -234,4 +244,205 @@ test('extra headers format back to the editor field', () => {
 		'anthropic-version: 2023-06-01\nx-trace-id: abc'
 	);
 	assert.equal(formatHeaders({}), '');
+});
+
+function liveView(overrides: Partial<LiveBackend> = {}): LiveBackend {
+	return {
+		detected_priority: null,
+		healthy: true,
+		enabled: true,
+		auth_failed: false,
+		inflight: 0,
+		max_inflight: 8,
+		models: ['model-a'],
+		pool: 'chat',
+		profile: 'generic',
+		detected_version: null,
+		detected_max_parallel: null,
+		detected_at: null,
+		...overrides
+	};
+}
+
+function backendWith(overrides: Partial<Backend> = {}): Backend {
+	return { ...backends[0], aliases: [], ...overrides };
+}
+
+test('the board groups backends by pool order and keeps an empty pool visible', () => {
+	const later: Pool = { ...pool, name: 'gpu', sort_order: -1, backends: [] };
+	const groups = boardGroups([pool, later], backends);
+	assert.deepEqual(groups.map((group) => group.pool?.name ?? null), ['gpu', 'chat', null]);
+	// A pool without members is still a topology row that needs editing.
+	assert.deepEqual(groups[0].backends, []);
+	assert.deepEqual(groups[1].backends.map((backend) => backend.name), ['gpu-0', 'gpu-1']);
+	// Backends no pool holds land in one trailing band.
+	assert.deepEqual(groups[2].backends.map((backend) => backend.name), ['orphan']);
+});
+
+test('a status event from another pool never overrides the view this pool has', () => {
+	const poolView: Pool = { ...pool, live_backends: { 'gpu-0': liveView({ inflight: 2 }) } };
+	const moved = backendWith({ live: liveView({ pool: 'other', inflight: 9 }) });
+	assert.equal(liveForPool(poolView, moved)?.inflight, 2);
+	// The pool's own view is used as-is.
+	assert.equal(liveForPool(pool, backends[0])?.inflight, 2);
+	// Without a per-pool view, the last status is better than an empty row.
+	assert.equal(liveForPool({ ...pool, live_backends: undefined }, moved)?.inflight, 9);
+});
+
+test('a healthy pool with full coverage and working aliases has nothing to report', () => {
+	const coverage: Coverage[] = [{ name: 'model-a', serving: 2, total: 2 }];
+	assert.deepEqual(poolProblems(pool, backends, coverage), []);
+});
+
+test('an empty pool says nothing can serve a request', () => {
+	assert.deepEqual(poolProblems({ ...pool, backends: [] }, backends, []), [
+		{ key: 'upstreams-problem-no-backends', params: {} }
+	]);
+});
+
+test('a pool whose every backend is drained is named as paused, not down', () => {
+	const drained = [backendWith({ name: 'gpu-0', live: liveView({ enabled: false }) })];
+	assert.deepEqual(poolProblems({ ...pool, backends: ['gpu-0'] }, drained, []).map((problem) => problem.key), [
+		'upstreams-problem-all-drained'
+	]);
+	const down = [backendWith({ name: 'gpu-0', live: liveView({ healthy: false }) })];
+	assert.deepEqual(poolProblems({ ...pool, backends: ['gpu-0'] }, down, []).map((problem) => problem.key), [
+		'upstreams-problem-all-down'
+	]);
+});
+
+test('a rejected key and an empty model list name the backends they affect', () => {
+	const rejected = [backendWith({ name: 'gpu-0', live: liveView({ auth_failed: true, models: [] }) })];
+	const problems = poolProblems({ ...pool, backends: ['gpu-0'] }, rejected, []);
+	assert.deepEqual(problems.find((problem) => problem.key === 'upstreams-problem-auth')?.params, {
+		backends: 'gpu-0'
+	});
+	assert.deepEqual(problems.find((problem) => problem.key === 'upstreams-problem-no-models')?.params, {
+		backends: 'gpu-0'
+	});
+});
+
+test('an OpenRouter account with no allowlist is unconfigured, not broken', () => {
+	const account = [
+		backendWith({ name: 'openrouter', provider: 'openrouter', live: liveView({ models: [] }) })
+	];
+	const problems = poolProblems({ ...pool, backends: ['openrouter'], models: [] }, account, []);
+	assert.deepEqual(problems.map((problem) => problem.key), []);
+});
+
+test('partial coverage, unserved allowlist entries and ghost members are reported', () => {
+	const coverage: Coverage[] = [
+		{ name: 'model-a', serving: 1, total: 2 },
+		{ name: 'model-b', serving: 0, total: 2 }
+	];
+	const problems = poolProblems({ ...pool, backends: ['gpu-0', 'gpu-1', 'ghost'] }, backends, coverage);
+	assert.deepEqual(problems.find((problem) => problem.key === 'upstreams-problem-partial-coverage')?.params, {
+		models: 'model-a (1/2)'
+	});
+	assert.deepEqual(problems.find((problem) => problem.key === 'upstreams-problem-unserved-allowlist')?.params, {
+		models: 'model-b'
+	});
+	assert.deepEqual(problems.find((problem) => problem.key === 'upstreams-problem-missing-backends')?.params, {
+		backends: 'ghost'
+	});
+});
+
+test('the board filter matches a row by name, endpoint, model or alias', () => {
+	const row = { backend: backends[0], live: backends[0].live };
+	assert.equal(boardRowMatches(row, ''), true, 'no query shows every row');
+	assert.equal(boardRowMatches(row, 'GPU'), true, 'name matching ignores case');
+	assert.equal(boardRowMatches(row, 'gpu-0/v1'), true, 'the endpoint is part of the row');
+	assert.equal(boardRowMatches(row, 'model-a'), true, 'an advertised model matches');
+	assert.equal(boardRowMatches(row, 'default'), true, 'an alias matches');
+	assert.equal(boardRowMatches(row, 'model-b'), false);
+});
+
+test('a pool name keeps its whole band, including an empty one', () => {
+	const rows = [{ backend: backends[0], live: backends[0].live }];
+	assert.equal(boardPoolMatches('chat', rows, 'cha'), true);
+	assert.equal(boardPoolMatches('chat', rows, 'model-a'), true, 'one matching row keeps the band');
+	assert.equal(boardPoolMatches('chat', rows, 'embedding'), false);
+	assert.equal(boardPoolMatches('chat', [], 'chat'), true, 'an empty pool is still findable by name');
+	assert.equal(boardPoolMatches('chat', [], 'anything'), false);
+});
+
+test('a provider fits only when both prices are under the ceiling', () => {
+	const endpoint = {
+		provider: 'DeepInfra',
+		prompt_price: 0.098,
+		completion_price: 0.294,
+		cache_read_price: 0.0029,
+		throughput_p50: 78,
+		latency_p50: 0.75,
+		uptime_30m: 100,
+		quantization: 'fp8',
+		context_length: 163000
+	};
+	assert.equal(endpointFits(endpoint, 0.1, 0.3), true);
+	assert.equal(endpointFits(endpoint, 0.098, 0.294), true, 'equality is inside the ceiling');
+	assert.equal(endpointFits(endpoint, 0.0979, 0.3), false, 'the input price is the limit');
+	assert.equal(endpointFits(endpoint, 0.1, 0.2939), false, 'the output price is the limit');
+});
+
+test('the cheapest provider wins on input price, then output', () => {
+	const provider = (name: string, prompt: number, completion: number) => ({
+		provider: name,
+		prompt_price: prompt,
+		completion_price: completion,
+		cache_read_price: null,
+		throughput_p50: null,
+		latency_p50: null,
+		uptime_30m: null,
+		quantization: null,
+		context_length: null
+	});
+	const endpoints = [provider('pricey', 0.2, 0.4), provider('cheap', 0.09, 0.5), provider('tie', 0.09, 0.3)];
+	assert.equal(cheapestEndpoint(endpoints)?.provider, 'tie');
+	assert.equal(cheapestEndpoint([]), null);
+});
+
+test('a status event updates only the pool band it names', () => {
+	const shared = backendWith({
+		name: 'shared',
+		live: { ...liveView({ models: ['m'] }), pool: 'chat' }
+	});
+	const embedLive = { ...liveView({ models: ['m'] }), pool: 'embed' };
+	const topology: Topology = {
+		pools: [
+			{ ...pool, name: 'chat', backends: ['shared'] },
+			{ ...pool, name: 'embed', kind: 'embedding', backends: ['shared'], live_backends: { shared: embedLive } }
+		],
+		backends: [shared],
+		fallbacks: {},
+		usage_last_hour: {},
+		pool_kinds: ['chat', 'embedding'],
+		pool_strategies: [],
+		groups: [],
+		fallback_kinds: []
+	};
+
+	const next = applyStatusEvent(topology, {
+		name: 'shared',
+		pool: 'embed',
+		healthy: false,
+		enabled: true,
+		auth_failed: false,
+		inflight: 3,
+		max_inflight: 8,
+		models: ['m'],
+		profile: 'generic',
+		detected_version: null,
+		detected_max_parallel: null,
+		detected_at: null,
+		detected_priority: null,
+		usage: [1, 2]
+	});
+
+	const chatBand = next.pools.find((candidate) => candidate.name === 'chat')!;
+	const embedBand = next.pools.find((candidate) => candidate.name === 'embed')!;
+	assert.equal(chatBand.live_backends, undefined, 'the untouched band keeps its payload');
+	assert.equal(liveForPool(chatBand, next.backends[0])?.healthy, true);
+	assert.equal(liveForPool(embedBand, next.backends[0])?.healthy, false, 'the named band takes the event');
+	assert.equal(liveForPool(embedBand, next.backends[0])?.inflight, 3);
+	assert.deepEqual(next.usage_last_hour.shared, [1, 2]);
 });

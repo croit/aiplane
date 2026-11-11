@@ -69,7 +69,7 @@ Walkthrough: expand **Access and approvals**, select actual `browse_page`, choos
 
 The UI explains that missing overrides use the tool rule and connector restrictions still apply. A batch asks once if any included action requires it and denies the batch if any is prohibited. Tool/connector identity stays visible using existing real connection metadata. Unknown/stale actions are shown as unavailable rather than dropped silently; saving requires correction/reload and never turns a removed denial into Allow. The server repeats availability and schema checks.
 
-Reuse the current native disclosure, select controls, loading/error states and daisyUI classes. All added strings go through six Fluent catalogues. The existing named MCP action rows remain unchanged; they do not gain empty nested action controls. Coordinator browser verification must include keyboard/mobile behavior and pending-rule revocation before the feature is reported complete.
+Reuse the current native disclosure, select controls, loading/error states and the app's component classes. All added strings go through six Fluent catalogues. The existing named MCP action rows remain unchanged; they do not gain empty nested action controls. Coordinator browser verification must include keyboard/mobile behavior and pending-rule revocation before the feature is reported complete.
 
 ## Implementation order and tests
 

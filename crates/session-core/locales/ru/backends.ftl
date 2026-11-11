@@ -1,13 +1,10 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
-
-
-backends-status-down = недоступен
+# The upstream board and the backend editor: the pool band's status word, the
+# editor's fields, and the connection-test outcomes.
 backends-status-up = активен
 
-backends-inflight-label = в обработке { $load }
 
 # Backend CRUD editor (add/edit/delete backends stored in the DB topology).
-backends-apply-changes = Применить изменения
 backends-field-name = Название
 backends-field-base-url = Базовый URL
 backends-field-pool = Пул
@@ -18,17 +15,19 @@ backends-pool-not-served = Не обслуживается
 backends-pool-new = Новый: openrouter-{ $kind }
 backends-save-backend = Сохранить бэкенд
 backends-delete-backend = Удалить
+backends-delete-confirm = Удалить бэкенд «{ $name }»? Остальные бэкенды пула сохранятся.
+backends-advanced = Дополнительные настройки
 
 backends-field-api-key = Ключ API
 backends-field-api-key-keep = оставьте пустым, чтобы сохранить текущий ключ
 backends-field-api-key-stored = Сохранённый ключ: { $hint }
+backends-field-api-key-clear = Удалить сохранённый ключ
 
 # An alias that is configured but would not route.
 # Save-time check on the aliases textarea.
 # Save-time check on the aliases textarea.
 # Two states that leave a backend green but unusable.
 # Maintenance switch.
-backends-status-drained = обслуживание
 
 # Строки бэкендов в SPA: переключатель обслуживания, нагрузка за час и удаление.
 backends-add-heading = Добавить бэкенд
@@ -44,18 +43,15 @@ backends-field-aliases = Алиасы (name=target по одному в стро
 backends-field-extra-headers = Дополнительные заголовки (имя: значение на строку)
 backends-field-extra-headers-hint = Отправляется с каждым запросом к этому бэкенду, после API-ключа. Например anthropic-version: 2023-06-01, который требует Anthropic.
 backends-field-supports-edit = Поддерживает редактирование изображений
-backends-status-saturated = перегружен
-backends-auth-failed-title = Upstream отклонил учётные данные health-пробы (401/403), поэтому обнаружение моделей отключено — через этот бэкенд не станет доступно ничего нового. Проверьте ключ API; если он берётся из переменной окружения, проверьте, что она задана.
-backends-auth-failed = ключ отклонён
 backends-no-models-title = Этот бэкенд не объявляет ни одной модели, поэтому на него ничего не маршрутизируется, а голому псевдониму не к чему привязаться. Обычно это проба, которая ни разу не вернула данные.
-backends-no-models = модели не заявлены
+backends-no-models = нет моделей
 backends-key-env-badge = ключ: env { $var }
 backends-key-env-unset-badge = env { $var } НЕ ЗАДАНА
-backends-enabled-hint = Выключите, чтобы вывести бэкенд на обслуживание. Действует сразу — «Применить изменения» не нужно. Его модели остаются известными, поэтому нагрузку берут другие бэкенды пула, а клиенты видят временную недоступность, а не «модель не найдена».
-backends-enabled-label = Принимает трафик
+backends-enabled-hint = Выключите, чтобы вывести бэкенд на обслуживание. Действует сразу. Его модели остаются известными, поэтому нагрузку берут другие бэкенды пула, а клиенты видят временную недоступность, а не «модель не найдена».
+backends-enabled-label = Принимает трафик ({ $name })
 backends-activity-summary = 15м { $m15 } · 30м { $m30 } · 60м { $m60 }
-backends-aliases-label = алиасы:
 backends-alias-target-title = алиас → { $target }
+backends-alias-missing-title = алиас → { $target } — этот бэкенд не сообщает такую модель
 backends-alias-disabled-title = простой алиас отключён — этот бэкенд обслуживает несколько моделей; укажите явную цель (форма сопоставления)
 backends-alias-disabled-label = { $name } (отключён)
 backends-fallback-offline-title = fallback_offline: используется, когда все бэкенды известной модели в этом пуле недоступны
@@ -85,35 +81,59 @@ backends-detect-profile = определено: { $profile }
 # OpenRouter catalog: one backend, one key, the account's models, and a
 # purchase-price ceiling per selected model.
 openrouter-heading = OpenRouter
-openrouter-description = One OpenRouter connection. Pick the models this gateway may use and the maximum you will pay for each; a model with no provider under its ceiling is not offered.
-openrouter-connected = Connected
-openrouter-key-label = Key
-openrouter-credits = Credits
-openrouter-refresh = Refresh prices
-openrouter-backend = Backend
-openrouter-search = Search models
-openrouter-select-all = Select all
-openrouter-deselect-all = Deselect all
-openrouter-selected-count = { $count } selected
-openrouter-model = Model
-openrouter-price = List price
-openrouter-context = Context
-openrouter-ceiling-prompt = Max input $/1M
-openrouter-ceiling-completion = Max output $/1M
-openrouter-strategy = Provider strategy
-openrouter-strategy-cheapest = Cheapest
-openrouter-strategy-fastest = Fastest
-openrouter-strategy-balanced = Balanced
-openrouter-min-throughput = Min tokens/s
-openrouter-available = Available
-openrouter-over-ceiling = Over ceiling
-openrouter-save = Save selection
-openrouter-saved = Selection saved.
-openrouter-no-models = No models match this filter.
+openrouter-description = Одно подключение OpenRouter. Выберите модели, которые шлюз может использовать, и максимальную цену для каждой; модель без провайдера в пределах лимита не предлагается.
+openrouter-connected = Подключено
+openrouter-key-label = Ключ
+openrouter-credits = Баланс
+openrouter-refresh = Обновить цены
+openrouter-backend = Бэкенд
+openrouter-search = Поиск моделей
+openrouter-select-all = Выбрать все
+openrouter-deselect-all = Снять все
+openrouter-selected-count = Выбрано: { $count }
+openrouter-model = Модель
+openrouter-price = Цена по каталогу
+openrouter-context = Контекст
+openrouter-ceiling-prompt = Макс. вход $/1M
+openrouter-ceiling-completion = Макс. выход $/1M
+openrouter-strategy = Стратегия провайдера
+openrouter-strategy-cheapest = Самая дешёвая
+openrouter-strategy-fastest = Самая быстрая
+openrouter-strategy-balanced = Сбалансированная
+openrouter-min-throughput = Мин. токенов/с
+openrouter-over-ceiling = Дороже лимита
+openrouter-save = Сохранить выбор
+openrouter-saved = Выбор сохранён.
+openrouter-no-models = Ни одна модель не подходит под этот фильтр.
 openrouter-error = OpenRouter: { $message }
-openrouter-select-model-first = Select at least one model.
-openrouter-endpoints = Providers
-openrouter-provider = Provider
+openrouter-select-model-first = Выберите хотя бы одну модель.
+openrouter-endpoints = Провайдеры
+openrouter-provider-input = Вход $/1M
+openrouter-provider-output = Выход $/1M
+openrouter-provider-cache-read = Чтение кэша
+openrouter-provider-throughput = tok/s
+openrouter-provider-latency = Задержка
+openrouter-provider-uptime = Доступность
+openrouter-provider-limit = Твой лимит
+openrouter-ceiling-missing = лимит не задан
+openrouter-usage = Расход
+openrouter-aria-input-ceiling = { $model } лимит на вход
+openrouter-aria-output-ceiling = { $model } лимит на выход
+openrouter-aria-strategy = { $model } стратегия провайдера
+openrouter-aria-min-throughput = { $model } минимальная пропускная способность
+openrouter-cheapest-provider = Дешевле всех
+openrouter-provider-fits = подходит
+openrouter-provider-excluded = дороже
+openrouter-providers-fit = { $fit } из { $total } провайдеров в пределах лимита
+openrouter-providers-fit-short = { $fit } из { $total } подходят
+openrouter-price-unknown = цена не проверена
+openrouter-price-unknown-hint = Цены провайдеров для этой модели ещё не загружены — открой строку, чтобы увидеть их.
+openrouter-cheapest = Дешевле всех: { $provider } — { $prompt } / { $completion } за 1M
+openrouter-use-cheapest = Взять самый дешёвый
+openrouter-compare = Сравнить на OpenRouter
+openrouter-provider-error = Не удалось загрузить провайдеров: { $message }
+openrouter-provider-none = OpenRouter не сообщает провайдеров для этой модели.
+openrouter-provider = Провайдер
 openrouter-add-heading = Добавить OpenRouter
 openrouter-add-description = Один ключ — всё настроено: бэкенд плюс пул для каждого типа моделей (chat, transcription, speech, system_one, embedding, image, rerank), с именем openrouter-<тип>. Существующие пулы с таким именем добавляются. Выбор моделей и ценовые потолки — в панели OpenRouter.
 openrouter-add-save = Добавить OpenRouter
@@ -126,10 +146,12 @@ openrouter-key-placeholder = Новый API-ключ
 openrouter-key-save = Сохранить ключ
 openrouter-key-saved = Ключ обновлён
 openrouter-sort = Сортировка
-openrouter-provider-field = Provider
-openrouter-provider-openai = OpenAI-compatible
+openrouter-save-changed = Сохранить выбор · изменено: { $count }
+openrouter-dirty-confirm = У «{ $kind }» есть несохранённые изменения. Отменить?
+openrouter-provider-field = Провайдер
+openrouter-provider-openai = Совместимый с OpenAI
 openrouter-provider-openrouter = OpenRouter
-openrouter-provider-hint = OpenRouter reads the account catalog and enforces the per-model price ceiling on every request. Other providers are plain OpenAI-compatible HTTP.
-openrouter-ceiling-required = Every selected model needs both price ceilings.
-openrouter-max-price = Max $/1M
+openrouter-provider-hint = OpenRouter читает каталог аккаунта и применяет лимит цены для каждой модели при каждом запросе. Остальные провайдеры — обычный HTTP, совместимый с OpenAI.
+openrouter-ceiling-required = Для каждой выбранной модели нужны оба лимита цены.
+openrouter-max-price = Макс. $/1M
 openrouter-voices = Голоса

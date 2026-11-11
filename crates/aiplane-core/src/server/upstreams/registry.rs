@@ -960,37 +960,6 @@ fn in_scope(pools: &Option<HashSet<String>>, pool: &Pool) -> bool {
     pools.as_ref().is_none_or(|p| p.contains(&pool.name))
 }
 
-/// What the running registry is serving right now — the "before" side of the
-/// apply diff. See [`UpstreamRegistry::live_topology`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LiveTopology {
-    /// Sorted by pool name.
-    pub pools: Vec<LivePool>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LivePool {
-    pub name: String,
-    pub kind: PoolKind,
-    pub strategy: PickerStrategy,
-    /// Sorted by backend name.
-    pub backends: Vec<LiveBackend>,
-}
-
-/// The backend fields worth diffing: the ones a reload actually changes about
-/// how requests are dispatched. Secrets are deliberately absent — a diff must
-/// never be a place a key can leak, and "the key changed" is not something an
-/// operator needs spelled out.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LiveBackend {
-    pub priority: crate::server::priority::BackendPriority,
-    pub name: String,
-    pub base_url: String,
-    pub weight: u32,
-    pub max_inflight: u32,
-    pub health_path: String,
-}
-
 /// Minimum share of a prompt's blocks that must match before cache locality
 /// outranks load — SGLang's `cache_threshold`, same default.
 ///
@@ -1702,29 +1671,37 @@ impl UpstreamRegistry {
         // and trust `tool_choice` on a server that ignores it. An edited
         // base_url drops both, which is correct: it may be a different server.
         let old = self.data();
-        let mut prior: HashMap<(&str, &str), (HashSet<String>, Detected)> = HashMap::new();
+        let mut prior: HashMap<(&str, &str), (HashSet<String>, Detected, bool)> = HashMap::new();
         for pool in old.pools.values() {
             for b in &pool.backends {
                 let live = b.live_models();
                 let detected = b.detected();
                 let entry = prior
                     .entry((b.name.as_str(), b.base_url.as_str()))
-                    .or_insert_with(|| (HashSet::new(), Detected::default()));
+                    .or_insert_with(|| (HashSet::new(), Detected::default(), b.is_healthy()));
                 if b.discovers_models() && !live.is_empty() {
                     entry.0 = live;
                 }
                 if detected != Detected::default() {
                     entry.1 = detected;
                 }
+                // Health is probed state, not configuration. The freshly built
+                // backend starts `healthy` (the field's initial value), so
+                // without this carry-over a backend that was down came back as
+                // routable for the whole first probe round after every save.
+                entry.2 = b.is_healthy();
             }
         }
         for pool in data.pools.values() {
             for b in &pool.backends {
-                if let Some((live, detected)) = prior.get(&(b.name.as_str(), b.base_url.as_str())) {
+                if let Some((live, detected, healthy)) =
+                    prior.get(&(b.name.as_str(), b.base_url.as_str()))
+                {
                     if b.discovers_models() && !live.is_empty() {
                         b.set_models(live.clone());
                     }
                     b.set_detected(detected);
+                    b.set_healthy(*healthy);
                 }
             }
         }
@@ -1738,44 +1715,6 @@ impl UpstreamRegistry {
         self.generation.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
-
-    /// A comparable summary of what the registry is *currently serving*, for
-    /// diffing against the edited DB topology.
-    ///
-    /// Deliberately a plain data snapshot rather than a diff method: the DB side
-    /// lives in `db::upstreams_config` and the web layer owns the wording, so
-    /// the registry's job is only to say what it has.
-    pub fn live_topology(&self) -> LiveTopology {
-        let d = self.data();
-        let mut pools: Vec<LivePool> = d
-            .pools
-            .values()
-            .map(|p| {
-                let mut backends: Vec<LiveBackend> = p
-                    .backends
-                    .iter()
-                    .map(|b| LiveBackend {
-                        priority: b.priority.clone(),
-                        name: b.name.clone(),
-                        base_url: b.base_url.clone(),
-                        weight: b.weight,
-                        max_inflight: b.max_inflight,
-                        health_path: b.health_path.clone(),
-                    })
-                    .collect();
-                backends.sort_by(|a, b| a.name.cmp(&b.name));
-                LivePool {
-                    name: p.name.clone(),
-                    kind: p.kind,
-                    strategy: p.strategy,
-                    backends,
-                }
-            })
-            .collect();
-        pools.sort_by(|a, b| a.name.cmp(&b.name));
-        LiveTopology { pools }
-    }
-
     /// For one pool: every name it currently advertises to clients, each with
     /// how many of the pool's backends can actually serve it and how many exist.
     ///
@@ -1811,6 +1750,36 @@ impl UpstreamRegistry {
                 (name, serving, total)
             })
             .collect()
+    }
+
+    /// The pools of `kind` that currently route `model`, each with the names of
+    /// the backends in it that can serve the model right now.
+    ///
+    /// The catalog's answer to "who carries this model". Availability is part
+    /// of the answer, exactly like [`Self::pool_model_coverage`]: a drained or
+    /// unhealthy backend is not where an operator should look when a model
+    /// misbehaves. Sorted by pool name then backend name; empty when nothing
+    /// serves the model, which is the state of a leftover override.
+    pub fn serving_pools(&self, model: &str, kind: PoolKind) -> Vec<(String, Vec<String>)> {
+        let d = self.data();
+        let mut out: Vec<(String, Vec<String>)> = d
+            .pools
+            .values()
+            .filter(|pool| pool.kind == kind)
+            .filter_map(|pool| {
+                let mut backends: Vec<String> = pool
+                    .backends
+                    .iter()
+                    .filter(|b| b.is_available() && b.serves_model(model))
+                    .map(|b| b.name.clone())
+                    .collect();
+                backends.sort();
+                backends.dedup();
+                (!backends.is_empty()).then(|| (pool.name.clone(), backends))
+            })
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
     }
 
     /// Flip one backend's maintenance switch on the **running** registry, by
@@ -4711,6 +4680,72 @@ mod tests {
         assert_eq!(map.len(), 3);
     }
 
+    /// The catalog's "served by" line: pool → the backends that can serve the
+    /// model *right now*, of the asked kind only, sorted for a stable render.
+    #[test]
+    fn serving_pools_names_the_pools_and_available_backends() {
+        let reg = build(vec![
+            (
+                "local",
+                pool_config(
+                    PoolKind::Chat,
+                    PickerStrategy::RoundRobin,
+                    vec![backend("c", 16)],
+                ),
+            ),
+            (
+                "cloud",
+                pool_config(
+                    PoolKind::Chat,
+                    PickerStrategy::RoundRobin,
+                    vec![backend("a", 16), backend("b", 16)],
+                ),
+            ),
+            (
+                "embed",
+                pool_config(
+                    PoolKind::Embedding,
+                    PickerStrategy::RoundRobin,
+                    vec![backend("e", 16)],
+                ),
+            ),
+        ]);
+        seed_models(&reg, "local", 0, &["m"]);
+        seed_models(&reg, "cloud", 0, &["m"]);
+        seed_models(&reg, "cloud", 1, &["m"]);
+        seed_models(&reg, "embed", 0, &["m"]);
+
+        assert_eq!(
+            reg.serving_pools("m", PoolKind::Chat),
+            vec![
+                ("cloud".to_string(), vec!["a".to_string(), "b".to_string()]),
+                ("local".to_string(), vec!["c".to_string()]),
+            ],
+            "both chat pools sorted by name; the embedding pool has no say here"
+        );
+
+        // Availability is part of the answer: a drained backend is not where
+        // the operator should look. The pool stays while a sibling serves.
+        set_health(&reg, "cloud", 0, false);
+        assert_eq!(
+            reg.serving_pools("m", PoolKind::Chat),
+            vec![
+                ("cloud".to_string(), vec!["b".to_string()]),
+                ("local".to_string(), vec!["c".to_string()]),
+            ]
+        );
+
+        // No backend left in the pool → the pool leaves the answer entirely.
+        set_health(&reg, "cloud", 1, false);
+        assert_eq!(
+            reg.serving_pools("m", PoolKind::Chat),
+            vec![("local".to_string(), vec!["c".to_string()])]
+        );
+
+        // A model nothing serves has no provenance — a leftover override.
+        assert!(reg.serving_pools("gone", PoolKind::Chat).is_empty());
+    }
+
     #[test]
     fn a_pool_level_attaches_to_its_models_and_defaults_to_the_lowest() {
         let reg = build(vec![
@@ -5670,6 +5705,15 @@ mod tests {
             "a static System One model must not depend on the chat probe"
         );
 
+        // A probe proved the backend down. The freshly built backend starts
+        // `healthy`, so a reload that dropped this would route to a dead
+        // upstream for the next probe round after every save.
+        for pool in reg.pools() {
+            for backend in &pool.backends {
+                backend.set_healthy(false);
+            }
+        }
+
         // Reload the same topology: the rebuilt backend starts with an empty
         // live set, but the carry-over must keep "live-model" routable.
         reg.reload(&mk_snap(), &crate::server::crypto::Crypto::ephemeral())
@@ -5679,6 +5723,14 @@ mod tests {
             reg.knows_model("live-model", PoolKind::Chat),
             "reload must carry over the live model set for an unchanged backend"
         );
+        for pool in reg.pools() {
+            for backend in &pool.backends {
+                assert!(
+                    !backend.is_healthy(),
+                    "reload must carry over the probed-down state for an unchanged backend"
+                );
+            }
+        }
         assert!(
             reg.knows_model("typesafe/jev-1.13", PoolKind::SystemOne),
             "reloading must not copy a chat catalog over a static System One model list"

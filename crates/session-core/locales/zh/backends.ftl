@@ -1,13 +1,10 @@
 # STATUS: llm-generated, unreviewed — pending native-speaker QA
-
-
-backends-status-down = 离线
+# The upstream board and the backend editor: the pool band's status word, the
+# editor's fields, and the connection-test outcomes.
 backends-status-up = 正常
 
-backends-inflight-label = 处理中 { $load }
 
 # Backend CRUD editor (add/edit/delete backends stored in the DB topology).
-backends-apply-changes = 应用更改
 backends-field-name = 名称
 backends-field-base-url = 基础 URL
 backends-field-pool = 池
@@ -18,17 +15,19 @@ backends-pool-not-served = 不提供
 backends-pool-new = 新建：openrouter-{ $kind }
 backends-save-backend = 保存后端
 backends-delete-backend = 删除
+backends-delete-confirm = 删除后端“{ $name }”？其资源池会保留其余后端。
+backends-advanced = 高级设置
 
 backends-field-api-key = API 密钥
 backends-field-api-key-keep = 留空以保留当前密钥
 backends-field-api-key-stored = 已存储密钥：{ $hint }
+backends-field-api-key-clear = 删除已保存的密钥
 
 # An alias that is configured but would not route.
 # Save-time check on the aliases textarea.
 # Save-time check on the aliases textarea.
 # Two states that leave a backend green but unusable.
 # Maintenance switch.
-backends-status-drained = 维护中
 
 # SPA 后端行：分流开关、每小时负载与删除确认。
 backends-add-heading = 添加后端
@@ -44,18 +43,15 @@ backends-field-aliases = 别名（每行 name=target）
 backends-field-extra-headers = 额外请求头（每行 name: value）
 backends-field-extra-headers-hint = 附加到发往该后端的每个请求，在 API 密钥之后。例如 Anthropic 要求的 anthropic-version: 2023-06-01。
 backends-field-supports-edit = 支持图像编辑
-backends-status-saturated = 已饱和
-backends-auth-failed-title = 上游拒绝了健康探测的凭据（401/403），因此模型发现已关闭——不会有新模型通过该后端变为可路由。请检查 API 密钥；若使用环境变量，请确认该变量确实已设置。
-backends-auth-failed = 密钥被拒绝
 backends-no-models-title = 该后端未公布任何模型，因此不会有请求路由到它，裸别名也无从绑定。通常是探测始终未返回数据。
-backends-no-models = 未提供任何模型
+backends-no-models = 无模型
 backends-key-env-badge = 密钥：环境变量 { $var }
 backends-key-env-unset-badge = 环境变量 { $var } 未设置
-backends-enabled-hint = 关闭以将该后端排空进行维护。立即生效，无需“应用更改”。其模型仍为已知，因此池中其他后端会接管，客户端只会看到临时不可用，而不是“找不到模型”。
-backends-enabled-label = 接收流量
+backends-enabled-hint = 关闭以将该后端排空进行维护。立即生效。其模型仍为已知，因此池中其他后端会接管，客户端只会看到临时不可用，而不是“找不到模型”。
+backends-enabled-label = 接收流量（{ $name }）
 backends-activity-summary = 15分钟 { $m15 } · 30分钟 { $m30 } · 60分钟 { $m60 }
-backends-aliases-label = 别名：
 backends-alias-target-title = 别名 → { $target }
+backends-alias-missing-title = 别名 → { $target } — 此后端未上报该模型
 backends-alias-disabled-title = 裸别名已禁用 — 此后端提供多个模型，请为其指定明确的目标（映射表单）
 backends-alias-disabled-label = { $name }（已禁用）
 backends-fallback-offline-title = fallback_offline：当此池中某已知模型的所有后端都离线时使用
@@ -85,35 +81,59 @@ backends-detect-profile = 已识别：{ $profile }
 # OpenRouter catalog: one backend, one key, the account's models, and a
 # purchase-price ceiling per selected model.
 openrouter-heading = OpenRouter
-openrouter-description = One OpenRouter connection. Pick the models this gateway may use and the maximum you will pay for each; a model with no provider under its ceiling is not offered.
-openrouter-connected = Connected
-openrouter-key-label = Key
-openrouter-credits = Credits
-openrouter-refresh = Refresh prices
-openrouter-backend = Backend
-openrouter-search = Search models
-openrouter-select-all = Select all
-openrouter-deselect-all = Deselect all
-openrouter-selected-count = { $count } selected
-openrouter-model = Model
-openrouter-price = List price
-openrouter-context = Context
-openrouter-ceiling-prompt = Max input $/1M
-openrouter-ceiling-completion = Max output $/1M
-openrouter-strategy = Provider strategy
-openrouter-strategy-cheapest = Cheapest
-openrouter-strategy-fastest = Fastest
-openrouter-strategy-balanced = Balanced
-openrouter-min-throughput = Min tokens/s
-openrouter-available = Available
-openrouter-over-ceiling = Over ceiling
-openrouter-save = Save selection
-openrouter-saved = Selection saved.
-openrouter-no-models = No models match this filter.
+openrouter-description = 一个 OpenRouter 连接。选择此网关可使用的模型及每个模型的最高价格；没有提供商低于其上限的模型不会提供。
+openrouter-connected = 已连接
+openrouter-key-label = 密钥
+openrouter-credits = 额度
+openrouter-refresh = 刷新价格
+openrouter-backend = 后端
+openrouter-search = 搜索模型
+openrouter-select-all = 全选
+openrouter-deselect-all = 取消全选
+openrouter-selected-count = 已选 { $count } 个
+openrouter-model = 模型
+openrouter-price = 标价
+openrouter-context = 上下文
+openrouter-ceiling-prompt = 输入上限 $/1M
+openrouter-ceiling-completion = 输出上限 $/1M
+openrouter-strategy = 提供商策略
+openrouter-strategy-cheapest = 最便宜
+openrouter-strategy-fastest = 最快
+openrouter-strategy-balanced = 均衡
+openrouter-min-throughput = 最低 tokens/s
+openrouter-over-ceiling = 超出上限
+openrouter-save = 保存选择
+openrouter-saved = 选择已保存。
+openrouter-no-models = 没有模型匹配此筛选条件。
 openrouter-error = OpenRouter: { $message }
-openrouter-select-model-first = Select at least one model.
-openrouter-endpoints = Providers
-openrouter-provider = Provider
+openrouter-select-model-first = 请至少选择一个模型。
+openrouter-endpoints = 提供商
+openrouter-provider-input = 输入 $/1M
+openrouter-provider-output = 输出 $/1M
+openrouter-provider-cache-read = 缓存读取
+openrouter-provider-throughput = tok/s
+openrouter-provider-latency = 延迟
+openrouter-provider-uptime = 可用性
+openrouter-provider-limit = 你的上限
+openrouter-ceiling-missing = 未设置上限
+openrouter-usage = 用量
+openrouter-aria-input-ceiling = { $model } 输入上限
+openrouter-aria-output-ceiling = { $model } 输出上限
+openrouter-aria-strategy = { $model } 提供商策略
+openrouter-aria-min-throughput = { $model } 最低吞吐量
+openrouter-cheapest-provider = 最低价
+openrouter-provider-fits = 符合
+openrouter-provider-excluded = 超出
+openrouter-providers-fit = 你的上限内有 { $fit } / { $total } 家提供商
+openrouter-providers-fit-short = { $fit } / { $total } 符合
+openrouter-price-unknown = 价格未检查
+openrouter-price-unknown-hint = 此模型的提供商价格尚未读取——展开该行即可查看。
+openrouter-cheapest = 最低价：{ $provider }，{ $prompt } / { $completion } 每 1M
+openrouter-use-cheapest = 采用最低价
+openrouter-compare = 在 OpenRouter 上比较
+openrouter-provider-error = 无法读取提供商：{ $message }
+openrouter-provider-none = OpenRouter 未报告此模型的提供商。
+openrouter-provider = 提供商
 openrouter-add-heading = 添加 OpenRouter
 openrouter-add-description = 一个密钥，全部配置完成：后端加上每个模型类型的资源池（chat、transcription、speech、system_one、embedding、image、rerank），命名为 openrouter-<类型>。已存在同名的池将被加入。模型选择与价格上限在 OpenRouter 面板中完成。
 openrouter-add-save = 添加 OpenRouter
@@ -126,10 +146,12 @@ openrouter-key-placeholder = 新的 API 密钥
 openrouter-key-save = 保存密钥
 openrouter-key-saved = 密钥已更新
 openrouter-sort = 排序
-openrouter-provider-field = Provider
-openrouter-provider-openai = OpenAI-compatible
+openrouter-save-changed = 保存选择 · { $count } 项已更改
+openrouter-dirty-confirm = { $kind} 有未保存的更改。放弃？
+openrouter-provider-field = 提供商
+openrouter-provider-openai = OpenAI 兼容
 openrouter-provider-openrouter = OpenRouter
-openrouter-provider-hint = OpenRouter reads the account catalog and enforces the per-model price ceiling on every request. Other providers are plain OpenAI-compatible HTTP.
-openrouter-ceiling-required = Every selected model needs both price ceilings.
-openrouter-max-price = Max $/1M
+openrouter-provider-hint = OpenRouter 读取账户目录，并在每次请求时执行每个模型的价格上限。其他提供商是普通的 OpenAI 兼容 HTTP。
+openrouter-ceiling-required = 每个已选模型都需要两个价格上限。
+openrouter-max-price = 最高 $/1M
 openrouter-voices = 声音

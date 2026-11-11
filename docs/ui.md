@@ -1,6 +1,6 @@
 # Web UI
 
-The UI is a **SvelteKit SPA** (Svelte 5 runes, `adapter-static`) that lives in `web/`, is compiled ahead of time by Vite into plain static files, and is served **from the root `/`** by the Rust binary. It talks to AIplane exclusively over the session-authenticated JSON API at `/api/v0/*`, and streams chat over a JSON-SSE event protocol. Styling is [daisyUI v5](https://daisyui.com/) on Tailwind v4.
+The UI is a **SvelteKit SPA** (Svelte 5 runes, `adapter-static`) that lives in `web/`, is compiled ahead of time by Vite into plain static files, and is served **from the root `/`** by the Rust binary. It talks to AIplane exclusively over the session-authenticated JSON API at `/api/v0/*`, and streams chat over a JSON-SSE event protocol. Styling is Tailwind v4 on the croit-identity token layer in `web/src/app.css`.
 
 There is **no Node at runtime**: still one container, one process, one port. The container image contains the gateway binary plus the built `build/` directory; `AIPLANE_STATIC_DIR` points the binary at it.
 
@@ -14,7 +14,7 @@ The whole stack:
 | API contract | OpenAPI 3.1, generated from the router and the handlers' wire types | `GET /openapi.json` (`crates/aiplane/src/rama_server/openapi/`) |
 | API client | one `fetch` helper + hand-declared shapes | `web/src/lib/api.ts` |
 | Chat streaming | JSON events over SSE | `crates/session-core/src/chat_json.rs` ↔ `web/src/lib/chat-protocol.ts` |
-| Styling | Tailwind v4 + daisyUI v5 | `web/src/app.css` |
+| Styling | Tailwind v4 + token layer (`app.css`) | `web/src/app.css` |
 | Markdown rendering | `marked` + `dompurify`, client-side | `web/src/lib/markdown.ts` |
 
 ## How it is served
@@ -44,7 +44,7 @@ web/
 ├── package.json          SPA build toolchain (see docs/dependencies.md)
 ├── src/
 │   ├── app.html          the shell: manifest link, icons, pre-paint theme script
-│   ├── app.css           Tailwind entry + the two daisyUI theme blocks
+│   ├── app.css           Tailwind entry + the two theme token blocks + the component classes
 │   ├── lib/
 │   │   ├── api.ts             the fetch helper + typed wrappers + ApiError
 │   │   ├── admin-client.ts    same transport for the admin surfaces
@@ -363,7 +363,10 @@ label; the reusable `SourceLink` component renders that metadata in both places.
 
 The model administration read model lives at `GET /api/v0/admin/models`; model
 override writes use `PUT /api/v0/admin/models` and
-`DELETE /api/v0/admin/models/{name}`. Feature defaults and web-search settings
+`DELETE /api/v0/admin/models/{name}`. Each catalog row carries `served_by` — the
+pools routing that name and the backends available for it right now — which is
+what the row's provenance line and its link to the upstream board are built
+from. Feature defaults and web-search settings
 are independent resources at `PUT /api/v0/admin/model-defaults` and
 `PUT /api/v0/admin/search-settings`. Keep those mutation paths at the top level
 of the admin namespace: rama treats sibling parameterized route shapes as one
@@ -774,7 +777,7 @@ are in `web/src/lib/components/agents/`.
     (sub-agent, `human`, or any other kind key such as `a2a` or `loop`, drawn
     generically by that key); rows follow route order. The main agent node also lists the spec's `verifiers` as badges (id and kind, any kind). It is not a free-form
     graph: nodes cannot be moved or wired, and nothing is stored but the spec.
-    Nodes are HTML buttons (daisyUI `card`, `badge`) over an inline SVG of
+    Nodes are HTML buttons (`card`, `badge`) over an inline SVG of
     edges, laid out by `layoutCanvas` with fixed sizes, so the same spec always
     draws the same way. The canvas scrolls horizontally inside its own box.
     - *Editing.* Selecting a node opens a side panel (below the canvas on
@@ -831,14 +834,14 @@ are in `web/src/lib/components/agents/`.
     priced), a per-day bar chart with a metric switch, and breakdown tables
     (routes chosen, closed gates by route and missing slot, why sub-agent runs
     did not finish, output-filter actions, limit refusals by kind). The chart
-    is a plain inline SVG (`fill-primary`, daisyUI tokens): no chart library.
+    is a plain inline SVG (`fill-primary`, theme tokens): no chart library.
     Its pure half, `web/src/lib/agent-analytics.ts`, is unit-tested. Route,
     slot and reason names are shown as the identifiers they are.
   - *Activity*: the agent's activity log (`GET /api/v0/agents/{id}/activity`,
     see [`agent-activity-log.md`](agent-activity-log.md)). `ActivityPanel` lists every
     conversation's events newest first, or one conversation oldest first,
     grouped by turn (a sub-agent's run is its own group, badged
-    *sub-agent*); each event is a daisyUI `collapse` whose title is the kind
+    *sub-agent*); each event is a `collapse` whose title is the kind
     (an identifier, shown as `code`), time, round, duration and a one-line
     summary, and whose body is the full detail as JSON — a model exchange's
     whole request and answer, a tool call's arguments and result. Filters:
@@ -919,7 +922,7 @@ are in `web/src/lib/components/agents/`.
   `secure_input` too. A hand-off to a person (`human_answer`) shows its
   context as the inbox would (the debug view's `handoff`), and a line saying
   that in a live conversation it lands in the Inbox of the agent's managers
-  and responders. The card sits in the bubble's column of the daisyUI `chat`
+  and responders. The card sits in the bubble's column of the `chat`
   grid (`col-start-2`).
 - **`StreamedChat`** (`components/chat/`) is the compact conversation the
   test chat and the [agent architect](#agent-architect) share: the turns of a
@@ -1197,7 +1200,7 @@ agent builder's test chat and a person's own chat. Its pure half is
 - **Destinations** are rated one kind at a time with a progress bar per kind; rows that were unrated when the step opened come first and stay in place. A pool offers four guidance questions that suggest a level; the rating is the operator's own declaration and the suggestion is applied only on request. A tool, MCP server or connector with `egress` also chooses between hiding and gating.
 - **The System One model** list disables models that are not cleared for the highest level.
 
-In a conversation, `classification.active` shows the level as a daisyUI badge in the header (colour from the level, tooltip the cause of the latest change). For a person who may write in the conversation the badge opens a dropdown of the levels it can move to (`LevelSelector`), each as its own coloured badge; a reader sees the plain badge. The dropdown offers higher levels always and lower ones only when `lowering` is `with_reason`, asking for the reason in a modal; after a change the session and the model list are reloaded, and when no model is cleared for the level the composer shows a warning. In monitor mode, `observed` shows as an info box in the composer: the level the content would require, the matched classes and the chat's level (`cls-chat-observed`). Nothing is shown while the scheme is inactive.
+In a conversation, `classification.active` shows the level as a badge in the header (colour from the level, tooltip the cause of the latest change). For a person who may write in the conversation the badge opens a dropdown of the levels it can move to (`LevelSelector`), each as its own coloured badge; a reader sees the plain badge. The dropdown offers higher levels always and lower ones only when `lowering` is `with_reason`, asking for the reason in a modal; after a change the session and the model list are reloaded, and when no model is cleared for the level the composer shows a warning. In monitor mode, `observed` shows as an info box in the composer: the level the content would require, the matched classes and the chat's level (`cls-chat-observed`). Nothing is shown while the scheme is inactive.
 
 *Share* in the conversation header opens `ShareDialog` (`components/sharing/`) with three exclusive choices saved through `PUT …/shares`: not shared, by link (disabled with the reason when the server reports `link_allowed: false`), or only the listed people and groups, added through `SubjectPicker`, the same search the agents' `SharingPanel` uses. Saving the link choice copies the conversation URL (`clipboard.ts`); the button then briefly reads *Link copied*, and *Shared* while the link or any person or group has access.
 
@@ -1212,44 +1215,44 @@ Shared state lives in `.svelte.ts` modules exporting `$state` objects, built as 
 
 ## Theming
 
-`web/src/app.css` registers Croit `light` and `dark` daisyUI themes with the built-in palettes switched off. They are one design in two lightnesses, taken from the agent-setup mockup:
+`web/src/app.css` defines the app's one design in two lightnesses, on the croit Visual Identity: Urbanist 400/600, croit violet as the single action accent in both, Deep Anthracite ground in dark, white in light, 18 px on boxes and cards. The two token blocks (`:root` light, `[data-theme="dark"]` dark) set `--t-*` variables that the `@theme` mapping exposes as Tailwind colours:
 
 | Token | Dark (default) | Light | Used for |
 |---|---|---|---|
-| `base-100` | `#1b1b1d` | `#ffffff` | the page, field fills |
-| `base-200` | `#242427` | `#f5f4f8` | cards, panels, default buttons |
-| `base-300` | `#3a3a40` | `#dedce4` | the one line colour: card edges, tables, dividers (`border-base-300`) |
-| `base-content` | `#ecebf0` | `#1c1b22` | text; muted text is `text-base-content/60` |
-| `primary` | `#8558f0` | `#7c3aed` | actions, selection, focus ring |
+| `base-100` | `#1d1d1b` | `#ffffff` | the page, field fills |
+| `base-200` | `#242422` | `#f5f4f8` | cards, panels, default buttons |
+| `base-300` | `#3a3a37` | `#dedce4` | the one line colour: card edges, tables, dividers (`border-base-300`) |
+| `base-content` | `#efeeea` | `#1c1b22` | text; muted text is `text-base-content/60` |
+| `primary` | `#8e54e9` | `#8e54e9` | actions, selection, focus ring |
 | `neutral` | `#2d2d31` | `#1c1b22` | raised chips, scrims |
 | `success` / `warning` / `error` | `#4ade80` / `#fbbf24` / `#f87171` with dark text | `#15803d` / `#b45309` / `#c81e1e` with white text | alerts, badges, `StatusPill` |
 
-Shapes are shared: `--radius-field` 10 px (buttons, inputs, tabs), `--radius-box` 14 px (cards, alerts, modals), `--radius-selector` 8 px (badges, checkboxes, toggles), no depth or noise. Secondary stays the brand peach. `lib/theme.test.ts` keeps both themes on the same token set and checks every text-on-fill pair for WCAG AA (4.5:1); change a colour and that test tells you whether it still reads. The dark primary is a shade under the mockup's `#8b5cf6` because white text on `#8b5cf6` is only 4.2:1.
+Shapes are shared: `--radius-selector` 8 px (controls), `--radius-field` 10 px (fields), `--radius-box` 18 px (boxes and cards — the croit VI constant). There is no daisyUI in the SPA: the component classes the app was written against (`btn`, `card`, `alert`, `badge`, `input`, `select`, `checkbox`, `toggle`, `label`, `fieldset`, `link`, `skeleton`, `loading`, `tabs`, `join`, `table`, `menu`, `progress`, `divider`, `dropdown`, `stats`, `modal`, `collapse`, `chat`, `toast`, `range`, `mockup`) are implemented once, in plain CSS, on those tokens. `lib/theme.test.ts` keeps both themes on the same token set, checks every text-on-fill pair for WCAG AA (4.5:1), and pins the VI constants; `lib/markup-drift.test.ts` fails the build if a source carries a component class the token layer does not define.
 
-Cards are solid `base-200` panels with a `base-300` edge (one rule in `app.css`, so no page repeats it). Fields have one look app-wide: daisyUI's `input` / `select` / `textarea` at the default size (40 px) in forms, `-sm` only inside dense rows (table cells, toolbars, filter bars); a focused field rings in `primary`, and a field with `aria-invalid="true"` (or the `-error` variant) is error-coloured, focused or not. daisyUI 4's `input-bordered` & co. are inert in v5 and rejected by `markup-drift.test.ts`. The shared layout adds subtle peach and purple ambient accents. Urbanist Latin and Latin Extended fonts are bundled under `web/static/fonts/`, with the OFL license beside them. Other scripts use the fallback font stack. Numeric readouts — table cells, stat values, counts, amounts — use the monospace stack (`font-mono`, kept together with `tabular-nums`) so digits align in columns. The official white and black SVG wordmarks are served from `web/static/` and selected by theme. Tailwind v4 Vite scans the Svelte sources automatically, so no `@source` globs are needed.
+Cards are solid `base-200` panels with a `base-300` edge (one rule in `app.css`, so no page repeats it). Fields have one look app-wide: the `input` / `select` / `textarea` classes at the default size (40 px) in forms, `-sm` only inside dense rows (table cells, toolbars, filter bars); a focused field rings in `primary`, and a field with `aria-invalid="true"` (or the `-error` variant) is error-coloured, focused or not — the field-state rules sit in `@layer utilities` so they beat the component layer. The shared layout adds subtle peach and purple ambient accents. Urbanist Latin and Latin Extended fonts are bundled under `web/static/fonts/`, with the OFL license beside them. Other scripts use the fallback font stack. Numeric readouts — table cells, stat values, counts, amounts — use the monospace stack (`font-mono`, kept together with `tabular-nums`) so digits align in columns. The official white and black SVG wordmarks are served from `web/static/` and selected by theme. Tailwind v4 Vite scans the Svelte sources automatically, so no `@source` globs are needed.
 
 The theme is stored in a `theme` cookie (`light` / `dark`) and applied **before first paint** by a small inline script in `app.html`: it reads the cookie and sets `document.documentElement.dataset.theme`, using `dark` when there is no cookie. Doing it there — before CSS resolves — avoids a flash of the wrong theme. The toggle in `+layout.svelte` writes the same cookie, flips the attribute, and updates the browser theme color.
 
-**Hard rules (unchanged from the previous UI):**
+**Hard rules:**
 
-- daisyUI semantic component classes (`btn`, `card`, `alert`, `badge`, `input`, `select`, `tabs`, `dropdown`, `toast`, …) plus token utilities (`bg-base-100`, `text-base-content/60`, `border-base-300`, `text-error`, …) and plain Tailwind for layout. No bespoke `.brand-mark` / `.tagline` classes — if a treatment isn't covered by daisyUI + Tailwind, drop the treatment.
-- Override daisyUI focus/borders in `@layer utilities` **unlayered** (`@layer utilities { … }` with no nested sub-layer name). daisyUI emits its components inside `@layer utilities { @layer daisyui.l1.l2.l3 { … } }`, so anything in `@layer components` loses regardless of specificity; per the Cascade Layers spec, unlayered content in a layer comes after its sub-layers, which is the slot we need.
+- The component classes from `app.css` (`btn`, `card`, `alert`, `badge`, `input`, `select`, `tabs`, `dropdown`, `toast`, …) plus token utilities (`bg-base-100`, `text-base-content/60`, `border-base-300`, `text-error`, …) and plain Tailwind for layout. No bespoke `.brand-mark` / `.tagline` classes — if a treatment isn't covered by the token layer + Tailwind, drop the treatment.
+- Field states (focus ring, error) live in the `@layer utilities` block of `app.css`, where they beat the component layer; any rule that must beat the components goes there.
 - **Mobile-first.** Target ~360 px first and use `sm:` to enhance. Touch targets ≥44 px. `dvh`/`dvw`, never `vh`/`vw`. Stack via a parent `gap`, not child `margin-top`.
-- `form-control` and `label-text-alt` do **not** exist in daisyUI 5. The house pattern for a labelled control is a `flex flex-col gap-1` label with the help `<span>` after the input.
+- `form-control` and `label-text-alt` do **not** exist in the token layer. The house pattern for a labelled control is a `flex flex-col gap-1` label with the help `<span>` after the input.
 
 ### Shared UI components
 
-Where daisyUI has no component for a pattern the mockup uses, `web/src/lib/components/ui/` has one, built from daisyUI classes and Tailwind utilities only. Their state-to-class mapping lives in `lib/ui-variants.ts` (unit-tested), so "selected" looks the same on every one of them. Reach for these before composing the classes by hand.
+Where the token layer has no component for a pattern the mockup uses, `web/src/lib/components/ui/` has one, built from the `app.css` component classes and Tailwind utilities only. Their state-to-class mapping lives in `lib/ui-variants.ts` (unit-tested), so "selected" looks the same on every one of them. Reach for these before composing the classes by hand.
 
 | Component | Use it for | Not for |
 |---|---|---|
 | `Modal` | Any centred dialog: bindable `open`, title, optional description, `size` (`sm`–`xl`), body, optional `footer` snippet. Escape, backdrop and the ✕ all close it; nothing renders while closed. `EditModal` is `Modal` plus the admin rows' Cancel/Save footers. | Full-screen pickers (`CapabilityPicker`) and the feedback sheet, which are bottom sheets on mobile. |
 | `ChoiceCard` | A single pick between options that each need a sentence ("on the website" / "by e-mail"). Several in a `role="radiogroup"` grid; with `multiple` a switch of a multi-pick set (`role="checkbox"` in a `role="group"`, the agent setup's abilities). | Two or three short words — use `SegmentedControl`. |
-| `SegmentedControl` | A small closed enum (a handful of options) shown at once, as a daisyUI `join` of radio buttons — a value to pick, such as the agent analytics' chart metric. | Long or data-driven lists — `SearchableSelect`. Navigation between views — daisyUI `tabs` (`role="tablist"`), as the agent workbench does. |
+| `SegmentedControl` | A small closed enum (a handful of options) shown at once, as a `join` of radio buttons — a value to pick, such as the agent analytics' chart metric. | Long or data-driven lists — `SearchableSelect`. Navigation between views — `tabs` (`role="tablist"`), as the agent workbench does. |
 | `ChipToggle` | Multi-pick from a short visible set (channels, tags); with `onremove` a removable token. | A grant field over a closed server-known set — `SearchableSelect multiple`. |
 | `AiSuggestion` | Anything the model proposed that the user has not accepted yet; the dashed primary edge is reserved for this. `actions` holds Apply / Dismiss. | Settled configuration or help text — `alert alert-info`. |
-| `StatusPill` | A state word next to a name: `ok` / `warn` / `bad` / `info` / `neutral` as a soft, round daisyUI badge ("Live v3", "Needs setup"). | Counts and kinds (`badge badge-outline`). |
-| `StepIndicator` | Where the user is in a multi-step flow; pills are current (primary), done (green) or upcoming; `onselect` makes them jump. | Page sections — `SectionTabs` / daisyUI `tabs`. |
+| `StatusPill` | A state word next to a name: `ok` / `warn` / `bad` / `info` / `neutral` as a soft, round badge ("Live v3", "Needs setup"). | Counts and kinds (`badge badge-outline`). |
+| `StepIndicator` | Where the user is in a multi-step flow; pills are current (primary), done (green) or upcoming; `onselect` makes them jump. | Page sections — `SectionTabs` / `tabs`. |
 
 ## PWA and Web Push
 

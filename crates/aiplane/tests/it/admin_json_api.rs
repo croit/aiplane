@@ -6,7 +6,7 @@
 //! The gating contract (401 anonymous, 403 non-admin, full data for admin)
 //! plus one write round-trip per surface family: groups (RBAC reload),
 //! limits, settings (hot reload), model defaults (shared validation), and
-//! the topology (upsert → dirty → apply → clean).
+//! the topology (upsert → live → stream).
 
 use crate::common;
 
@@ -14,7 +14,7 @@ use aiplane::rama_server::router::router;
 use common::Service as _;
 use rama::http::body::util::BodyExt;
 use rama::http::{Body, Method, Request, StatusCode, header};
-use wiremock::matchers::{header as header_matches, method};
+use wiremock::matchers::{header as header_matches, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 async fn setup() -> (std::sync::Arc<aiplane::rama_server::RamaState>, String) {
@@ -108,7 +108,7 @@ async fn admin_routes_gate_with_json_envelopes() {
         (Method::PUT, "/api/v0/admin/backends"),
         (Method::POST, "/api/v0/admin/backends/test"),
         (Method::PUT, "/api/v0/admin/pools"),
-        (Method::POST, "/api/v0/admin/upstreams/reload"),
+        (Method::POST, "/api/v0/admin/upstreams/openrouter/kind"),
     ] {
         let anon = app
             .serve(req(method.clone(), uri, "bogus", None))
@@ -1252,6 +1252,11 @@ async fn model_overrides_validate_and_save() {
     assert_eq!(offered["kind"], "chat");
     assert_eq!(offered["alias_target"], serde_json::Value::Null);
     assert_eq!(offered["served"], true);
+    assert_eq!(
+        offered["served_by"],
+        serde_json::json!([{"pool": "pool", "backends": ["mock"]}]),
+        "the catalog names the pool and backend that carry the model"
+    );
     assert_eq!(offered["resolved_reasoning_style"], "none");
     assert_eq!(offered["uses_token_budget"], false);
     assert_eq!(offered["effort_levels"], serde_json::json!([]));
@@ -1272,6 +1277,11 @@ async fn model_overrides_validate_and_save() {
     assert_eq!(
         configured["served"], false,
         "nothing advertises `m` any more, so the page files it as inactive"
+    );
+    assert_eq!(
+        configured["served_by"],
+        serde_json::json!([]),
+        "a model nothing serves has no provenance"
     );
     assert_eq!(configured["resolved_reasoning_style"], "qwen");
     // Nothing serves `m`, so no server would enforce a Qwen budget: the
@@ -1817,10 +1827,10 @@ async fn compaction_and_voice_prompt_fields_save_and_clear() {
     );
 }
 
-/// Topology: save a backend + pool (dirty bumps), apply (dirty resets),
-/// and the live stream answers with status events.
+/// Topology: save a backend + pool (live now, no apply step), and the live
+/// stream answers with status events.
 #[tokio::test]
-async fn topology_save_apply_and_stream() {
+async fn topology_save_is_live_and_streams() {
     let (state, cookie) = setup().await;
     let app = router(state.clone());
 
@@ -1837,11 +1847,7 @@ async fn topology_save_apply_and_stream() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let saved: serde_json::Value = serde_json::from_str(&body(resp).await).unwrap();
-    assert_eq!(
-        saved["dirty"],
-        serde_json::json!(1),
-        "save marks the topology dirty"
-    );
+    assert_eq!(saved["name"], serde_json::json!("b1"));
 
     let resp = app
         .serve(req(
@@ -1903,14 +1909,13 @@ async fn topology_save_apply_and_stream() {
         .await,
     )
     .unwrap();
-    assert_eq!(listed["dirty"], serde_json::json!(4));
+    assert!(
+        listed.get("dirty").is_none(),
+        "the topology no longer stages changes"
+    );
+    assert!(listed.get("pending_changes").is_none());
     assert!(listed["all_models"].is_array());
     assert!(listed["coverage"].is_object());
-    assert!(
-        listed["pending_changes"]
-            .as_array()
-            .is_some_and(|changes| changes.iter().any(|change| change["code"] == "pool_added"))
-    );
     assert!(
         listed["backends"]
             .as_array()
@@ -1926,25 +1931,43 @@ async fn topology_save_apply_and_stream() {
     );
     assert_eq!(listed["pools"][0]["backends"], serde_json::json!(["b1"]));
     assert_eq!(listed["pools"][0]["kind"], "system_one");
+    // Live-now: the pool the operator just saved is running in the registry
+    // without any apply step.
+    assert!(
+        listed["pools"][0]["live_backends"]
+            .as_object()
+            .is_some_and(|live| live.contains_key("b1")),
+        "a saved pool is live in the running registry"
+    );
     assert!(
         listed["pool_kinds"]
             .as_array()
             .is_some_and(|kinds| kinds.iter().any(|kind| kind == "system_one"))
     );
 
+    // Clearing the stored key is explicit: `clear_key` deletes it, and a body
+    // carrying both a new key and the flag is refused rather than guessing
+    // which one the operator meant.
     let resp = app
         .serve(req(
-            Method::POST,
-            "/api/v0/admin/upstreams/reload",
+            Method::PUT,
+            "/api/v0/admin/backends",
             &cookie,
-            None,
+            Some(r#"{"name":"b1","base_url":"http://upstream.invalid","api_key":"sk-new-1234567890-wxyz","clear_key":true,"overwrite":true}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let resp = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/backends",
+            &cookie,
+            Some(r#"{"name":"b1","base_url":"http://upstream.invalid","pools":["p1"],"clear_key":true,"overwrite":true}"#.into()),
         ))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let applied: serde_json::Value = serde_json::from_str(&body(resp).await).unwrap();
-    assert_eq!(applied["dirty"], serde_json::json!(0));
-
     let listed: serde_json::Value = serde_json::from_str(
         &body(
             app.serve(req(Method::GET, "/api/v0/admin/upstreams", &cookie, None))
@@ -1954,7 +1977,30 @@ async fn topology_save_apply_and_stream() {
         .await,
     )
     .unwrap();
-    assert_eq!(listed["pending_changes"], serde_json::json!([]));
+    let cleared = listed["backends"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["name"] == "b1")
+        .expect("b1 is still configured");
+    assert_eq!(
+        cleared["has_stored_key"],
+        serde_json::json!(false),
+        "clear_key deletes the sealed key"
+    );
+    assert_eq!(cleared["api_key_hint"], serde_json::Value::Null);
+
+    // There is no apply step any more: the old route is gone. A POST to a
+    // path nothing serves errors out (the SPA catch-all only answers GET).
+    let resp = app
+        .serve(req(
+            Method::POST,
+            "/api/v0/admin/upstreams/reload",
+            &cookie,
+            None,
+        ))
+        .await;
+    assert!(resp.is_err(), "the apply route must not exist any more");
 
     // The live stream opens (200 + SSE content type). Its body never ends
     // by design — drop the response, which drops the channel and ends the
@@ -1976,6 +2022,135 @@ async fn topology_save_apply_and_stream() {
         Some("text/event-stream")
     );
     drop(resp);
+}
+
+/// Unknown-model fallback: one auto-saving picker per pool kind, live now.
+#[tokio::test]
+async fn unknown_model_fallback_round_trips_and_clears() {
+    let (state, cookie) = setup().await;
+    let app = router(state);
+
+    let resp = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/upstreams/fallback",
+            &cookie,
+            Some(r#"{"kind":"chat","model":"model-a"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let listed: serde_json::Value = serde_json::from_str(
+        &body(
+            app.serve(req(Method::GET, "/api/v0/admin/upstreams", &cookie, None))
+                .await
+                .unwrap(),
+        )
+        .await,
+    )
+    .unwrap();
+    assert_eq!(listed["fallbacks"]["chat"], "model-a");
+    assert_eq!(
+        listed["fallback_kinds"],
+        serde_json::json!(["chat", "transcription", "embedding", "image"])
+    );
+
+    // An empty model clears the fallback; the kind stays in the picker list.
+    let resp = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/upstreams/fallback",
+            &cookie,
+            Some(r#"{"kind":"chat","model":""}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let listed: serde_json::Value = serde_json::from_str(
+        &body(
+            app.serve(req(Method::GET, "/api/v0/admin/upstreams", &cookie, None))
+                .await
+                .unwrap(),
+        )
+        .await,
+    )
+    .unwrap();
+    assert!(listed["fallbacks"].get("chat").is_none());
+}
+
+#[tokio::test]
+async fn openrouter_provider_prices_are_read_on_demand() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/models/deepseek/deepseek-v4.1/endpoints"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": { "endpoints": [
+                {
+                    "provider_name": "DeepInfra",
+                    "pricing": {
+                        "prompt": "0.000000098",
+                        "completion": "0.000000294",
+                        "input_cache_read": "0.0000000029"
+                    },
+                    "context_length": 163000,
+                    "throughput_last_30m": { "p50": 78.0 },
+                    "latency_last_30m": { "p50": 0.75 },
+                    "uptime_last_30m": 100.0,
+                    "quantization": "fp8"
+                }
+            ]}
+        })))
+        .mount(&upstream)
+        .await;
+
+    let (state, cookie) = setup().await;
+    let app = router(state);
+
+    let resp = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/backends",
+            &cookie,
+            Some(format!(
+                r#"{{"name":"or","provider":"openrouter","base_url":"{}"}}"#,
+                upstream.uri()
+            )),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = app
+        .serve(req(
+            Method::GET,
+            "/api/v0/admin/upstreams/openrouter/endpoints?backend=or&model=deepseek%2Fdeepseek-v4.1",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let listed: serde_json::Value = serde_json::from_str(&body(resp).await).unwrap();
+    let endpoint = &listed["endpoints"][0];
+    assert_eq!(endpoint["provider"], "DeepInfra");
+    assert!((endpoint["prompt_price"].as_f64().unwrap() - 0.098).abs() < 1e-9);
+    assert!((endpoint["completion_price"].as_f64().unwrap() - 0.294).abs() < 1e-9);
+    assert!((endpoint["cache_read_price"].as_f64().unwrap() - 0.0029).abs() < 1e-9);
+    assert_eq!(endpoint["context_length"], 163000);
+    assert_eq!(endpoint["throughput_p50"], 78.0);
+
+    // A malformed id is the caller's mistake, not an upstream failure.
+    let resp = app
+        .serve(req(
+            Method::GET,
+            "/api/v0/admin/upstreams/openrouter/endpoints?backend=or&model=..%2F..%2Fetc",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
 /// The workspace API: memories + scheduled + webhooks CRUD

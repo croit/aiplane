@@ -86,17 +86,50 @@ test('no component uses a class daisyUI 5 dropped', () => {
 	);
 });
 
-// A modal has to read as a layer ABOVE the page, and in the dark theme
-// daisyUI's defaults do not achieve it: the box and the page are both
-// `base-100` (oklch 14%), the scrim between them is `black / 0.4` — which over
-// a near-black page is a handful of lightness points — and the elevation
-// shadow is `black / 0.25`, invisible on black. The result was a dialog whose
-// edges you could not find.
-//
-// `app.css` overrides all three. They are one rule each, outside
-// `@layer daisyui` so they win without `!important`, and losing any of them
-// silently restores the unreadable dialog — nothing errors, it just stops
-// looking like a modal. Hence this grep.
+// The app was written against the daisyUI component vocabulary; the token
+// layer in app.css keeps those names. Any source that carries a class from
+// that vocabulary must find it defined in app.css — otherwise the element
+// renders unstyled and nothing errors. Tailwind utilities never match the
+// pattern below, so they are not checked.
+const COMPONENT_PATTERN =
+	/^(accordion|alert|avatar|badge|btn|card|chat|checkbox|collapse|divider|dropdown|fieldset|indicator|input|join|kbd|label|legend|link|loading|menu|mockup|modal|navbar|pagination|placeholder|progress|range|radio|rating|select|skeleton|stat|stats|steps|tab|table|tabs|textarea|toast|toggle|tooltip|tree)(-[a-z0-9]+)*$/;
+
+// Tailwind utilities that look like component variants: user-select.
+const TAILWIND_LOOKALIKES = new Set(['select-all', 'select-none']);
+
+test('every component class the sources use is defined in app.css', () => {
+	const root = new URL('../..', import.meta.url).pathname;
+	const css = readFileSync(join(root, 'src/app.css'), 'utf8');
+	const offenders: string[] = [];
+	const seen = new Set<string>();
+	for (const file of svelteFiles(join(root, 'src'))) {
+		const body = readFileSync(file, 'utf8');
+		const tokens: string[] = [];
+		for (const m of body.matchAll(/class="([^"]*)"/g)) tokens.push(...m[1].split(/\s+/));
+		for (const m of body.matchAll(/class:([a-z0-9-]+)/g)) tokens.push(m[1]);
+		for (const token of tokens) {
+			if (!COMPONENT_PATTERN.test(token) || TAILWIND_LOOKALIKES.has(token) || seen.has(token)) continue;
+			seen.add(token);
+			if (!new RegExp(`\\.${token}([^\\w-]|$)`).test(css)) {
+				offenders.push(`${file.slice(root.length)}: ${token}`);
+			}
+		}
+	}
+	assert.deepEqual(
+		offenders,
+		[],
+		`these classes are part of the component vocabulary but app.css does not define them —\n` +
+			`the element renders unstyled. Implement them in app.css, or drop the class if it is inert:\n` +
+			offenders.join('\n')
+	);
+});
+
+// A modal has to read as a layer ABOVE the page. In the dark theme the box
+// and the page are both near-black, so without an edge of their own a dialog
+// has no visible boundary: the box carries a `base-300` border plus a deep
+// shadow, and the native `<dialog>` backdrop carries the scrim. Losing any of
+// those silently restores the unreadable dialog — nothing errors, it just
+// stops looking like a modal. Hence this grep.
 test('app.css gives every modal a visible edge over a dark page', () => {
 	const css = readFileSync(new URL('../app.css', import.meta.url).pathname, 'utf8');
 
@@ -105,14 +138,25 @@ test('app.css gives every modal a visible edge over a dark page', () => {
 	assert.match(box[1], /border:\s*1px solid var\(--color-base-300\)/, 'modal box has no border');
 	assert.match(box[1], /box-shadow:/, 'modal box has no elevation shadow');
 
-	// The scrim: daisyUI ships 0.4, which is not enough separation on a
-	// near-black surface.
-	const scrim = /\.modal\.modal-open,[\s\S]*?\{([^}]*)\}/.exec(css);
-	assert.ok(scrim, 'the open-modal scrim has no override in app.css');
+	// The scrim: over a near-black page it has to pull away from it.
+	const scrim = /dialog\.modal(?:\[open\])?::backdrop\s*\{([^}]*)\}/.exec(css);
+	assert.ok(scrim, 'the dialog backdrop has no override in app.css');
 	const opacity = /background-color:\s*oklch\(0% 0 0 \/ ([\d.]+)\)/.exec(scrim[1]);
-	assert.ok(opacity, 'the scrim override does not set a background colour');
+	assert.ok(opacity, 'the backdrop override does not set a background colour');
 	assert.ok(
 		Number(opacity[1]) > 0.4,
-		`scrim opacity ${opacity[1]} is no darker than daisyUI's own 0.4`
+		`backdrop opacity ${opacity[1]} is too thin to separate the dialog from the page`
 	);
+});
+
+// Tailwind ships a `.collapse` utility whose whole body is `visibility:
+// collapse` — and utilities outrank the components layer. The app's disclosure
+// is `<details class="collapse">`, so without an unlayered declaration the
+// closed <details> hides its own summary and every disclosure in the app looks
+// empty. Nothing errors; the control simply vanishes.
+test('the disclosure wins the `.collapse` name against the Tailwind utility', () => {
+	const css = readFileSync(new URL('../app.css', import.meta.url).pathname, 'utf8');
+	const rule = /^\.collapse\s*\{([^}]*)\}/m.exec(css);
+	assert.ok(rule, '.collapse has no unlayered override in app.css');
+	assert.match(rule[1], /visibility:\s*visible/, 'the closed disclosure would hide its summary');
 });

@@ -1,21 +1,60 @@
-# Angeheftete Anwenden-Leiste (sichtbar bei nicht angewendeten Änderungen).
-upstreams-apply-count = nicht angewendete Änderungen
-upstreams-apply-note = — die Laufzeit-Registry liefert noch die vorherige Topologie.
-
-# Ein Backend, das in der DB existiert, aber noch nicht in der Laufzeit-Registry.
-upstreams-backend-pending = ausstehend
-
-# Hinweis, nachdem die SPA die ausstehende Topologie übernommen hat.
-upstreams-applied = Topologie übernommen.
+# Die Upstreams-Oberfläche: was ein Pool ist, und die Spaltenköpfe des Boards.
 upstreams-heading = Upstreams
-upstreams-description = Pools gruppieren Backends nach Art und Auswahlstrategie. Gesundheit, Last und bereitgestellte Modelle werden live geprüft. Topologie-Änderungen werden in der Datenbank gespeichert und mit „Änderungen anwenden“ wirksam.
+upstreams-description = Pools gruppieren Backends nach Art und Auswahlstrategie. Gesundheit, Last und bereitgestellte Modelle werden live geprüft. Topologie-Änderungen werden in der Datenbank gespeichert und sofort in der laufenden Registry wirksam.
 upstreams-add-pool = Pool
 upstreams-add-backend = Backend
 upstreams-unassigned-heading = Nicht zugewiesen
 upstreams-unassigned-description = Backends, die keinem Pool zugewiesen sind. Weise eines einem Pool zu, um Anfragen dorthin zu leiten.
 upstreams-empty = Noch keine Pools oder Backends konfiguriert. Füge einen Pool oder ein Backend hinzu, um zu beginnen.
-upstreams-delete-confirm = Wirklich löschen?
 upstreams-cancel = Abbrechen
 upstreams-edit-backend = Backend bearbeiten
 upstreams-comp-limits = Limits
 upstreams-edit-pool = Pool bearbeiten
+
+# Das Concourse-Board: Spaltenköpfe, das Lampen-Vokabular, die Zeilen-Aktionen.
+board-col-name = Backend
+board-col-state = Zustand
+board-col-load = Last
+board-col-requests = Anfragen/h
+board-summary-on-time = pünktlich
+board-summary-degraded = eingeschränkt
+board-summary-down = ausgefallen
+board-summary-maintenance = Wartung
+board-summary-hint = Ein Zähler pro Backend, über alle Pools hinweg.
+board-on-time = Pünktlich
+board-on-time-detail = Gesund, nimmt Traffic an
+board-saturated = Gesättigt
+board-saturated-detail = { $inflight } von { $max } Inflight-Anfragen belegt
+board-down = Ausgefallen
+board-down-detail = Die Health-Probe schlägt fehl
+board-maintenance = Wartung
+board-maintenance-detail = Pausiert — nimmt keinen neuen Traffic an
+board-auth = Key abgelehnt
+board-auth-detail = Der Upstream hat den API-Key abgelehnt
+board-no-probe = Keine Probe
+board-no-probe-detail = Noch nicht geprobt
+board-models-unit = Modelle
+board-legend-on-time = pünktlich — gesund, dient
+board-legend-degraded = verzögert — gesättigt oder Key-Problem
+board-legend-down = gestrichen — unerreichbar
+board-legend-maintenance = Wartung — pausiert
+board-enabled = Dient
+board-drained = Pausiert
+board-edit = Bearbeiten
+
+board-detail-endpoint = Endpunkt
+board-detail-models = Modelle
+board-detail-aliases = Aliase
+board-detail-activity = Verkehr
+board-key-none = kein Key konfiguriert
+board-models-none = keine entdeckt
+board-models-more = +{ $count } weitere
+board-pool-account = Konto
+board-pool-managed = Dieser Pool wird im Tab „OpenRouter“ verwaltet.
+
+board-filter-placeholder = Backends, Modelle, Aliase filtern…
+board-filter-clear = Zurücksetzen
+board-filter-empty = Kein Backend und kein Pool passt zu diesem Filter.
+board-edit-named = Backend { $name } bearbeiten
+upstreams-saved = Gespeichert — sofort aktiv.
+board-model-open-catalog = Dieses Modell im Katalog öffnen

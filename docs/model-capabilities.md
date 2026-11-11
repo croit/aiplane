@@ -67,8 +67,7 @@ fallback reference and `cap_updated_at`.
 
 ## Registry hot-reload
 
-The `UpstreamRegistry` holds its pool/backend data behind an `ArcSwap` (lock-free). The admin
-clicks "Apply changes" (`POST /admin/upstreams/reload`) to:
+The `UpstreamRegistry` holds its pool/backend data behind an `ArcSwap` (lock-free). Every topology write reloads it:
 
 1. Load the full topology snapshot from DB
 2. Build new `Pool`/`Backend` structs

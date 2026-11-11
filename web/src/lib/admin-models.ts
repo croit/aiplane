@@ -1,12 +1,12 @@
 export type ModelKind = 'chat' | 'embedding' | 'image' | 'speech' | 'transcription' | 'ocr' | 'rerank' | 'system_one';
 export type ModelFilter = 'active' | 'all' | 'chat' | 'other' | 'alias' | 'inactive' | 'configured';
 export type PricingUnit = 'tokens' | 'images' | 'characters' | 'seconds';
-export const MODEL_ADMIN_TABS = ['upstreams', 'catalog', 'defaults', 'routing'] as const;
+export const MODEL_ADMIN_TABS = ['upstreams', 'openrouter', 'catalog', 'defaults', 'fallbacks', 'routing'] as const;
 export type ModelAdminTab = (typeof MODEL_ADMIN_TABS)[number];
 
 export function selectedModelAdminTab(search: string): ModelAdminTab {
 	const selected = new URLSearchParams(search).get('tab');
-	return MODEL_ADMIN_TABS.find((tab) => tab === selected) ?? 'catalog';
+	return MODEL_ADMIN_TABS.find((tab) => tab === selected) ?? 'upstreams';
 }
 
 export interface ModelCapabilities {
@@ -46,6 +46,12 @@ export type TunedEffort = (typeof TUNED_EFFORTS)[number];
 /** The smallest thinking budget the server accepts (`MIN_THINKING_BUDGET`). */
 export const MIN_THINKING_BUDGET = 1024;
 
+/** One line of a model's provenance: the pool and its available backends. */
+export interface ServedBy {
+	pool: string;
+	backends: string[];
+}
+
 export interface AdminModel {
 	name: string;
 	/** The picker description; empty when none is set. */
@@ -54,6 +60,8 @@ export interface AdminModel {
 	alias_target: string | null;
 	/** An upstream pool currently advertises this model. */
 	served: boolean;
+	/** The pools routing this name right now, with the backends behind each. */
+	served_by: ServedBy[];
 	configured: boolean;
 	resolved_reasoning_style: string;
 	uses_token_budget: boolean;

@@ -5,8 +5,10 @@ admin-heading = Modelos
 admin-models-routing-heading = Modelos y enrutamiento
 admin-models-routing-intro = Configura la infraestructura de modelos, el catálogo, los modelos predeterminados y el enrutamiento automático en un solo lugar.
 admin-models-tab-upstreams = Upstreams
+admin-models-tab-openrouter = OpenRouter
 admin-models-tab-catalog = Catálogo de modelos
 admin-models-tab-defaults = Modelos predeterminados
+admin-models-tab-fallbacks = Alternativas
 admin-models-tab-routing = Enrutamiento automático
 
 admin-col-model = Modelo
@@ -343,3 +345,6 @@ admin-error-unknown-groups = { $count ->
     [one] No existe aquí este grupo: { $groups }. Créelo primero en Administración → Grupos o elija de la lista.
    *[other] No existen aquí estos grupos: { $groups }. Créelos primero en Administración → Grupos o elija de la lista.
 }
+
+admin-served-by = servido por { $pools }
+admin-served-by-open = Abrir este modelo en el tablero de upstreams

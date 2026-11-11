@@ -1,8 +1,8 @@
-// The two daisyUI themes in app.css are one design in two lightnesses. These
-// checks pin the parts of that contract a reviewer cannot see in a diff:
-// both themes define the same tokens (a token only one theme sets silently
-// falls back to daisyUI's default in the other), the text/fill pairs stay
-// readable, and the app-wide field states (focus ring, error) are wired.
+// The two theme token blocks in app.css (`:root` light, `[data-theme="dark"]`
+// dark) are one design in two lightnesses. These checks pin the parts of that
+// contract a reviewer cannot see in a diff: both themes define the same
+// tokens, the text/fill pairs stay readable, and the app-wide field states
+// (focus ring, error) are wired.
 
 import test from 'node:test';
 import assert from 'node:assert';
@@ -12,12 +12,15 @@ const css = readFileSync(new URL('../app.css', import.meta.url).pathname, 'utf8'
 
 function themes(): Map<string, Map<string, string>> {
 	const out = new Map<string, Map<string, string>>();
-	for (const block of css.matchAll(/@plugin "daisyui\/theme" \{([^}]*)\}/g)) {
-		const body = block[1];
-		const name = /name:\s*"([^"]+)"/.exec(body)?.[1];
-		assert.ok(name, 'a theme block has no name');
+	const blocks: Array<[string, RegExp]> = [
+		['light', /:root\s*\{([^}]*)\}/],
+		['dark', /\[data-theme="dark"\]\s*\{([^}]*)\}/]
+	];
+	for (const [name, pattern] of blocks) {
+		const block = css.match(pattern);
+		assert.ok(block, `the ${name} theme block is missing`);
 		const tokens = new Map<string, string>();
-		for (const m of body.matchAll(/(--[\w-]+):\s*([^;]+);/g)) tokens.set(m[1], m[2].trim());
+		for (const m of block[1].matchAll(/(--t-[\w-]+):\s*([^;]+);/g)) tokens.set(m[1], m[2].trim());
 		out.set(name, tokens);
 	}
 	return out;
@@ -42,22 +45,20 @@ test('app.css defines a light and a dark theme with the same tokens', () => {
 	const all = themes();
 	assert.deepEqual([...all.keys()].sort(), ['dark', 'light']);
 	const [light, dark] = [all.get('light')!, all.get('dark')!];
+	assert.ok(light.size > 15, 'the light theme defines no tokens');
 	assert.deepEqual([...light.keys()].sort(), [...dark.keys()].sort());
-	for (const key of ['--radius-field', '--radius-box', '--radius-selector', '--size-field', '--border']) {
-		assert.equal(light.get(key), dark.get(key), `${key} differs between themes — the shapes must match`);
-	}
 });
 
 test('every text-on-fill pair in both themes reaches WCAG AA (4.5:1)', () => {
 	const pairs = [
-		['--color-base-content', '--color-base-100'],
-		['--color-base-content', '--color-base-200'],
-		['--color-primary-content', '--color-primary'],
-		['--color-neutral-content', '--color-neutral'],
-		['--color-success-content', '--color-success'],
-		['--color-warning-content', '--color-warning'],
-		['--color-error-content', '--color-error'],
-		['--color-info-content', '--color-info']
+		['--t-base-content', '--t-base-100'],
+		['--t-base-content', '--t-base-200'],
+		['--t-primary-content', '--t-primary'],
+		['--t-neutral-content', '--t-neutral'],
+		['--t-success-content', '--t-success'],
+		['--t-warning-content', '--t-warning'],
+		['--t-error-content', '--t-error'],
+		['--t-info-content', '--t-info']
 	];
 	for (const [name, tokens] of themes()) {
 		for (const [fg, bg] of pairs) {
@@ -67,13 +68,20 @@ test('every text-on-fill pair in both themes reaches WCAG AA (4.5:1)', () => {
 	}
 });
 
+test('the croit VI pins hold: violet primary and 18px box radius', () => {
+	for (const [name, tokens] of themes()) {
+		assert.equal(tokens.get('--t-primary')!.toLowerCase(), '#8e54e9', `${name}: the action accent is not croit violet`);
+	}
+	assert.match(css, /--radius-box:\s*1\.125rem/);
+});
+
 test('a plain button keeps a visible edge on a card', () => {
-	assert.match(css, /:where\(\.btn:not\([^)]*\)\)\s*\{\s*border-color:\s*var\(--color-base-300\)/);
+	assert.match(css, /\.btn\s*\{[^}]*border:\s*1px solid var\(--color-base-300\)/s);
 });
 
 test('focused fields ring in the primary colour, invalid ones in error', () => {
-	assert.match(css, /:where\(\.input, \.select, \.textarea\):is\(:focus, :focus-within\)\s*\{\s*--input-color:\s*var\(--color-primary\)/, 'no primary focus ring on fields');
-	assert.match(css, /\[aria-invalid="true"\][\s\S]*?--input-color:\s*var\(--color-error\)/, 'aria-invalid fields are not marked');
+	assert.match(css, /:where\(\.input, \.select, \.textarea\):is\(:focus, :focus-within\)\s*\{\s*border-color:\s*var\(--color-primary\)/, 'no primary focus ring on fields');
+	assert.match(css, /\.input\[aria-invalid="true"\][\s\S]*?border-color:\s*var\(--color-error\)/, 'aria-invalid fields are not marked');
 	assert.ok(
 		css.indexOf('.input[aria-invalid="true"]') > css.indexOf(':where(.input, .select, .textarea)'),
 		'the error rule must follow the focus rule, or a focused invalid field rings in primary'

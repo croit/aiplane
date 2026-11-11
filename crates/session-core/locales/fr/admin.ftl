@@ -5,8 +5,10 @@ admin-heading = Modèles
 admin-models-routing-heading = Modèles et routage
 admin-models-routing-intro = Configurez l’infrastructure des modèles, le catalogue, les modèles par défaut et le routage automatique au même endroit.
 admin-models-tab-upstreams = Amonts
+admin-models-tab-openrouter = OpenRouter
 admin-models-tab-catalog = Catalogue de modèles
 admin-models-tab-defaults = Modèles par défaut
+admin-models-tab-fallbacks = Replis
 admin-models-tab-routing = Routage automatique
 
 admin-col-model = Modèle
@@ -342,3 +344,6 @@ admin-error-unknown-groups = { $count ->
     [one] Groupe introuvable ici : { $groups }. Créez-le d’abord dans Administration → Groupes, ou choisissez dans la liste.
    *[other] Groupes introuvables ici : { $groups }. Créez-les d’abord dans Administration → Groupes, ou choisissez dans la liste.
 }
+
+admin-served-by = servi par { $pools }
+admin-served-by-open = Ouvrir ce modèle sur le tableau des upstreams

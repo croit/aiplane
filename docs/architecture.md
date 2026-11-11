@@ -2,7 +2,7 @@
 
 ## One-paragraph summary
 
-AIplane is a single Rust binary built on **rama 0.3**, which is a proxy-native HTTP framework. The same process serves the OpenAI-compatible API (`/v1/*`), the OIDC browser flow (`/auth/*`), the session-authed JSON API (`/api/v0/*`), and — from the root `/` — the static files of a **SvelteKit SPA** (Svelte 5, `adapter-static`, built from `web/`). The SPA is compiled ahead of time and served out of `AIPLANE_STATIC_DIR`, so there is still no Node at runtime: one container, one process, one port. Chat streams over a JSON-SSE event protocol (`session_core::chat_json`) rather than server-rendered diffs; styling is **daisyUI v5 + Tailwind v4** with a shadcn-flavoured neutral palette. See [`ui.md`](ui.md).
+AIplane is a single Rust binary built on **rama 0.3**, which is a proxy-native HTTP framework. The same process serves the OpenAI-compatible API (`/v1/*`), the OIDC browser flow (`/auth/*`), the session-authed JSON API (`/api/v0/*`), and — from the root `/` — the static files of a **SvelteKit SPA** (Svelte 5, `adapter-static`, built from `web/`). The SPA is compiled ahead of time and served out of `AIPLANE_STATIC_DIR`, so there is still no Node at runtime: one container, one process, one port. Chat streams over a JSON-SSE event protocol (`session_core::chat_json`) rather than server-rendered diffs; styling is **Tailwind v4 on the croit-identity token layer** in `web/src/app.css`. See [`ui.md`](ui.md).
 
 > Indexing an external file share (Nextcloud / WebDAV / …) into RAG is its
 > own subsystem with its own extension point — see

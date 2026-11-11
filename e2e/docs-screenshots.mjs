@@ -68,7 +68,7 @@ try {
         { name: 'classification-classes', route: '/admin/classification?tab=classes', selector: fullPage, full: true, prepare: 'classification-active', englishFileInput: true },
         { name: 'chat-overview', route: `/chat/${conversation.id}`, selector: '[data-chat-composer]', full: true },
         { name: 'chat-composer', route: `/chat/${conversation.id}`, selector: '[data-chat-composer]' },
-        { name: 'upstream-pool', route: '/admin/models?tab=upstreams', selector: 'article.card', text: 'wiremock-chat' },
+        { name: 'upstream-pool', route: '/admin/models?tab=upstreams', selector: '[data-testid="concourse-board"]' },
         { name: 'memory-preferences', route: '/settings/memory', selector: 'section.card', text: 'Preferences' },
         { name: 'token-card', route: '/settings/tokens', selector: 'li.card', text: 'Local laptop' },
         { name: 'browser-status', route: '/tools/browser', selector: 'section.card', text: 'Status' },
@@ -228,8 +228,9 @@ async function englishFileInputs(page) {
 
 /** The backend form refusing a priority mapping whose values are not strictly ordered. */
 async function showPriorityError(page) {
-    await page.getByRole('button', { name: 'Edit backend', exact: true }).first().click();
+    await page.getByTestId('upstream-backend-wiremock-chat').getByRole('button', { name: 'Edit backend' }).click();
     const dialog = page.getByRole('dialog');
+    await dialog.getByText('Advanced settings', { exact: true }).click();
     await dialog.getByRole('combobox', { name: 'Backend prioritization' }).selectOption({ label: 'Custom mapping' });
     for (const level of ['Low', 'Medium', 'High']) await dialog.getByRole('spinbutton', { name: level, exact: true }).fill('0');
     await dialog.getByRole('button', { name: 'Save backend', exact: true }).click();

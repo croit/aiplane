@@ -7,7 +7,9 @@
 	import AdminModelRow from '#lib/components/admin/AdminModelRow.svelte';
 	import DefaultModelsCard from '#lib/components/admin/DefaultModelsCard.svelte';
 	import AutomaticRoutesCard from '#lib/components/admin/AutomaticRoutesCard.svelte';
+	import UnknownModelFallbacksCard from '#lib/components/admin/UnknownModelFallbacksCard.svelte';
 	import UpstreamsPanel from '#lib/components/admin/UpstreamsPanel.svelte';
+	import OpenRouterTab from '#lib/components/admin/OpenRouterTab.svelte';
 	import { t } from '#lib/i18n.svelte.js';
 
 	let data = $state<AdminModelsData | null>(null);
@@ -23,10 +25,21 @@
 		else if (kind === 'cleared') notice = t('admin-cleared-defaults', { model });
 	});
 
-	let query = $state('');
+	let query = $state(page.url.searchParams.get('q') ?? '');
 	// The catalog opens on the models that are actually served; aliases and
-	// dead overrides are one click away.
-	let filter = $state<ModelFilter>('active');
+	// dead overrides are one click away. A `q` deep link asks for one model by
+	// name, so the filter must not hide it in another section.
+	let filter = $state<ModelFilter>(page.url.searchParams.get('q') ? 'all' : 'active');
+
+	// A `q` deep link arrives from the board's model chips; the catalog's
+	// "served by" line goes the other way. SPA navigation keeps this component
+	// mounted, so the URL is the trigger, not the initial state above.
+	$effect(() => {
+		const deepLink = page.url.searchParams.get('q') ?? '';
+		if (!deepLink) return;
+		query = deepLink;
+		filter = 'all';
+	});
 
 	async function refresh() {
 		try {
@@ -67,8 +80,10 @@
 		</div>
 		<nav class="tabs tabs-border w-full overflow-x-auto" aria-label={t('admin-models-routing-heading')}>
 			<a class:tab-active={selected === 'upstreams'} class="tab whitespace-nowrap" href="/admin/models?tab=upstreams">{t('admin-models-tab-upstreams')}</a>
+			<a class:tab-active={selected === 'openrouter'} class="tab whitespace-nowrap" href="/admin/models?tab=openrouter">{t('admin-models-tab-openrouter')}</a>
 			<a class:tab-active={selected === 'catalog'} class="tab whitespace-nowrap" href="/admin/models?tab=catalog">{t('admin-models-tab-catalog')}</a>
 			<a class:tab-active={selected === 'defaults'} class="tab whitespace-nowrap" href="/admin/models?tab=defaults">{t('admin-models-tab-defaults')}</a>
+			<a class:tab-active={selected === 'fallbacks'} class="tab whitespace-nowrap" href="/admin/models?tab=fallbacks">{t('admin-models-tab-fallbacks')}</a>
 			<a class:tab-active={selected === 'routing'} class="tab whitespace-nowrap" href="/admin/models?tab=routing">{t('admin-models-tab-routing')}</a>
 		</nav>
 	</header>
@@ -76,7 +91,11 @@
 	{#if error}<div class="alert alert-error"><span>{error}</span></div>{/if}
 	{#if notice}<div class="alert alert-success"><span>{notice}</span></div>{/if}
 	{#if selected === 'upstreams'}
-		<UpstreamsPanel />
+		<UpstreamsPanel initialQuery={page.url.searchParams.get('q') ?? ''} />
+	{:else if selected === 'openrouter'}
+		<OpenRouterTab />
+	{:else if selected === 'fallbacks'}
+		<UnknownModelFallbacksCard />
 	{:else if data}
 		{#if selected === 'defaults'}
 			<DefaultModelsCard defaults={data.feature_defaults} onsave={saveDefault} />

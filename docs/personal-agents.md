@@ -792,7 +792,7 @@ documentation and generated artifacts together.
 - No dependency on an external agent runtime, hosted thread store or hosted
   computer service.
 - Existing AIplane model upstreams, Rust/Rama stack, SQLite migrations,
-  JSON API, JSON-SSE, Fluent catalogs and daisyUI remain the platform
+  JSON API, JSON-SSE, Fluent catalogs and the token layer remain the platform
   conventions.
 - Personal and organization data must be isolated in database queries and
   tool access, not merely filtered in the UI.

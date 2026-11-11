@@ -61,7 +61,7 @@ pub use config::{
 pub use prefix_index::PrefixIndex;
 pub use profile::{BackendProfile, Detected};
 pub use registry::{
-    AcquireError, Acquired, AliasStatus, Backend, CatalogModel, LiveBackend, LivePool,
-    LiveTopology, Pool, PoolAccess, RouteError, UpstreamRegistry,
+    AcquireError, Acquired, AliasStatus, Backend, CatalogModel, Pool, PoolAccess, RouteError,
+    UpstreamRegistry,
 };
 pub use wait::route_or_wait;
