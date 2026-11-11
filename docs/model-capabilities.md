@@ -13,7 +13,7 @@ upstream errors when it doesn't.
 
 ### 1. Admin-configured (source of truth)
 
-The admin sets capabilities per model via `/admin/models` → expandable "Capabilities" section:
+The admin sets capabilities per model in the model editor: **Models & routing → Catalog** → **Edit** on the row (`/admin/models/edit`).
 
 - **Tri-state** per capability: `Unknown` (try and learn) / `Enabled` / `Disabled`
 - A **fallback model** dropdown for vision: which model describes images when

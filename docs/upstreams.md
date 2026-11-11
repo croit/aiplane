@@ -422,7 +422,7 @@ We do **not** transcode audio in AIplane — upstreams handle the formats they s
 
 ## Operator workflow
 
-- Add, edit, or remove pools and backends at `/admin/upstreams`. Every save applies to the running registry immediately — no restart, no apply step.
+- Add, edit, or remove pools and backends at **Models & routing → Upstreams** (`/admin/models?tab=upstreams`; `/admin/upstreams` opens the same board). Every save applies to the running registry immediately — no restart, no apply step.
 - Add a model on a backend → it shows up in `/v1/models` and the chat picker within 5 s.
 - Drop a model → it disappears from routing within 5 s (next probe).
 - Want to verify? Check `tracing` output: every model-set change logs `advertised models updated added=[...] removed=[...] total=N`, and every topology write logs one `identified backend profile=… context_windows=N` per *enabled* backend (drained ones keep what they had).
