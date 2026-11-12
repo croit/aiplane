@@ -1013,6 +1013,18 @@ h1, h2, h3, .card-title {
 }
 
 /*
+ * A closed popover is hidden by the UA stylesheet alone. The component
+ * classes put a display on the element itself (`.menu` is a flex column), and
+ * any author display wins over the UA rule — so a menu declared `popover`
+ * stayed visible whether it was open or not. Unlayered on purpose: it must
+ * beat the components and the utilities alike. Opening still raises the
+ * element into the top layer; this only restores its closed state.
+ */
+[popover]:not(:popover-open) {
+    display: none;
+}
+
+/*
  * Modals must read as *above* the page. The native <dialog> backdrop is the
  * scrim; the box gets a real border and a shadow deep enough to show against
  * a dark ground. Written once here — every modal in the app shares it.

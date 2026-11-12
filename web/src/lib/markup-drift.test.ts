@@ -174,6 +174,20 @@ test('a popover menu anchors below its trigger instead of carrying the dropdown 
 	assert.deepEqual(offenders, [], 'the popover takes its placement from .dropdown-content, not the .dropdown wrapper:\n' + offenders.join('\n'));
 });
 
+// The same trap as `.collapse`, inverted: a closed popover is hidden by the
+// UA stylesheet only, and the component classes set a `display` of their own
+// (`.menu` is a flex column). Author display beats the UA rule, so without an
+// unlayered guard every `popover` menu is visible while closed — permanently
+// expanded, and toggling it changes nothing on screen.
+test('a closed popover stays hidden whatever display its classes set', () => {
+	const css = readFileSync(new URL('../app.css', import.meta.url).pathname, 'utf8');
+	assert.match(
+		css,
+		/^\[popover\]:not\(:popover-open\)\s*\{\s*display:\s*none;?\s*\}/m,
+		'a closed popover is shown by its component display — add the unlayered guard'
+	);
+});
+
 // Tailwind ships a `.collapse` utility whose whole body is `visibility:
 // collapse` — and utilities outrank the components layer. The app's disclosure
 // is `<details class="collapse">`, so without an unlayered declaration the
