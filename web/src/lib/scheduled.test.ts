@@ -64,6 +64,20 @@ test('stored cron expressions repopulate the friendly editor without losing Sund
 	assert.equal(scheduleFromCron('5 4 * 2 *').mode, 'advanced');
 });
 
+test('a stored weekday range edits as the weekdays it names', () => {
+	assert.deepEqual(scheduleFromCron('0 8 * * 1-5'), {
+		mode: 'weekly', minute: 0, hour: 8, dayOfMonth: 1, weekdays: [1, 2, 3, 4, 5], advanced: ''
+	});
+	assert.deepEqual(scheduleFromCron('0 8 * * 1-3,0').weekdays, [1, 2, 3, 0]);
+	// Anything the weekday toggles cannot represent stays raw, so the preview
+	// sends the stored expression rather than one with a NaN day.
+	for (const cron of ['0 8 * * 1-9', '0 8 * * */2', '0 8 * * MON-FRI']) {
+		assert.deepEqual(scheduleFromCron(cron), {
+			mode: 'advanced', minute: 0, hour: 9, dayOfMonth: 1, weekdays: [], advanced: cron
+		});
+	}
+});
+
 test('scheduled run times retain the original compact 24-hour layout', () => {
 	assert.equal(formatScheduledRun('2026-09-10T00:00:00Z', 'en', 'Asia/Tokyo'), 'Thu Sep 10, 09:00');
 	assert.equal(formatScheduledRun('invalid', 'en', 'UTC'), '');

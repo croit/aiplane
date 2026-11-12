@@ -111,6 +111,24 @@ export function cronFromSchedule(schedule: ScheduleFields): string | null {
 	return schedule.advanced.trim() || null;
 }
 
+/** The weekday numbers a cron day-of-week field names, or `null` when the toggles cannot represent it. */
+function parseWeekdays(spec: string): number[] | null {
+	const days: number[] = [];
+	for (const token of spec.split(',')) {
+		const range = /^(\d)-(\d)$/.exec(token);
+		if (range) {
+			const [from, to] = [Number(range[1]), Number(range[2])];
+			if (from > to || to > 6) return null;
+			for (let day = from; day <= to; day++) days.push(day);
+			continue;
+		}
+		const day = Number(token);
+		if (!Number.isInteger(day) || day < 0 || day > 6) return null;
+		days.push(day);
+	}
+	return [...new Set(days)];
+}
+
 export function scheduleFromCron(cron: string): ScheduleFields {
 	const fields = cron.trim().split(/\s+/);
 	if (fields.length !== 5) return { ...defaultSchedule(), mode: 'advanced', advanced: cron };
@@ -122,7 +140,8 @@ export function scheduleFromCron(cron: string): ScheduleFields {
 	}
 	if (Number.isInteger(parsedMinute) && Number.isInteger(parsedHour) && month === '*') {
 		if (dayOfMonth === '*' && dayOfWeek === '*') return { ...defaultSchedule(), mode: 'daily', minute: parsedMinute, hour: parsedHour };
-		if (dayOfMonth === '*' && dayOfWeek !== '*') return { ...defaultSchedule(), mode: 'weekly', minute: parsedMinute, hour: parsedHour, weekdays: dayOfWeek.split(',').map(Number) };
+		const weekdays = dayOfMonth === '*' && dayOfWeek !== '*' ? parseWeekdays(dayOfWeek) : null;
+		if (weekdays && weekdays.length > 0) return { ...defaultSchedule(), mode: 'weekly', minute: parsedMinute, hour: parsedHour, weekdays };
 		const parsedDay = Number(dayOfMonth);
 		if (Number.isInteger(parsedDay) && dayOfWeek === '*') return { ...defaultSchedule(), mode: 'monthly', minute: parsedMinute, hour: parsedHour, dayOfMonth: parsedDay };
 	}
