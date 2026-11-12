@@ -1936,6 +1936,19 @@ async fn a_note_typed_during_a_tool_round_raises_the_conversation_before_the_nex
         .await
         .unwrap();
     assert_eq!(note.status(), StatusCode::ACCEPTED);
+    // The note's classification is applied asynchronously. Let it land before
+    // the tool round can end, or the turn may take its next round without
+    // seeing the raised level and complete instead of aborting.
+    for _ in 0..200 {
+        if events(&state, &session)
+            .await
+            .iter()
+            .any(|event| event.2 == "pattern:iban")
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     wait_settled(&state, &session).await;
 
     let (status, error) = last_turn_status(&state, &session).await;
