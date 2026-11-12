@@ -113,6 +113,14 @@ bound can allocate tens of GB long before 120 s are up. Size-probe tests use
 finite inputs (`docs/dev-workflow.md` → "Size-probe tests: finite inputs
 only").
 
+Test threads get an 8 MiB stack (`RUST_MIN_STACK` on the `test`, `test-crate`
+and `test-nocapture` mise tasks). libtest's 2 MiB default is too small for the
+debug-build future chain a chat turn with tools produces — driver → tool
+runner → audit write → SQL pool — and Linux aborts the whole test process
+(`SIGABRT`, "has overflowed its stack") when it runs out. macOS' larger
+default hid this; keep the tasks as the way tests are started so the limit is
+the same everywhere.
+
 ## Style: test-first, Chicago / Classicist
 
 Write the test before the code — red, green, refactor (**TDD**). Tests are **state-based**: assert on observable results, exercising real collaborators (in-memory SQLite, `wiremock` upstreams, the actual `ToolRegistry` / `UpstreamRegistry`) rather than interaction mocks. Behaviour-verification (London-school) mocks are the exception, reserved for collaborators you genuinely can't stand up in-process — and the test says why in a comment. The mocking philosophy below is the practical edge of this: we fake only the things that reach outside the process.
