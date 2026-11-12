@@ -389,8 +389,14 @@ depends = ["build-web"]
 env = { AIPLANE_STATIC_DIR = "target/frontend/build" }
 run = "mise run stage-extension && cargo run --example dev_ui -p aiplane"
 
+# libtest runs each test on a thread with a 2 MiB stack unless RUST_MIN_STACK
+# says otherwise. The future chain a chat turn with tools produces in a debug
+# build (driver → tool runner → audit write → SQL pool) overflows that on
+# Linux and aborts the test process with SIGABRT; 8 MiB is the macOS default
+# the suite was developed on, and leaves the debug frames comfortable.
 [tasks.test]
 description = "Run the workspace tests (cargo-nextest — parallel, compact report)."
+env = { RUST_MIN_STACK = "8388608" }
 run = "cargo nextest run --workspace"
 
 [tasks.test-system-one-live]
@@ -399,6 +405,7 @@ run = "node --test e2e/live/system-one.test.mjs"
 
 [tasks.test-nocapture]
 description = "Run tests with stdout/stderr visible."
+env = { RUST_MIN_STACK = "8388608" }
 run = "cargo nextest run --workspace --no-capture"
 
 [tasks.parity-gap]
@@ -598,6 +605,7 @@ usage = '''
 arg "<crate>" help="workspace crate, e.g. aiplane-api"
 arg "[filter]" help="optional nextest name filter"
 '''
+env = { RUST_MIN_STACK = "8388608" }
 run = 'cargo nextest run -p "$usage_crate" ${usage_filter:-}'
 
 [tasks.lint-crate]
