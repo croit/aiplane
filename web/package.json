@@ -17,7 +17,7 @@
 		"@sveltejs/kit": "^3.1.0",
 		"@sveltejs/vite-plugin-svelte": "^7.3.1",
 		"@tailwindcss/typography": "^0.5.20",
-		"@tailwindcss/vite": "^4.1.0",
+		"@tailwindcss/vite": "^4.3.5",
 		"@types/node": "^26.6.6",
 		"@typescript/native": "npm:typescript@^7.0.2",
 		"daisyui": "^5.7.50",
