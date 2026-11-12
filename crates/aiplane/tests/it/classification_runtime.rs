@@ -1900,7 +1900,10 @@ async fn a_note_typed_during_a_tool_round_raises_the_conversation_before_the_nex
         .and(path("/chat/completions"))
         .respond_with(ToolThenAnswer::new(
             "get_current_timestamp",
-            Duration::from_millis(800),
+            // The steer must land while the tool round is in flight. 800 ms
+            // was tight on a loaded CI runner and made this test flaky; the
+            // suite's slow-test threshold is far above this.
+            Duration::from_secs(3),
         ))
         .mount(&upstream)
         .await;
