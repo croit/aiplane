@@ -122,7 +122,18 @@ fn is_client_route(path: &str) -> bool {
     }
     let root = rel.split('/').next().unwrap_or("");
     if root == "rag" {
-        return matches!(rel.trim_end_matches('/'), "rag" | "rag/profiles");
+        // RAG is narrower because it shares its root with server-owned OAuth
+        // and sync routes: `/rag/oauth/callback` and `/rag/{id}/connect` are
+        // pages the server renders or handlers it runs, never the app shell.
+        let rel = rel.trim_end_matches('/');
+        if matches!(rel, "rag" | "rag/profiles" | "rag/new") {
+            return true;
+        }
+        let mut segments = rel.split('/');
+        return segments.next() == Some("rag")
+            && matches!(segments.next(), Some(id) if !id.is_empty())
+            && segments.next() == Some("edit")
+            && segments.next().is_none();
     }
     SPA_ROUTES.contains(&root)
 }
@@ -564,6 +575,35 @@ mod tests {
             s.contains("<!doctype html"),
             "should fall back to index.html: {s}"
         );
+    }
+
+    /// The RAG pages share their root with server-owned OAuth and sync routes,
+    /// so the allowlist names the pages. A collection editor that is only
+    /// reachable by client navigation 404s on reload, bookmark or a pasted
+    /// link — the one way an operator enters it.
+    #[tokio::test]
+    async fn rag_editor_pages_fall_back_while_server_rag_routes_do_not() {
+        let (_d, root) = spa_tempdir();
+        for path in [
+            "/rag",
+            "/rag/profiles",
+            "/rag/new",
+            "/rag/collection-1/edit",
+        ] {
+            let resp = serve(&root, &get(path)).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{path}");
+        }
+        for path in [
+            "/rag/typo",
+            "/rag/oauth/callback",
+            "/rag/collection-1/connect",
+        ] {
+            assert_eq!(
+                serve(&root, &get(path)).await.status(),
+                StatusCode::NOT_FOUND,
+                "{path} belongs to the server or to nobody"
+            );
+        }
     }
 
     #[tokio::test]
