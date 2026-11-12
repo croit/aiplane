@@ -257,6 +257,25 @@ async fn wait_settled(state: &RamaState, session_id: &str) {
     panic!("turn never settled");
 }
 
+/// Wait until the named turn leaves `InProgress` and return its final row.
+///
+/// `wait_settled` answers "is anything running", which is enough when a test
+/// asserts on the last turn; a test that must not confuse its own turn with
+/// anything that starts after it polls the row it submitted.
+async fn wait_turn_finished(state: &RamaState, session_id: &str, turn_id: &str) -> chat::Turn {
+    for _ in 0..500 {
+        let turn = chat::get_turn(&state.db, session_id, turn_id)
+            .await
+            .unwrap()
+            .expect("the submitted turn still exists");
+        if turn.status != chat::TurnStatus::InProgress {
+            return turn;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("turn {turn_id} never finished");
+}
+
 async fn events(state: &RamaState, session_id: &str) -> Vec<(String, String, String)> {
     sqlx::query_as(
         "SELECT from_level, to_level, cause FROM chat_classification_events
@@ -1914,6 +1933,14 @@ async fn a_note_typed_during_a_tool_round_raises_the_conversation_before_the_nex
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let turn_id = chat::list_turns(&state.db, &session)
+        .await
+        .unwrap()
+        .last()
+        .unwrap()
+        .turn
+        .id
+        .clone();
     for _ in 0..100 {
         if !turn_requests(&upstream).await.is_empty() {
             break;
@@ -1949,10 +1976,9 @@ async fn a_note_typed_during_a_tool_round_raises_the_conversation_before_the_nex
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    wait_settled(&state, &session).await;
-
-    let (status, error) = last_turn_status(&state, &session).await;
-    assert_eq!(status, chat::TurnStatus::Errored, "{error}");
+    let turn = wait_turn_finished(&state, &session, &turn_id).await;
+    let error = turn.error_message.clone().unwrap_or_default();
+    assert_eq!(turn.status, chat::TurnStatus::Errored, "{error}");
     assert!(error.contains("Confidential"), "{error}");
     assert_eq!(
         turn_requests(&upstream).await.len(),
