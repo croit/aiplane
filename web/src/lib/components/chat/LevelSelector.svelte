@@ -62,7 +62,7 @@
 		>
 			{current.name}<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
 		</button>
-		<ul class="dropdown dropdown-content menu z-10 w-56 rounded-box bg-base-200 p-2 shadow" popover id="level-menu" style="position-anchor:--level" bind:this={menu}>
+		<ul class="dropdown-content menu z-10 w-56 rounded-box bg-base-200 p-2 shadow" popover id="level-menu" style="position-anchor:--level" bind:this={menu}>
 			{#each options as option (option.level.id)}
 				<li><button type="button" onclick={() => choose(option.level.id, option.needsReason)}><span class={levelBadgeClass(option.level.color)}>{option.level.name}</span></button></li>
 			{/each}

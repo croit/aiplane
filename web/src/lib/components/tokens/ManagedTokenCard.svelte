@@ -224,7 +224,7 @@
 						<StatusPill tone="ok">{t('tokens-badge-active')}</StatusPill>
 					{/if}
 					<button type="button" class="btn btn-ghost btn-sm btn-square" popovertarget={menuId} style="anchor-name:--{menuId}" aria-label={t('tokens-menu-aria')} title={t('tokens-menu-aria')}>⋯</button>
-					<ul class="dropdown dropdown-content menu z-10 w-56 rounded-box bg-base-200 p-2 shadow" popover id={menuId} style="position-anchor:--{menuId}">
+					<ul class="dropdown-content menu z-10 w-56 rounded-box bg-base-200 p-2 shadow" popover id={menuId} style="position-anchor:--{menuId}">
 						<li><button type="button" onclick={() => act(onrotate)} title={t('tokens-rotate-title')}>{t('tokens-rotate-button')}</button></li>
 						<li><button type="button" class="text-error" onclick={() => act(onrevoke)}>{t('tokens-revoke-button')}</button></li>
 					</ul>

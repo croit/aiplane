@@ -54,6 +54,8 @@ test('every text-on-fill pair in both themes reaches WCAG AA (4.5:1)', () => {
 		['--t-base-content', '--t-base-100'],
 		['--t-base-content', '--t-base-200'],
 		['--t-primary-content', '--t-primary'],
+		['--t-link', '--t-base-100'],
+		['--t-link', '--t-base-200'],
 		['--t-neutral-content', '--t-neutral'],
 		['--t-success-content', '--t-success'],
 		['--t-warning-content', '--t-warning'],
@@ -73,6 +75,15 @@ test('the croit VI pins hold: violet primary and 18px box radius', () => {
 		assert.equal(tokens.get('--t-primary')!.toLowerCase(), '#8e54e9', `${name}: the action accent is not croit violet`);
 	}
 	assert.match(css, /--radius-box:\s*1\.125rem/);
+});
+
+test('rendered markdown takes its colours from the theme, not the prose defaults', () => {
+	const prose = /:root \.prose\s*\{([^}]*)\}/.exec(css);
+	assert.ok(prose, 'app.css does not map the prose colours onto the tokens');
+	for (const variable of ['--tw-prose-body', '--tw-prose-headings', '--tw-prose-links']) {
+		const themed = new RegExp(`${variable}:\\s*(var\\(--color-[\\w-]+\\)|color-mix\\(in oklab, var\\(--color-base-content\\))`);
+		assert.match(prose[1], themed, `${variable} keeps the typography plugin's light default`);
+	}
 });
 
 test('a plain button keeps a visible edge on a card', () => {

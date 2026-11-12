@@ -149,6 +149,31 @@ test('app.css gives every modal a visible edge over a dark page', () => {
 	);
 });
 
+// A popover menu is laid out against its trigger through CSS anchor
+// positioning. The `dropdown` class is a relative-positioned wrapper for a
+// trigger; on the popover itself it overrides the top layer's fixed placement
+// and the menu lands wherever it happens to sit in the flow — in the chat
+// header that was over the title, floating across the page.
+test('a popover menu anchors below its trigger instead of carrying the dropdown wrapper class', () => {
+	const css = readFileSync(new URL('../app.css', import.meta.url).pathname, 'utf8');
+	const rule = /\.dropdown-content\s*\{([^}]*)\}/.exec(css);
+	assert.ok(rule, '.dropdown-content has no rule in app.css');
+	assert.match(rule[1], /position-area:\s*bottom center/, 'the menu is not scoped to the trigger\'s column');
+	assert.match(rule[1], /justify-self:\s*end/, 'the menu is not aligned to the trigger\'s inline end');
+
+	const root = new URL('../..', import.meta.url).pathname;
+	const offenders: string[] = [];
+	for (const file of svelteFiles(join(root, 'src'))) {
+		readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+			if (!/\bpopover\b/.test(line)) return;
+			for (const m of line.matchAll(/class="([^"]*)"/g)) {
+				if (m[1].split(/\s+/).includes('dropdown')) offenders.push(`${file.slice(root.length)}:${i + 1}`);
+			}
+		});
+	}
+	assert.deepEqual(offenders, [], 'the popover takes its placement from .dropdown-content, not the .dropdown wrapper:\n' + offenders.join('\n'));
+});
+
 // Tailwind ships a `.collapse` utility whose whole body is `visibility:
 // collapse` — and utilities outrank the components layer. The app's disclosure
 // is `<details class="collapse">`, so without an unlayered declaration the
