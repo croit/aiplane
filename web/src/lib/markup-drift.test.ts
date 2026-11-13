@@ -92,7 +92,7 @@ test('no component uses a class daisyUI 5 dropped', () => {
 // renders unstyled and nothing errors. Tailwind utilities never match the
 // pattern below, so they are not checked.
 const COMPONENT_PATTERN =
-	/^(accordion|alert|avatar|badge|btn|card|chat|checkbox|collapse|divider|dropdown|fieldset|indicator|input|join|kbd|label|legend|link|loading|menu|mockup|modal|navbar|pagination|placeholder|progress|range|radio|rating|select|skeleton|stat|stats|steps|tab|table|tabs|textarea|toast|toggle|tooltip|tree)(-[a-z0-9]+)*$/;
+	/^(accordion|alert|avatar|badge|btn|card|chat|checkbox|collapse|divider|dropdown|fieldset|file|indicator|input|join|kbd|label|legend|link|loading|menu|mockup|modal|navbar|pagination|placeholder|progress|range|radio|rating|select|skeleton|stat|stats|steps|tab|table|tabs|textarea|toast|toggle|tooltip|tree)(-[a-z0-9]+)*$/;
 
 // Tailwind utilities that look like component variants: user-select.
 const TAILWIND_LOOKALIKES = new Set(['select-all', 'select-none']);
@@ -172,6 +172,21 @@ test('a popover menu anchors below its trigger instead of carrying the dropdown 
 		});
 	}
 	assert.deepEqual(offenders, [], 'the popover takes its placement from .dropdown-content, not the .dropdown wrapper:\n' + offenders.join('\n'));
+});
+
+// A file field is a field like any other. Without the token layer's
+// `.file-input` the browser draws its own control — OS-language "Choose
+// file" chrome in the middle of a dark card, matching no other field.
+test('a file field draws the same field as every text input', () => {
+	const css = readFileSync(new URL('../app.css', import.meta.url).pathname, 'utf8');
+	const field = /\.file-input\s*\{([^}]*)\}/.exec(css);
+	assert.ok(field, '.file-input has no rule in app.css');
+	assert.match(field[1], /border:\s*1px solid var\(--color-base-300\)/);
+	assert.match(field[1], /border-radius:\s*var\(--radius-field\)/);
+	const button = /\.file-input::file-selector-button\s*\{([^}]*)\}/.exec(css);
+	assert.ok(button, 'the native file picker button keeps the browser chrome');
+	assert.match(button[1], /background-color:\s*var\(--color-base-200\)/);
+	assert.match(button[1], /border-radius:\s*var\(--radius-selector\)/);
 });
 
 // A search field that wraps its input draws the field on the <label> and the

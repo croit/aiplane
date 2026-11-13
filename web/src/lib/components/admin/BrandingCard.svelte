@@ -90,10 +90,7 @@
 					<div class="flex min-w-0 grow flex-col gap-2">
 						<span class="text-sm font-medium">{t(`branding-slot-${slot}`)}</span>
 						<div class="flex flex-wrap items-center gap-2">
-							<label class="file-input file-input-sm">
-								<span class="sr-only">{t('branding-upload')}</span>
-								<input type="file" accept="image/svg+xml,image/png,image/jpeg" disabled={saving !== null} onchange={setFile(slot)} />
-							</label>
+							<input type="file" class="file-input file-input-sm w-auto" accept="image/svg+xml,image/png,image/jpeg" aria-label={t('branding-upload')} disabled={saving !== null} onchange={setFile(slot)} />
 							{#if set}
 								<button class="btn btn-ghost btn-sm" disabled={saving !== null} onclick={() => remove(slot)}>{t('branding-remove')}</button>
 							{/if}
