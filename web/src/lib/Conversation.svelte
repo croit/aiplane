@@ -1267,7 +1267,6 @@
 		{/if}
 		<div class="flex flex-wrap items-center gap-2">
 			<CapabilityPicker capabilities={tools} onset={setCapability} />
-			<span class="flex-1"></span>
 			<select
 				class="select select-xs w-auto max-w-48"
 				aria-label={t('chat-render-effort-title')}

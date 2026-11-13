@@ -55,6 +55,7 @@ chat-render-tools-search-results = Resultados de búsqueda
 chat-render-tools-empty = Ninguna herramienta coincide con los filtros actuales.
 chat-render-tools-set-group = Establecer todas
 chat-render-tools-summary = { $on } siempre activas · { $auto } automáticas · { $off } desactivadas
+chat-render-tools-more = +{ $count } más
 chat-render-tools-done = Listo
 
 chat-render-close = Cerrar

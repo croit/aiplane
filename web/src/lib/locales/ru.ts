@@ -1559,6 +1559,7 @@ export const ru: Catalog = {
  "chat-render-tools-done": "Готово",
  "chat-render-tools-empty": "Нет инструментов, соответствующих текущим фильтрам.",
  "chat-render-tools-label": "Инструменты",
+ "chat-render-tools-more": "+{count} ещё",
  "chat-render-tools-search-placeholder": "Поиск инструментов…",
  "chat-render-tools-search-results": "Результаты поиска",
  "chat-render-tools-set-group": "Настроить все",

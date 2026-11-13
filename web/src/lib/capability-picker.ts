@@ -18,8 +18,7 @@ export function capabilityGroups<T extends CapabilityItem>(items: T[]): { name: 
 	}));
 }
 
-/** Lower ranks first; rows of one rank keep the order they came in (the server's: group, then title). */
-export function rankCapabilities<T>(items: T[], rank: (item: T) => number): T[] {
+/** Lower ranks first; rows of one rank keep the order they came in (the server's: group, then title). */export function rankCapabilities<T>(items: T[], rank: (item: T) => number): T[] {
 	return items.map((item, index) => ({ item, index, rank: rank(item) }))
 		.sort((a, b) => a.rank - b.rank || a.index - b.index)
 		.map(({ item }) => item);
@@ -47,4 +46,27 @@ export function capabilityCounts(capabilities: ChatCapability[]): Record<ChatCap
 		(counts, capability) => ({ ...counts, [capability.state]: counts[capability.state] + 1 }),
 		{ on: 0, auto: 0, off: 0 }
 	);
+}
+
+/**
+ * How many of `widths` fit beside the trigger in `available` pixels, in order,
+ * reserving the gap and the "+N more" badge for as long as badges remain after
+ * the last one that fits. `gap` is the row's own column gap.
+ */
+export function fittingCapabilities(
+	widths: number[],
+	trigger: number,
+	more: number,
+	available: number,
+	gap: number
+): number {
+	let used = trigger;
+	let fit = 0;
+	for (let index = 0; index < widths.length; index += 1) {
+		used += gap + widths[index];
+		const reserve = index + 1 < widths.length ? gap + more : 0;
+		if (used + reserve > available) break;
+		fit = index + 1;
+	}
+	return fit;
 }

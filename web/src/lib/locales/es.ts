@@ -1541,6 +1541,7 @@ export const es: Catalog = {
  "chat-render-tools-done": "Listo",
  "chat-render-tools-empty": "Ninguna herramienta coincide con los filtros actuales.",
  "chat-render-tools-label": "Herramientas",
+ "chat-render-tools-more": "+{count} más",
  "chat-render-tools-search-placeholder": "Buscar herramientas…",
  "chat-render-tools-search-results": "Resultados de búsqueda",
  "chat-render-tools-set-group": "Establecer todas",

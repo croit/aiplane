@@ -151,6 +151,13 @@ lands in its textarea — once per mount, and only where
 `matchMedia('(pointer: fine)')` holds, so a touch screen does not pop its
 on-screen keyboard up over the page that was just opened.
 
+The composer's tool row never wraps the composer taller. It keeps as many
+pinned tools as fit beside **+ Tools** and folds the rest into one **+N more**
+badge that opens the same picker; the fit is measured off an invisible copy of
+the badges (`fittingCapabilities`, unit-tested), so it follows the window and
+the interface language. Below `sm` the row shows only the active count (`⌁ N`),
+which opens the picker too.
+
 The personal pages use one shared `SectionTabs` navigation component with
 path-backed tabs. `/tools` contains built-in tool controls (including location
 sharing), `/tools/integrations` the user's MCP connections, `/tools/skills`

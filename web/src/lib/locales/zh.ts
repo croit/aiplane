@@ -1526,6 +1526,7 @@ export const zh: Catalog = {
  "chat-render-tools-done": "完成",
  "chat-render-tools-empty": "没有符合当前筛选条件的工具。",
  "chat-render-tools-label": "工具",
+ "chat-render-tools-more": "+{count} 个",
  "chat-render-tools-search-placeholder": "搜索工具…",
  "chat-render-tools-search-results": "搜索结果",
  "chat-render-tools-set-group": "全部设置",
