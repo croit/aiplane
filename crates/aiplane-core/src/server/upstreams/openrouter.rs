@@ -83,6 +83,44 @@ pub struct Pricing {
     pub input_cache_write: Option<String>,
 }
 
+/// What a model's input/output price is billed per.
+///
+/// OpenRouter publishes one number for each side, but the unit depends on the
+/// model: chat and token-priced transcription are USD per token (the panel
+/// shows per 1M), while whisper-class transcription is USD per audio second.
+/// A transcription model that prices its output at zero is duration-priced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PriceUnit {
+    Token,
+    Second,
+}
+
+impl PriceUnit {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Token => "token",
+            Self::Second => "second",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "token" => Some(Self::Token),
+            "second" => Some(Self::Second),
+            _ => None,
+        }
+    }
+
+    /// Re-express a ceiling when a model changes its pricing scheme.
+    pub fn convert(self, value: f64, to: Self) -> f64 {
+        match (self, to) {
+            (Self::Token, Self::Second) => value / 1_000_000.0,
+            (Self::Second, Self::Token) => value * 1_000_000.0,
+            _ => value,
+        }
+    }
+}
+
 impl Pricing {
     pub fn prompt_per_million(&self) -> f64 {
         per_million(self.prompt.as_deref())
@@ -90,6 +128,33 @@ impl Pricing {
 
     pub fn completion_per_million(&self) -> f64 {
         per_million(self.completion.as_deref())
+    }
+
+    /// The input price in `unit`: USD per 1M tokens, or USD per audio second.
+    pub fn prompt_price(&self, unit: PriceUnit, model_id: &str) -> f64 {
+        match unit {
+            PriceUnit::Token => self.prompt_per_million(),
+            PriceUnit::Second => duration_price(self.prompt.as_deref(), model_id),
+        }
+    }
+
+    /// The output price in `unit`. Duration-priced transcription has none.
+    pub fn completion_price(&self, unit: PriceUnit) -> f64 {
+        match unit {
+            PriceUnit::Token => self.completion_per_million(),
+            PriceUnit::Second => self
+                .completion
+                .as_deref()
+                .and_then(parse_price)
+                .unwrap_or(0.0),
+        }
+    }
+
+    pub fn cache_read_price(&self, unit: PriceUnit) -> Option<f64> {
+        match unit {
+            PriceUnit::Token => self.cache_read_per_million(),
+            PriceUnit::Second => None,
+        }
     }
 
     pub fn request_price(&self) -> Option<f64> {
@@ -176,6 +241,26 @@ impl CatalogEntry {
             .as_ref()
             .and_then(|t| t.max_completion_tokens)
     }
+
+    /// What this model's prices are billed per. See [`PriceUnit`].
+    pub fn price_unit(&self) -> PriceUnit {
+        let duration_priced = self
+            .output_modalities()
+            .iter()
+            .any(|modality| modality == "transcription")
+            && self
+                .pricing
+                .completion
+                .as_deref()
+                .and_then(parse_price)
+                .unwrap_or(0.0)
+                == 0.0;
+        if duration_priced {
+            PriceUnit::Second
+        } else {
+            PriceUnit::Token
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -238,6 +323,18 @@ pub struct RefreshReport {
 
 fn per_million(value: Option<&str>) -> f64 {
     value.and_then(parse_price).unwrap_or(0.0) * 1_000_000.0
+}
+
+/// USD per second of audio. Microsoft's MAI transcription models are the one
+/// exception in OpenRouter's catalog: they quote an hourly rate in `prompt`
+/// (`0.10`, `0.36`), every other duration-priced model is already per second.
+fn duration_price(value: Option<&str>, model_id: &str) -> f64 {
+    let raw = value.and_then(parse_price).unwrap_or(0.0);
+    if model_id.starts_with("microsoft/mai-transcribe") {
+        raw / 3_600.0
+    } else {
+        raw
+    }
 }
 
 fn parse_price(value: &str) -> Option<f64> {
@@ -382,27 +479,36 @@ pub struct Allowed {
     pub completion: f64,
 }
 
-/// Whether one endpoint satisfies both ceilings.
-pub fn endpoint_allowed(endpoint: &EndpointEntry, max_prompt: f64, max_completion: f64) -> bool {
-    endpoint.pricing.prompt_per_million() <= max_prompt
-        && endpoint.pricing.completion_per_million() <= max_completion
+/// Whether one endpoint satisfies both ceilings. A missing ceiling does not
+/// filter that side.
+pub fn endpoint_allowed(
+    endpoint: &EndpointEntry,
+    max_prompt: Option<f64>,
+    max_completion: Option<f64>,
+    unit: PriceUnit,
+    model_id: &str,
+) -> bool {
+    max_prompt.is_none_or(|max| endpoint.pricing.prompt_price(unit, model_id) <= max)
+        && max_completion.is_none_or(|max| endpoint.pricing.completion_price(unit) <= max)
 }
 
 /// The cheapest allowed endpoint, by prompt price then completion price.
-pub fn cheapest_allowed(
-    endpoints: &[EndpointEntry],
-    max_prompt: f64,
-    max_completion: f64,
-) -> Option<(&EndpointEntry, Allowed)> {
+pub fn cheapest_allowed<'a>(
+    endpoints: &'a [EndpointEntry],
+    max_prompt: Option<f64>,
+    max_completion: Option<f64>,
+    unit: PriceUnit,
+    model_id: &str,
+) -> Option<(&'a EndpointEntry, Allowed)> {
     endpoints
         .iter()
-        .filter(|e| endpoint_allowed(e, max_prompt, max_completion))
+        .filter(|e| endpoint_allowed(e, max_prompt, max_completion, unit, model_id))
         .map(|e| {
             (
                 e,
                 Allowed {
-                    prompt: e.pricing.prompt_per_million(),
-                    completion: e.pricing.completion_per_million(),
+                    prompt: e.pricing.prompt_price(unit, model_id),
+                    completion: e.pricing.completion_price(unit),
                 },
             )
         })
@@ -542,6 +648,7 @@ pub async fn refresh_backend(
                 }
             };
 
+            let unit = known[model_id.as_str()].price_unit();
             let rows: Vec<upstreams_config::OpenRouterEndpointRow> = endpoints
                 .iter()
                 .map(|endpoint| upstreams_config::OpenRouterEndpointRow {
@@ -551,12 +658,15 @@ pub async fn refresh_backend(
                         endpoint.tag.clone()
                     },
                     provider_name: endpoint.provider_name.clone(),
-                    prompt_price: endpoint.pricing.prompt_per_million(),
-                    completion_price: endpoint.pricing.completion_per_million(),
+                    prompt_price: endpoint.pricing.prompt_price(unit, model_id),
+                    completion_price: endpoint.pricing.completion_price(unit),
                     request_price: endpoint.pricing.request_price(),
                     image_price: endpoint.pricing.image_price(),
-                    cache_read_price: endpoint.pricing.cache_read_per_million(),
-                    cache_write_price: endpoint.pricing.cache_write_per_million(),
+                    cache_read_price: endpoint.pricing.cache_read_price(unit),
+                    cache_write_price: endpoint
+                        .pricing
+                        .cache_write_per_million()
+                        .filter(|_| unit == PriceUnit::Token),
                     context_length: endpoint.context_length,
                     max_completion_tokens: endpoint.max_completion_tokens,
                     throughput_p50: endpoint.throughput_last_30m.as_ref().and_then(|p| p.p50),
@@ -570,16 +680,13 @@ pub async fn refresh_backend(
                 .await?;
 
             let Some(policy) = policies.get(model_id) else {
-                // A selected model with no ceiling is not offered. The admin UI
+                // A selected model with no policy is not offered. The admin UI
                 // writes the policy with the selection, so this is a stale row
                 // from an older selection.
                 continue;
             };
-            let cheapest = cheapest_allowed(
-                &endpoints,
-                policy.max_prompt_price,
-                policy.max_completion_price,
-            );
+            let (max_prompt, max_completion) = policy.ceilings_in(unit);
+            let cheapest = cheapest_allowed(&endpoints, max_prompt, max_completion, unit, model_id);
             let is_available = cheapest.is_some();
             if is_available {
                 available.insert(model_id.clone());
@@ -686,6 +793,28 @@ mod tests {
         }
     }
 
+    fn catalog_model(id: &str, output: &str, prompt: &str, completion: &str) -> CatalogEntry {
+        CatalogEntry {
+            id: id.into(),
+            name: id.into(),
+            description: String::new(),
+            context_length: Some(128_000),
+            architecture: Some(Architecture {
+                input_modalities: vec!["audio".into()],
+                output_modalities: vec![output.into()],
+            }),
+            pricing: Pricing {
+                prompt: Some(prompt.into()),
+                completion: Some(completion.into()),
+                ..Default::default()
+            },
+            supported_parameters: Vec::new(),
+            top_provider: None,
+            endpoints: Vec::new(),
+            supported_voices: Vec::new(),
+        }
+    }
+
     #[test]
     fn pricing_converts_per_token_strings_to_per_million() {
         let pricing = Pricing {
@@ -695,6 +824,172 @@ mod tests {
         };
         assert!((pricing.prompt_per_million() - 0.30).abs() < 1e-9);
         assert!((pricing.completion_per_million() - 1.20).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_duration_priced_transcription_model_prices_in_audio_seconds() {
+        let whisper = catalog_model(
+            "openai/whisper-large-v3-turbo",
+            "transcription",
+            "0.00000333",
+            "0",
+        );
+        assert_eq!(whisper.price_unit(), PriceUnit::Second);
+        assert!(
+            (whisper.pricing.prompt_price(PriceUnit::Second, &whisper.id) - 0.00000333).abs()
+                < 1e-12
+        );
+        assert_eq!(whisper.pricing.completion_price(PriceUnit::Second), 0.0);
+        assert_eq!(
+            whisper.pricing.cache_read_price(PriceUnit::Second),
+            None,
+            "a duration-priced model has no token cache"
+        );
+    }
+
+    #[test]
+    fn a_token_priced_transcription_model_keeps_per_million_tokens() {
+        let gpt = catalog_model(
+            "openai/gpt-4o-transcribe",
+            "transcription",
+            "0.0000025",
+            "0.00001",
+        );
+        assert_eq!(gpt.price_unit(), PriceUnit::Token);
+        assert!((gpt.pricing.prompt_price(PriceUnit::Token, &gpt.id) - 2.50).abs() < 1e-9);
+        assert!((gpt.pricing.completion_price(PriceUnit::Token) - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn microsoft_mai_duration_models_divide_their_hourly_rate() {
+        let mai = catalog_model("microsoft/mai-transcribe-2", "transcription", "0.10", "0");
+        assert_eq!(mai.price_unit(), PriceUnit::Second);
+        assert!(
+            (mai.pricing.prompt_price(PriceUnit::Second, &mai.id) - 0.10 / 3_600.0).abs() < 1e-12,
+            "an hourly rate becomes a per-second price"
+        );
+    }
+
+    #[test]
+    fn a_chat_model_with_free_completions_stays_token_priced() {
+        let free = catalog_model("acme/free", "text", "0", "0");
+        assert_eq!(free.price_unit(), PriceUnit::Token);
+    }
+
+    #[test]
+    fn a_model_is_available_only_when_a_provider_fits_both_ceilings() {
+        let endpoints = vec![
+            endpoint("0.0000010", "0.0000020", "expensive"),
+            endpoint("0.0000002", "0.0000009", "cheap"),
+        ];
+        // 0.30 / 1.20 per 1M: only the cheap provider fits both.
+        let cheapest = cheapest_allowed(
+            &endpoints,
+            Some(0.30),
+            Some(1.20),
+            PriceUnit::Token,
+            "acme/chat",
+        )
+        .unwrap();
+        assert_eq!(cheapest.0.tag, "cheap");
+        assert!(
+            cheapest_allowed(
+                &endpoints,
+                Some(0.10),
+                Some(0.10),
+                PriceUnit::Token,
+                "acme/chat"
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn input_and_output_ceilings_are_independent() {
+        let endpoints = [endpoint("0.0000001", "0.0000100", "cheap-in")];
+        assert!(
+            cheapest_allowed(
+                &endpoints,
+                Some(0.30),
+                Some(0.50),
+                PriceUnit::Token,
+                "acme/chat"
+            )
+            .is_none()
+        );
+        assert!(
+            cheapest_allowed(
+                &endpoints,
+                Some(0.30),
+                Some(20.0),
+                PriceUnit::Token,
+                "acme/chat"
+            )
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn no_ceiling_accepts_every_provider_and_picks_the_cheapest() {
+        let endpoints = vec![
+            endpoint("0.0000100", "0.0000500", "expensive"),
+            endpoint("0.0000002", "0.0000009", "cheap"),
+        ];
+        let cheapest =
+            cheapest_allowed(&endpoints, None, None, PriceUnit::Token, "acme/chat").unwrap();
+        assert_eq!(cheapest.0.tag, "cheap");
+        assert!(endpoint_allowed(
+            &endpoints[0],
+            None,
+            None,
+            PriceUnit::Token,
+            "acme/chat"
+        ));
+    }
+
+    #[test]
+    fn one_ceiling_filters_only_its_own_side() {
+        let endpoints = [endpoint("0.0000001", "0.0000100", "cheap-in")];
+        assert!(endpoint_allowed(
+            &endpoints[0],
+            Some(0.20),
+            None,
+            PriceUnit::Token,
+            "acme/chat"
+        ));
+        assert!(!endpoint_allowed(
+            &endpoints[0],
+            Some(0.05),
+            None,
+            PriceUnit::Token,
+            "acme/chat"
+        ));
+        assert!(endpoint_allowed(
+            &endpoints[0],
+            None,
+            Some(20.0),
+            PriceUnit::Token,
+            "acme/chat"
+        ));
+    }
+
+    #[test]
+    fn an_audio_second_ceiling_filters_in_seconds() {
+        let whisper = catalog_model("openai/whisper-large-v3", "transcription", "0.0000075", "0");
+        let endpoints = vec![
+            endpoint("0.0000075", "0", "deepinfra"),
+            endpoint("0.000031", "0", "groq"),
+        ];
+        let cheapest = cheapest_allowed(
+            &endpoints,
+            Some(0.00001),
+            None,
+            whisper.price_unit(),
+            &whisper.id,
+        )
+        .unwrap();
+        assert_eq!(cheapest.0.tag, "deepinfra");
+        assert!((cheapest.1.prompt - 0.0000075).abs() < 1e-12);
     }
 
     #[tokio::test]
@@ -737,25 +1032,6 @@ mod tests {
         assert!(!entry.supports("tools"));
         assert!(entry.input_modalities().is_empty());
         assert!(entry.output_modalities().is_empty());
-    }
-
-    #[test]
-    fn a_model_is_available_only_when_a_provider_fits_both_ceilings() {
-        let endpoints = vec![
-            endpoint("0.0000010", "0.0000020", "expensive"),
-            endpoint("0.0000002", "0.0000009", "cheap"),
-        ];
-        // 0.30 / 1.20 per 1M: only the cheap provider fits both.
-        let cheapest = cheapest_allowed(&endpoints, 0.30, 1.20).unwrap();
-        assert_eq!(cheapest.0.tag, "cheap");
-        assert!(cheapest_allowed(&endpoints, 0.10, 0.10).is_none());
-    }
-
-    #[test]
-    fn input_and_output_ceilings_are_independent() {
-        let endpoints = vec![endpoint("0.0000001", "0.0000100", "cheap-in")];
-        assert!(cheapest_allowed(&endpoints, 0.30, 0.50).is_none());
-        assert!(cheapest_allowed(&endpoints, 0.30, 20.0).is_some());
     }
 
     fn tts_model(id: &str, voices: &[&str]) -> CatalogEntry {

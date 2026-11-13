@@ -386,6 +386,54 @@ async fn main() -> anyhow::Result<()> {
                     "top_provider": { "context_length": 32000, "max_completion_tokens": 4096, "is_moderated": false },
                     "endpoints": ["/api/v1/audio/speech"],
                     "supported_voices": ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
+                },
+                {
+                    "id": "openai/whisper-large-v3-turbo",
+                    "canonical_slug": "openai/whisper-large-v3-turbo",
+                    "name": "Whisper Large V3 Turbo",
+                    "description": "Duration-priced speech recognition, billed per audio second.",
+                    "context_length": null,
+                    "architecture": {
+                        "input_modalities": ["audio"],
+                        "output_modalities": ["transcription"],
+                        "modality": "audio->transcription"
+                    },
+                    "pricing": { "prompt": "0.00000333", "completion": "0" },
+                    "supported_parameters": [],
+                    "top_provider": { "context_length": null, "max_completion_tokens": 0, "is_moderated": false },
+                    "endpoints": ["/api/v1/audio/transcriptions"]
+                },
+                {
+                    "id": "openai/whisper-large-v3",
+                    "canonical_slug": "openai/whisper-large-v3",
+                    "name": "Whisper Large V3",
+                    "description": "Duration-priced speech recognition with three providers.",
+                    "context_length": null,
+                    "architecture": {
+                        "input_modalities": ["audio"],
+                        "output_modalities": ["transcription"],
+                        "modality": "audio->transcription"
+                    },
+                    "pricing": { "prompt": "0.0000075", "completion": "0" },
+                    "supported_parameters": [],
+                    "top_provider": { "context_length": null, "max_completion_tokens": 0, "is_moderated": false },
+                    "endpoints": ["/api/v1/audio/transcriptions"]
+                },
+                {
+                    "id": "openai/gpt-4o-transcribe",
+                    "canonical_slug": "openai/gpt-4o-transcribe",
+                    "name": "GPT-4o Transcribe",
+                    "description": "Token-priced speech recognition, billed per 1M tokens.",
+                    "context_length": 128000,
+                    "architecture": {
+                        "input_modalities": ["audio"],
+                        "output_modalities": ["transcription"],
+                        "modality": "audio->transcription"
+                    },
+                    "pricing": { "prompt": "0.0000025", "completion": "0.00001" },
+                    "supported_parameters": [],
+                    "top_provider": { "context_length": 128000, "max_completion_tokens": 115200, "is_moderated": false },
+                    "endpoints": ["/api/v1/audio/transcriptions"]
                 }
             ]
         })))
@@ -457,6 +505,37 @@ async fn main() -> anyhow::Result<()> {
                     }
                 ]
             }
+        })))
+        .mount(&openrouter_mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/models/openai/whisper-large-v3-turbo/endpoints"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": { "endpoints": [
+                { "name": "DeepInfra", "provider_name": "DeepInfra", "tag": "deepinfra", "context_length": 0, "max_completion_tokens": 0, "pricing": { "prompt": "0.00000333", "completion": "0" }, "uptime_last_30m": 100.0, "quantization": "unknown" },
+                { "name": "Prime Intellect", "provider_name": "Prime Intellect", "tag": "primeintellect", "context_length": 0, "max_completion_tokens": 0, "pricing": { "prompt": "0.0000111111111111", "completion": "0" }, "uptime_last_30m": 100.0, "quantization": "bf16" },
+                { "name": "Groq", "provider_name": "Groq", "tag": "groq", "context_length": 0, "max_completion_tokens": 0, "pricing": { "prompt": "0.0000111111111111", "completion": "0" }, "uptime_last_30m": 100.0, "quantization": "unknown" }
+            ] }
+        })))
+        .mount(&openrouter_mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/models/openai/whisper-large-v3/endpoints"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": { "endpoints": [
+                { "name": "DeepInfra", "provider_name": "DeepInfra", "tag": "deepinfra", "context_length": 0, "max_completion_tokens": 0, "pricing": { "prompt": "0.0000075", "completion": "0" }, "uptime_last_30m": 100.0, "quantization": "unknown" },
+                { "name": "Together", "provider_name": "Together", "tag": "together", "context_length": 0, "max_completion_tokens": 0, "pricing": { "prompt": "0.000025", "completion": "0" }, "uptime_last_30m": 99.4, "quantization": "unknown" },
+                { "name": "Groq", "provider_name": "Groq", "tag": "groq", "context_length": 0, "max_completion_tokens": 0, "pricing": { "prompt": "0.000031", "completion": "0" }, "uptime_last_30m": 100.0, "quantization": "unknown" }
+            ] }
+        })))
+        .mount(&openrouter_mock)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/models/openai/gpt-4o-transcribe/endpoints"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": { "endpoints": [
+                { "name": "OpenAI", "provider_name": "OpenAI", "tag": "openai", "context_length": 128000, "max_completion_tokens": 115200, "pricing": { "prompt": "0.0000025", "completion": "0.00001" }, "uptime_last_30m": 100.0, "quantization": "unknown" }
+            ] }
         })))
         .mount(&openrouter_mock)
         .await;
@@ -699,6 +778,38 @@ async fn main() -> anyhow::Result<()> {
             level_rank: 0,
             enforce_limits: true,
             kind: PoolKind::Speech,
+            strategy: PickerStrategy::RoundRobin,
+            models: Vec::new(),
+            backend: vec![BackendConfig {
+                provider: ProviderKind::OpenRouter,
+                priority: Default::default(),
+                alias: Default::default(),
+                supports_edit: false,
+                extra_headers: BTreeMap::new(),
+                enabled: true,
+                name: "openrouter".into(),
+                base_url: openrouter_mock.uri(),
+                api_key_env: None,
+                api_key: Some("sk-or-dev-ui".into()),
+                weight: 1,
+                max_inflight: 16,
+                health_path: "/models".into(),
+                models: Vec::new(),
+            }],
+        },
+    );
+    // The same backend serves a transcription pool, so the panel's
+    // audio-second pricing and filtering have a real mixed-unit catalog.
+    pools.insert(
+        "openrouter-transcription".to_string(),
+        UpstreamPoolConfig {
+            voices: Default::default(),
+            offer_voices: Vec::new(),
+            allowed_groups: Vec::new(),
+            fallback_offline: None,
+            level_rank: 0,
+            enforce_limits: true,
+            kind: PoolKind::Transcription,
             strategy: PickerStrategy::RoundRobin,
             models: Vec::new(),
             backend: vec![BackendConfig {

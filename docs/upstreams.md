@@ -98,30 +98,33 @@ speech, image, rerank, System One. Ticking a kind joins the account to the
 leaves it, and a pool auto-created under that name with no other backend is
 removed with it. Pools that already hold another backend are never joined
 from the panel: a pool has one model list, and mixing would pin the other
-backend to this allowlist — for that, edit the pool's backend list. Expanding
-a kind opens its model table: selection plus per-model price ceilings and
-provider strategy, saved per kind. The catalog is the account-filtered
+backend to this allowlist — for that, edit the pool's backend list. Every
+kind starts collapsed and its header ends in **Show models** / **Hide
+models**, so opening one is a visible action rather than a hidden click.
+Opening a kind shows its model table: selection plus per-model price ceilings
+and provider strategy, saved per kind. The catalog is the account-filtered
 `GET /models/user`, read once per kind with the matching `output_modalities`
 value, so the models the account can actually use appear without being typed
 in.
 
 Both tables sort from their column headers and open on the cheapest output
 tokens (`sortModels` / `sortEndpoints` in `lib/openrouter-sort.ts`, missing
-measurements last). A selected model is tinted and carries a primary edge, so
-the allowlist is readable at a glance. Expanding a model shows its providers
-filtered live by the ceiling fields above: a side left empty does not filter,
-and every provider the ceilings exclude is hidden — the table closes with
-how many, instead of leaving the reader to compare numbers. The row also
-counts what still fits (`x of y fit`), so a ceiling change is visible before
-the table is opened.
+measurements last); a duration-priced model's providers open on the cheapest
+input second instead, because its output is always zero. A selected model is
+tinted and carries a primary edge, so the allowlist is readable at a glance.
+Expanding a model shows its providers filtered live by the ceiling fields
+above: a side left empty does not filter, and every provider the ceilings
+exclude is hidden — the table closes with how many, instead of leaving the
+reader to compare numbers. The row also counts what still fits (`x of y fit`),
+so a ceiling change is visible before the table is opened.
 
 Below `sm` the panel never nests the two tables: a kind opens a full-screen
 model list (search, price filter, sort, and All / Selected / Fitting chips),
 and tapping a model pushes a second full-screen view with its ceilings,
 strategy and provider cards — one vertical scroll, no sideways table. Both
 views edit the same draft, so Save works from either, and the flow opens in a
-native dialog above the app's sticky mobile header. The first served kind is
-opened automatically on desktop only.
+native dialog above the app's sticky mobile header. Kinds open only when the
+operator taps one.
 
 Selecting a model is an explicit allowlist, not discovery: an OpenRouter
 backend with nothing selected serves nothing. The selection is stored per pool,
@@ -130,8 +133,18 @@ A pool has one model list, so give OpenRouter its own pool per kind: putting it
 in a pool that also holds a self-hosted backend pins that backend to the same
 list. The panel warns when the chosen pool has other backends.
 
-Each selected model carries **two purchase-price ceilings** in USD per 1M
-tokens — input and output — plus a provider strategy:
+Each selected model carries **two optional purchase-price ceilings** — input
+and output — plus a provider strategy. An empty side does not filter: with
+both empty every provider is eligible and the strategy picks among all of
+them; a model that was saved with no ceiling therefore needs no extra
+confirmation. What the ceilings are expressed in follows the model: chat and
+token-priced transcription use USD per 1M tokens, whisper-class transcription
+uses **USD per audio second** (OpenRouter's `pricing.prompt` for a
+duration-priced model is a per-second rate; Microsoft's MAI transcription
+models are the one catalog exception, quoting an hourly rate that the gateway
+divides by 3600). The panel labels each model's columns, ceilings and cheapest
+provider with its own unit, and a transcription catalog that mixes both units
+shows a separate maximum-price filter for each.
 
 | Strategy | `provider` sent to OpenRouter |
 |---|---|
@@ -139,20 +152,23 @@ tokens — input and output — plus a provider strategy:
 | `fastest` | `sort: "throughput"` |
 | `balanced` | no `sort`; OpenRouter's own effective-cost routing |
 
-Every request also carries `max_price: {prompt, completion}` and
-`require_parameters: true`. The block is **gateway-owned**: unlike the
+Every chat request also carries `max_price` for the ceilings that are set,
+plus `require_parameters: true`. The block is **gateway-owned**: unlike the
 per-model sampling defaults, a client cannot replace it, because that would
-bypass the ceiling the account is protected by.
+bypass the ceiling the account is protected by. OpenRouter's
+speech-to-text endpoint does not apply `max_price`, so a duration-priced
+transcription model is guarded by the availability check below instead; the
+panel never shows a ceiling that would not be enforced.
 
 A model with no provider under both ceilings is removed from the running
 advertised set, so it disappears from `/v1/models`, the chat picker and
 routing; a direct API call gets `model_not_found` rather than a silent
 downgrade to another model. The selection is kept, so the model returns when a
 price drops again. Prices and per-provider performance are re-read every ten
-minutes (and on **Refresh prices**); `max_price` is the hard guard between
-refreshes. `max_price` does not cover cache read/write prices or conditional
-long-context overrides, so a provider whose cache price exceeds the ceiling is
-not excluded by it.
+minutes (and on **Refresh prices**); for chat, `max_price` is the hard guard
+between refreshes. `max_price` does not cover cache read/write prices or
+conditional long-context overrides, so a provider whose cache price exceeds
+the ceiling is not excluded by it.
 
 Speech pools get their voice menu from the account too: on every selection save
 and catalog refresh, the pool's `offer_voices` is replaced with the

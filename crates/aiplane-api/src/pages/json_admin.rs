@@ -3567,6 +3567,9 @@ pub struct OpenRouterModelView {
     pub supports_structured_output: bool,
     /// The voices this TTS model speaks; empty for non-speech models.
     pub supported_voices: Vec<String>,
+    /// What the prices below are billed per: `token` (USD per 1M tokens) or
+    /// `second` (USD per audio second, for duration-priced transcription).
+    pub price_unit: String,
     pub prompt_price: f64,
     pub completion_price: f64,
     pub selected: bool,
@@ -3579,8 +3582,8 @@ pub struct OpenRouterModelView {
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct OpenRouterPolicyView {
-    pub max_prompt_price: f64,
-    pub max_completion_price: f64,
+    pub max_prompt_price: Option<f64>,
+    pub max_completion_price: Option<f64>,
     pub strategy: String,
     pub min_throughput: Option<f64>,
 }
@@ -3615,12 +3618,16 @@ impl OpenRouterEndpointView {
         }
     }
 
-    fn from_wire(e: upstreams::openrouter::EndpointEntry) -> Self {
+    fn from_wire(
+        e: upstreams::openrouter::EndpointEntry,
+        unit: upstreams::openrouter::PriceUnit,
+        model_id: &str,
+    ) -> Self {
         Self {
             provider: e.provider_name,
-            prompt_price: e.pricing.prompt_per_million(),
-            completion_price: e.pricing.completion_per_million(),
-            cache_read_price: e.pricing.cache_read_per_million(),
+            prompt_price: e.pricing.prompt_price(unit, model_id),
+            completion_price: e.pricing.completion_price(unit),
+            cache_read_price: e.pricing.cache_read_price(unit),
             throughput_p50: e.throughput_last_30m.and_then(|p| p.p50),
             latency_p50: e.latency_last_30m.and_then(|p| p.p50),
             uptime_30m: e.uptime_last_30m,
@@ -3809,8 +3816,9 @@ pub async fn openrouter_catalog(State(state): State<Arc<RamaState>>, req: Reques
         let output_modalities = model.output_modalities().to_vec();
         let supports_tools = model.supports("tools");
         let supports_structured_output = model.supports("structured_outputs");
-        let prompt_price = model.pricing.prompt_per_million();
-        let completion_price = model.pricing.completion_per_million();
+        let unit = model.price_unit();
+        let prompt_price = model.pricing.prompt_price(unit, &model.id);
+        let completion_price = model.pricing.completion_price(unit);
         models.push(OpenRouterModelView {
             id: id.clone(),
             name: model.name,
@@ -3822,18 +3830,28 @@ pub async fn openrouter_catalog(State(state): State<Arc<RamaState>>, req: Reques
             supports_tools,
             supports_structured_output,
             supported_voices: model.supported_voices,
+            price_unit: unit.as_str().into(),
             prompt_price,
             completion_price,
             selected: selected.contains(&model.id),
-            policy: policy.map(|p| OpenRouterPolicyView {
-                max_prompt_price: p.max_prompt_price,
-                max_completion_price: p.max_completion_price,
-                strategy: p.strategy.clone(),
-                min_throughput: p.min_throughput,
+            policy: policy.map(|p| {
+                let (max_prompt_price, max_completion_price) = p.ceilings_in(unit);
+                OpenRouterPolicyView {
+                    max_prompt_price,
+                    max_completion_price,
+                    strategy: p.strategy.clone(),
+                    min_throughput: p.min_throughput,
+                }
             }),
             cheapest_provider: policy.and_then(|p| p.cheapest_provider.clone()),
-            cheapest_prompt_price: policy.and_then(|p| p.cheapest_prompt_price),
-            cheapest_completion_price: policy.and_then(|p| p.cheapest_completion_price),
+            cheapest_prompt_price: policy.and_then(|p| {
+                p.cheapest_prompt_price
+                    .map(|price| p.price_unit.convert(price, unit))
+            }),
+            cheapest_completion_price: policy.and_then(|p| {
+                p.cheapest_completion_price
+                    .map(|price| p.price_unit.convert(price, unit))
+            }),
             endpoints: endpoints
                 .into_iter()
                 .map(OpenRouterEndpointView::from_stored)
@@ -3882,6 +3900,17 @@ pub async fn openrouter_model_endpoints(
     let Some(model) = query_param(&req, "model") else {
         return bad_request("`model` is required");
     };
+    let unit = match query_param(&req, "unit").as_deref() {
+        None => upstreams::openrouter::PriceUnit::Token,
+        Some(raw) => match upstreams::openrouter::PriceUnit::parse(raw) {
+            Some(unit) => unit,
+            None => {
+                return bad_request(format!(
+                    "`{raw}` is not a price unit — use `token` or `second`"
+                ));
+            }
+        },
+    };
     let backend = match upstreams_config::get_backend(&state.db, &backend_name).await {
         Ok(Some(backend)) => backend,
         Ok(None) => return not_found(format!("no backend `{backend_name}`")),
@@ -3915,7 +3944,7 @@ pub async fn openrouter_model_endpoints(
             OpenRouterEndpointsView {
                 endpoints: endpoints
                     .into_iter()
-                    .map(OpenRouterEndpointView::from_wire)
+                    .map(|endpoint| OpenRouterEndpointView::from_wire(endpoint, unit, &model))
                     .collect(),
             },
         ),
@@ -3938,8 +3967,11 @@ pub struct OpenRouterSelectBody {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 pub struct OpenRouterSelection {
     pub model: String,
-    pub max_prompt_price: f64,
-    pub max_completion_price: f64,
+    /// Omitted or `null` leaves that side uncapped.
+    pub max_prompt_price: Option<f64>,
+    pub max_completion_price: Option<f64>,
+    /// `token` (USD per 1M) or `second` (USD per audio second).
+    pub price_unit: String,
     #[serde(default = "balanced_strategy")]
     pub strategy: String,
     #[serde(default)]
@@ -4007,12 +4039,23 @@ pub async fn openrouter_select(State(state): State<Arc<RamaState>>, req: Request
                 selection.strategy
             ));
         }
-        if !selection.max_prompt_price.is_finite()
-            || !selection.max_completion_price.is_finite()
-            || selection.max_prompt_price < 0.0
-            || selection.max_completion_price < 0.0
-        {
-            return bad_request("price ceilings must be non-negative numbers");
+        if upstreams::openrouter::PriceUnit::parse(&selection.price_unit).is_none() {
+            return bad_request(format!(
+                "`{}` is not a price unit — use token or second",
+                selection.price_unit
+            ));
+        }
+        for (side, value) in [
+            ("input", selection.max_prompt_price),
+            ("output", selection.max_completion_price),
+        ] {
+            if let Some(value) = value
+                && (!value.is_finite() || value < 0.0)
+            {
+                return bad_request(format!(
+                    "the {side} price ceiling must be a non-negative number"
+                ));
+            }
         }
         if let Some(min) = selection.min_throughput
             && (!min.is_finite() || min < 0.0)
@@ -4034,6 +4077,8 @@ pub async fn openrouter_select(State(state): State<Arc<RamaState>>, req: Request
             model_id: selection.model.clone(),
             max_prompt_price: selection.max_prompt_price,
             max_completion_price: selection.max_completion_price,
+            price_unit: upstreams::openrouter::PriceUnit::parse(&selection.price_unit)
+                .unwrap_or(upstreams::openrouter::PriceUnit::Token),
             strategy: selection.strategy.clone(),
             min_throughput: selection.min_throughput,
             // Fail closed until the first price refresh proves a provider fits.

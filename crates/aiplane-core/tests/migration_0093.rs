@@ -56,8 +56,9 @@ async fn the_provider_round_trips_and_drives_the_openrouter_catalog() {
 
     let policy = OpenRouterPolicyRow {
         model_id: "deepseek/deepseek-v4.1".into(),
-        max_prompt_price: 0.30,
-        max_completion_price: 1.20,
+        max_prompt_price: Some(0.30),
+        max_completion_price: Some(1.20),
+        price_unit: aiplane_core::server::upstreams::openrouter::PriceUnit::Token,
         strategy: "cheapest".into(),
         min_throughput: Some(40.0),
         available: true,
@@ -81,7 +82,7 @@ async fn the_provider_round_trips_and_drives_the_openrouter_catalog() {
             .await
             .unwrap()
             .unwrap();
-    assert_eq!(resolved.max_prompt_price, 0.30);
+    assert_eq!(resolved.max_prompt_price, Some(0.30));
 }
 
 #[tokio::test]
@@ -124,6 +125,7 @@ async fn the_new_tables_carry_the_policy_columns() {
         "model_id",
         "max_prompt_price",
         "max_completion_price",
+        "price_unit",
         "strategy",
         "min_throughput",
         "available",

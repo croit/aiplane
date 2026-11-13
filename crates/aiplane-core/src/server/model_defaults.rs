@@ -75,17 +75,26 @@ async fn apply_openrouter_policy(pool: &Pool, model: &str, body: &mut Value) {
     object.insert("provider".into(), provider_block(&policy));
 }
 
-/// The `provider` object OpenRouter receives. `max_price` is in USD per 1M
-/// tokens, matching the admin form and `pricing` in the catalog.
+/// The `provider` object OpenRouter receives. `max_price` is in the model's
+/// billing unit — USD per 1M tokens for chat, USD per audio second for
+/// duration-priced transcription. A missing ceiling omits that side; with no
+/// side left there is no `max_price` at all. OpenRouter's speech-to-text
+/// endpoint does not apply `max_price`, so a duration-priced model only gets
+/// `require_parameters` and the price refresh's own availability gate.
 pub fn provider_block(policy: &crate::server::db::upstreams_config::OpenRouterPolicyRow) -> Value {
     let mut provider = serde_json::Map::new();
-    provider.insert(
-        "max_price".into(),
-        serde_json::json!({
-            "prompt": policy.max_prompt_price,
-            "completion": policy.max_completion_price,
-        }),
-    );
+    if policy.price_unit == crate::server::upstreams::openrouter::PriceUnit::Token {
+        let mut max_price = serde_json::Map::new();
+        if let Some(prompt) = policy.max_prompt_price {
+            max_price.insert("prompt".into(), serde_json::json!(prompt));
+        }
+        if let Some(completion) = policy.max_completion_price {
+            max_price.insert("completion".into(), serde_json::json!(completion));
+        }
+        if !max_price.is_empty() {
+            provider.insert("max_price".into(), Value::Object(max_price));
+        }
+    }
     // Only providers that actually honour the parameters the request carries.
     provider.insert("require_parameters".into(), Value::Bool(true));
     match policy.strategy.as_str() {
@@ -403,8 +412,9 @@ only = ["together"]
     ) -> crate::server::db::upstreams_config::OpenRouterPolicyRow {
         crate::server::db::upstreams_config::OpenRouterPolicyRow {
             model_id: "deepseek/deepseek-v4.1".into(),
-            max_prompt_price: 0.30,
-            max_completion_price: 1.20,
+            max_prompt_price: Some(0.30),
+            max_completion_price: Some(1.20),
+            price_unit: crate::server::upstreams::openrouter::PriceUnit::Token,
             strategy: strategy.into(),
             min_throughput: min,
             available: true,
@@ -425,6 +435,38 @@ only = ["together"]
         assert_eq!(block["require_parameters"], json!(true));
         // Balanced leaves routing to OpenRouter: no sort key.
         assert!(block.get("sort").is_none());
+    }
+
+    #[test]
+    fn a_missing_ceiling_omits_that_side() {
+        let mut row = policy("balanced", None);
+        row.max_prompt_price = None;
+        let block = provider_block(&row);
+        assert_eq!(block["max_price"], json!({"completion": 1.20}));
+    }
+
+    #[test]
+    fn no_ceiling_sends_no_max_price_at_all() {
+        let mut row = policy("balanced", None);
+        row.max_prompt_price = None;
+        row.max_completion_price = None;
+        let block = provider_block(&row);
+        assert!(block.get("max_price").is_none());
+        assert_eq!(block["require_parameters"], json!(true));
+    }
+
+    #[test]
+    fn a_duration_priced_policy_is_not_sent_as_a_token_ceiling() {
+        let mut row = policy("cheapest", None);
+        row.price_unit = crate::server::upstreams::openrouter::PriceUnit::Second;
+        row.max_prompt_price = Some(0.00001);
+        row.max_completion_price = None;
+        let block = provider_block(&row);
+        assert!(
+            block.get("max_price").is_none(),
+            "OpenRouter's speech-to-text endpoint does not apply max_price"
+        );
+        assert_eq!(block["sort"], json!("price"));
     }
 
     #[test]

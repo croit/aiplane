@@ -28,8 +28,15 @@ export function nextSort<Key extends string>(sort: Sort<Key>, key: Key): Sort<Ke
 /** What the model catalog opens with: the cheapest output tokens first. */
 export const defaultModelSort = (): Sort<ModelSortKey> => ({ key: 'out', direction: 'asc' });
 
-/** What a model's provider table opens with: same question, same default. */
-export const defaultProviderSort = (): Sort<ProviderSortKey> => ({ key: 'out', direction: 'asc' });
+/**
+ * What a model's provider table opens with. Duration-priced transcription
+ * puts its whole cost on the input side and always reports `0` output, so
+ * there the cheapest input is the same question.
+ */
+export const defaultProviderSort = (
+	unit: 'token' | 'second' = 'token'
+): Sort<ProviderSortKey> =>
+	unit === 'second' ? { key: 'in', direction: 'asc' } : { key: 'out', direction: 'asc' };
 
 type Cell = string | number | null;
 

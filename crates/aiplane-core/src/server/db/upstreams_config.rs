@@ -18,6 +18,7 @@ use sqlx::sqlite::SqliteRow;
 
 use super::{DbError, Pool};
 use crate::server::upstreams::config::ProviderKind;
+use crate::server::upstreams::openrouter::PriceUnit;
 
 // ---------------------------------------------------------------------------
 // Row structs
@@ -1098,9 +1099,12 @@ pub async fn set_fallback(db: &Pool, kind: &str, model_id: Option<&str>) -> Resu
 #[derive(Debug, Clone, PartialEq)]
 pub struct OpenRouterPolicyRow {
     pub model_id: String,
-    /// USD per 1M tokens, the unit `provider.max_price` uses.
-    pub max_prompt_price: f64,
-    pub max_completion_price: f64,
+    /// USD per 1M tokens, or USD per audio second; `None` leaves that side
+    /// uncapped. See [`price_unit`](Self::price_unit).
+    pub max_prompt_price: Option<f64>,
+    pub max_completion_price: Option<f64>,
+    /// `token` | `second`: the unit the ceilings and observed prices use.
+    pub price_unit: PriceUnit,
     /// `cheapest` | `fastest` | `balanced`.
     pub strategy: String,
     pub min_throughput: Option<f64>,
@@ -1109,6 +1113,20 @@ pub struct OpenRouterPolicyRow {
     pub cheapest_completion_price: Option<f64>,
     pub cheapest_provider: Option<String>,
     pub observed_at: Option<String>,
+}
+
+impl OpenRouterPolicyRow {
+    /// The ceilings in another unit. A model that switches between per-token
+    /// and per-second pricing keeps the same spend policy instead of silently
+    /// turning a 30-cent ceiling into 30 dollars.
+    pub fn ceilings_in(&self, unit: PriceUnit) -> (Option<f64>, Option<f64>) {
+        (
+            self.max_prompt_price
+                .map(|value| self.price_unit.convert(value, unit)),
+            self.max_completion_price
+                .map(|value| self.price_unit.convert(value, unit)),
+        )
+    }
 }
 
 /// One provider endpoint observed for a selected model.
@@ -1136,8 +1154,8 @@ pub async fn load_openrouter_policies(
     backend: &str,
 ) -> Result<HashMap<String, OpenRouterPolicyRow>, DbError> {
     let rows = sqlx::query(
-        r#"SELECT p.model_id, p.max_prompt_price, p.max_completion_price, p.strategy,
-                  p.min_throughput, p.available, p.cheapest_prompt_price,
+        r#"SELECT p.model_id, p.max_prompt_price, p.max_completion_price, p.price_unit,
+                  p.strategy, p.min_throughput, p.available, p.cheapest_prompt_price,
                   p.cheapest_completion_price, p.cheapest_provider, p.observed_at
              FROM openrouter_model_policies p
              JOIN backends b ON b.id = p.backend_id
@@ -1156,6 +1174,11 @@ pub async fn load_openrouter_policies(
                 model_id,
                 max_prompt_price: row.try_get("max_prompt_price")?,
                 max_completion_price: row.try_get("max_completion_price")?,
+                price_unit: row
+                    .try_get::<String, _>("price_unit")
+                    .ok()
+                    .and_then(|unit| PriceUnit::parse(&unit))
+                    .unwrap_or(PriceUnit::Token),
                 strategy: row.try_get("strategy")?,
                 min_throughput: row.try_get("min_throughput")?,
                 available: row.try_get::<i64, _>("available")? != 0,
@@ -1177,13 +1200,14 @@ pub async fn upsert_openrouter_policy(
     let now = now_rfc3339();
     sqlx::query(
         r#"INSERT INTO openrouter_model_policies
-               (backend_id, model_id, max_prompt_price, max_completion_price, strategy,
-                min_throughput, available, cheapest_prompt_price, cheapest_completion_price,
-                cheapest_provider, observed_at, created_at, updated_at)
-           VALUES ((SELECT id FROM backends WHERE name = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               (backend_id, model_id, max_prompt_price, max_completion_price, price_unit,
+                strategy, min_throughput, available, cheapest_prompt_price,
+                cheapest_completion_price, cheapest_provider, observed_at, created_at, updated_at)
+           VALUES ((SELECT id FROM backends WHERE name = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(backend_id, model_id) DO UPDATE SET
                max_prompt_price          = excluded.max_prompt_price,
                max_completion_price      = excluded.max_completion_price,
+               price_unit                = excluded.price_unit,
                strategy                  = excluded.strategy,
                min_throughput            = excluded.min_throughput,
                available                 = excluded.available,
@@ -1197,6 +1221,7 @@ pub async fn upsert_openrouter_policy(
     .bind(&row.model_id)
     .bind(row.max_prompt_price)
     .bind(row.max_completion_price)
+    .bind(row.price_unit.as_str())
     .bind(&row.strategy)
     .bind(row.min_throughput)
     .bind(row.available as i64)
@@ -1219,8 +1244,8 @@ pub async fn get_openrouter_policy_for_model(
     model_id: &str,
 ) -> Result<Option<OpenRouterPolicyRow>, DbError> {
     let row = sqlx::query(
-        r#"SELECT p.model_id, p.max_prompt_price, p.max_completion_price, p.strategy,
-                  p.min_throughput, p.available, p.cheapest_prompt_price,
+        r#"SELECT p.model_id, p.max_prompt_price, p.max_completion_price, p.price_unit,
+                  p.strategy, p.min_throughput, p.available, p.cheapest_prompt_price,
                   p.cheapest_completion_price, p.cheapest_provider, p.observed_at
              FROM openrouter_model_policies p
              JOIN backends b ON b.id = p.backend_id
@@ -1233,8 +1258,13 @@ pub async fn get_openrouter_policy_for_model(
     .await?;
     Ok(row.map(|row| OpenRouterPolicyRow {
         model_id: row.try_get("model_id").unwrap_or_default(),
-        max_prompt_price: row.try_get("max_prompt_price").unwrap_or(0.0),
-        max_completion_price: row.try_get("max_completion_price").unwrap_or(0.0),
+        max_prompt_price: row.try_get("max_prompt_price").ok().flatten(),
+        max_completion_price: row.try_get("max_completion_price").ok().flatten(),
+        price_unit: row
+            .try_get::<String, _>("price_unit")
+            .ok()
+            .and_then(|unit| PriceUnit::parse(&unit))
+            .unwrap_or(PriceUnit::Token),
         strategy: row
             .try_get("strategy")
             .unwrap_or_else(|_| "balanced".into()),

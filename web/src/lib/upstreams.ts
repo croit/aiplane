@@ -1,4 +1,5 @@
 import type { BackendPriority, PriorityMapping } from './priority.js';
+import type { PriceUnit } from './openrouter-price.js';
 export interface LiveBackend {
 	detected_priority: PriorityMapping | null;
 	healthy: boolean;
@@ -498,13 +499,18 @@ export interface OpenRouterModel {
 	supports_structured_output: boolean;
 	/** The voices this TTS model speaks; empty for non-speech models. */
 	supported_voices: string[];
-	/** The model's list price in USD per 1M tokens. */
+	/**
+	 * What the prices below are billed per: `token` is USD per 1M tokens,
+	 * `second` is USD per audio second (duration-priced transcription).
+	 */
+	price_unit: PriceUnit;
+	/** The model's list price in USD per 1M tokens, or per audio second. */
 	prompt_price: number;
 	completion_price: number;
 	selected: boolean;
 	policy: {
-		max_prompt_price: number;
-		max_completion_price: number;
+		max_prompt_price: number | null;
+		max_completion_price: number | null;
 		strategy: string;
 		min_throughput: number | null;
 	} | null;
@@ -527,7 +533,10 @@ export interface OpenRouterEndpoint {
 	context_length: number | null;
 }
 
-/** Whether a provider fits the ceilings, in USD per 1M tokens; `null` leaves that side uncapped. */
+/**
+ * Whether a provider fits the ceilings, in the model's unit; `null` leaves
+ * that side uncapped.
+ */
 export function endpointFits(
 	endpoint: OpenRouterEndpoint,
 	maxPrompt: number | null,
@@ -583,8 +592,9 @@ export interface OpenRouterView {
 
 export interface OpenRouterSelection {
 	model: string;
-	max_prompt_price: number;
-	max_completion_price: number;
+	max_prompt_price: number | null;
+	max_completion_price: number | null;
+	price_unit: PriceUnit;
 	strategy: string;
 	min_throughput: number | null;
 }

@@ -5,6 +5,7 @@
 	import { t, n } from '#lib/i18n.svelte.js';
 	import type { Backend, OpenRouterEndpoint, OpenRouterModel, OpenRouterSelection, OpenRouterView, Pool } from '#lib/upstreams.js';
 	import { cheapestEndpoint, endpointFits } from '#lib/upstreams.js';
+	import { formatOpenRouterPrice, openRouterPriceStep, type PriceUnit } from '#lib/openrouter-price.js';
 	import {
 		defaultModelSort,
 		defaultProviderSort,
@@ -28,8 +29,8 @@
 
 	interface Draft {
 		selected: boolean;
-		prompt: number;
-		completion: number;
+		prompt: number | null;
+		completion: number | null;
 		strategy: string;
 		min: number | null;
 	}
@@ -55,7 +56,8 @@
 	let views = $state<Record<string, OpenRouterView | null>>({});
 	let drafts = $state<Record<string, Record<string, Draft>>>({});
 	let search = $state('');
-	let maxPrice = $state<number | null>(null);
+	let maxPriceToken = $state<number | null>(null);
+	let maxPriceSecond = $state<number | null>(null);
 	// Both tables open on the cheapest output tokens; a header click re-sorts.
 	let modelSort = $state<Sort<ModelSortKey>>(defaultModelSort());
 	let providerSort = $state<Sort<ProviderSortKey>>(defaultProviderSort());
@@ -120,36 +122,50 @@
 		kinds.map((kind) => views[kind]).find((view): view is OpenRouterView => !!view) ?? null
 	);
 	let models = $derived(currentView?.catalog ?? []);
+	// A transcription catalog mixes duration-priced models (USD per audio
+	// second) with token-priced ones (USD per 1M tokens), so the filter and
+	// the unit labels follow each model rather than the kind.
+	let catalogUnits = $derived(new Set(models.map((model) => model.price_unit)));
+	let catalogUnit = $derived(catalogUnits.size === 1 ? [...catalogUnits][0] : null);
+	let hasTokenModels = $derived(models.some((model) => model.price_unit === 'token'));
+	let hasSecondModels = $derived(models.some((model) => model.price_unit === 'second'));
 	let filtered = $derived.by(() => {
 		const needle = search.trim().toLowerCase();
-		const rows = models.filter(
-			(model) =>
-				(!needle ||
-					model.id.toLowerCase().includes(needle) ||
-					model.name.toLowerCase().includes(needle) ||
-					model.description.toLowerCase().includes(needle)) &&
-				(maxPrice === null ||
-					!Number.isFinite(Number(maxPrice)) ||
-					model.prompt_price <= Number(maxPrice))
-		);
+		const rows = models.filter((model) => {
+			if (needle && !model.id.toLowerCase().includes(needle) &&
+				!model.name.toLowerCase().includes(needle) &&
+				!model.description.toLowerCase().includes(needle)) {
+				return false;
+			}
+			const limit = model.price_unit === 'second' ? maxPriceSecond : maxPriceToken;
+			return limit === null || !Number.isFinite(Number(limit)) || model.prompt_price <= Number(limit);
+		});
 		return sortModels(rows, modelSort);
 	});
 	let selectedCount = $derived(
 		expanded ? Object.values(drafts[expanded] ?? {}).filter((entry) => entry.selected).length : 0
 	);
 
+	function unitKey(base: string, unit: PriceUnit): string {
+		return unit === 'second' ? `${base}-second` : base;
+	}
+
+	function unitSuffix(unit: PriceUnit): string {
+		return t(unit === 'second' ? 'openrouter-per-second' : 'openrouter-per-million');
+	}
+
 	function poolNameOf(kind: string) {
 		return `openrouter-${kind}`;
 	}
 
 	function draftFor(model: OpenRouterModel): Draft {
-		const prompt = model.policy?.max_prompt_price ?? Number(model.prompt_price.toFixed(4));
-		const completion =
-			model.policy?.max_completion_price ?? Number(model.completion_price.toFixed(4));
 		return {
 			selected: model.selected,
-			prompt,
-			completion,
+			// An unselected model starts with no ceiling: every provider is
+			// eligible and the strategy picks among all prices. A saved policy
+			// keeps the operator's ceilings.
+			prompt: model.policy?.max_prompt_price ?? null,
+			completion: model.policy?.max_completion_price ?? null,
 			strategy: model.policy?.strategy ?? 'balanced',
 			min: model.policy?.min_throughput ?? null
 		};
@@ -289,12 +305,14 @@
 	async function saveKind() {
 		if (!backendName || !expanded) return;
 		const kind = expanded;
+		const byId = new Map(models.map((model) => [model.id, model]));
 		const selections: OpenRouterSelection[] = Object.entries(drafts[kind] ?? {})
 			.filter(([, entry]) => entry.selected)
 			.map(([model, entry]) => ({
 				model,
-				max_prompt_price: Number(entry.prompt),
-				max_completion_price: Number(entry.completion),
+				max_prompt_price: hasCeiling(entry.prompt) ? Number(entry.prompt) : null,
+				max_completion_price: hasCeiling(entry.completion) ? Number(entry.completion) : null,
+				price_unit: byId.get(model)?.price_unit ?? 'token',
 				strategy: entry.strategy,
 				min_throughput:
 					entry.strategy === 'cheapest' && entry.min !== null && entry.min !== undefined && `${entry.min}` !== ''
@@ -307,13 +325,13 @@
 		}
 		const invalid = selections.find(
 			(selection) =>
-				!Number.isFinite(selection.max_prompt_price) ||
-				!Number.isFinite(selection.max_completion_price) ||
-				selection.max_prompt_price < 0 ||
-				selection.max_completion_price < 0
+				(selection.max_prompt_price !== null &&
+					(!Number.isFinite(selection.max_prompt_price) || selection.max_prompt_price < 0)) ||
+				(selection.max_completion_price !== null &&
+					(!Number.isFinite(selection.max_completion_price) || selection.max_completion_price < 0))
 		);
 		if (invalid) {
-			error = t('openrouter-ceiling-required');
+			error = t('openrouter-ceiling-invalid');
 			return;
 		}
 		savingKind = kind;
@@ -381,8 +399,8 @@
 		}
 	}
 
-	function price(value: number | null): string {
-		return value === null ? '—' : `$${value.toFixed(4)}`;
+	function price(value: number | null, unit: PriceUnit): string {
+		return formatOpenRouterPrice(value, unit);
 	}
 
 	function throughput(value: number | null): string {
@@ -402,13 +420,19 @@
 			return;
 		}
 		openModel = model.id;
+		// Duration-priced transcription has no output cost to sort by.
+		providerSort = defaultProviderSort(model.price_unit);
 		const cached = providerStates[model.id];
 		// A failed read retries on the next expand; a stored or successful one
 		// stays.
 		if ((cached && cached.status !== 'error') || model.endpoints.length > 0) return;
 		providerStates = { ...providerStates, [model.id]: { status: 'loading', endpoints: [] } };
 		try {
-			const query = new URLSearchParams({ backend: backendName, model: model.id });
+			const query = new URLSearchParams({
+				backend: backendName,
+				model: model.id,
+				unit: model.price_unit
+			});
 			const next = await adminJson<{ endpoints: OpenRouterEndpoint[] }>(
 				`/api/v0/admin/upstreams/openrouter/endpoints?${query.toString()}`
 			);
@@ -477,28 +501,22 @@
 		);
 	}
 
-	/** Both numbers entered. Until then no provider count is meaningful. */
-	function ceilingValid(entry: Draft): boolean {
-		return hasCeiling(entry.prompt) && hasCeiling(entry.completion);
+	/** Ceilings carry four decimals for tokens and seven for audio seconds. */
+	function ceiling(value: number, unit: PriceUnit): number {
+		const factor = unit === 'second' ? 10_000_000 : 10_000;
+		return Math.ceil(value * factor) / factor;
 	}
 
-	/** Ceilings carry four decimals; round up so the cheapest provider fits. */
-	function ceiling(value: number): number {
-		return Math.ceil(value * 10_000) / 10_000;
-	}
-
-	function useCheapest(entry: Draft, endpoint: OpenRouterEndpoint) {
-		entry.prompt = ceiling(endpoint.prompt_price);
-		entry.completion = ceiling(endpoint.completion_price);
+	function useCheapest(entry: Draft, endpoint: OpenRouterEndpoint, unit: PriceUnit) {
+		entry.prompt = ceiling(endpoint.prompt_price, unit);
+		entry.completion = ceiling(endpoint.completion_price, unit);
 	}
 
 	onMount(() => {
-		// Open the first served kind, so the panel lands on actionable content.
-		// On a phone that would jump straight into the full-screen flow and
-		// hide the account state, so it waits for a tap there.
-		if (!window.matchMedia('(min-width: 640px)').matches) return;
+		// Load one kind so the account state (key label, credits) is on screen,
+		// but leave every kind collapsed: opening one is an explicit action.
 		const first = kinds.find((kind) => servedKinds[kind]);
-		if (first) void toggleKind(first);
+		if (first) void loadKind(first);
 	});
 
 	$effect(() => {
@@ -595,7 +613,7 @@
 			<div class="flex flex-col gap-1">
 				{#each kinds as kind (kind)}
 					{@const served = servedKinds[kind]}
-					<div class="flex items-center gap-3 {expanded === kind ? 'rounded-box border border-base-300 p-2' : 'px-2 py-1 hover:bg-base-200/50'}">
+					<div class="flex items-center gap-3 {expanded === kind ? 'rounded-box border border-base-300 p-2' : 'px-2 py-1 hover:bg-base-200/50'}" data-testid={`openrouter-kind-${kind}`}>
 						<input
 							class="checkbox checkbox-sm"
 							type="checkbox"
@@ -604,23 +622,33 @@
 							aria-label={kind}
 							onchange={(event) => void setKind(kind, event.currentTarget.checked)}
 						/>
-						<button class="flex flex-1 items-center gap-3 text-left" type="button" onclick={() => toggleKind(kind)} disabled={!served}>
+						<button
+							class="flex flex-1 items-center gap-3 rounded-field py-1 text-left"
+							type="button"
+							aria-expanded={expanded === kind}
+							aria-controls={`openrouter-kind-${kind}`}
+							onclick={() => toggleKind(kind)}
+							disabled={!served}
+						>
+							{#if served}
+								<span class="text-xs text-base-content/50" aria-hidden="true">{expanded === kind ? '▾' : '▸'}</span>
+							{/if}
 							<span class="text-sm font-medium">{kind}</span>
 							{#if served}
 								<span class="text-xs text-base-content/60">
 									{t('openrouter-kind-selected-count', { count: served.selected })}
 									{#if views[kind]} · {t('openrouter-kind-catalog-count', { count: views[kind]?.catalog.length ?? 0 })}{/if}
 								</span>
+								<span class="ml-auto btn btn-ghost btn-xs">
+									{expanded === kind ? t('openrouter-hide-models') : t('openrouter-show-models')}
+								</span>
 							{:else}
 								<span class="text-xs text-base-content/50">{t('openrouter-kind-not-enabled')}</span>
 							{/if}
 						</button>
-						{#if served}
-							<span class="text-base-content/50">{expanded === kind ? '−' : '+'}</span>
-						{/if}
 					</div>
 					{#if expanded === kind && served}
-						<div class="mx-2 mb-2 hidden flex-col gap-3 border-t border-base-300 pt-3 sm:flex">
+						<div id={`openrouter-kind-${kind}`} class="mx-2 mb-2 hidden flex-col gap-3 border-t border-base-300 pt-3 sm:flex">
 							{#if savedKind === kind}
 								<div class="alert alert-success py-2 text-sm" role="status"><span>{t('openrouter-saved')}</span></div>
 							{/if}
@@ -629,10 +657,18 @@
 									<span class="text-xs text-base-content/70">{t('openrouter-search')}</span>
 									<input class="input input-sm w-56" bind:value={search} placeholder="deepseek, claude, …" />
 								</label>
-								<label class="flex flex-col gap-1">
-									<span class="text-xs text-base-content/70">{t('openrouter-max-price')}</span>
-									<input class="input input-sm w-28 font-mono" type="number" min="0" step="0.01" bind:value={maxPrice} placeholder="—" />
-								</label>
+								{#if hasTokenModels}
+									<label class="flex flex-col gap-1">
+										<span class="text-xs text-base-content/70">{t('openrouter-max-price')}</span>
+										<input class="input input-sm w-28 font-mono" type="number" min="0" step="0.01" bind:value={maxPriceToken} placeholder="—" />
+									</label>
+								{/if}
+								{#if hasSecondModels}
+									<label class="flex flex-col gap-1">
+										<span class="text-xs text-base-content/70">{t('openrouter-max-price-second')}</span>
+										<input class="input input-sm w-32 font-mono" type="number" min="0" step="0.0000001" bind:value={maxPriceSecond} placeholder="—" />
+									</label>
+								{/if}
 								<div class="flex items-center gap-2">
 									<button class="btn btn-xs" type="button" onclick={() => selectAll(true)}>{t('openrouter-select-all')}</button>
 									<button class="btn btn-xs" type="button" onclick={() => selectAll(false)}>{t('openrouter-deselect-all')}</button>
@@ -654,16 +690,16 @@
 													<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleModelSort('model')}>{t('openrouter-model')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(modelSort, 'model')}</span></button>
 												</th>
 												<th class="text-end" aria-sort={sortState(modelSort, 'in')}>
-													<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleModelSort('in')}>{t('openrouter-provider-input')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(modelSort, 'in')}</span></button>
+													<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleModelSort('in')}>{catalogUnit ? t(unitKey('openrouter-provider-input', catalogUnit)) : t('openrouter-in')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(modelSort, 'in')}</span></button>
 												</th>
 												<th class="text-end" aria-sort={sortState(modelSort, 'out')}>
-													<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleModelSort('out')}>{t('openrouter-provider-output')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(modelSort, 'out')}</span></button>
+													<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleModelSort('out')}>{catalogUnit ? t(unitKey('openrouter-provider-output', catalogUnit)) : t('openrouter-out')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(modelSort, 'out')}</span></button>
 												</th>
 												<th class="text-end" aria-sort={sortState(modelSort, 'context')}>
 													<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleModelSort('context')}>{t('openrouter-context')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(modelSort, 'context')}</span></button>
 												</th>
-												<th>{t('openrouter-ceiling-prompt')}</th>
-												<th>{t('openrouter-ceiling-completion')}</th>
+												<th>{catalogUnit ? t(unitKey('openrouter-ceiling-prompt', catalogUnit)) : t('openrouter-max-input')}</th>
+												<th>{catalogUnit ? t(unitKey('openrouter-ceiling-completion', catalogUnit)) : t('openrouter-max-output')}</th>
 												<th>{t('openrouter-strategy')}</th>
 												<th>{t('openrouter-cheapest-provider')}</th>
 												<th></th>
@@ -697,14 +733,26 @@
 																</span>
 															</button>
 														</td>
-														<td class="text-end font-mono text-xs tabular-nums">{price(model.prompt_price)}</td>
-														<td class="text-end font-mono text-xs tabular-nums">{price(model.completion_price)}</td>
+														<td class="text-end font-mono text-xs tabular-nums">
+															{price(model.prompt_price, model.price_unit)}
+															{#if catalogUnit === null}<span class="ml-1 text-base-content/50">{unitSuffix(model.price_unit)}</span>{/if}
+														</td>
+														<td class="text-end font-mono text-xs tabular-nums">
+															{price(model.completion_price, model.price_unit)}
+															{#if catalogUnit === null}<span class="ml-1 text-base-content/50">{unitSuffix(model.price_unit)}</span>{/if}
+														</td>
 														<td class="text-end font-mono text-xs tabular-nums">{model.context_length ? n(model.context_length) : '—'}</td>
 														<td>
-															<input class="input input-xs w-24 font-mono" type="number" min="0" step="0.0001" bind:value={entry.prompt} disabled={!entry.selected} aria-label={t('openrouter-aria-input-ceiling', { model: model.id })} />
+															<div class="flex items-center gap-1">
+																<input class="input input-xs w-24 font-mono" type="number" min="0" step={openRouterPriceStep(model.price_unit)} bind:value={entry.prompt} disabled={!entry.selected} aria-label={t('openrouter-aria-input-ceiling', { model: model.id })} placeholder="—" />
+																{#if catalogUnit === null}<span class="text-[10px] text-base-content/50">{unitSuffix(model.price_unit)}</span>{/if}
+															</div>
 														</td>
 														<td>
-															<input class="input input-xs w-24 font-mono" type="number" min="0" step="0.0001" bind:value={entry.completion} disabled={!entry.selected} aria-label={t('openrouter-aria-output-ceiling', { model: model.id })} />
+															<div class="flex items-center gap-1">
+																<input class="input input-xs w-24 font-mono" type="number" min="0" step={openRouterPriceStep(model.price_unit)} bind:value={entry.completion} disabled={!entry.selected} aria-label={t('openrouter-aria-output-ceiling', { model: model.id })} placeholder="—" />
+																{#if catalogUnit === null}<span class="text-[10px] text-base-content/50">{unitSuffix(model.price_unit)}</span>{/if}
+															</div>
 														</td>
 														<td>
 															<div class="flex flex-col gap-1">
@@ -721,17 +769,15 @@
 														<td class="text-xs">
 															{#if model.cheapest_provider}
 																<div class="font-mono">{model.cheapest_provider}</div>
-																<div class="text-base-content/50">{price(model.cheapest_prompt_price)} / {price(model.cheapest_completion_price)}</div>
+																<div class="text-base-content/50">{price(model.cheapest_prompt_price, model.price_unit)} / {price(model.cheapest_completion_price, model.price_unit)} {unitSuffix(model.price_unit)}</div>
 															{:else}
-																<div class="text-base-content/50">{model.prompt_price.toFixed(4)} / {model.completion_price.toFixed(4)}</div>
+																<div class="text-base-content/50">{price(model.prompt_price, model.price_unit)} / {price(model.completion_price, model.price_unit)} {unitSuffix(model.price_unit)}</div>
 															{/if}
 														</td>
 														<td>
 															{#if entry.selected}
 																{#if endpointsFor(model).length === 0}
 																	<span class="badge badge-ghost badge-xs" title={t('openrouter-price-unknown-hint')}>{t('openrouter-price-unknown')}</span>
-																{:else if !capped(entry)}
-																	<span class="badge badge-ghost badge-xs">{t('openrouter-ceiling-missing')}</span>
 																{:else}
 																	{@const fitting = fittingCount(model, entry)}
 																	{#if fitting === 0}
@@ -766,10 +812,10 @@
 																						<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleProviderSort('provider')}>{t('openrouter-provider')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(providerSort, 'provider')}</span></button>
 																					</th>
 																					<th class="text-end" aria-sort={sortState(providerSort, 'in')}>
-																						<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleProviderSort('in')}>{t('openrouter-provider-input')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(providerSort, 'in')}</span></button>
+																						<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleProviderSort('in')}>{t(unitKey('openrouter-provider-input', model.price_unit))} <span class="text-base-content/40" aria-hidden="true">{sortMarker(providerSort, 'in')}</span></button>
 																					</th>
 																					<th class="text-end" aria-sort={sortState(providerSort, 'out')}>
-																						<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleProviderSort('out')}>{t('openrouter-provider-output')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(providerSort, 'out')}</span></button>
+																						<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleProviderSort('out')}>{t(unitKey('openrouter-provider-output', model.price_unit))} <span class="text-base-content/40" aria-hidden="true">{sortMarker(providerSort, 'out')}</span></button>
 																					</th>
 																					<th class="text-end" aria-sort={sortState(providerSort, 'cache')}>
 																						<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleProviderSort('cache')}>{t('openrouter-provider-cache-read')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(providerSort, 'cache')}</span></button>
@@ -795,9 +841,9 @@
 																							{endpoint.provider}
 																							{#if endpoint.quantization}<span class="badge badge-ghost badge-xs ml-1">{endpoint.quantization}</span>{/if}
 																						</td>
-																						<td class="text-end font-mono text-xs tabular-nums">{price(endpoint.prompt_price)}</td>
-																						<td class="text-end font-mono text-xs tabular-nums">{price(endpoint.completion_price)}</td>
-																						<td class="text-end font-mono text-xs tabular-nums">{price(endpoint.cache_read_price)}</td>
+																						<td class="text-end font-mono text-xs tabular-nums">{price(endpoint.prompt_price, model.price_unit)}</td>
+																						<td class="text-end font-mono text-xs tabular-nums">{price(endpoint.completion_price, model.price_unit)}</td>
+																						<td class="text-end font-mono text-xs tabular-nums">{price(endpoint.cache_read_price, model.price_unit)}</td>
 																						<td class="text-end font-mono text-xs tabular-nums">{endpoint.context_length !== null ? n(endpoint.context_length) : '—'}</td>
 																						<td class="text-end font-mono text-xs tabular-nums">{throughput(endpoint.throughput_p50)}</td>
 																						<td class="text-end font-mono text-xs tabular-nums">{endpoint.latency_p50 !== null ? `${endpoint.latency_p50.toFixed(2)} s` : '—'}</td>
@@ -814,13 +860,11 @@
 																	</div>
 																	<div class="mt-2 flex flex-wrap items-center gap-2 text-xs">
 																		{#if cheapest}
-																			<span>{t('openrouter-cheapest', { provider: cheapest.provider, prompt: price(cheapest.prompt_price), completion: price(cheapest.completion_price) })}</span>
+																			<span>{t(unitKey('openrouter-cheapest', model.price_unit), { provider: cheapest.provider, prompt: price(cheapest.prompt_price, model.price_unit), completion: price(cheapest.completion_price, model.price_unit) })}</span>
 																		{/if}
-																		{#if ceilingValid(entry)}
-																			<span class="text-base-content/60">{t('openrouter-providers-fit', { fit: fittingCount(model, entry), total: providers.length })}</span>
-																		{/if}
+																		<span class="text-base-content/60">{t('openrouter-providers-fit', { fit: fittingCount(model, entry), total: providers.length })}</span>
 																		{#if cheapest}
-																			<button class="btn btn-xs" type="button" onclick={() => useCheapest(entry, cheapest)}>{t('openrouter-use-cheapest')}</button>
+																			<button class="btn btn-xs" type="button" onclick={() => useCheapest(entry, cheapest, model.price_unit)}>{t('openrouter-use-cheapest')}</button>
 																		{/if}
 																		<a class="btn btn-ghost btn-xs" href={`https://openrouter.ai/${model.id}`} target="_blank" rel="noreferrer">{t('openrouter-compare')} ↗</a>
 																	</div>
@@ -864,12 +908,12 @@
 									<div class="flex-1 overflow-y-auto px-3 py-3" data-testid="openrouter-mobile-detail">
 										<div class="grid grid-cols-2 gap-2">
 											<label class="flex flex-col gap-1">
-												<span class="text-xs text-base-content/70">{t('openrouter-ceiling-prompt')}</span>
-												<input class="input input-sm font-mono" type="number" min="0" step="0.0001" bind:value={entry.prompt} aria-label={t('openrouter-aria-input-ceiling', { model: model.id })} />
+												<span class="text-xs text-base-content/70">{t(unitKey('openrouter-ceiling-prompt', model.price_unit))}</span>
+												<input class="input input-sm font-mono" type="number" min="0" step={openRouterPriceStep(model.price_unit)} bind:value={entry.prompt} placeholder="—" aria-label={t('openrouter-aria-input-ceiling', { model: model.id })} />
 											</label>
 											<label class="flex flex-col gap-1">
-												<span class="text-xs text-base-content/70">{t('openrouter-ceiling-completion')}</span>
-												<input class="input input-sm font-mono" type="number" min="0" step="0.0001" bind:value={entry.completion} aria-label={t('openrouter-aria-output-ceiling', { model: model.id })} />
+												<span class="text-xs text-base-content/70">{t(unitKey('openrouter-ceiling-completion', model.price_unit))}</span>
+												<input class="input input-sm font-mono" type="number" min="0" step={openRouterPriceStep(model.price_unit)} bind:value={entry.completion} placeholder="—" aria-label={t('openrouter-aria-output-ceiling', { model: model.id })} />
 											</label>
 										</div>
 										<div class="mt-2 grid grid-cols-2 gap-2">
@@ -891,10 +935,10 @@
 										<div class="mt-3 flex items-center justify-between gap-2">
 											<span class="text-xs text-base-content/70">{t('openrouter-providers-fit', { fit: fittingCount(model, entry), total: providers.length })}</span>
 											<select class="select select-xs w-auto" value={mobileProviderSort} onchange={(event) => setMobileProviderSort(event.currentTarget.value)} aria-label={t('openrouter-sort')}>
-												<option value="out:asc">{t('openrouter-provider-output')} ↑</option>
-												<option value="out:desc">{t('openrouter-provider-output')} ↓</option>
-												<option value="in:asc">{t('openrouter-provider-input')} ↑</option>
-												<option value="in:desc">{t('openrouter-provider-input')} ↓</option>
+												<option value="out:asc">{t(unitKey('openrouter-provider-output', model.price_unit))} ↑</option>
+												<option value="out:desc">{t(unitKey('openrouter-provider-output', model.price_unit))} ↓</option>
+												<option value="in:asc">{t(unitKey('openrouter-provider-input', model.price_unit))} ↑</option>
+												<option value="in:desc">{t(unitKey('openrouter-provider-input', model.price_unit))} ↓</option>
 												<option value="throughput:desc">{t('openrouter-provider-throughput')} ↓</option>
 												<option value="latency:asc">{t('openrouter-provider-latency')} ↑</option>
 												<option value="uptime:desc">{t('openrouter-provider-uptime')} ↓</option>
@@ -915,9 +959,9 @@
 															{#if endpoint.quantization}<span class="badge badge-ghost badge-xs">{endpoint.quantization}</span>{/if}
 														</div>
 														<dl class="mt-2 grid grid-cols-3 gap-x-2 gap-y-1 font-mono text-[11px] text-base-content/70">
-															<div><dt class="text-base-content/50">{t('openrouter-provider-input')}</dt><dd>{price(endpoint.prompt_price)}</dd></div>
-															<div><dt class="text-base-content/50">{t('openrouter-provider-output')}</dt><dd>{price(endpoint.completion_price)}</dd></div>
-															<div><dt class="text-base-content/50">{t('openrouter-provider-cache-read')}</dt><dd>{price(endpoint.cache_read_price)}</dd></div>
+															<div><dt class="text-base-content/50">{t(unitKey('openrouter-provider-input', model.price_unit))}</dt><dd>{price(endpoint.prompt_price, model.price_unit)}</dd></div>
+															<div><dt class="text-base-content/50">{t(unitKey('openrouter-provider-output', model.price_unit))}</dt><dd>{price(endpoint.completion_price, model.price_unit)}</dd></div>
+															<div><dt class="text-base-content/50">{t('openrouter-provider-cache-read')}</dt><dd>{price(endpoint.cache_read_price, model.price_unit)}</dd></div>
 															<div><dt class="text-base-content/50">{t('openrouter-context')}</dt><dd>{endpoint.context_length !== null ? n(endpoint.context_length) : '—'}</dd></div>
 															<div><dt class="text-base-content/50">{t('openrouter-provider-throughput')}</dt><dd>{throughput(endpoint.throughput_p50)}</dd></div>
 															<div><dt class="text-base-content/50">{t('openrouter-provider-latency')}</dt><dd>{endpoint.latency_p50 !== null ? `${endpoint.latency_p50.toFixed(2)} s` : '—'}</dd></div>
@@ -935,7 +979,7 @@
 										</div>
 										<div class="mt-3 flex flex-wrap gap-2">
 											{#if cheapest}
-												<button class="btn btn-sm" type="button" onclick={() => useCheapest(entry, cheapest)}>{t('openrouter-use-cheapest')}</button>
+												<button class="btn btn-sm" type="button" onclick={() => useCheapest(entry, cheapest, model.price_unit)}>{t('openrouter-use-cheapest')}</button>
 											{/if}
 											<a class="btn btn-ghost btn-sm" href={`https://openrouter.ai/${model.id}`} target="_blank" rel="noreferrer">{t('openrouter-compare')} ↗</a>
 										</div>
@@ -957,17 +1001,25 @@
 											<input class="input input-sm" bind:value={search} placeholder="deepseek, claude, …" />
 										</label>
 										<div class="grid grid-cols-2 gap-2">
-											<label class="flex flex-col gap-1">
-												<span class="text-xs text-base-content/70">{t('openrouter-max-price')}</span>
-												<input class="input input-sm font-mono" type="number" min="0" step="0.01" bind:value={maxPrice} placeholder="—" />
-											</label>
+											{#if hasTokenModels}
+												<label class="flex flex-col gap-1">
+													<span class="text-xs text-base-content/70">{t('openrouter-max-price')}</span>
+													<input class="input input-sm font-mono" type="number" min="0" step="0.01" bind:value={maxPriceToken} placeholder="—" />
+												</label>
+											{/if}
+											{#if hasSecondModels}
+												<label class="flex flex-col gap-1">
+													<span class="text-xs text-base-content/70">{t('openrouter-max-price-second')}</span>
+													<input class="input input-sm font-mono" type="number" min="0" step="0.0000001" bind:value={maxPriceSecond} placeholder="—" />
+												</label>
+											{/if}
 											<label class="flex flex-col gap-1">
 												<span class="text-xs text-base-content/70">{t('openrouter-sort')}</span>
 												<select class="select select-sm" value={mobileModelSort} onchange={(event) => setMobileModelSort(event.currentTarget.value)}>
-													<option value="out:asc">{t('openrouter-provider-output')} ↑</option>
-													<option value="out:desc">{t('openrouter-provider-output')} ↓</option>
-													<option value="in:asc">{t('openrouter-provider-input')} ↑</option>
-													<option value="in:desc">{t('openrouter-provider-input')} ↓</option>
+													<option value="out:asc">{t('openrouter-out')} ↑</option>
+													<option value="out:desc">{t('openrouter-out')} ↓</option>
+													<option value="in:asc">{t('openrouter-in')} ↑</option>
+													<option value="in:desc">{t('openrouter-in')} ↓</option>
 													<option value="model:asc">{t('openrouter-model')} A–Z</option>
 													<option value="context:desc">{t('openrouter-context')} ↓</option>
 												</select>
@@ -990,15 +1042,13 @@
 															<span class="block truncate text-sm font-semibold">{model.name}</span>
 															<span class="block truncate font-mono text-[11px] text-base-content/60">{model.id}</span>
 															<span class="mt-1 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[11px] text-base-content/70">
-																<span>{t('openrouter-provider-input')} {price(model.prompt_price)}</span>
-																<span>{t('openrouter-provider-output')} {price(model.completion_price)}</span>
+																<span>{t(unitKey('openrouter-provider-input', model.price_unit))} {price(model.prompt_price, model.price_unit)}</span>
+																<span>{t(unitKey('openrouter-provider-output', model.price_unit))} {price(model.completion_price, model.price_unit)}</span>
 																<span>{model.context_length ? n(model.context_length) : '—'}</span>
 															</span>
 														</button>
 														{#if entry.selected}
-															{#if !capped(entry)}
-																<span class="badge badge-ghost badge-sm">{t('openrouter-ceiling-missing')}</span>
-															{:else if fittingCount(model, entry) === 0}
+															{#if fittingCount(model, entry) === 0}
 																<span class="badge badge-warning badge-sm">{t('openrouter-over-ceiling')}</span>
 															{:else}
 																<span class="badge badge-success badge-sm">{t('openrouter-providers-fit-short', { fit: fittingCount(model, entry), total: endpointsFor(model).length })}</span>

@@ -81,7 +81,7 @@ backends-detect-profile = определено: { $profile }
 # OpenRouter catalog: one backend, one key, the account's models, and a
 # purchase-price ceiling per selected model.
 openrouter-heading = OpenRouter
-openrouter-description = Одно подключение OpenRouter. Выберите модели, которые шлюз может использовать, и максимальную цену для каждой; модель без провайдера в пределах лимита не предлагается.
+openrouter-description = Одно подключение OpenRouter. Выберите модели, которые может использовать этот шлюз, и при необходимости предел цены для каждой; модель без подходящего провайдера не предлагается.
 openrouter-connected = Подключено
 openrouter-key-label = Ключ
 openrouter-credits = Баланс
@@ -99,6 +99,21 @@ openrouter-filter-fitting = Подходящие
 openrouter-price = Цена по каталогу
 openrouter-context = Контекст
 openrouter-ceiling-prompt = Макс. вход $/1M
+openrouter-in = Вход
+openrouter-out = Выход
+openrouter-max-input = Макс. вход
+openrouter-max-output = Макс. выход
+openrouter-provider-input-second = Вход $/с
+openrouter-provider-output-second = Выход $/с
+openrouter-ceiling-prompt-second = Макс. вход $/с
+openrouter-ceiling-completion-second = Макс. выход $/с
+openrouter-max-price-second = Макс. $/с
+openrouter-cheapest-second = Дешевле всех: { $provider } — { $prompt } / { $completion } за секунду аудио
+openrouter-per-million = /1M
+openrouter-per-second = /с
+openrouter-show-models = Показать модели
+openrouter-hide-models = Скрыть модели
+openrouter-ceiling-invalid = Ценовые пределы должны быть пустыми или неотрицательным числом.
 openrouter-ceiling-completion = Макс. выход $/1M
 openrouter-strategy = Стратегия провайдера
 openrouter-strategy-cheapest = Самая дешёвая
@@ -119,7 +134,6 @@ openrouter-provider-throughput = tok/s
 openrouter-provider-latency = Задержка
 openrouter-provider-uptime = Доступность
 openrouter-provider-limit = Твой лимит
-openrouter-ceiling-missing = лимит не задан
 openrouter-usage = Расход
 openrouter-aria-input-ceiling = { $model } лимит на вход
 openrouter-aria-output-ceiling = { $model } лимит на выход
@@ -128,14 +142,14 @@ openrouter-aria-min-throughput = { $model } минимальная пропус�
 openrouter-cheapest-provider = Дешевле всех
 openrouter-provider-fits = подходит
 openrouter-provider-excluded = дороже
-openrouter-providers-fit = { $fit } из { $total } провайдеров в пределах лимита
+openrouter-providers-fit = Доступно { $fit } из { $total } провайдеров
 openrouter-providers-hidden = { $count ->
     [one] { $count } поставщик скрыт из-за лимитов
     [few] { $count } поставщика скрыто из-за лимитов
     [many] { $count } поставщиков скрыто из-за лимитов
    *[other] { $count } поставщиков скрыто из-за лимитов
   }
-openrouter-providers-none-fit = Ни один поставщик не подходит под лимиты — увеличь Max input или Max output.
+openrouter-providers-none-fit = Ни один провайдер не подходит под ваши пределы — увеличьте или очистите «Макс. вход» / «Макс. выход».
 openrouter-providers-fit-short = { $fit } из { $total } подходят
 openrouter-price-unknown = цена не проверена
 openrouter-price-unknown-hint = Цены провайдеров для этой модели ещё не загружены — открой строку, чтобы увидеть их.
@@ -163,6 +177,5 @@ openrouter-provider-field = Провайдер
 openrouter-provider-openai = Совместимый с OpenAI
 openrouter-provider-openrouter = OpenRouter
 openrouter-provider-hint = OpenRouter читает каталог аккаунта и применяет лимит цены для каждой модели при каждом запросе. Остальные провайдеры — обычный HTTP, совместимый с OpenAI.
-openrouter-ceiling-required = Для каждой выбранной модели нужны оба лимита цены.
 openrouter-max-price = Макс. $/1M
 openrouter-voices = Голоса

@@ -171,8 +171,9 @@ async fn v1_chat_completions_overrides_a_client_provider_block_with_the_openrout
         "mock",
         &OpenRouterPolicyRow {
             model_id: "model-a".into(),
-            max_prompt_price: 0.30,
-            max_completion_price: 1.20,
+            max_prompt_price: Some(0.30),
+            max_completion_price: Some(1.20),
+            price_unit: aiplane_core::server::upstreams::openrouter::PriceUnit::Token,
             strategy: "cheapest".into(),
             min_throughput: Some(40.0),
             available: true,

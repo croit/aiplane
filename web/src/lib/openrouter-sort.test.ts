@@ -55,6 +55,15 @@ test('providers open on the cheapest output tokens, ties by provider', () => {
 	);
 });
 
+test('a duration-priced model opens its providers on the cheapest audio second', () => {
+	const rows = [endpoint('Groq', 0.000031, 0), endpoint('DeepInfra', 0.0000075, 0), endpoint('Together', 0.000025, 0)];
+	assert.deepEqual(
+		sortEndpoints(rows, defaultProviderSort('second')).map((row) => row.provider),
+		['DeepInfra', 'Together', 'Groq']
+	);
+	assert.deepEqual(defaultProviderSort('second'), { key: 'in', direction: 'asc' });
+});
+
 test('a measured column sorts numerically and puts unmeasured providers last', () => {
 	const rows = [
 		endpoint('a', 0.1, 0.1, { latency_p50: null }),
