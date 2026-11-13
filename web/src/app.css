@@ -378,13 +378,6 @@ h1, h2, h3, .card-title {
     .textarea::placeholder {
         color: color-mix(in oklab, var(--color-base-content) 40%, transparent);
     }
-    .input:focus,
-    .select:focus,
-    .textarea:focus {
-        outline: none;
-        border-color: var(--color-primary);
-        box-shadow: 0 0 0 1px var(--color-primary);
-    }
     .input:disabled,
     .select:disabled,
     .textarea:disabled {
@@ -451,7 +444,7 @@ h1, h2, h3, .card-title {
         background-color: color-mix(in oklab, var(--color-base-content) 9%, var(--color-base-200));
     }
     .file-input:focus-visible {
-        outline: 2px solid var(--color-primary);
+        outline: 2px solid color-mix(in oklab, var(--color-primary) 35%, var(--color-base-300));
         outline-offset: 2px;
     }
     .file-input:disabled {
@@ -1051,15 +1044,17 @@ h1, h2, h3, .card-title {
 }
 
 /*
- * Field states that must beat the component layer (a focused field rings in
- * the primary colour; a field marked aria-invalid reads as an error, focused
- * or not). Zero specificity via :where, so a Tailwind border-* on the same
- * element still wins.
+ * Field states that must beat the component layer (a focused field gets a
+ * quiet primary edge and a soft halo; a field marked aria-invalid reads as an
+ * error, focused or not). Zero specificity via :where, so a Tailwind border-*
+ * on the same element still wins. The halo is a wash, not a second outline:
+ * a field in use should read as warmed up, not boxed in.
  */
 @layer utilities {
     :where(.input, .select, .textarea):is(:focus, :focus-within) {
-        border-color: var(--color-primary);
-        box-shadow: 0 0 0 1px var(--color-primary);
+        outline: none;
+        border-color: color-mix(in oklab, var(--color-primary) 35%, var(--color-base-300));
+        box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-primary) 10%, transparent);
     }
 
     .input[aria-invalid="true"],

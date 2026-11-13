@@ -90,8 +90,17 @@ test('a plain button keeps a visible edge on a card', () => {
 	assert.match(css, /\.btn\s*\{[^}]*border:\s*1px solid var\(--color-base-300\)/s);
 });
 
-test('focused fields ring in the primary colour, invalid ones in error', () => {
-	assert.match(css, /:where\(\.input, \.select, \.textarea\):is\(:focus, :focus-within\)\s*\{\s*border-color:\s*var\(--color-primary\)/, 'no primary focus ring on fields');
+test('focused fields warm up in the primary colour, invalid ones read as errors', () => {
+	assert.match(
+		css,
+		/:where\(\.input, \.select, \.textarea\):is\(:focus, :focus-within\)\s*\{\s*outline:\s*none;\s*border-color:\s*color-mix\(in oklab, var\(--color-primary\)/,
+		'no primary focus edge on fields'
+	);
+	assert.match(
+		css,
+		/:where\(\.input, \.select, \.textarea\):is\(:focus, :focus-within\)\s*\{[^}]*box-shadow:\s*0 0 0 3px color-mix\(in oklab, var\(--color-primary\)/,
+		'no soft primary halo on focused fields'
+	);
 	assert.match(css, /\.input\[aria-invalid="true"\][\s\S]*?border-color:\s*var\(--color-error\)/, 'aria-invalid fields are not marked');
 	assert.ok(
 		css.indexOf('.input[aria-invalid="true"]') > css.indexOf(':where(.input, .select, .textarea)'),
