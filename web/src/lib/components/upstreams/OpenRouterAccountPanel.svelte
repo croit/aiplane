@@ -13,7 +13,8 @@
 		sortModels,
 		type ModelSortKey,
 		type ProviderSortKey,
-		type Sort
+		type Sort,
+		type SortDirection
 	} from '#lib/openrouter-sort.js';
 
 	interface Props {
@@ -58,6 +59,36 @@
 	// Both tables open on the cheapest output tokens; a header click re-sorts.
 	let modelSort = $state<Sort<ModelSortKey>>(defaultModelSort());
 	let providerSort = $state<Sort<ProviderSortKey>>(defaultProviderSort());
+	// Below `sm` the two tables are a full-screen flow instead: the model list,
+	// then one model's providers. Nothing nests there.
+	let mobileFilter = $state<'all' | 'selected' | 'fit'>('all');
+	const mobileModels = $derived.by(() => {
+		if (!expanded) return [];
+		const entries = drafts[expanded] ?? {};
+		return filtered.filter((model) => {
+			const entry = entries[model.id];
+			if (!entry) return false;
+			if (mobileFilter === 'selected') return entry.selected;
+			if (mobileFilter === 'fit') return !capped(entry) || fittingCount(model, entry) > 0;
+			return true;
+		});
+	});
+	const mobileModelSort = $derived(`${modelSort.key}:${modelSort.direction}`);
+	const mobileProviderSort = $derived(`${providerSort.key}:${providerSort.direction}`);
+	// A native dialog puts the flow in the top layer, above the app's sticky
+	// mobile header (which a fixed div inside <main> could not clear).
+	let narrow = $state(false);
+	let mobileDialog = $state<HTMLDialogElement | null>(null);
+
+	function setMobileModelSort(value: string) {
+		const [key, direction] = value.split(':') as [ModelSortKey, SortDirection];
+		modelSort = { key, direction };
+	}
+
+	function setMobileProviderSort(value: string) {
+		const [key, direction] = value.split(':') as [ProviderSortKey, SortDirection];
+		providerSort = { key, direction };
+	}
 	let loadingKind = $state<string | null>(null);
 	let savingKind = $state<string | null>(null);
 	let refreshing = $state(false);
@@ -215,6 +246,7 @@
 			return;
 		}
 		expanded = kind;
+		openModel = null;
 		if (!views[kind]) void loadKind(kind);
 	}
 
@@ -462,8 +494,25 @@
 
 	onMount(() => {
 		// Open the first served kind, so the panel lands on actionable content.
+		// On a phone that would jump straight into the full-screen flow and
+		// hide the account state, so it waits for a tap there.
+		if (!window.matchMedia('(min-width: 640px)').matches) return;
 		const first = kinds.find((kind) => servedKinds[kind]);
 		if (first) void toggleKind(first);
+	});
+
+	$effect(() => {
+		const query = window.matchMedia('(max-width: 639px)');
+		narrow = query.matches;
+		const handler = (event: MediaQueryListEvent) => (narrow = event.matches);
+		query.addEventListener('change', handler);
+		return () => query.removeEventListener('change', handler);
+	});
+
+	$effect(() => {
+		if (!mobileDialog) return;
+		if (expanded && narrow && !mobileDialog.open) mobileDialog.showModal();
+		else if ((!expanded || !narrow) && mobileDialog.open) mobileDialog.close();
 	});
 
 	$effect(() => {
@@ -571,7 +620,7 @@
 						{/if}
 					</div>
 					{#if expanded === kind && served}
-						<div class="mx-2 mb-2 flex flex-col gap-3 border-t border-base-300 pt-3">
+						<div class="mx-2 mb-2 hidden flex-col gap-3 border-t border-base-300 pt-3 sm:flex">
 							{#if savedKind === kind}
 								<div class="alert alert-success py-2 text-sm" role="status"><span>{t('openrouter-saved')}</span></div>
 							{/if}
@@ -792,6 +841,189 @@
 								</button>
 							</div>
 						</div>
+					{/if}
+					{#if expanded === kind && served}
+						<dialog bind:this={mobileDialog} class="modal p-0" aria-label={kind} onclose={() => (expanded = null)} data-testid="openrouter-mobile">
+							<div class="modal-box flex h-dvh max-h-dvh w-screen max-w-none flex-col rounded-none border-0 bg-base-100 p-0">
+							{#if openModel}
+								{@const entry = (drafts[kind] ?? {})[openModel]}
+								{@const model = models.find((candidate) => candidate.id === openModel) ?? null}
+								{#if model && entry}
+									{@const providers = endpointsFor(model)}
+									{@const visible = fittingEndpoints(model, entry)}
+									{@const hiddenCount = providers.length - visible.length}
+									{@const cheapest = cheapestEndpoint(visible)}
+									<header class="flex items-center gap-2 border-b border-base-300 px-2 py-2">
+										<button class="btn btn-ghost btn-sm" type="button" onclick={() => (openModel = null)}>‹ {t('openrouter-models')}</button>
+										<div class="min-w-0 flex-1">
+											<h4 class="truncate text-sm font-semibold">{model.name}</h4>
+											<p class="truncate font-mono text-[11px] text-base-content/60">{model.id}</p>
+										</div>
+										<button class="btn btn-primary btn-sm" type="button" disabled={savingKind === kind} onclick={() => void saveKind()}>{savingKind === kind ? '…' : t('openrouter-save')}</button>
+									</header>
+									<div class="flex-1 overflow-y-auto px-3 py-3" data-testid="openrouter-mobile-detail">
+										<div class="grid grid-cols-2 gap-2">
+											<label class="flex flex-col gap-1">
+												<span class="text-xs text-base-content/70">{t('openrouter-ceiling-prompt')}</span>
+												<input class="input input-sm font-mono" type="number" min="0" step="0.0001" bind:value={entry.prompt} aria-label={t('openrouter-aria-input-ceiling', { model: model.id })} />
+											</label>
+											<label class="flex flex-col gap-1">
+												<span class="text-xs text-base-content/70">{t('openrouter-ceiling-completion')}</span>
+												<input class="input input-sm font-mono" type="number" min="0" step="0.0001" bind:value={entry.completion} aria-label={t('openrouter-aria-output-ceiling', { model: model.id })} />
+											</label>
+										</div>
+										<div class="mt-2 grid grid-cols-2 gap-2">
+											<label class="flex flex-col gap-1">
+												<span class="text-xs text-base-content/70">{t('openrouter-strategy')}</span>
+												<select class="select select-sm" bind:value={entry.strategy} aria-label={t('openrouter-aria-strategy', { model: model.id })}>
+													<option value="cheapest">{t('openrouter-strategy-cheapest')}</option>
+													<option value="fastest">{t('openrouter-strategy-fastest')}</option>
+													<option value="balanced">{t('openrouter-strategy-balanced')}</option>
+												</select>
+											</label>
+											{#if entry.strategy === 'cheapest'}
+												<label class="flex flex-col gap-1">
+													<span class="text-xs text-base-content/70">{t('openrouter-min-throughput')}</span>
+													<input class="input input-sm font-mono" type="number" min="0" step="1" bind:value={entry.min} aria-label={t('openrouter-aria-min-throughput', { model: model.id })} />
+												</label>
+											{/if}
+										</div>
+										<div class="mt-3 flex items-center justify-between gap-2">
+											<span class="text-xs text-base-content/70">{t('openrouter-providers-fit', { fit: fittingCount(model, entry), total: providers.length })}</span>
+											<select class="select select-xs w-auto" value={mobileProviderSort} onchange={(event) => setMobileProviderSort(event.currentTarget.value)} aria-label={t('openrouter-sort')}>
+												<option value="out:asc">{t('openrouter-provider-output')} ↑</option>
+												<option value="out:desc">{t('openrouter-provider-output')} ↓</option>
+												<option value="in:asc">{t('openrouter-provider-input')} ↑</option>
+												<option value="in:desc">{t('openrouter-provider-input')} ↓</option>
+												<option value="throughput:desc">{t('openrouter-provider-throughput')} ↓</option>
+												<option value="latency:asc">{t('openrouter-provider-latency')} ↑</option>
+												<option value="uptime:desc">{t('openrouter-provider-uptime')} ↓</option>
+												<option value="provider:asc">{t('openrouter-provider')} A–Z</option>
+											</select>
+										</div>
+										<div class="mt-2 flex flex-col gap-2">
+											{#if providerStates[model.id]?.status === 'loading'}
+												<div class="flex justify-center py-4"><span class="loading loading-spinner loading-sm"></span></div>
+											{:else if providerStates[model.id]?.status === 'error'}
+												<p class="text-xs text-error">{t('openrouter-provider-error', { message: providerStates[model.id]?.error ?? '' })}</p>
+											{:else}
+											{#each visible as endpoint, index (endpoint.provider + index)}
+												<div class="card border border-base-300 bg-base-200/40">
+													<div class="p-3">
+														<div class="flex flex-wrap items-center gap-2">
+															<span class="font-mono text-sm font-medium">{endpoint.provider}</span>
+															{#if endpoint.quantization}<span class="badge badge-ghost badge-xs">{endpoint.quantization}</span>{/if}
+														</div>
+														<dl class="mt-2 grid grid-cols-3 gap-x-2 gap-y-1 font-mono text-[11px] text-base-content/70">
+															<div><dt class="text-base-content/50">{t('openrouter-provider-input')}</dt><dd>{price(endpoint.prompt_price)}</dd></div>
+															<div><dt class="text-base-content/50">{t('openrouter-provider-output')}</dt><dd>{price(endpoint.completion_price)}</dd></div>
+															<div><dt class="text-base-content/50">{t('openrouter-provider-cache-read')}</dt><dd>{price(endpoint.cache_read_price)}</dd></div>
+															<div><dt class="text-base-content/50">{t('openrouter-context')}</dt><dd>{endpoint.context_length !== null ? n(endpoint.context_length) : '—'}</dd></div>
+															<div><dt class="text-base-content/50">{t('openrouter-provider-throughput')}</dt><dd>{throughput(endpoint.throughput_p50)}</dd></div>
+															<div><dt class="text-base-content/50">{t('openrouter-provider-latency')}</dt><dd>{endpoint.latency_p50 !== null ? `${endpoint.latency_p50.toFixed(2)} s` : '—'}</dd></div>
+															<div><dt class="text-base-content/50">{t('openrouter-provider-uptime')}</dt><dd>{endpoint.uptime_30m !== null ? `${Math.round(endpoint.uptime_30m)} %` : '—'}</dd></div>
+														</dl>
+													</div>
+												</div>
+											{:else}
+												<p class="text-xs text-warning" data-testid="openrouter-mobile-none-fit">{t('openrouter-providers-none-fit')}</p>
+											{/each}
+											{#if hiddenCount > 0}
+												<p class="text-xs text-base-content/60" data-testid="openrouter-mobile-hidden">{t('openrouter-providers-hidden', { count: hiddenCount })}</p>
+											{/if}
+											{/if}
+										</div>
+										<div class="mt-3 flex flex-wrap gap-2">
+											{#if cheapest}
+												<button class="btn btn-sm" type="button" onclick={() => useCheapest(entry, cheapest)}>{t('openrouter-use-cheapest')}</button>
+											{/if}
+											<a class="btn btn-ghost btn-sm" href={`https://openrouter.ai/${model.id}`} target="_blank" rel="noreferrer">{t('openrouter-compare')} ↗</a>
+										</div>
+									</div>
+								{/if}
+							{:else}
+								<header class="flex items-center gap-2 border-b border-base-300 px-2 py-2">
+									<button class="btn btn-ghost btn-sm btn-circle" type="button" aria-label={t('chat-render-close')} onclick={() => (expanded = null)}>×</button>
+									<div class="min-w-0 flex-1">
+										<h4 class="truncate font-semibold">{kind}</h4>
+										<p class="text-xs text-base-content/60">{t('openrouter-selected-count', { count: selectedCount })} · {t('openrouter-kind-catalog-count', { count: models.length })}</p>
+									</div>
+									<button class="btn btn-primary btn-sm" type="button" disabled={savingKind === kind} onclick={() => void saveKind()}>{savingKind === kind ? '…' : t('openrouter-save')}</button>
+								</header>
+								<div class="flex-1 overflow-y-auto px-3 py-3" data-testid="openrouter-mobile-models">
+									<div class="flex flex-col gap-2">
+										<label class="flex flex-col gap-1">
+											<span class="text-xs text-base-content/70">{t('openrouter-search')}</span>
+											<input class="input input-sm" bind:value={search} placeholder="deepseek, claude, …" />
+										</label>
+										<div class="grid grid-cols-2 gap-2">
+											<label class="flex flex-col gap-1">
+												<span class="text-xs text-base-content/70">{t('openrouter-max-price')}</span>
+												<input class="input input-sm font-mono" type="number" min="0" step="0.01" bind:value={maxPrice} placeholder="—" />
+											</label>
+											<label class="flex flex-col gap-1">
+												<span class="text-xs text-base-content/70">{t('openrouter-sort')}</span>
+												<select class="select select-sm" value={mobileModelSort} onchange={(event) => setMobileModelSort(event.currentTarget.value)}>
+													<option value="out:asc">{t('openrouter-provider-output')} ↑</option>
+													<option value="out:desc">{t('openrouter-provider-output')} ↓</option>
+													<option value="in:asc">{t('openrouter-provider-input')} ↑</option>
+													<option value="in:desc">{t('openrouter-provider-input')} ↓</option>
+													<option value="model:asc">{t('openrouter-model')} A–Z</option>
+													<option value="context:desc">{t('openrouter-context')} ↓</option>
+												</select>
+											</label>
+										</div>
+										<div class="join w-full">
+											<button class="btn btn-sm join-item flex-1 {mobileFilter === 'all' ? 'btn-active' : 'btn-ghost'}" type="button" aria-pressed={mobileFilter === 'all'} onclick={() => (mobileFilter = 'all')}>{t('openrouter-filter-all')}</button>
+											<button class="btn btn-sm join-item flex-1 {mobileFilter === 'selected' ? 'btn-active' : 'btn-ghost'}" type="button" aria-pressed={mobileFilter === 'selected'} onclick={() => (mobileFilter = 'selected')}>{t('openrouter-filter-selected')}</button>
+											<button class="btn btn-sm join-item flex-1 {mobileFilter === 'fit' ? 'btn-active' : 'btn-ghost'}" type="button" aria-pressed={mobileFilter === 'fit'} onclick={() => (mobileFilter = 'fit')}>{t('openrouter-filter-fitting')}</button>
+										</div>
+									</div>
+									<div class="mt-3 flex flex-col gap-2">
+										{#each mobileModels as model (model.id)}
+											{@const entry = (drafts[kind] ?? {})[model.id]}
+											{#if entry}
+												<div class="card border {entry.selected ? 'border-primary bg-primary/10' : 'border-base-300 bg-base-200/40'}">
+													<div class="flex items-start gap-3 p-3">
+														<input class="checkbox checkbox-sm mt-1" type="checkbox" bind:checked={entry.selected} aria-label={model.id} />
+														<button type="button" class="min-w-0 flex-1 text-left" onclick={() => void toggleModel(model)}>
+															<span class="block truncate text-sm font-semibold">{model.name}</span>
+															<span class="block truncate font-mono text-[11px] text-base-content/60">{model.id}</span>
+															<span class="mt-1 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[11px] text-base-content/70">
+																<span>{t('openrouter-provider-input')} {price(model.prompt_price)}</span>
+																<span>{t('openrouter-provider-output')} {price(model.completion_price)}</span>
+																<span>{model.context_length ? n(model.context_length) : '—'}</span>
+															</span>
+														</button>
+														{#if entry.selected}
+															{#if !capped(entry)}
+																<span class="badge badge-ghost badge-sm">{t('openrouter-ceiling-missing')}</span>
+															{:else if fittingCount(model, entry) === 0}
+																<span class="badge badge-warning badge-sm">{t('openrouter-over-ceiling')}</span>
+															{:else}
+																<span class="badge badge-success badge-sm">{t('openrouter-providers-fit-short', { fit: fittingCount(model, entry), total: endpointsFor(model).length })}</span>
+															{/if}
+														{/if}
+													</div>
+												</div>
+											{/if}
+										{:else}
+											<p class="text-sm text-base-content/60">{t('openrouter-no-models')}</p>
+										{/each}
+									</div>
+								</div>
+								<footer class="border-t border-base-300 px-3 py-2">
+									<div class="flex flex-wrap items-center justify-between gap-2">
+										<span class="text-xs text-base-content/60">{t('openrouter-selected-count', { count: selectedCount })}</span>
+										<div class="flex gap-2">
+											<button class="btn btn-xs" type="button" onclick={() => selectAll(true)}>{t('openrouter-select-all')}</button>
+											<button class="btn btn-xs" type="button" onclick={() => selectAll(false)}>{t('openrouter-deselect-all')}</button>
+										</div>
+									</div>
+								</footer>
+							{/if}
+							</div>
+						</dialog>
 					{/if}
 				{/each}
 			</div>

@@ -115,6 +115,14 @@ how many, instead of leaving the reader to compare numbers. The row also
 counts what still fits (`x of y fit`), so a ceiling change is visible before
 the table is opened.
 
+Below `sm` the panel never nests the two tables: a kind opens a full-screen
+model list (search, price filter, sort, and All / Selected / Fitting chips),
+and tapping a model pushes a second full-screen view with its ceilings,
+strategy and provider cards — one vertical scroll, no sideways table. Both
+views edit the same draft, so Save works from either, and the flow opens in a
+native dialog above the app's sticky mobile header. The first served kind is
+opened automatically on desktop only.
+
 Selecting a model is an explicit allowlist, not discovery: an OpenRouter
 backend with nothing selected serves nothing. The selection is stored per pool,
 so one backend can carry a different model list for chat and for System One.
