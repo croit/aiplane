@@ -418,6 +418,30 @@ h1, h2, h3, .card-title {
     .input-warning {
         border-color: var(--color-warning);
     }
+    /*
+     * A field that wraps its control — a search box with an icon, a filter
+     * with a prefix — draws the field on the label. The control inside is
+     * text only: without this it keeps its own width (the browser default,
+     * narrower than the field), background, border and focus outline, so the
+     * field shows a second box inside its own edge.
+     */
+    label.input {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    label.input > input {
+        flex: 1;
+        min-width: 0;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        outline: none;
+    }
 
     /* ============ Labels and fieldsets ============ */
     .label {

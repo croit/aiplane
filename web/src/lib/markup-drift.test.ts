@@ -174,8 +174,29 @@ test('a popover menu anchors below its trigger instead of carrying the dropdown 
 	assert.deepEqual(offenders, [], 'the popover takes its placement from .dropdown-content, not the .dropdown wrapper:\n' + offenders.join('\n'));
 });
 
-// The same trap as `.collapse`, inverted: a closed popover is hidden by the
-// UA stylesheet only, and the component classes set a `display` of their own
+// A search field that wraps its input draws the field on the <label> and the
+// input inside is meant to be text only. Without the child rule the input
+// keeps the browser's default width (narrower than the field) and its own
+// background, border and focus outline — the field shows a second box inside
+// its own edge, and the typed text sits in it instead of filling the field.
+test('a field that wraps its control draws one field, not two', () => {
+	const css = readFileSync(new URL('../app.css', import.meta.url).pathname, 'utf8');
+	const field = /label\.input\s*\{([^}]*)\}/.exec(css);
+	assert.ok(field, 'app.css does not lay out a wrapping label.input');
+	assert.match(field[1], /display:\s*flex/, 'the icon and the control do not share the field row');
+	const control = /label\.input > input\s*\{([^}]*)\}/.exec(css);
+	assert.ok(control, 'the input inside a wrapping label.input gets no override');
+	for (const [property, expected] of [
+		['flex', /flex:\s*1/],
+		['border', /border:\s*0/],
+		['outline', /outline:\s*none/],
+		['min-width', /min-width:\s*0/]
+	] as const) {
+		assert.match(control[1], expected, `the inner input keeps its own ${property}`);
+	}
+});
+
+// The same trap as `.collapse`, inverted: a closed popover is hidden by the// UA stylesheet only, and the component classes set a `display` of their own
 // (`.menu` is a flex column). Author display beats the UA rule, so without an
 // unlayered guard every `popover` menu is visible while closed — permanently
 // expanded, and toggling it changes nothing on screen.
