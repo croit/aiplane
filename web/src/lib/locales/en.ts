@@ -2468,6 +2468,11 @@ export const en: Catalog = {
  "openrouter-provider-uptime": "Uptime",
  "openrouter-providers-fit": "{fit} of {total} providers under your ceiling",
  "openrouter-providers-fit-short": "{fit} of {total} fit",
+ "openrouter-providers-hidden": {
+  "one": "{count} provider hidden by your ceilings",
+  "other": "{count} providers hidden by your ceilings"
+ },
+ "openrouter-providers-none-fit": "No provider fits your ceilings — raise Max input or Max output.",
  "openrouter-refresh": "Refresh prices",
  "openrouter-save": "Save selection",
  "openrouter-save-changed": "Save selection · {count} changed",

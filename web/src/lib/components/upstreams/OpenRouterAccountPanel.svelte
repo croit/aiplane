@@ -5,6 +5,16 @@
 	import { t, n } from '#lib/i18n.svelte.js';
 	import type { Backend, OpenRouterEndpoint, OpenRouterModel, OpenRouterSelection, OpenRouterView, Pool } from '#lib/upstreams.js';
 	import { cheapestEndpoint, endpointFits } from '#lib/upstreams.js';
+	import {
+		defaultModelSort,
+		defaultProviderSort,
+		nextSort,
+		sortEndpoints,
+		sortModels,
+		type ModelSortKey,
+		type ProviderSortKey,
+		type Sort
+	} from '#lib/openrouter-sort.js';
 
 	interface Props {
 		backends: Backend[];
@@ -45,7 +55,9 @@
 	let drafts = $state<Record<string, Record<string, Draft>>>({});
 	let search = $state('');
 	let maxPrice = $state<number | null>(null);
-	let sort = $state<'price' | 'name'>('price');
+	// Both tables open on the cheapest output tokens; a header click re-sorts.
+	let modelSort = $state<Sort<ModelSortKey>>(defaultModelSort());
+	let providerSort = $state<Sort<ProviderSortKey>>(defaultProviderSort());
 	let loadingKind = $state<string | null>(null);
 	let savingKind = $state<string | null>(null);
 	let refreshing = $state(false);
@@ -89,11 +101,7 @@
 					!Number.isFinite(Number(maxPrice)) ||
 					model.prompt_price <= Number(maxPrice))
 		);
-		return [...rows].sort((a, b) =>
-			sort === 'name'
-				? a.id.localeCompare(b.id)
-				: a.prompt_price - b.prompt_price || a.id.localeCompare(b.id)
-		);
+		return sortModels(rows, modelSort);
 	});
 	let selectedCount = $derived(
 		expanded ? Object.values(drafts[expanded] ?? {}).filter((entry) => entry.selected).length : 0
@@ -384,13 +392,48 @@
 		}
 	}
 
-	/** How many known providers fit the ceilings currently in the draft. */
+	/** The draft's ceilings; a side left empty does not filter. */
+	function capsOf(entry: Draft): { prompt: number | null; completion: number | null } {
+		return {
+			prompt: hasCeiling(entry.prompt) ? Number(entry.prompt) : null,
+			completion: hasCeiling(entry.completion) ? Number(entry.completion) : null
+		};
+	}
+
+	/** With any ceiling set, the provider table shows what still qualifies. */
+	function capped(entry: Draft): boolean {
+		const caps = capsOf(entry);
+		return caps.prompt !== null || caps.completion !== null;
+	}
+
+	/** The providers that still qualify under the draft's ceilings, in the table's order. */
+	function fittingEndpoints(model: OpenRouterModel, entry: Draft): OpenRouterEndpoint[] {
+		const caps = capsOf(entry);
+		const rows = endpointsFor(model).filter((endpoint) =>
+			endpointFits(endpoint, caps.prompt, caps.completion)
+		);
+		return sortEndpoints(rows, providerSort);
+	}
+
 	function fittingCount(model: OpenRouterModel, entry: Draft): number {
-		const prompt = Number(entry.prompt);
-		const completion = Number(entry.completion);
-		return endpointsFor(model).filter((endpoint) =>
-			endpointFits(endpoint, prompt, completion)
-		).length;
+		return fittingEndpoints(model, entry).length;
+	}
+
+	function toggleModelSort(key: ModelSortKey) {
+		modelSort = nextSort(modelSort, key);
+	}
+
+	function toggleProviderSort(key: ProviderSortKey) {
+		providerSort = nextSort(providerSort, key);
+	}
+
+	function sortMarker(sort: Sort, key: string): string {
+		return sort.key === key ? (sort.direction === 'asc' ? '↑' : '↓') : '↕';
+	}
+
+	function sortState(sort: Sort, key: string): 'ascending' | 'descending' | 'none' {
+		if (sort.key !== key) return 'none';
+		return sort.direction === 'asc' ? 'ascending' : 'descending';
 	}
 
 	function hasCeiling(value: unknown): boolean {
@@ -541,13 +584,6 @@
 									<span class="text-xs text-base-content/70">{t('openrouter-max-price')}</span>
 									<input class="input input-sm w-28 font-mono" type="number" min="0" step="0.01" bind:value={maxPrice} placeholder="—" />
 								</label>
-								<label class="flex flex-col gap-1">
-									<span class="text-xs text-base-content/70">{t('openrouter-sort')}</span>
-									<select class="select select-sm" bind:value={sort}>
-										<option value="price">{t('openrouter-price')}</option>
-										<option value="name">{t('openrouter-model')}</option>
-									</select>
-								</label>
 								<div class="flex items-center gap-2">
 									<button class="btn btn-xs" type="button" onclick={() => selectAll(true)}>{t('openrouter-select-all')}</button>
 									<button class="btn btn-xs" type="button" onclick={() => selectAll(false)}>{t('openrouter-deselect-all')}</button>
@@ -565,9 +601,18 @@
 										<thead>
 											<tr>
 												<th class="w-8"></th>
-												<th>{t('openrouter-model')}</th>
-												<th class="text-end">{t('openrouter-price')}</th>
-												<th class="text-end">{t('openrouter-context')}</th>
+												<th aria-sort={sortState(modelSort, 'model')}>
+													<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleModelSort('model')}>{t('openrouter-model')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(modelSort, 'model')}</span></button>
+												</th>
+												<th class="text-end" aria-sort={sortState(modelSort, 'in')}>
+													<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleModelSort('in')}>{t('openrouter-provider-input')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(modelSort, 'in')}</span></button>
+												</th>
+												<th class="text-end" aria-sort={sortState(modelSort, 'out')}>
+													<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleModelSort('out')}>{t('openrouter-provider-output')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(modelSort, 'out')}</span></button>
+												</th>
+												<th class="text-end" aria-sort={sortState(modelSort, 'context')}>
+													<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleModelSort('context')}>{t('openrouter-context')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(modelSort, 'context')}</span></button>
+												</th>
 												<th>{t('openrouter-ceiling-prompt')}</th>
 												<th>{t('openrouter-ceiling-completion')}</th>
 												<th>{t('openrouter-strategy')}</th>
@@ -579,8 +624,8 @@
 											{#each filtered as model (model.id)}
 												{@const entry = (drafts[kind] ?? {})[model.id]}
 												{#if entry}
-													<tr class={entry.selected ? '' : 'opacity-60'} data-testid={`openrouter-model-${model.id}`}>
-														<td>
+													<tr class={entry.selected ? 'bg-primary/10' : ''} data-testid={`openrouter-model-${model.id}`}>
+														<td class={entry.selected ? 'border-s-2 border-primary' : ''}>
 															<input
 																class="checkbox checkbox-sm"
 																type="checkbox"
@@ -592,7 +637,7 @@
 															<button class="flex w-full items-start gap-1 text-left" type="button" aria-expanded={openModel === model.id} onclick={() => void toggleModel(model)}>
 																<span class="mt-0.5 text-xs text-base-content/50">{openModel === model.id ? '▾' : '▸'}</span>
 																<span class="min-w-0">
-																	<span class="block font-mono text-xs break-all">{model.id}</span>
+																	<span class="block font-mono text-xs break-all {entry.selected ? 'font-semibold' : ''}">{model.id}</span>
 																	<span class="flex items-center gap-2 text-xs text-base-content/60">
 																		{model.name}
 																		{#if model.supported_voices.length > 0}
@@ -603,10 +648,8 @@
 																</span>
 															</button>
 														</td>
-														<td class="text-end font-mono text-xs tabular-nums">
-															<div>{price(model.prompt_price)}</div>
-															<div class="text-base-content/50">{price(model.completion_price)}</div>
-														</td>
+														<td class="text-end font-mono text-xs tabular-nums">{price(model.prompt_price)}</td>
+														<td class="text-end font-mono text-xs tabular-nums">{price(model.completion_price)}</td>
 														<td class="text-end font-mono text-xs tabular-nums">{model.context_length ? n(model.context_length) : '—'}</td>
 														<td>
 															<input class="input input-xs w-24 font-mono" type="number" min="0" step="0.0001" bind:value={entry.prompt} disabled={!entry.selected} aria-label={t('openrouter-aria-input-ceiling', { model: model.id })} />
@@ -638,7 +681,7 @@
 															{#if entry.selected}
 																{#if endpointsFor(model).length === 0}
 																	<span class="badge badge-ghost badge-xs" title={t('openrouter-price-unknown-hint')}>{t('openrouter-price-unknown')}</span>
-																{:else if !ceilingValid(entry)}
+																{:else if !capped(entry)}
 																	<span class="badge badge-ghost badge-xs">{t('openrouter-ceiling-missing')}</span>
 																{:else}
 																	{@const fitting = fittingCount(model, entry)}
@@ -653,10 +696,12 @@
 													</tr>
 													{#if openModel === model.id}
 														{@const providers = endpointsFor(model)}
+														{@const visible = fittingEndpoints(model, entry)}
+														{@const hidden = providers.length - visible.length}
 														{@const state = providerStates[model.id] ?? null}
-														{@const cheapest = cheapestEndpoint(providers)}
+														{@const cheapest = cheapestEndpoint(visible)}
 														<tr class="bg-base-200/40">
-															<td colspan="9" class="p-3">
+															<td colspan="10" class="p-3">
 																{#if state?.status === 'loading'}
 																	<span class="loading loading-spinner loading-sm"></span>
 																{:else if state?.status === 'error'}
@@ -665,25 +710,38 @@
 																	<p class="text-xs text-base-content/60">{t('openrouter-provider-none')}</p>
 																{:else}
 																	<div class="overflow-x-auto">
-																		<table class="table table-xs">
+																		<table class="table table-xs" data-testid="openrouter-provider-table">
 																			<thead>
 																				<tr>
-																					<th>{t('openrouter-provider')}</th>
-																					<th class="text-end">{t('openrouter-provider-input')}</th>
-																					<th class="text-end">{t('openrouter-provider-output')}</th>
-																					<th class="text-end">{t('openrouter-provider-cache-read')}</th>
-																					<th class="text-end">{t('openrouter-context')}</th>
-																					<th class="text-end">{t('openrouter-provider-throughput')}</th>
-																					<th class="text-end">{t('openrouter-provider-latency')}</th>
-																					<th class="text-end">{t('openrouter-provider-uptime')}</th>
-																					<th>{t('openrouter-provider-limit')}</th>
+																					<th aria-sort={sortState(providerSort, 'provider')}>
+																						<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleProviderSort('provider')}>{t('openrouter-provider')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(providerSort, 'provider')}</span></button>
+																					</th>
+																					<th class="text-end" aria-sort={sortState(providerSort, 'in')}>
+																						<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleProviderSort('in')}>{t('openrouter-provider-input')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(providerSort, 'in')}</span></button>
+																					</th>
+																					<th class="text-end" aria-sort={sortState(providerSort, 'out')}>
+																						<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleProviderSort('out')}>{t('openrouter-provider-output')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(providerSort, 'out')}</span></button>
+																					</th>
+																					<th class="text-end" aria-sort={sortState(providerSort, 'cache')}>
+																						<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleProviderSort('cache')}>{t('openrouter-provider-cache-read')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(providerSort, 'cache')}</span></button>
+																					</th>
+																					<th class="text-end" aria-sort={sortState(providerSort, 'context')}>
+																						<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleProviderSort('context')}>{t('openrouter-context')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(providerSort, 'context')}</span></button>
+																					</th>
+																					<th class="text-end" aria-sort={sortState(providerSort, 'throughput')}>
+																						<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleProviderSort('throughput')}>{t('openrouter-provider-throughput')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(providerSort, 'throughput')}</span></button>
+																					</th>
+																					<th class="text-end" aria-sort={sortState(providerSort, 'latency')}>
+																						<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleProviderSort('latency')}>{t('openrouter-provider-latency')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(providerSort, 'latency')}</span></button>
+																					</th>
+																					<th class="text-end" aria-sort={sortState(providerSort, 'uptime')}>
+																						<button class="inline-flex items-center gap-1 font-medium" type="button" onclick={() => toggleProviderSort('uptime')}>{t('openrouter-provider-uptime')} <span class="text-base-content/40" aria-hidden="true">{sortMarker(providerSort, 'uptime')}</span></button>
+																					</th>
 																				</tr>
 																			</thead>
 																			<tbody>
-																				{#each providers as endpoint, index (endpoint.provider + index)}
-																					{@const valid = ceilingValid(entry)}
-																					{@const fits = valid && endpointFits(endpoint, Number(entry.prompt), Number(entry.completion))}
-																					<tr class={fits ? '' : 'opacity-60'}>
+																				{#each visible as endpoint, index (endpoint.provider + index)}
+																					<tr>
 																						<td class="font-mono text-xs">
 																							{endpoint.provider}
 																							{#if endpoint.quantization}<span class="badge badge-ghost badge-xs ml-1">{endpoint.quantization}</span>{/if}
@@ -695,9 +753,13 @@
 																						<td class="text-end font-mono text-xs tabular-nums">{throughput(endpoint.throughput_p50)}</td>
 																						<td class="text-end font-mono text-xs tabular-nums">{endpoint.latency_p50 !== null ? `${endpoint.latency_p50.toFixed(2)} s` : '—'}</td>
 																						<td class="text-end font-mono text-xs tabular-nums">{endpoint.uptime_30m !== null ? `${Math.round(endpoint.uptime_30m)} %` : '—'}</td>
-																						<td class="text-xs">{valid ? (fits ? t('openrouter-provider-fits') : t('openrouter-provider-excluded')) : '—'}</td>
 																					</tr>
+																				{:else}
+																					<tr><td colspan="8" class="text-xs text-warning" data-testid="openrouter-providers-none-fit">{t('openrouter-providers-none-fit')}</td></tr>
 																				{/each}
+																				{#if hidden > 0}
+																					<tr><td colspan="8" class="text-xs text-base-content/60" data-testid="openrouter-providers-hidden">{t('openrouter-providers-hidden', { count: hidden })}</td></tr>
+																				{/if}
 																			</tbody>
 																		</table>
 																	</div>

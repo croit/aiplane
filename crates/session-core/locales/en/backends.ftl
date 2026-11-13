@@ -117,6 +117,11 @@ openrouter-cheapest-provider = Cheapest
 openrouter-provider-fits = under
 openrouter-provider-excluded = over
 openrouter-providers-fit = { $fit } of { $total } providers under your ceiling
+openrouter-providers-hidden = { $count ->
+    [one] { $count } provider hidden by your ceilings
+   *[other] { $count } providers hidden by your ceilings
+  }
+openrouter-providers-none-fit = No provider fits your ceilings — raise Max input or Max output.
 openrouter-providers-fit-short = { $fit } of { $total } fit
 openrouter-price-unknown = price not checked
 openrouter-price-unknown-hint = The provider prices for this model have not been read yet — open the row to see them.

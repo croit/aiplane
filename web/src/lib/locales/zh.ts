@@ -2453,6 +2453,8 @@ export const zh: Catalog = {
  "openrouter-provider-uptime": "可用性",
  "openrouter-providers-fit": "你的上限内有 {fit} / {total} 家提供商",
  "openrouter-providers-fit-short": "{fit} / {total} 符合",
+ "openrouter-providers-hidden": "因上限隐藏了 {count} 个提供商",
+ "openrouter-providers-none-fit": "没有提供商符合你的上限 — 提高 Max input 或 Max output。",
  "openrouter-refresh": "刷新价格",
  "openrouter-save": "保存选择",
  "openrouter-save-changed": "保存选择 · {count} 项已更改",

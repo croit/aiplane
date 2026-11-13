@@ -2486,6 +2486,13 @@ export const ru: Catalog = {
  "openrouter-provider-uptime": "Доступность",
  "openrouter-providers-fit": "{fit} из {total} провайдеров в пределах лимита",
  "openrouter-providers-fit-short": "{fit} из {total} подходят",
+ "openrouter-providers-hidden": {
+  "few": "{count} поставщика скрыто из-за лимитов",
+  "many": "{count} поставщиков скрыто из-за лимитов",
+  "one": "{count} поставщик скрыт из-за лимитов",
+  "other": "{count} поставщиков скрыто из-за лимитов"
+ },
+ "openrouter-providers-none-fit": "Ни один поставщик не подходит под лимиты — увеличь Max input или Max output.",
  "openrouter-refresh": "Обновить цены",
  "openrouter-save": "Сохранить выбор",
  "openrouter-save-changed": "Сохранить выбор · изменено: {count}",

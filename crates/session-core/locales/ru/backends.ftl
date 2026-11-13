@@ -125,6 +125,13 @@ openrouter-cheapest-provider = Дешевле всех
 openrouter-provider-fits = подходит
 openrouter-provider-excluded = дороже
 openrouter-providers-fit = { $fit } из { $total } провайдеров в пределах лимита
+openrouter-providers-hidden = { $count ->
+    [one] { $count } поставщик скрыт из-за лимитов
+    [few] { $count } поставщика скрыто из-за лимитов
+    [many] { $count } поставщиков скрыто из-за лимитов
+   *[other] { $count } поставщиков скрыто из-за лимитов
+  }
+openrouter-providers-none-fit = Ни один поставщик не подходит под лимиты — увеличь Max input или Max output.
 openrouter-providers-fit-short = { $fit } из { $total } подходят
 openrouter-price-unknown = цена не проверена
 openrouter-price-unknown-hint = Цены провайдеров для этой модели ещё не загружены — открой строку, чтобы увидеть их.

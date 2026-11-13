@@ -2468,6 +2468,11 @@ export const de: Catalog = {
  "openrouter-provider-uptime": "Uptime",
  "openrouter-providers-fit": "{fit} von {total} Anbietern unter deinem Limit",
  "openrouter-providers-fit-short": "{fit} von {total} passen",
+ "openrouter-providers-hidden": {
+  "one": "{count} Anbieter durch deine Grenzen ausgeblendet",
+  "other": "{count} Anbieter durch deine Grenzen ausgeblendet"
+ },
+ "openrouter-providers-none-fit": "Kein Anbieter passt zu deinen Grenzen — erhöhe Max Input oder Max Output.",
  "openrouter-refresh": "Preise aktualisieren",
  "openrouter-save": "Auswahl speichern",
  "openrouter-save-changed": "Auswahl speichern · {count} geändert",

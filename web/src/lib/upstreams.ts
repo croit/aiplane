@@ -527,13 +527,16 @@ export interface OpenRouterEndpoint {
 	context_length: number | null;
 }
 
-/** Whether a provider fits both ceilings, in USD per 1M tokens. */
+/** Whether a provider fits the ceilings, in USD per 1M tokens; `null` leaves that side uncapped. */
 export function endpointFits(
 	endpoint: OpenRouterEndpoint,
-	maxPrompt: number,
-	maxCompletion: number
+	maxPrompt: number | null,
+	maxCompletion: number | null
 ): boolean {
-	return endpoint.prompt_price <= maxPrompt && endpoint.completion_price <= maxCompletion;
+	return (
+		(maxPrompt === null || endpoint.prompt_price <= maxPrompt) &&
+		(maxCompletion === null || endpoint.completion_price <= maxCompletion)
+	);
 }
 
 /** The provider with the lowest input price, then output; null for no providers. */

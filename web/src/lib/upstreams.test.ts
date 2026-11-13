@@ -382,6 +382,10 @@ test('a provider fits only when both prices are under the ceiling', () => {
 	assert.equal(endpointFits(endpoint, 0.098, 0.294), true, 'equality is inside the ceiling');
 	assert.equal(endpointFits(endpoint, 0.0979, 0.3), false, 'the input price is the limit');
 	assert.equal(endpointFits(endpoint, 0.1, 0.2939), false, 'the output price is the limit');
+	assert.equal(endpointFits(endpoint, null, 0.3), true, 'only the output ceiling is set');
+	assert.equal(endpointFits(endpoint, 0.1, null), true, 'only the input ceiling is set');
+	assert.equal(endpointFits(endpoint, null, 0.2939), false, 'the set output ceiling still applies');
+	assert.equal(endpointFits(endpoint, null, null), true, 'no ceiling filters nothing');
 });
 
 test('the cheapest provider wins on input price, then output', () => {

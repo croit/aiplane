@@ -105,6 +105,16 @@ provider strategy, saved per kind. The catalog is the account-filtered
 value, so the models the account can actually use appear without being typed
 in.
 
+Both tables sort from their column headers and open on the cheapest output
+tokens (`sortModels` / `sortEndpoints` in `lib/openrouter-sort.ts`, missing
+measurements last). A selected model is tinted and carries a primary edge, so
+the allowlist is readable at a glance. Expanding a model shows its providers
+filtered live by the ceiling fields above: a side left empty does not filter,
+and every provider the ceilings exclude is hidden — the table closes with
+how many, instead of leaving the reader to compare numbers. The row also
+counts what still fits (`x of y fit`), so a ceiling change is visible before
+the table is opened.
+
 Selecting a model is an explicit allowlist, not discovery: an OpenRouter
 backend with nothing selected serves nothing. The selection is stored per pool,
 so one backend can carry a different model list for chat and for System One.

@@ -125,6 +125,11 @@ openrouter-cheapest-provider = Más barato
 openrouter-provider-fits = incluido
 openrouter-provider-excluded = excluido
 openrouter-providers-fit = { $fit } de { $total } proveedores bajo tu límite
+openrouter-providers-hidden = { $count ->
+    [one] { $count } proveedor oculto por tus límites
+   *[other] { $count } proveedores ocultos por tus límites
+  }
+openrouter-providers-none-fit = Ningún proveedor cumple tus límites — sube Max entrada o Max salida.
 openrouter-providers-fit-short = { $fit } de { $total } incluidos
 openrouter-price-unknown = precio sin comprobar
 openrouter-price-unknown-hint = Los precios de los proveedores de este modelo aún no se han leído — abre la fila para verlos.
