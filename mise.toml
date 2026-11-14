@@ -599,6 +599,13 @@ depends = ["lint", "test", "test-web", "test-extension", "test-clients", "build"
 description = "The local pre-push gate: lint + Rust tests + SPA checks and build. Same checks as `ci` minus the release build — nothing in `ci` catches a compile error that `test` doesn't, and the release build is a THIRD full compile of the workspace (dev for clippy, test for nextest, release for the binary). Run this once before pushing; use `test-crate` / `lint-crate` while iterating."
 depends = ["lint", "test", "test-web", "test-extension", "test-clients", "build-web", "parity-gap"]
 
+[tasks.guard]
+description = "Run one local command under a resident-memory ceiling (32 GiB by default, MEMORY_LIMIT_GB overrides). macOS cannot enforce RLIMIT_AS/RSS, so the wrapper measures the command's process group and stops it before the host runs out of memory. Every local build, lint, test or browser job goes through this."
+usage = '''
+arg "<command>" help="command and its arguments" var=#true
+'''
+run = 'scripts/memory-guard.sh $usage_command'
+
 [tasks.test-crate]
 description = "Tests for ONE crate — the iteration loop. `mise run test-crate aiplane-api [filter]`. Seconds instead of the ~20 min a full `test` costs after touching a root crate, because it links that crate's test binaries only."
 usage = '''

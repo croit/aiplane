@@ -59,6 +59,28 @@ Credentials belong in `mise.local.toml` or the DB (sealed with `AIPLANE_ENCRYPTI
 
 Anything not covered: add a task to `mise.toml` rather than typing the raw command into a script. Discoverability matters.
 
+## Local memory ceiling
+
+A crashed host loses work that no test reports. On macOS `setrlimit(RLIMIT_AS)`
+and `RLIMIT_RSS` are rejected with `EINVAL`, so `ulimit -v` cannot cap a build.
+Every local build, lint, test and browser run therefore starts through the
+watchdog:
+
+```bash
+mise run guard -- mise run test-crate aiplane
+MEMORY_LIMIT_GB=16 mise run guard -- mise run verify
+scripts/memory-guard.sh 32 cargo nextest run -p aiplane
+```
+
+`scripts/memory-guard.sh` starts the command in its own process group, samples
+the group's resident set once a second, and sends `TERM` and then `KILL` at the
+ceiling (exit 137). The default is 32 GiB; `MEMORY_LIMIT_GB` changes it. The
+`mise run guard` argument is a simple word list — when the command needs its
+own quoting, call the script directly with the arguments. The guard is a
+watchdog, not a scheduler: a large run still belongs on a build host when one
+is available, and `CARGO_BUILD_JOBS`/`NEXTEST_TEST_THREADS` keep the peak lower.
+Concurrent agents share the machine's ceiling, not one each.
+
 ## The feedback ladder — don't run the full gate to check one change
 
 Measured on an M-series laptop, editing `aiplane-core` (the root of the crate
@@ -81,15 +103,27 @@ why it belongs at the end of a change set exactly once, not in the loop.
 So climb the ladder, and only step up when the rung below is green:
 
 ```bash
-mise run check                      # ~seconds — does it type-check at all?
-mise run test-crate aiplane-api     # the crate you're editing (+ optional filter)
-mise run lint-crate aiplane-api     # clippy for that crate
-mise run verify                     # ONCE, before pushing: lint + all tests
+mise run guard -- mise run check                      # ~seconds — does it type-check at all?
+mise run guard -- mise run test-crate aiplane-api     # the crate you're editing (+ optional filter)
+mise run guard -- mise run lint-crate aiplane-api     # clippy for that crate
+mise run guard -- mise run verify                     # ONCE, before pushing: lint + all tests
 ```
 
 `mise run ci` adds the release build on top of `verify`; you only need it if
 you're actually shipping a binary — CI builds it on every push anyway. The
 pre-push hook runs `verify`, so a normal `git push` is already the gate.
+
+### Local memory ceiling
+
+The machine is shared and a build or test run that outgrows it crashes the
+host, taking uncommitted work with it. macOS rejects `setrlimit(RLIMIT_AS)` and
+`RLIMIT_RSS` (so `ulimit -v`/`-m` do nothing), which is why every rung above is
+prefixed with `mise run guard --`. The wrapper puts the command in its own
+process group, samples the group's resident set once a second, and terminates
+it at 32 GiB (`MEMORY_LIMIT_GB=16 mise run guard -- …` lowers it) with exit
+137 and a line naming the group. It is a stop, not a plan: keep
+`CARGO_BUILD_JOBS=2` and `NEXTEST_TEST_THREADS=2` on this workspace, and one
+Rust-building agent at a time.
 
 Two habits that cost more than any tooling change:
 
@@ -158,7 +192,8 @@ The architecture tests check the first four (docs/testing.md).
 
 ## Build discipline
 - One Rust-building agent at a time on this machine; run every cargo/mise
-  command as `CARGO_BUILD_JOBS=4 mise run …`.
+  command under the guard with limited parallelism:
+  `CARGO_BUILD_JOBS=2 NEXTEST_TEST_THREADS=2 mise run guard -- mise run …`.
 - Climb the feedback ladder (check → test-crate → lint-crate) and run
   `mise run verify` once, at the end.
 - Commits per item, each complete (code, tests, docs, i18n, generated

@@ -25,7 +25,13 @@ if ! command -v mise >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "pre-push: running lint + workspace tests (mirrors CI; bypass with --no-verify)…"
+repo_root="$(git rev-parse --show-toplevel)"
+echo "pre-push: running lint + workspace tests under the 32 GiB memory guard (bypass with --no-verify)…"
+# The full gate is the largest local job there is, so it runs under the same
+# memory ceiling as every other build (AGENTS.md). Two jobs/threads keep the
+# peak well below the guard while still using the machine.
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
+export NEXTEST_TEST_THREADS="${NEXTEST_TEST_THREADS:-2}"
 # Secrets first, and over the full history rather than just the staged diff:
 # push is the last moment before something becomes public, and it's the one
 # gate that also covers commits made with `--no-verify` or on a clone where
@@ -36,7 +42,9 @@ mise run secrets
 # as an *argument* to the lint task, which is why this is a single task rather
 # than a list.) The release build stays out — CI does it, and no compile error
 # survives the test step.
-mise run verify
+# The guard is the machine's memory ceiling, not a speed knob: a workspace
+# verify links every test binary, and an uncapped run has OOM-killed the host.
+"$repo_root/scripts/memory-guard.sh" "${MEMORY_LIMIT_GB:-32}" mise run verify
 echo "pre-push: all checks passed ✓"
 
 # Housekeeping, detached so it never delays a push: cargo has no garbage
