@@ -39,7 +39,7 @@ backends-field-pool-hint = Asigna este backend a un grupo. Un backend en varios 
 backends-field-weight = Peso
 backends-field-max-inflight = Máximo en curso
 backends-field-models = Modelos (separados por comas; en blanco = descubrir vía /models)
-backends-field-aliases = Alias (name=target por línea)
+backends-aliases-managed = Los alias se editan en la pestaña Alias.
 backends-field-extra-headers = Encabezados adicionales (nombre: valor por línea)
 backends-field-extra-headers-hint = Se envía con cada petición a este backend, después de la clave API. Por ejemplo anthropic-version: 2023-06-01, que Anthropic exige.
 backends-field-supports-edit = Admite edición de imágenes
@@ -60,7 +60,7 @@ backends-pool-empty = No hay backends en este pool.
 
 backends-test-button = Probar conexión
 backends-test-hint = Llama a esta URL con las credenciales de arriba. No se guarda nada.
-backends-test-insert-hint = Ids de modelos anunciados: haz clic para completar la línea de alias donde está el cursor:
+backends-test-models = Ids de modelo anunciados:
 backends-test-ok = Alcanzable, autenticado ({ $source }), { $count } modelos descubiertos.
 backends-test-ok-no-models = Alcanzable y autenticado ({ $source }), pero la respuesta no es una lista /models de OpenAI ni de TypeSafe, así que el descubrimiento no puede leerla. Este backend solo podrá servir los ids que indiques en «Modelos».
 backends-test-auth-failed = Rechazado con HTTP { $status }: la credencial fue denegada ({ $source }). Hasta que se corrija, el descubrimiento de modelos queda desactivado y el backend no anuncia nada.

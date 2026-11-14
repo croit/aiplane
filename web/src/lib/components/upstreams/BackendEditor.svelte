@@ -5,7 +5,7 @@
 	import { ApiError, request } from '#lib/api.js';
 	import { t, n } from '#lib/i18n.svelte.js';
 	import SearchableSelect from '#lib/components/SearchableSelect.svelte';
-	import { backendTestFailure, completeAliasLine, formatHeaders, parallelismMismatch, parseAliases, parseHeaders, splitList, type Backend, type BackendTestResult, type Pool } from '#lib/upstreams.js';
+	import { backendTestFailure, formatHeaders, parallelismMismatch, parseHeaders, splitList, type Backend, type BackendTestResult, type Pool } from '#lib/upstreams.js';
 
 	interface Props {
 		backend?: Backend | null;
@@ -52,9 +52,6 @@
 		return (pools ?? []).filter((pool) => pool.kind === kind && pool.backends.length === 0);
 	}
 	let models = $state(untrack(() => backend?.models.join(', ') ?? ''));
-	let aliases = $state(
-		untrack(() => backend?.aliases.map(({ alias, target }) => (target ? `${alias}=${target}` : alias)).join('\n') ?? '')
-	);
 	let extraHeaders = $state(untrack(() => formatHeaders(backend?.extra_headers ?? {})));
 	let supportsEdit = $state(untrack(() => backend?.supports_edit ?? false));
 	let priorityMode = $state<BackendPriority['mode']>(untrack(() => backend?.priority.mode ?? 'auto'));
@@ -69,7 +66,6 @@
 	let errorAlert: HTMLDivElement | undefined = $state();
 	let testing = $state(false);
 	let testResult = $state<BackendTestResult | null>(null);
-	let aliasesInput: HTMLTextAreaElement;
 
 	// A new backend, or an existing one being renamed onto a name in use.
 	let nameTaken = $derived(name.trim() !== backend?.name && existingNames.includes(name.trim()));
@@ -99,7 +95,6 @@
 				health_path: healthPath,
 				supports_edit: supportsEdit,
 				models: splitList(models),
-				aliases: parseAliases(aliases),
 				extra_headers: parseHeaders(extraHeaders),
 				pools: provider === 'openrouter'
 					? Object.values(kindSelection).filter((value) => value !== '' && value !== 'new')
@@ -181,14 +176,6 @@
 		} finally {
 			testing = false;
 		}
-	}
-
-	async function insertModel(model: string) {
-		const completed = completeAliasLine(aliases, aliasesInput.selectionStart ?? aliases.length, model);
-		aliases = completed.value;
-		await tick();
-		aliasesInput.setSelectionRange(completed.cursor, completed.cursor);
-		aliasesInput.focus();
 	}
 </script>
 
@@ -278,9 +265,9 @@
 			{/if}
 			{#if testResult.models.length}
 				<div class="flex flex-col gap-1">
-					<span class="text-xs text-base-content/60">{t('backends-test-insert-hint')}</span>
+					<span class="text-xs text-base-content/60">{t('backends-test-models')}</span>
 					<div class="flex flex-wrap gap-1">
-						{#each testResult.models as model (model)}<button class="badge badge-outline badge-sm cursor-pointer font-mono" type="button" onclick={() => { advancedOpen = true; void insertModel(model); }}>{model}</button>{/each}
+						{#each testResult.models as model (model)}<span class="badge badge-outline badge-sm font-mono">{model}</span>{/each}
 					</div>
 				</div>
 			{/if}
@@ -358,10 +345,7 @@
 				<span class="text-xs text-base-content/70">{t('backends-field-models')}</span>
 				<input class="input font-mono w-full" data-autofocus={focus === 'models' ? '' : undefined} bind:value={models} />
 			</label>
-			<label class="flex flex-col gap-1">
-				<span class="text-xs text-base-content/70">{t('backends-field-aliases')}</span>
-				<textarea bind:this={aliasesInput} class="textarea font-mono w-full" rows="3" bind:value={aliases}></textarea>
-			</label>
+			<p class="text-xs text-base-content/60">{t('backends-aliases-managed')}</p>
 			<label class="flex flex-col gap-1">
 				<span class="text-xs text-base-content/70">{t('backends-field-extra-headers')}</span>
 				<textarea class="textarea font-mono w-full" rows="3" bind:value={extraHeaders}></textarea>

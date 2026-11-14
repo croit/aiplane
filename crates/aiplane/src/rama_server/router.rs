@@ -647,6 +647,18 @@ pub fn router(state: Arc<RamaState>) -> Router<Arc<RamaState>, Endpoint> {
         )
         .with_get("/api/v0/admin/upstreams", pages::json_admin::topology_list)
         .with_get(
+            "/api/v0/admin/model-aliases",
+            pages::json_admin::model_aliases_list,
+        )
+        .with_put(
+            "/api/v0/admin/model-aliases",
+            pages::json_admin::model_alias_save,
+        )
+        .with_delete(
+            "/api/v0/admin/model-aliases/{name}",
+            pages::json_admin::model_alias_delete,
+        )
+        .with_get(
             "/api/v0/admin/upstreams/openrouter",
             pages::json_admin::openrouter_catalog,
         )

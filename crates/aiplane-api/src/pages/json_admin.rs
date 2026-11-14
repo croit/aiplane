@@ -2073,7 +2073,7 @@ pub async fn tokens_priority(State(state): State<Arc<RamaState>>, req: Request) 
 // ---------------------------------------------------------------------------
 // Upstream topology (backends + pools + fallbacks + apply + live health)
 
-use aiplane_core::server::db::upstreams_config::{self, AliasRow, BackendRow, PoolRow, VoiceRow};
+use aiplane_core::server::db::upstreams_config::{self, BackendRow, PoolRow, VoiceRow};
 
 /// GET /api/v0/admin/upstreams — the DB topology, the live registry health,
 /// and the last hour of per-backend request counts.
@@ -2393,8 +2393,6 @@ pub struct BackendSaveBody {
     pub extra_headers: BTreeMap<String, String>,
     #[serde(default)]
     pub models: Vec<String>,
-    #[serde(default)]
-    pub aliases: Vec<AliasBody>,
     /// The backend's full pool membership after this save. An OpenRouter
     /// backend serves one pool per kind, so a save can name several.
     #[serde(default)]
@@ -2413,13 +2411,6 @@ pub struct BackendSaveBody {
 pub struct NewPoolBody {
     pub name: String,
     pub kind: String,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-pub struct AliasBody {
-    pub alias: String,
-    #[serde(default)]
-    pub target: Option<String>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -2811,6 +2802,10 @@ pub async fn backends_save(State(state): State<Arc<RamaState>>, req: Request) ->
             "send either a new API key or clear_key, not both — a new key replaces the stored one",
         );
     }
+    let existing = match upstreams_config::get_backend(&state.db, &name).await {
+        Ok(existing) => existing,
+        Err(err) => return internal(err),
+    };
     let (api_key_ct, api_key_nonce) = {
         let entered = parsed.api_key.trim();
         if !entered.is_empty() {
@@ -2821,17 +2816,22 @@ pub async fn backends_save(State(state): State<Arc<RamaState>>, req: Request) ->
         } else if parsed.clear_key {
             (None, None)
         } else {
-            match upstreams_config::get_backend(&state.db, &name).await {
-                Ok(Some(existing)) => (existing.api_key_ct, existing.api_key_nonce),
-                _ => (None, None),
+            match &existing {
+                Some(existing) => (existing.api_key_ct.clone(), existing.api_key_nonce.clone()),
+                None => (None, None),
             }
         }
     };
-    // Preserve the maintenance switch: a save must not undrain.
-    let enabled = match upstreams_config::get_backend(&state.db, &name).await {
-        Ok(Some(existing)) => existing.enabled,
-        _ => true,
-    };
+    // Preserve the maintenance switch: a save must not undrain. Aliases belong
+    // to the global editor, so a backend save carries the existing rows through
+    // instead of deleting the ones the form no longer has a field for.
+    let enabled = existing
+        .as_ref()
+        .map(|existing| existing.enabled)
+        .unwrap_or(true);
+    let aliases = existing
+        .map(|existing| existing.aliases)
+        .unwrap_or_default();
     let row = BackendRow {
         provider: upstreams::config::ProviderKind::parse(&parsed.provider),
         priority: parsed.priority,
@@ -2852,14 +2852,7 @@ pub async fn backends_save(State(state): State<Arc<RamaState>>, req: Request) ->
         enabled,
         extra_headers: parsed.extra_headers,
         models: parsed.models,
-        aliases: parsed
-            .aliases
-            .into_iter()
-            .map(|a| AliasRow {
-                alias: a.alias,
-                target: a.target.filter(|t| !t.trim().is_empty()),
-            })
-            .collect(),
+        aliases,
         created_at: jiff::Timestamp::now(),
         updated_at: jiff::Timestamp::now(),
     };
@@ -3503,6 +3496,220 @@ pub struct BackendStatus {
     /// Its request counts over the last hour, in twelve five-minute buckets.
     pub usage: Vec<i64>,
     pub requests_last_hour: i64,
+}
+
+// ---------------------------------------------------------------------------
+// Model aliases: one global view over `backend_aliases`
+// ---------------------------------------------------------------------------
+
+/// GET /api/v0/admin/model-aliases
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct ModelAliasesView {
+    pub aliases: Vec<ModelAliasView>,
+    /// Every backend and the real models it serves now, for the target picker.
+    pub backends: Vec<ModelAliasBackendView>,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct ModelAliasView {
+    pub name: String,
+    pub targets: Vec<ModelAliasTargetView>,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct ModelAliasTargetView {
+    pub backend: String,
+    /// The explicit model, or `None` for the backend's sole model.
+    pub target: Option<String>,
+    /// The model a request would reach right now; `None` when nothing matches.
+    pub resolves_to: Option<String>,
+    pub served: bool,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct ModelAliasBackendView {
+    pub name: String,
+    pub models: Vec<String>,
+}
+
+async fn model_aliases_view(state: &RamaState) -> Result<ModelAliasesView, db::DbError> {
+    let snapshot = db::upstreams_config::load_snapshot(&state.db).await?;
+    let mut served: std::collections::HashMap<String, std::collections::HashSet<String>> =
+        std::collections::HashMap::new();
+    for pool in state.upstreams.pools() {
+        for backend in &pool.backends {
+            served
+                .entry(backend.name.clone())
+                .or_default()
+                .extend(backend.models_snapshot());
+        }
+    }
+
+    let mut grouped: BTreeMap<String, Vec<ModelAliasTargetView>> = BTreeMap::new();
+    for backend in snapshot.backends.values() {
+        let live = served.get(&backend.name);
+        for alias in &backend.aliases {
+            let (resolves_to, is_served) = match &alias.target {
+                Some(target) => match live {
+                    Some(models) if models.contains(target) => (Some(target.clone()), true),
+                    _ => (None, false),
+                },
+                None => match live {
+                    Some(models) if models.len() == 1 => (models.iter().next().cloned(), true),
+                    _ => (None, false),
+                },
+            };
+            grouped
+                .entry(alias.alias.clone())
+                .or_default()
+                .push(ModelAliasTargetView {
+                    backend: backend.name.clone(),
+                    target: alias.target.clone(),
+                    resolves_to,
+                    served: is_served,
+                });
+        }
+    }
+    let mut aliases: Vec<ModelAliasView> = grouped
+        .into_iter()
+        .map(|(name, mut targets)| {
+            targets.sort_by(|a, b| a.backend.cmp(&b.backend));
+            ModelAliasView { name, targets }
+        })
+        .collect();
+    aliases.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut backends: Vec<ModelAliasBackendView> = snapshot
+        .backends
+        .values()
+        .map(|backend| {
+            let mut models = backend.models.clone();
+            if let Some(live) = served.get(&backend.name) {
+                models.extend(live.iter().cloned());
+            }
+            models.sort();
+            models.dedup();
+            ModelAliasBackendView {
+                name: backend.name.clone(),
+                models,
+            }
+        })
+        .collect();
+    backends.sort_by(|a, b| a.name.cmp(&b.name));
+
+    Ok(ModelAliasesView { aliases, backends })
+}
+
+pub async fn model_aliases_list(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_session, _admin) = require_admin_json!(state, req);
+    match model_aliases_view(&state).await {
+        Ok(view) => json_ok(StatusCode::OK, view),
+        Err(err) => internal(err),
+    }
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+pub struct ModelAliasSaveBody {
+    pub name: String,
+    #[serde(default)]
+    pub targets: Vec<ModelAliasTargetBody>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+pub struct ModelAliasTargetBody {
+    pub backend: String,
+    #[serde(default)]
+    pub target: Option<String>,
+}
+
+/// PUT /api/v0/admin/model-aliases — replace one alias across every backend.
+pub async fn model_alias_save(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_session, _admin) = require_admin_json!(state, req);
+    let (_, body) = req.into_parts();
+    let bytes = match session_core::chrome::read_body_to_bytes(body).await {
+        Ok(bytes) => bytes,
+        Err(message) => return bad_request(message),
+    };
+    let parsed: ModelAliasSaveBody = match serde_json::from_slice(&bytes) {
+        Ok(parsed) => parsed,
+        Err(err) => return bad_request(format!("parsing the alias body: {err}")),
+    };
+    let name = parsed.name.trim().to_string();
+    if name.is_empty() {
+        return bad_request("an alias needs a name");
+    }
+    if name
+        .chars()
+        .any(|character| character.is_whitespace() || character.is_control())
+    {
+        return bad_request("an alias name must not contain spaces or control characters");
+    }
+    let mut real_models: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for pool in state.upstreams.pools() {
+        for backend in &pool.backends {
+            real_models.extend(backend.models_snapshot());
+        }
+    }
+    if real_models.contains(&name) {
+        return bad_request(format!(
+            "`{name}` is a real model id — a request naming it would never reach the alias"
+        ));
+    }
+    if parsed.targets.is_empty() {
+        return bad_request("an alias needs at least one backend");
+    }
+    let snapshot = match db::upstreams_config::load_snapshot(&state.db).await {
+        Ok(snapshot) => snapshot,
+        Err(err) => return internal(err),
+    };
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut targets: Vec<(String, Option<String>)> = Vec::with_capacity(parsed.targets.len());
+    for target in parsed.targets {
+        let backend = target.backend.trim().to_string();
+        if backend.is_empty() {
+            return bad_request("every alias target needs a backend");
+        }
+        if !seen.insert(backend.clone()) {
+            return bad_request(format!(
+                "`{backend}` is listed twice — one target per backend per alias"
+            ));
+        }
+        if !snapshot.backends.contains_key(&backend) {
+            return not_found(format!("no backend `{backend}`"));
+        }
+        let model = target
+            .target
+            .map(|model| model.trim().to_string())
+            .filter(|model| !model.is_empty());
+        targets.push((backend, model));
+    }
+    if let Err(err) = db::upstreams_config::replace_model_alias(&state.db, &name, &targets).await {
+        return internal(err);
+    }
+    if let Some(err) = apply_topology(&state).await {
+        return err;
+    }
+    json_ok(StatusCode::OK, TopologySaved { name })
+}
+
+/// DELETE /api/v0/admin/model-aliases/{name}
+pub async fn model_alias_delete(State(state): State<Arc<RamaState>>, req: Request) -> Response {
+    let (_session, _admin) = require_admin_json!(state, req);
+    let Some(name) = raw_path_segment(&req, 0) else {
+        return bad_request("the URL is missing its alias name");
+    };
+    match db::upstreams_config::delete_model_alias(&state.db, &name).await {
+        Ok(true) => {}
+        Ok(false) => return not_found(format!("no alias `{name}`")),
+        Err(err) => return internal(err),
+    }
+    if let Some(err) = apply_topology(&state).await {
+        return err;
+    }
+    Response::builder()
+        .status(StatusCode::NO_CONTENT)
+        .body(rama::http::Body::empty())
+        .expect("static empty response")
 }
 
 // ---------------------------------------------------------------------------

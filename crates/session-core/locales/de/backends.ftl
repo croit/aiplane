@@ -39,7 +39,7 @@ backends-field-pool-hint = Weist dieses Backend einem Pool zu. Ein Backend in me
 backends-field-weight = Gewichtung
 backends-field-max-inflight = Max. gleichzeitig
 backends-field-models = Modelle (kommagetrennt; leer = über /models erkennen)
-backends-field-aliases = Aliase (name=target pro Zeile)
+backends-aliases-managed = Aliase werden im Tab „Aliase“ bearbeitet.
 backends-field-extra-headers = Zusätzliche Header (name: value pro Zeile)
 backends-field-extra-headers-hint = Wird mit jeder Anfrage an dieses Backend gesendet, nach dem API-Schlüssel. Beispiel: anthropic-version: 2023-06-01, den Anthropic verlangt.
 backends-field-supports-edit = Unterstützt Bildbearbeitung
@@ -60,7 +60,7 @@ backends-pool-empty = Keine Backends in diesem Pool.
 
 backends-test-button = Verbindung testen
 backends-test-hint = Ruft diese URL mit den obigen Zugangsdaten auf. Es wird nichts gespeichert.
-backends-test-insert-hint = Gemeldete Modell-Ids — klicken, um die Alias-Zeile am Cursor zu vervollständigen:
+backends-test-models = Gemeldete Modell-Ids:
 backends-test-ok = Erreichbar, authentifiziert ({ $source }), { $count } Modelle gefunden.
 backends-test-ok-no-models = Erreichbar und authentifiziert ({ $source }), aber die Antwort ist weder eine OpenAI- noch eine TypeSafe-/models-Liste — die Erkennung kann sie nicht lesen. Dieses Backend kann nur die Ids bedienen, die du unter „Modelle“ einträgst.
 backends-test-auth-failed = Abgelehnt mit HTTP { $status }: die Zugangsdaten wurden verweigert ({ $source }). Bis das behoben ist, bleibt die Modell-Erkennung aus und das Backend meldet nichts.

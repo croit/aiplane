@@ -3620,3 +3620,232 @@ async fn groups_save_sets_clears_and_preserves_independent_agent_management() {
         assert_eq!(group["can_manage_agents"], false);
     }
 }
+
+#[tokio::test]
+async fn model_aliases_are_edited_in_one_global_view() {
+    let (state, cookie) = setup().await;
+    let app = router(state);
+    for (name, model) in [("gpu-a", "model-a"), ("gpu-b", "model-b")] {
+        let saved = app
+            .serve(req(
+                Method::PUT,
+                "/api/v0/admin/backends",
+                &cookie,
+                Some(format!(
+                    r#"{{"name":"{name}","base_url":"http://127.0.0.1:9/v1","models":["{model}"]}}"#
+                )),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(saved.status(), StatusCode::OK, "{}", body(saved).await);
+    }
+    let pooled = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/pools",
+            &cookie,
+            Some(r#"{"name":"chat","kind":"chat","backends":["gpu-a","gpu-b"]}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(pooled.status(), StatusCode::OK, "{}", body(pooled).await);
+
+    let listed = app
+        .serve(req(
+            Method::GET,
+            "/api/v0/admin/model-aliases",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(listed.status(), StatusCode::OK);
+    let listed: serde_json::Value = serde_json::from_str(&body(listed).await).unwrap();
+    assert_eq!(listed["aliases"], serde_json::json!([]));
+    assert_eq!(
+        listed["backends"],
+        serde_json::json!([
+            { "name": "gpu-a", "models": ["model-a"] },
+            { "name": "gpu-b", "models": ["model-b"] },
+        ])
+    );
+
+    let saved = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/model-aliases",
+            &cookie,
+            Some(
+                r#"{"name":"fast","targets":[
+                    {"backend":"gpu-a","target":"model-a"},
+                    {"backend":"gpu-b","target":null}
+                ]}"#
+                .into(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(saved.status(), StatusCode::OK, "{}", body(saved).await);
+
+    let listed = app
+        .serve(req(
+            Method::GET,
+            "/api/v0/admin/model-aliases",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let listed: serde_json::Value = serde_json::from_str(&body(listed).await).unwrap();
+    assert_eq!(
+        listed["aliases"],
+        serde_json::json!([{
+            "name": "fast",
+            "targets": [
+                { "backend": "gpu-a", "target": "model-a", "resolves_to": "model-a", "served": true },
+                { "backend": "gpu-b", "target": null, "resolves_to": "model-b", "served": true },
+            ],
+        }])
+    );
+
+    // Saving the backend from its editor (which no longer carries an alias
+    // field) must not delete the alias rows.
+    let resaved = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/backends",
+            &cookie,
+            Some(
+                r#"{"name":"gpu-a","base_url":"http://127.0.0.1:9/v1","models":["model-a"],"overwrite":true}"#
+                    .into(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resaved.status(), StatusCode::OK, "{}", body(resaved).await);
+    let listed = app
+        .serve(req(
+            Method::GET,
+            "/api/v0/admin/model-aliases",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let listed: serde_json::Value = serde_json::from_str(&body(listed).await).unwrap();
+    assert_eq!(listed["aliases"][0]["targets"].as_array().unwrap().len(), 2);
+
+    // A second save replaces the name's targets wholesale.
+    let saved = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/model-aliases",
+            &cookie,
+            Some(r#"{"name":"fast","targets":[{"backend":"gpu-a","target":"model-a"}]}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(saved.status(), StatusCode::OK, "{}", body(saved).await);
+    let listed = app
+        .serve(req(
+            Method::GET,
+            "/api/v0/admin/model-aliases",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let listed: serde_json::Value = serde_json::from_str(&body(listed).await).unwrap();
+    assert_eq!(listed["aliases"][0]["targets"].as_array().unwrap().len(), 1);
+
+    let deleted = app
+        .serve(req(
+            Method::DELETE,
+            "/api/v0/admin/model-aliases/fast",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    let listed = app
+        .serve(req(
+            Method::GET,
+            "/api/v0/admin/model-aliases",
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let listed: serde_json::Value = serde_json::from_str(&body(listed).await).unwrap();
+    assert_eq!(listed["aliases"], serde_json::json!([]));
+}
+
+#[tokio::test]
+async fn model_alias_validation_names_the_problem() {
+    let (state, cookie) = setup().await;
+    let app = router(state);
+    let saved = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/backends",
+            &cookie,
+            Some(
+                r#"{"name":"gpu-a","base_url":"http://127.0.0.1:9/v1","models":["model-a"]}"#
+                    .into(),
+            ),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(saved.status(), StatusCode::OK);
+    let pooled = app
+        .serve(req(
+            Method::PUT,
+            "/api/v0/admin/pools",
+            &cookie,
+            Some(r#"{"name":"chat","kind":"chat","backends":["gpu-a"]}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(pooled.status(), StatusCode::OK, "{}", body(pooled).await);
+
+    for (payload, expected) in [
+        (
+            r#"{"name":" ","targets":[{"backend":"gpu-a","target":"model-a"}]}"#,
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            r#"{"name":"a b","targets":[{"backend":"gpu-a","target":"model-a"}]}"#,
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            r#"{"name":"model-a","targets":[{"backend":"gpu-a","target":"model-a"}]}"#,
+            StatusCode::BAD_REQUEST,
+        ),
+        (r#"{"name":"fast","targets":[]}"#, StatusCode::BAD_REQUEST),
+        (
+            r#"{"name":"fast","targets":[{"backend":"gpu-a","target":"model-a"},{"backend":"gpu-a","target":"model-a"}]}"#,
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            r#"{"name":"fast","targets":[{"backend":"missing","target":"model-a"}]}"#,
+            StatusCode::NOT_FOUND,
+        ),
+    ] {
+        let response = app
+            .serve(req(
+                Method::PUT,
+                "/api/v0/admin/model-aliases",
+                &cookie,
+                Some(payload.into()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            expected,
+            "{payload}: {}",
+            body(response).await
+        );
+    }
+}

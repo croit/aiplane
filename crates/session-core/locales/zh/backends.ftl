@@ -39,7 +39,7 @@ backends-field-pool-hint = 将此后端分配到一个池。位于多个池中�
 backends-field-weight = 权重
 backends-field-max-inflight = 最大处理中数
 backends-field-models = 模型（逗号分隔；留空 = 通过 /models 发现）
-backends-field-aliases = 别名（每行 name=target）
+backends-aliases-managed = 别名在“别名”标签页中编辑。
 backends-field-extra-headers = 额外请求头（每行 name: value）
 backends-field-extra-headers-hint = 附加到发往该后端的每个请求，在 API 密钥之后。例如 Anthropic 要求的 anthropic-version: 2023-06-01。
 backends-field-supports-edit = 支持图像编辑
@@ -60,7 +60,7 @@ backends-pool-empty = 此池中没有后端。
 
 backends-test-button = 测试连接
 backends-test-hint = 使用上面填写的凭据调用该 URL。不会保存任何内容。
-backends-test-insert-hint = 上游公布的模型 id —— 点击即可补全光标所在的别名行：
+backends-test-models = 已上报的模型 ID：
 backends-test-ok = 可达，认证通过（{ $source }），发现 { $count } 个模型。
 backends-test-ok-no-models = 可达且认证通过（{ $source }），但响应既不是 OpenAI 也不是 TypeSafe 的 /models 列表，模型发现无法解析。该后端只能提供你在“模型”中列出的 id。
 backends-test-auth-failed = 被拒绝，HTTP { $status }：凭据未被接受（{ $source }）。在修好之前模型发现保持关闭，后端不会公布任何模型。

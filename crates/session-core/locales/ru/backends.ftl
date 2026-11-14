@@ -39,7 +39,7 @@ backends-field-pool-hint = Назначает этот бэкенд одному
 backends-field-weight = Вес
 backends-field-max-inflight = Макс. одновременных
 backends-field-models = Модели (через запятую; пусто = определять через /models)
-backends-field-aliases = Алиасы (name=target по одному в строке)
+backends-aliases-managed = Алиасы редактируются на вкладке «Алиасы».
 backends-field-extra-headers = Дополнительные заголовки (имя: значение на строку)
 backends-field-extra-headers-hint = Отправляется с каждым запросом к этому бэкенду, после API-ключа. Например anthropic-version: 2023-06-01, который требует Anthropic.
 backends-field-supports-edit = Поддерживает редактирование изображений
@@ -60,7 +60,7 @@ backends-pool-empty = В этом пуле нет бэкендов.
 
 backends-test-button = Проверить соединение
 backends-test-hint = Обращается к этому URL с указанными выше учётными данными. Ничего не сохраняется.
-backends-test-insert-hint = Объявленные id моделей — нажмите, чтобы дополнить строку псевдонима под курсором:
+backends-test-models = Сообщённые id моделей:
 backends-test-ok = Доступен, аутентификация пройдена ({ $source }), найдено моделей: { $count }.
 backends-test-ok-no-models = Доступен, аутентификация пройдена ({ $source }), но ответ не является списком /models ни в формате OpenAI, ни в формате TypeSafe — обнаружение не может его прочитать. Этот бэкенд сможет обслуживать только id, перечисленные в поле «Модели».
 backends-test-auth-failed = Отклонено с HTTP { $status }: учётные данные не приняты ({ $source }). Пока это не исправлено, обнаружение моделей отключено и бэкенд ничего не объявляет.

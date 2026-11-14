@@ -46,7 +46,9 @@ const FAILURE_THRESHOLD: u32 = 3;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 /// How often an OpenRouter backend's catalog and per-provider prices are
 /// re-read. The request path's `max_price` is the hard guard between ticks;
-/// this cadence only decides how quickly a hidden model returns.
+/// this cadence decides how quickly a model whose provider crossed its ceiling
+/// disappears, and how quickly an affordable one returns. Ten minutes keeps
+/// the view well inside the hourly freshness bound.
 const OPENROUTER_REFRESH_INTERVAL: Duration = Duration::from_secs(600);
 /// How many backends are identified at once. Each round is five concurrent
 /// GETs, so this is really a cap of `5 × N` in-flight requests on a client
@@ -1489,5 +1491,13 @@ mod detection_wiring {
         )
         .await;
         assert_eq!(backend.context_window("qwen3:0.6b"), Some(4_096));
+    }
+
+    #[test]
+    fn openrouter_prices_refresh_within_the_hourly_bound() {
+        assert!(
+            OPENROUTER_REFRESH_INTERVAL <= Duration::from_secs(3600),
+            "the price filters may be at most an hour stale"
+        );
     }
 }

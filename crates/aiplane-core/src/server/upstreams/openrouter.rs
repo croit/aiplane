@@ -690,6 +690,21 @@ pub async fn refresh_backend(
             let is_available = cheapest.is_some();
             if is_available {
                 available.insert(model_id.clone());
+            } else if policy.available {
+                tracing::warn!(
+                    backend = %backend_name,
+                    model = %model_id,
+                    max_prompt = ?max_prompt,
+                    max_completion = ?max_completion,
+                    "OpenRouter model no longer has a provider under its price ceiling; hiding it from routing"
+                );
+            }
+            if is_available && !policy.available {
+                tracing::info!(
+                    backend = %backend_name,
+                    model = %model_id,
+                    "OpenRouter model is available under its price ceiling again"
+                );
             }
             let (prompt, completion, provider) = match cheapest {
                 Some((endpoint, allowed)) => (

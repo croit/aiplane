@@ -411,21 +411,12 @@ export function splitLines(value: string): string[] {
 	return value.split('\n').map((item) => item.trim()).filter(Boolean);
 }
 
-export function parseAliases(value: string): BackendAlias[] {
-	return splitLines(value).map((line) => {
-		const separator = line.indexOf('=');
-		return separator < 0
-			? { alias: line, target: null }
-			: { alias: line.slice(0, separator).trim(), target: line.slice(separator + 1).trim() || null };
-	});
-}
-
 /**
- * The editor's extra-headers field: one `name: value` per line, the same
- * grammar as the aliases field. A line without a separator is dropped — the
- * server rejects it on save, and the editor should not ship it in the first
- * place. The value keeps everything after the first `:`, so a header whose
- * value contains a colon (a URL) survives.
+ * The editor's extra-headers field: one `name: value` per line. A line
+ * without a separator is dropped — the server rejects it on save, and the
+ * editor should not ship it in the first place. The value keeps everything
+ * after the first `:`, so a header whose value contains a colon (a URL)
+ * survives.
  */
 export function parseHeaders(value: string): Record<string, string> {
 	const headers: Record<string, string> = {};
@@ -444,18 +435,6 @@ export function formatHeaders(headers: Record<string, string>): string {
 	return Object.entries(headers)
 		.map(([name, value]) => `${name}: ${value}`)
 		.join('\n');
-}
-
-export function completeAliasLine(value: string, cursor: number, model: string) {
-	const lineStart = value.lastIndexOf('\n', Math.max(0, cursor - 1)) + 1;
-	const nextNewline = value.indexOf('\n', cursor);
-	const lineEnd = nextNewline < 0 ? value.length : nextNewline;
-	const alias = value.slice(lineStart, lineEnd).split('=')[0].trim();
-	const replacement = alias ? `${alias}=${model}` : model;
-	return {
-		value: value.slice(0, lineStart) + replacement + value.slice(lineEnd),
-		cursor: lineStart + replacement.length
-	};
 }
 
 export function parseVoices(value: string): Voice[] {

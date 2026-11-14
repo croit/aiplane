@@ -16,8 +16,9 @@ the environment variables it already supports.
    It looks like `gwk_…`.
 
 2. **Alias the model names Claude Code sends.** Claude Code asks for ids like
-   `claude-sonnet-4-6`; your backend serves something else. On
-   `/admin/upstreams`, give the backend an alias per id you want to answer:
+   `claude-sonnet-4-6`; your backend serves something else. Open
+   **Models & routing → Aliases** (`/admin/models?tab=aliases`) and give each
+   id you want to answer an alias, with the backend and model it should reach:
 
    | Alias | Target |
    |---|---|
@@ -25,8 +26,10 @@ the environment variables it already supports.
    | `claude-opus-4-8` | the same, or a larger one |
    | `claude-haiku-4-5` | a small, fast model — Claude Code uses it for background work |
 
-   Aliases are also what makes a model **discoverable** (see below), so one
-   piece of configuration does both jobs.
+   An alias target is a backend plus either a concrete model or **Sole model**;
+   the same alias may name several backends, and a request then load-balances
+   across them. Aliases are also what makes a model **discoverable** (see
+   below), so one piece of configuration does both jobs.
 
    As a safety net, the per-kind unknown-model fallback (`/admin/models?tab=fallbacks`)
    catches any id you didn't alias: with a chat fallback configured, a model
@@ -37,7 +40,7 @@ the environment variables it already supports.
    ```bash
    export ANTHROPIC_BASE_URL=https://aiplane.example.com
    export ANTHROPIC_AUTH_TOKEN=gwk_…            # a token from /settings/tokens
-   export ANTHROPIC_MODEL=default                # an alias from /admin/upstreams
+   export ANTHROPIC_MODEL=default                # an alias from the Aliases tab
    export ANTHROPIC_DEFAULT_HAIKU_MODEL=default  # background tasks go here too
    export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
    export CLAUDE_CODE_MAX_CONTEXT_TOKENS=262144  # what your model actually serves

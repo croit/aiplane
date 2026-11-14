@@ -829,6 +829,50 @@ async fn replace_backend_aliases(
 }
 
 // ---------------------------------------------------------------------------
+// Model aliases (edited globally, stored per backend)
+// ---------------------------------------------------------------------------
+
+/// Replace one client-facing alias across every backend.
+///
+/// The row shape is `(backend, alias, target)`, so an alias is global by name
+/// while each target keeps the model that backend serves. `None` is the bare
+/// binding to that backend's sole model. The alias editor owns this write; a
+/// backend save preserves the rows instead of replacing them.
+pub async fn replace_model_alias(
+    db: &Pool,
+    alias: &str,
+    targets: &[(String, Option<String>)],
+) -> Result<(), DbError> {
+    let mut tx = db.begin().await?;
+    sqlx::query("DELETE FROM backend_aliases WHERE alias = ?")
+        .bind(alias)
+        .execute(&mut *tx)
+        .await?;
+    for (backend, target) in targets {
+        sqlx::query(
+            r#"INSERT INTO backend_aliases (backend_id, alias, target)
+               SELECT id, ?, ? FROM backends WHERE name = ?"#,
+        )
+        .bind(alias)
+        .bind(target)
+        .bind(backend)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Remove an alias from every backend. Returns whether anything was deleted.
+pub async fn delete_model_alias(db: &Pool, alias: &str) -> Result<bool, DbError> {
+    let result = sqlx::query("DELETE FROM backend_aliases WHERE alias = ?")
+        .bind(alias)
+        .execute(db)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+// ---------------------------------------------------------------------------
 // Pool CRUD
 // ---------------------------------------------------------------------------
 
@@ -1740,6 +1784,85 @@ mod tests {
         assert_eq!(reloaded.weight, 5);
         assert_eq!(reloaded.models, vec!["qwen-32b"]);
         assert!(reloaded.extra_headers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_alias_is_replaced_across_every_backend_as_one_name() {
+        let pool = test_pool().await;
+        for (name, model) in [("gpu-a", "qwen-7b"), ("gpu-b", "llama-8b")] {
+            let mut backend = bare_backend(name);
+            backend.models = vec![model.into()];
+            upsert_backend(&pool, &backend).await.unwrap();
+        }
+
+        replace_model_alias(
+            &pool,
+            "fast",
+            &[
+                ("gpu-a".into(), Some("qwen-7b".into())),
+                ("gpu-b".into(), None),
+            ],
+        )
+        .await
+        .unwrap();
+        let loaded = load_all_backends(&pool).await.unwrap();
+        let a = loaded.get("gpu-a").unwrap();
+        let b = loaded.get("gpu-b").unwrap();
+        assert_eq!(
+            a.aliases,
+            vec![AliasRow {
+                alias: "fast".into(),
+                target: Some("qwen-7b".into()),
+            }]
+        );
+        assert_eq!(
+            b.aliases,
+            vec![AliasRow {
+                alias: "fast".into(),
+                target: None,
+            }]
+        );
+
+        // A second save replaces the name's targets wholesale: gpu-b's target
+        // disappears, and an unrelated alias is untouched.
+        let mut other = bare_backend("gpu-a");
+        other.models = vec!["qwen-7b".into()];
+        other.aliases = vec![AliasRow {
+            alias: "smart".into(),
+            target: Some("qwen-7b".into()),
+        }];
+        upsert_backend(&pool, &other).await.unwrap();
+        replace_model_alias(&pool, "fast", &[("gpu-a".into(), Some("qwen-7b".into()))])
+            .await
+            .unwrap();
+        let loaded = load_all_backends(&pool).await.unwrap();
+        assert_eq!(loaded.get("gpu-b").unwrap().aliases, Vec::new());
+        assert_eq!(
+            loaded.get("gpu-a").unwrap().aliases,
+            vec![
+                AliasRow {
+                    alias: "fast".into(),
+                    target: Some("qwen-7b".into()),
+                },
+                AliasRow {
+                    alias: "smart".into(),
+                    target: Some("qwen-7b".into()),
+                },
+            ]
+        );
+
+        assert!(delete_model_alias(&pool, "fast").await.unwrap());
+        assert!(!delete_model_alias(&pool, "fast").await.unwrap());
+        assert!(
+            load_all_backends(&pool)
+                .await
+                .unwrap()
+                .get("gpu-a")
+                .unwrap()
+                .aliases
+                .iter()
+                .all(|alias| alias.alias != "fast")
+        );
     }
 
     /// No foreign key points at a *name*.

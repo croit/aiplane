@@ -587,6 +587,9 @@ Debug fixture routes exist only in development builds.
 | `POST /api/v0/admin/limits` |
 | `DELETE /api/v0/admin/limits/{id}` |
 | `PUT /api/v0/admin/model-defaults` |
+| `GET /api/v0/admin/model-aliases` |
+| `PUT /api/v0/admin/model-aliases` |
+| `DELETE /api/v0/admin/model-aliases/{name}` |
 | `GET /api/v0/admin/models` |
 | `PUT /api/v0/admin/models` |
 | `DELETE /api/v0/admin/models/{name}` |

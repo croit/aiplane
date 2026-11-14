@@ -6,6 +6,7 @@
 	import type { AdminModel, AdminModelsData, CatalogSections, ModelFilter } from '#lib/admin-models.js';
 	import AdminModelRow from '#lib/components/admin/AdminModelRow.svelte';
 	import DefaultModelsCard from '#lib/components/admin/DefaultModelsCard.svelte';
+	import ModelAliasesCard from '#lib/components/admin/ModelAliasesCard.svelte';
 	import AutomaticRoutesCard from '#lib/components/admin/AutomaticRoutesCard.svelte';
 	import UnknownModelFallbacksCard from '#lib/components/admin/UnknownModelFallbacksCard.svelte';
 	import UpstreamsPanel from '#lib/components/admin/UpstreamsPanel.svelte';
@@ -67,6 +68,13 @@
 			: []
 	);
 	let selected = $derived(selectedModelAdminTab(page.url.search));
+	let tabNav = $state<HTMLElement>();
+	// A deep link to a tab past the visible strip (Aliases on a phone) should
+	// show the selected tab, not leave it scrolled out of view.
+	$effect(() => {
+		selected;
+		tabNav?.querySelector('.tab-active')?.scrollIntoView({ inline: 'center', block: 'nearest' });
+	});
 	onMount(refresh);
 </script>
 
@@ -78,10 +86,11 @@
 			<h1 class="text-2xl font-bold">{t('admin-models-routing-heading')}</h1>
 			<p class="max-w-2xl text-sm text-base-content/70">{t('admin-models-routing-intro')}</p>
 		</div>
-		<nav class="tabs tabs-border w-full overflow-x-auto" aria-label={t('admin-models-routing-heading')}>
+		<nav class="tabs tabs-border w-full overflow-x-auto" aria-label={t('admin-models-routing-heading')} bind:this={tabNav}>
 			<a class:tab-active={selected === 'upstreams'} class="tab whitespace-nowrap" href="/admin/models?tab=upstreams">{t('admin-models-tab-upstreams')}</a>
 			<a class:tab-active={selected === 'openrouter'} class="tab whitespace-nowrap" href="/admin/models?tab=openrouter">{t('admin-models-tab-openrouter')}</a>
 			<a class:tab-active={selected === 'catalog'} class="tab whitespace-nowrap" href="/admin/models?tab=catalog">{t('admin-models-tab-catalog')}</a>
+			<a class:tab-active={selected === 'aliases'} class="tab whitespace-nowrap" href="/admin/models?tab=aliases">{t('admin-models-tab-aliases')}</a>
 			<a class:tab-active={selected === 'defaults'} class="tab whitespace-nowrap" href="/admin/models?tab=defaults">{t('admin-models-tab-defaults')}</a>
 			<a class:tab-active={selected === 'fallbacks'} class="tab whitespace-nowrap" href="/admin/models?tab=fallbacks">{t('admin-models-tab-fallbacks')}</a>
 			<a class:tab-active={selected === 'routing'} class="tab whitespace-nowrap" href="/admin/models?tab=routing">{t('admin-models-tab-routing')}</a>
@@ -94,6 +103,8 @@
 		<UpstreamsPanel initialQuery={page.url.searchParams.get('q') ?? ''} />
 	{:else if selected === 'openrouter'}
 		<OpenRouterTab />
+	{:else if selected === 'aliases'}
+		<ModelAliasesCard />
 	{:else if selected === 'fallbacks'}
 		<UnknownModelFallbacksCard />
 	{:else if data}

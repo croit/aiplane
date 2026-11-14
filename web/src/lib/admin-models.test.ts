@@ -41,6 +41,7 @@ test('model administration defaults to the upstreams board and accepts only know
 	assert.equal(selectedModelAdminTab('?tab=upstreams'), 'upstreams');
 	assert.equal(selectedModelAdminTab('?tab=openrouter'), 'openrouter');
 	assert.equal(selectedModelAdminTab('?tab=catalog'), 'catalog');
+	assert.equal(selectedModelAdminTab('?tab=aliases'), 'aliases');
 	assert.equal(selectedModelAdminTab('?tab=defaults'), 'defaults');
 	assert.equal(selectedModelAdminTab('?tab=fallbacks'), 'fallbacks');
 	assert.equal(selectedModelAdminTab('?tab=routing'), 'routing');

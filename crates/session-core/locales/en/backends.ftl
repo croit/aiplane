@@ -29,7 +29,7 @@ backends-field-pool-hint = Assigns this backend to one pool. A backend in severa
 backends-field-weight = Weight
 backends-field-max-inflight = Max in-flight
 backends-field-models = Models (comma-separated; blank = discover from /models)
-backends-field-aliases = Aliases (name=target per line)
+backends-aliases-managed = Aliases are edited in the Aliases tab.
 backends-field-extra-headers = Extra headers (name: value per line)
 backends-field-extra-headers-hint = Sent with every request to this backend, after the API key. For example the anthropic-version: 2023-06-01 that Anthropic requires.
 backends-field-supports-edit = Supports image editing
@@ -50,7 +50,7 @@ backends-pool-empty = No backends in this pool.
 
 backends-test-button = Test connection
 backends-test-hint = Calls this URL with the credentials above. Nothing is saved.
-backends-test-insert-hint = Reported model ids — click one to complete the alias line your cursor is on:
+backends-test-models = Reported model ids:
 backends-test-ok = Reachable, authenticated ({ $source }), { $count } models discovered.
 backends-test-ok-no-models = Reachable and authenticated ({ $source }), but the response is neither an OpenAI nor a TypeSafe /models list, so discovery cannot read it. This backend can only serve the ids you list under "Models".
 backends-test-auth-failed = Rejected with HTTP { $status }: the credential was refused ({ $source }). Model discovery stays off until this is fixed, which leaves the backend advertising nothing.

@@ -151,6 +151,14 @@ pub(super) fn operations() -> Vec<Op> {
             .ok(json::<json_tokens::TokenPriorityRequest>())
             .errors(&[400, 404]),
         get("/api/v0/admin/upstreams", Access::Admin).ok(json::<admin::TopologyView>()),
+        get("/api/v0/admin/model-aliases", Access::Admin).ok(json::<admin::ModelAliasesView>()),
+        put("/api/v0/admin/model-aliases", Access::Admin)
+            .body(json::<admin::ModelAliasSaveBody>())
+            .ok(json::<admin::TopologySaved>())
+            .errors(&[400, 404]),
+        delete("/api/v0/admin/model-aliases/{name}", Access::Admin)
+            .no_content()
+            .errors(&[400, 404]),
         get("/api/v0/admin/upstreams/events", Access::Admin).ok(sse::<admin::BackendStatus>()),
         put("/api/v0/admin/backends", Access::Admin)
             .body(json::<admin::BackendSaveBody>())

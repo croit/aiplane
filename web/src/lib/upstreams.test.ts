@@ -14,7 +14,6 @@ import {
 	liveForPool,
 	poolProblems,
 	parallelismMismatch,
-	completeAliasLine,
 	poolCoverage,
 	parseHeaders,
 	formatHeaders,
@@ -143,17 +142,6 @@ test('pool coverage exposes partial replicas and aliases exactly once', () => {
 		{ name: 'model-a', serving: 1, total: 2 },
 		{ name: 'model-b', serving: 1, total: 2 }
 	]);
-});
-
-test('a discovered model completes only the alias line at the cursor', () => {
-	assert.deepEqual(completeAliasLine('fast=model-a\ndefault\nother=model-c', 18, 'repo/model-b'), {
-		value: 'fast=model-a\ndefault=repo/model-b\nother=model-c',
-		cursor: 33
-	});
-	assert.deepEqual(completeAliasLine('', 0, 'repo/model-a'), {
-		value: 'repo/model-a',
-		cursor: 12
-	});
 });
 
 test('model ids sort the way a person reads a version, not by byte', () => {
