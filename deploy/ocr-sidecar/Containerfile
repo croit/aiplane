@@ -8,7 +8,7 @@
 # same image. Dependabot's docker ecosystem bumps the digest while keeping the
 # tag readable (`.github/dependabot.yml`); do not drop the tag, it is what makes
 # the pin reviewable.
-FROM python:3.12-slim@sha256:12316debbfb86890f6b2d825820612741ba527ad5a44e3902759141d572bfe8f
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
