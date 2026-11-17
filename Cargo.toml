@@ -142,7 +142,7 @@ url = "2"
 # comment here claimed otherwise, which stopped being true once rustls landed.
 # v10.3+ also fixes CVE-2026-25537 (string-typed `nbf`/`exp` claims silently
 # skipping validation).
-jsonwebtoken = { version = "11", default-features = false, features = ["use_pem", "aws_lc_rs"] }
+jsonwebtoken = { version = "12", default-features = false, features = ["use_pem", "aws_lc_rs"] }
 
 # HTTP framework + proxying. `http-full` covers server, client, codec, and
 # the SSE response primitives; rustls/tls deliberately omitted so the build
