@@ -867,15 +867,22 @@ pub async fn session_steer(
         Ok(turn) => turn.and_then(|turn| turn.model).unwrap_or_default(),
         Err(err) => return internal(err),
     };
+    // The turn's model as metered: an alias is billed and limited as the model
+    // it resolves to, so a model-scoped rule sees the same id the usage rows do.
+    let billed = state.upstreams.billing_model(
+        &model,
+        aiplane_core::server::upstreams::PoolKind::Chat,
+        &state.pool_access_for(&user.roles),
+    );
     if let Some(exceeded) = state
         .limit_exceeded(
             &user.id,
             &state.role_ids_for(&user.roles),
             None,
-            &model,
+            &billed,
             state
                 .upstreams
-                .enforce_limits_for_model(&model, aiplane_core::server::upstreams::PoolKind::Chat),
+                .enforce_limits_for_model(&billed, aiplane_core::server::upstreams::PoolKind::Chat),
         )
         .await
     {

@@ -90,7 +90,7 @@ The backend editor no longer carries an aliases field; it points here. The **Mod
 
 1. Open **Catalog**. Search by model name or use the chat, other, aliases or configured filter. A model row's **served by** line names the pool and the backends carrying it right now and opens **Upstreams** filtered to that model; the board's model chips link the other way, into the catalog. A model nothing serves has no such line, which is what the **inactive** filter is for.
 2. Open the model editor (`/admin/models/edit`).
-3. Set input/output prices in the unit shown for that model kind. Configure prices before treating monetary usage totals as complete. With a per-token price, embedding and rerank calls are charged at the input price; when a backend reports only a total token count, those tokens count as input. A rerank backend that reports no token usage (Text Embeddings Inference) or reports search units instead (Cohere) records its calls with no tokens and no cost; see [reranking](../reference/api.md#reranking).
+3. Set input/output prices in the unit shown for that model kind. Configure prices before treating monetary usage totals as complete. Calls are metered and priced under the model id they resolve to, so price the real model rather than an alias: an alias has no row of its own and bills at its target's price. With a per-token price, embedding and rerank calls are charged at the input price; when a backend reports only a total token count, those tokens count as input. A rerank backend that reports no token usage (Text Embeddings Inference) or reports search units instead (Cohere) records its calls with no tokens and no cost; see [reranking](../reference/api.md#reranking).
 4. Optionally set the **description**: the one-line subtext the chat picker shows under the model or alias. It is limited to 240 characters and is searchable in the picker.
 5. For a chat model, verify its context window, reasoning format and capabilities against the upstream's actual configuration.
 6. Save. Return to the catalog and inspect the configured values.
@@ -140,7 +140,7 @@ The selector receives request content. Treat its provider as another processor o
 | Model missing for a user | Pool allowed groups and token model restrictions |
 | Automatic route cannot be added | Available selector and at least two eligible candidate models |
 | Route repeatedly uses fallback | Decision reason, confidence, selector timeout and candidate availability |
-| Cost appears incomplete | Input/output price overrides and the Usage unpriced-model warning |
+| Cost appears incomplete | Input/output price overrides; the Usage page links each unpriced model to its editor |
 
 ## Backend priority forwarding
 

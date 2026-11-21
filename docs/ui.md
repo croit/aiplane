@@ -643,10 +643,11 @@ the name.
 `GET /api/v0/usage` is the complete usage-dashboard read model. Period,
 scope, source, backend, and token filters are query parameters so a view is
 reconstructable from its URL. The response includes the effective scope and
-admin capability, metrics state, viewer timezone, totals, pricing gaps,
-in-force limits, and user/token/backend/source/model breakdowns. The backend
-clamps `scope=all` for non-admin users; the client reflects the effective
-scope rather than trusting the requested one.
+admin capability, metrics state, viewer timezone, totals, pricing gaps — each
+named as the model that bills for the calls, so an alias appears under its
+target — in-force limits, and user/token/backend/source/model breakdowns. The
+backend clamps `scope=all` for non-admin users; the client reflects the
+effective scope rather than trusting the requested one.
 
 `GET /api/v0/admin/limits` is the operator limit-policy read model: rules plus
 the complete role, user, token-with-owner, and model option sets needed to

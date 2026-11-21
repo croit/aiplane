@@ -7,6 +7,7 @@
 	import UsageStats from '#lib/components/usage/UsageStats.svelte';
 	import UsageTable from '#lib/components/usage/UsageTable.svelte';
 	import { t } from '#lib/i18n.svelte.js';
+	import { me } from '#lib/session.svelte.js';
 	import { usageSearch, type UsageFilters } from '#lib/usage.js';
 	import type { UsageResponse } from '#lib/usage-types.js';
 
@@ -79,7 +80,23 @@
 			<div class="alert alert-warning"><span>{t('usage-metrics-disabled-prefix')}<code class="text-xs">[usage].enabled = false</code>{t('usage-metrics-disabled-suffix')}</span></div>
 		{/if}
 		{#if data.unpriced_models.length > 0}
-			<div class="alert alert-warning"><span>{t('usage-unpriced-warning', { models: data.unpriced_models.join(', ') })}</span></div>
+			<div class="alert alert-warning">
+				<div class="flex flex-col gap-1">
+					<span class="font-medium">{t('usage-unpriced-heading')}</span>
+					<span class="text-sm">{t('usage-unpriced-body')}</span>
+					<ul class="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+						{#each data.unpriced_models as model (model)}
+							<li>
+								{#if me.value?.is_admin}
+									<a class="link link-neutral font-mono" href={`/admin/models/edit?model=${encodeURIComponent(model)}`} title={t('usage-unpriced-open')}>{model}</a>
+								{:else}
+									<span class="font-mono">{model}</span>
+								{/if}
+							</li>
+						{/each}
+					</ul>
+				</div>
+			</div>
 		{/if}
 		{#if data.scope === 'self' && data.limits.length > 0}<UsageLimits limits={data.limits} currency={data.currency} timezone={data.timezone} />{/if}
 		<UsageFiltersView {filters} {data} onchange={change} />

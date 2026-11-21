@@ -2593,6 +2593,18 @@ impl UpstreamRegistry {
             .find_map(|p| p.resolve_healthy(model))
     }
 
+    /// The id a call to `model` is metered, priced and limited as: the real
+    /// model an alias resolves to, or `model` itself when the name is a real id
+    /// (or nothing serves it right now).
+    ///
+    /// Usage rows, prices and model-scoped limits key on the real id — an alias
+    /// carries none of its own — so a gate that is about to meter a call must
+    /// check this, not the spelling the caller sent.
+    pub fn billing_model(&self, model: &str, kind: PoolKind, access: &PoolAccess) -> String {
+        self.resolve_model_for(model, kind, access)
+            .unwrap_or_else(|| model.to_string())
+    }
+
     /// Every distinct real model id a healthy permitted backend may resolve
     /// `model` to. A routing policy must evaluate capabilities against the
     /// same real model it can ultimately dispatch, so heterogeneous aliases
@@ -4678,6 +4690,29 @@ mod tests {
         assert_eq!(map["smart"], Some("glm-4.6".to_string()));
         // Exactly the two reals plus the one alias, nothing else.
         assert_eq!(map.len(), 3);
+    }
+
+    /// An alias is billed, priced and limited as the model behind it; a real id
+    /// is its own billing id, and an unknown name keeps its spelling so the
+    /// caller still gets a limit check.
+    #[test]
+    fn billing_model_is_the_real_id_behind_an_alias() {
+        let reg = build(vec![(
+            "chat",
+            pool_config(
+                PoolKind::Chat,
+                PickerStrategy::RoundRobin,
+                vec![backend_alias("a", targets(&[("smart", "glm-4.6")]))],
+            ),
+        )]);
+        seed_models(&reg, "chat", 0, &["glm-4.6", "glm-4.5-air"]);
+        let all = PoolAccess::all();
+        assert_eq!(reg.billing_model("smart", PoolKind::Chat, &all), "glm-4.6");
+        assert_eq!(
+            reg.billing_model("glm-4.5-air", PoolKind::Chat, &all),
+            "glm-4.5-air"
+        );
+        assert_eq!(reg.billing_model("gone", PoolKind::Chat, &all), "gone");
     }
 
     /// The catalog's "served by" line: pool → the backends that can serve the

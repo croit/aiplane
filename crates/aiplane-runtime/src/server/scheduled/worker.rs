@@ -189,16 +189,23 @@ async fn execute_run(
     };
     // A scheduled fire draws from the owner's budget like any other call. If
     // they're over a limit, skip this fire and record it as an error (visible
-    // in the schedule's run history) rather than running it for free.
+    // in the schedule's run history) rather than running it for free. The gate
+    // names the model the run will be metered as, so the rule and the usage
+    // rows agree.
+    let billed = state.upstreams.billing_model(
+        model,
+        aiplane_core::server::upstreams::PoolKind::Chat,
+        &state.pool_access_for(&user.roles),
+    );
     if state
         .limit_exceeded(
             user_id,
             &state.role_ids_for(&user.roles),
             None,
-            model,
+            &billed,
             state
                 .upstreams
-                .enforce_limits_for_model(model, aiplane_core::server::upstreams::PoolKind::Chat),
+                .enforce_limits_for_model(&billed, aiplane_core::server::upstreams::PoolKind::Chat),
         )
         .await
         .is_some()

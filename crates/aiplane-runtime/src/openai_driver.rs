@@ -1991,7 +1991,7 @@ async fn run_one_turn(
             emit_usage(
                 d,
                 &user_email,
-                &ctx.model,
+                &real_model,
                 &backend_name,
                 status.as_u16(),
                 started,
@@ -2079,7 +2079,7 @@ async fn run_one_turn(
                         emit_usage(
                             d,
                             &user_email,
-                            &ctx.model,
+                            &real_model,
                             &backend_name,
                             status_code,
                             started,
@@ -2190,7 +2190,7 @@ async fn run_one_turn(
                             emit_loop_usage(
                                 d,
                                 &user_email,
-                                &ctx.model,
+                                &real_model,
                                 &backend_name,
                                 status_code,
                                 started,
@@ -2236,7 +2236,7 @@ async fn run_one_turn(
                                 emit_loop_usage(
                                     d,
                                     &user_email,
-                                    &ctx.model,
+                                    &real_model,
                                     &backend_name,
                                     status_code,
                                     started,
@@ -2341,7 +2341,7 @@ async fn run_one_turn(
         let mut round_usage = d.state.usage.defer(usage_record(
             d,
             &user_email,
-            &ctx.model,
+            &real_model,
             &backend_name,
             status_code,
             started,
@@ -4147,6 +4147,11 @@ fn emit_loop_usage(
 }
 
 /// The usage row of one upstream round, as the gateway saw it end.
+///
+/// `model` is the **resolved** id, not what the caller asked for: prices and
+/// per-model settings key on it, and a backend alias carries no price row of
+/// its own. `/v1` meters the same way, so both surfaces attribute a call to the
+/// same model.
 fn usage_record(
     d: &OpenAiDriver,
     user_email: &str,

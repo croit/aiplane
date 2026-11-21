@@ -53,7 +53,9 @@ usage-no-activity = 此时间段内无活动。
 usage-limits-heading = 你的限额
 usage-limit-used = 已使用 { $percent }%
 usage-limit-refreshes = { $time } 刷新
-usage-unpriced-warning = 支出不包含未定价的模型：{ $models }。请在 /admin/models 中设置价格以计入。
+usage-unpriced-heading = 支出不包含未定价的模型
+usage-unpriced-body = 这些模型未设置价格，因此其用量不计入支出。
+usage-unpriced-open = 打开此模型的价格设置
 
 usage-table-by-token = 按 API 令牌
 usage-key-token = API 令牌

@@ -196,7 +196,9 @@ units:
 - Transcription: provider-reported duration, or the measured duration of a
   decodable PCM/WAV, MP3, FLAC, Ogg/Vorbis, or ISO-MP4 payload.
 
-Configure prices per model in `/admin/models`. Chat, embedding and rerank
+Configure prices per model in `/admin/models`. A call is metered under the
+model id it resolves to, so a backend alias bills at its target's price and
+appears under that id in the usage breakdown. Chat, embedding and rerank
 models use prices per 1M tokens. An embedding or rerank call generates
 nothing, so when its backend reports only `usage.total_tokens`, those tokens
 are recorded as input tokens and priced at the input rate. A chat call

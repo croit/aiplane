@@ -369,16 +369,22 @@ async fn person_context(
         p.history_limit = background.history_limit;
     }
     p.actor = Actor::person(user.id.clone(), user.roles.clone());
+    // Metered as the resolved model, so the gate and the usage rows agree on
+    // which model-scoped rule governs this run.
+    let billed = state.upstreams.billing_model(
+        &p.model,
+        aiplane_core::server::upstreams::PoolKind::Chat,
+        &state.pool_access_for(&user.roles),
+    );
     if state
         .limit_exceeded(
             &owner,
             &state.role_ids_for(&user.roles),
             None,
-            &p.model,
-            state.upstreams.enforce_limits_for_model(
-                &p.model,
-                aiplane_core::server::upstreams::PoolKind::Chat,
-            ),
+            &billed,
+            state
+                .upstreams
+                .enforce_limits_for_model(&billed, aiplane_core::server::upstreams::PoolKind::Chat),
         )
         .await
         .is_some()

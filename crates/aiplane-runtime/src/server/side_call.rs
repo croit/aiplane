@@ -508,8 +508,15 @@ async fn send(
     )
     .await
     .map_err(failed)?;
-    exchange.model = Some(target.model.clone());
-    if let Some(exceeded) = payer.over_budget(state, &target.model).await {
+    // Prices, per-model settings and the usage view key on the resolved id; an
+    // alias carries no row of its own, so metering the requested name would
+    // leave every one of these calls unpriced however the model is configured.
+    let billing_model = state
+        .upstreams
+        .resolve_model_for(&target.model, PoolKind::Chat, &target.access)
+        .unwrap_or_else(|| target.model.clone());
+    exchange.model = Some(billing_model.clone());
+    if let Some(exceeded) = payer.over_budget(state, &billing_model).await {
         return Err(SideCallError::OverBudget(exceeded));
     }
     let access = live_model_access(
@@ -530,7 +537,7 @@ async fn send(
     });
     let acquired = aiplane_core::server::upstreams::route_or_wait(
         &state.upstreams,
-        &target.model,
+        &billing_model,
         PoolKind::Chat,
         &access,
         if priority.is_some() {

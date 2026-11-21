@@ -110,6 +110,10 @@ async fn state_with_chat_access_at_level(
 /// A chat pool serving exactly one model, reachable under `alias` too — the
 /// shape every real deployment has (`alias = ["default", ...]`).
 async fn state_with_aliased_chat_model(model: &str, alias: &str) -> RamaState {
+    aliased_chat_state("http://unused.invalid", model, alias).await
+}
+
+async fn aliased_chat_state(upstream_uri: &str, model: &str, alias: &str) -> RamaState {
     let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
     let mut pools = HashMap::new();
     pools.insert(
@@ -132,7 +136,7 @@ async fn state_with_aliased_chat_model(model: &str, alias: &str) -> RamaState {
                 extra_headers: Default::default(),
                 enabled: true,
                 name: "mock".into(),
-                base_url: "http://unused.invalid".into(),
+                base_url: upstream_uri.into(),
                 api_key_env: None,
                 api_key: None,
                 weight: 1,
@@ -3224,6 +3228,118 @@ async fn the_usage_endpoint_aggregates_the_callers_window() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// A backend alias has no price row of its own — it bills as the model it
+/// resolves to — so a warning that names the alias sends the operator to a row
+/// that cannot be priced. The list names the resolved model instead, and
+/// pricing that model clears it.
+#[tokio::test]
+async fn the_unpriced_warning_names_the_model_an_alias_bills_as() {
+    let state = Arc::new(state_with_aliased_chat_model("Qwen/Qwen3-8B", "default").await);
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    // The row the chat path used to write: metered under the alias spelling.
+    db::usage::insert_batch(
+        &state.db,
+        &[db::usage::UsageRecord {
+            created_at: jiff::Timestamp::now(),
+            user_id: "alice".into(),
+            user_email: Some("alice@example.com".into()),
+            token_id: None,
+            token_name: None,
+            source: db::usage::UsageSource::Chat,
+            kind: db::usage::UsageKind::Chat,
+            backend: "mock".into(),
+            model: "default".into(),
+            status: 200,
+            duration_ms: 10,
+            prompt_tokens: Some(100),
+            completion_tokens: Some(50),
+            total_tokens: Some(150),
+            cached_tokens: None,
+            input_units: None,
+            output_units: None,
+            enforce_limits: true,
+            principal_kind: aiplane_core::server::principal::PrincipalKind::User,
+            agent_id: None,
+            chain: None,
+            stop_reason: None,
+        }],
+    )
+    .await
+    .unwrap();
+    let app = router(state.clone());
+
+    let body: serde_json::Value = serde_json::from_str(
+        &body_string(
+            app.serve(json_req(Method::GET, "/api/v0/usage".into(), &cookie, None))
+                .await
+                .unwrap(),
+        )
+        .await,
+    )
+    .unwrap();
+    assert_eq!(
+        body["unpriced_models"],
+        serde_json::json!(["Qwen/Qwen3-8B"]),
+        "the warning must name the model an operator can price"
+    );
+
+    // Pricing that model settles it: every future call on the alias meters
+    // under this id.
+    db::model_defaults::set_pricing(&state.db, "Qwen/Qwen3-8B", Some(1.0), Some(2.0), None)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_str(
+        &body_string(
+            app.serve(json_req(Method::GET, "/api/v0/usage".into(), &cookie, None))
+                .await
+                .unwrap(),
+        )
+        .await,
+    )
+    .unwrap();
+    assert_eq!(body["unpriced_models"], serde_json::json!([]));
+}
+
+/// A turn on an alias is metered under the model it resolved to. Prices and
+/// per-model settings key on the real id, so metering the alias would leave
+/// the call unpriced however the operator configured the model.
+#[tokio::test]
+async fn a_chat_turn_on_an_alias_is_metered_under_the_resolved_model() {
+    let upstream = MockServer::start().await;
+    mount_streaming_upstream(&upstream, &["hello"], 0).await;
+    let state = aliased_chat_state(&upstream.uri(), "Qwen/Qwen3-8B", "default").await;
+    let usage = aiplane_core::server::usage::spawn(state.db.clone(), 90);
+    let state = Arc::new(state.with_usage(usage));
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let app = router(state.clone());
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+
+    let resp = app
+        .serve(json_req(
+            Method::POST,
+            format!("/api/v0/chat/sessions/{}/messages", session.id),
+            &cookie,
+            Some(r#"{"model":"default","message":"hi"}"#.into()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    wait_for_idle(&state, "alice").await;
+    // The usage writer flushes in batches.
+    tokio::time::sleep(Duration::from_millis(800)).await;
+
+    let models: Vec<String> =
+        sqlx::query_scalar("SELECT model FROM usage_events ORDER BY created_at")
+            .fetch_all(&state.db)
+            .await
+            .unwrap();
+    assert!(!models.is_empty(), "the turn must be metered");
+    assert!(
+        models.iter().all(|model| model == "Qwen/Qwen3-8B"),
+        "a call on the `default` alias must be metered as the model behind it: {models:?}"
+    );
 }
 
 /// The tools endpoints list the caller's granted tools and round-trip a

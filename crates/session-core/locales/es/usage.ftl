@@ -53,7 +53,9 @@ usage-no-activity = Sin actividad en este período.
 usage-limits-heading = Tus límites
 usage-limit-used = { $percent } % usado
 usage-limit-refreshes = se renueva { $time }
-usage-unpriced-warning = El gasto excluye modelos sin precio: { $models }. Configura precios en /admin/models para contarlos.
+usage-unpriced-heading = El gasto excluye los modelos sin precio
+usage-unpriced-body = No hay ningún precio configurado para estos modelos, así que su uso no se cuenta en el gasto.
+usage-unpriced-open = Abrir los precios de este modelo
 
 usage-table-by-token = Por token de API
 usage-key-token = Token de API

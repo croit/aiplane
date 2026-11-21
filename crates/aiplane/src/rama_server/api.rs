@@ -492,18 +492,29 @@ pub async fn usage(
             .collect();
     let limit_status = state.enforcer.statuses(&user.id, &role_ids).await;
     // Models with traffic but no configured price → spend under-counted.
+    //
+    // A backend alias bills as the model it resolves to — prices, settings and
+    // the catalog all key on the real id — so a period that still holds rows
+    // metered under the alias spelling names that model instead: it is the row
+    // an operator can actually price.
     let priced = aiplane_core::server::db::model_defaults::all_prices(&state.db)
         .await
         .unwrap_or_default();
-    let unpriced: Vec<String> = agg
-        .by_model
-        .iter()
-        .filter(|g| {
-            !priced.contains_key(&g.key)
-                && (g.total_tokens > 0 || g.input_units > 0.0 || g.output_units > 0.0)
-        })
-        .map(|g| g.key.clone())
-        .collect();
+    let billing = billing_models(&state);
+    let mut unpriced: Vec<String> = Vec::new();
+    for group in &agg.by_model {
+        if group.total_tokens <= 0 && group.input_units <= 0.0 && group.output_units <= 0.0 {
+            continue;
+        }
+        let model = billing
+            .get(&group.key)
+            .and_then(Option::as_deref)
+            .unwrap_or(group.key.as_str());
+        if priced.contains_key(model) || unpriced.iter().any(|seen| seen == model) {
+            continue;
+        }
+        unpriced.push(model.to_string());
+    }
 
     let limits = limit_status
         .iter()
@@ -530,6 +541,34 @@ pub async fn usage(
     })
 }
 
+/// Every model name that bills as another id, mapped to its billing id — a
+/// backend alias, which carries no price or settings of its own.
+///
+/// `None` for a spelling two pool kinds map to different models: the usage
+/// view has no kind to tell them apart, and naming one of the two would point
+/// the operator at a price row that may not govern the calls.
+fn billing_models(state: &RamaState) -> std::collections::HashMap<String, Option<String>> {
+    use aiplane_core::server::upstreams::PoolKind;
+
+    let mut out: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
+    for kind in PoolKind::ALL {
+        for (name, target) in state.upstreams.models_with_alias_target(kind) {
+            let Some(target) = target else { continue };
+            match out.get(&name) {
+                Some(Some(existing)) if *existing != target => {
+                    out.insert(name, None);
+                }
+                Some(_) => {}
+                None => {
+                    out.insert(name, Some(target));
+                }
+            }
+        }
+    }
+    out
+}
+
 /// What `GET /api/v0/usage` answers: the window's totals and breakdowns, the
 /// pickers' options, and the limits in force.
 #[derive(serde::Serialize, schemars::JsonSchema)]
@@ -554,7 +593,7 @@ pub struct UsageView {
     pub tokens: Vec<UsageTokenOption>,
     pub limits: Vec<aiplane_api::pages::json_tokens::LimitStatusView>,
     /// Models with traffic but no configured price, so their spend is
-    /// under-counted.
+    /// under-counted. An alias is named as the model it bills as.
     pub unpriced_models: Vec<String>,
 }
 

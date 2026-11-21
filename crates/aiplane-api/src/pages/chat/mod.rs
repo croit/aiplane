@@ -147,16 +147,22 @@ pub(crate) async fn submit_turn(
     refuse_if_agent_inactive(state, &user.id, &active.id).await?;
     // Rate-limit / quota gate — before reserving a worker or touching the DB,
     // so an over-budget user is turned away cleanly (details on `/usage`).
+    // The gate names the model the turn will be metered as, not the spelling the
+    // caller sent: metering, prices and model-scoped rules all key on it.
+    let billed = state.upstreams.billing_model(
+        &submit.model,
+        aiplane_core::server::upstreams::PoolKind::Chat,
+        &state.pool_access_for(&user.roles),
+    );
     if let Some(exceeded) = state
         .limit_exceeded(
             &user.id,
             &state.role_ids_for(&user.roles),
             None,
-            &submit.model,
-            state.upstreams.enforce_limits_for_model(
-                &submit.model,
-                aiplane_core::server::upstreams::PoolKind::Chat,
-            ),
+            &billed,
+            state
+                .upstreams
+                .enforce_limits_for_model(&billed, aiplane_core::server::upstreams::PoolKind::Chat),
         )
         .await
     {
@@ -526,16 +532,20 @@ async fn start_pending_turn(state: &Arc<RamaState>, pending: &chat::PendingTurn)
     // The budget is spent when the work runs, not when it was asked for. A
     // user who queued three messages and then ran out of quota gets the ones
     // that fit, and the rest wait rather than running for free.
+    let billed = state.upstreams.billing_model(
+        &pending.model,
+        aiplane_core::server::upstreams::PoolKind::Chat,
+        &state.pool_access_for(&user.roles),
+    );
     if state
         .limit_exceeded(
             &user.id,
             &state.role_ids_for(&user.roles),
             None,
-            &pending.model,
-            state.upstreams.enforce_limits_for_model(
-                &pending.model,
-                aiplane_core::server::upstreams::PoolKind::Chat,
-            ),
+            &billed,
+            state
+                .upstreams
+                .enforce_limits_for_model(&billed, aiplane_core::server::upstreams::PoolKind::Chat),
         )
         .await
         .is_some()

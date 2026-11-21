@@ -53,7 +53,9 @@ usage-no-activity = Нет активности за этот период.
 usage-limits-heading = Ваши лимиты
 usage-limit-used = использовано { $percent } %
 usage-limit-refreshes = обновится { $time }
-usage-unpriced-warning = Расходы не включают модели без цены: { $models }. Задайте цены в /admin/models, чтобы учитывать их.
+usage-unpriced-heading = Расходы не включают модели без цены
+usage-unpriced-body = Для этих моделей не задана цена, поэтому их использование не учитывается в расходах.
+usage-unpriced-open = Открыть цены этой модели
 
 usage-table-by-token = По API-токену
 usage-key-token = API-токен
