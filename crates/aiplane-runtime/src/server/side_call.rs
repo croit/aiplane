@@ -535,9 +535,13 @@ async fn send(
             state.config().gateway.default_priority,
         )
     });
+    // Routed by the name the call picked, not the id it bills as: an alias's
+    // target is a backend and a real model on it, and routing the id lets any
+    // pool serving that id take the call instead. The backend's own answer to
+    // the name is what the body carries, below.
     let acquired = aiplane_core::server::upstreams::route_or_wait(
         &state.upstreams,
-        &billing_model,
+        &target.model,
         PoolKind::Chat,
         &access,
         if priority.is_some() {
