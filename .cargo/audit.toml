@@ -42,12 +42,6 @@ ignore = [
     # extraction), both already at their latest releases. Nothing to upgrade to.
     "RUSTSEC-2026-0192",
 
-    # RUSTSEC-2026-0253 — `lru` 0.16.4, unsoundness (use-after-free if a
-    # user-supplied Drop panics during LruCache::pop). Build/dev-graph only —
-    # `cargo tree -i lru -e normal` prints nothing, so it is not in the shipped
-    # binary — and no dependent has released against a fixed `lru`.
-    "RUSTSEC-2026-0253",
-
     # RUSTSEC-2026-0391 / -0398 / -0403 — `zstd` 0.13.3 and its `zstd-safe`
     # 7.3.0 (abandoned-stream leak; uninitialized memory / out-of-bounds Vec
     # length on failed legacy-frame decompression).
