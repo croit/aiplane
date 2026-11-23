@@ -141,8 +141,11 @@ url = "2"
 # aws-lc-sys C/cmake build is a cost we were paying regardless — an earlier
 # comment here claimed otherwise, which stopped being true once rustls landed.
 # v10.3+ also fixes CVE-2026-25537 (string-typed `nbf`/`exp` claims silently
-# skipping validation).
-jsonwebtoken = { version = "11", default-features = false, features = ["use_pem", "aws_lc_rs"] }
+# skipping validation). v12 makes the HMAC key constructors fallible
+# (`from_secret` returns a `Result`) and refuses an empty key: a stored empty
+# `host_jwt` secret is an error with what to fix, instead of a verifier that
+# accepts a token signed with nothing.
+jsonwebtoken = { version = "12", default-features = false, features = ["use_pem", "aws_lc_rs"] }
 
 # HTTP framework + proxying. `http-full` covers server, client, codec, and
 # the SSE response primitives; rustls/tls deliberately omitted so the build

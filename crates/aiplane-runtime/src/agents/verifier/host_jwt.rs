@@ -291,17 +291,24 @@ async fn key_for(
     kid: Option<&str>,
 ) -> Result<DecodingKey, IdentityError> {
     match &cfg.key {
-        KeySource::Sealed(sealed) => state
-            .crypto
-            .open_from_string(sealed)
-            .map(|s| DecodingKey::from_secret(s.as_bytes()))
-            .ok_or_else(|| {
+        KeySource::Sealed(sealed) => {
+            let secret = state.crypto.open_from_string(sealed).ok_or_else(|| {
                 IdentityError::Storage(
                     "the host_jwt secret cannot be opened with this gateway's key — save the \
                      secret in the agent's spec again"
                         .into(),
                 )
-            }),
+            })?;
+            // An empty HMAC key is refused by jsonwebtoken rather than turned
+            // into a verifier that accepts a token signed with nothing.
+            DecodingKey::from_secret(secret.as_bytes()).map_err(|_| {
+                IdentityError::Storage(
+                    "the host_jwt secret is empty, and an empty key cannot verify a token — \
+                     save a secret in the agent's spec"
+                        .into(),
+                )
+            })
+        }
         KeySource::PublicKey(pem) => public_key(cfg.algorithm, pem).map_err(IdentityError::Storage),
         KeySource::Jwks(url) => jwks_key(state, url, kid).await,
     }

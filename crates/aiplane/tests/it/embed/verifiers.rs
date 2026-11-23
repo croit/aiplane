@@ -316,7 +316,7 @@ fn signed(claims: &Value, secret: &str) -> String {
     encode(
         &Header::default(),
         claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
+        &EncodingKey::from_secret(secret.as_bytes()).unwrap(),
     )
     .unwrap()
 }
