@@ -249,7 +249,10 @@ async fn wait_settled(state: &RamaState, session_id: &str) {
             .unwrap()
             .iter()
             .any(|t| t.turn.status == chat::TurnStatus::InProgress);
-        if !busy {
+        // The status leaves `InProgress` a moment before the worker drops its
+        // slot; a resume sent in that window is refused as busy, so wait for
+        // both like `turn_suspension::wait_for_status` does.
+        if !busy && state.chats.running_for_user("alice") == 0 {
             return;
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
