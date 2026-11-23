@@ -61,16 +61,25 @@ pub async fn insert_running_tool_call(
 /// correctness; only the UI + audit log are affected, and both are
 /// fine with a head + a "truncated" note.
 ///
-/// 16 KB head matches the UI render cap (`TOOL_CALL_RENDER_CAP` in
-/// `render.rs`); the symmetry means no further truncation is needed
-/// downstream.
+/// 16 KB keeps a row cheap to pull back and enough to read a result's shape.
+/// A JSON object keeps all its fields and only its largest string value is
+/// shortened, so the facts a reader needs survive; plain text keeps its head.
 pub(crate) const PERSISTED_TOOL_OUTPUT_CAP: usize = 16 * 1024;
 
 /// Cap `raw` to the persistence ceiling without splitting a UTF-8
 /// codepoint. Strings under the cap pass through unchanged.
+///
+/// A JSON object is capped by shortening its largest string value (see
+/// [`cap_json_object`]); anything else gets its head kept. The difference
+/// matters because object keys serialize in alphabetical order: `content`
+/// sorts before `url` and nearly every other field, so cutting the text keeps
+/// a page's body and throws away where it came from.
 pub(crate) fn cap_tool_output(raw: &str) -> std::borrow::Cow<'_, str> {
     if raw.len() <= PERSISTED_TOOL_OUTPUT_CAP {
         return std::borrow::Cow::Borrowed(raw);
+    }
+    if let Some(capped) = cap_json_object(raw) {
+        return std::borrow::Cow::Owned(capped);
     }
     let head_end = raw
         .char_indices()
@@ -80,14 +89,71 @@ pub(crate) fn cap_tool_output(raw: &str) -> std::borrow::Cow<'_, str> {
         .unwrap_or(PERSISTED_TOOL_OUTPUT_CAP);
     let mut out = String::with_capacity(head_end + 128);
     out.push_str(&raw[..head_end]);
-    out.push_str(&format!(
+    out.push_str(&truncation_note(raw.len(), head_end));
+    std::borrow::Cow::Owned(out)
+}
+
+/// What a shortened field says about itself, so neither a person nor a model
+/// reads a slice as the whole answer.
+fn truncation_note(original: usize, shown: usize) -> String {
+    format!(
         "\n\n…\n(truncated by gateway at persist time: original {} bytes, \
          displayed first {} chars; the model saw the full payload before this \
          row was written)\n",
-        raw.len(),
-        head_end,
-    ));
-    std::borrow::Cow::Owned(out)
+        original, shown,
+    )
+}
+
+/// Cap a JSON object by shortening its largest string values, keeping every
+/// other field.
+///
+/// A tool result is a record: `fetch_url` returns the body *plus* the URL it
+/// came from, the status, the content type and whether it was truncated. All
+/// of those are a few dozen bytes and all of them are lost when the serialized
+/// text is cut at 16 KB behind a multi-megabyte `content` — the expanded tool
+/// call in the chat then shows a page with no address. Shortening the value
+/// instead keeps the result valid JSON with its facts intact; the model saw
+/// the full payload when the call ran, and this row is the record of it.
+///
+/// `None` when the payload is not an object, when no string field is worth
+/// shortening, or when the object is over the cap for reasons a string cannot
+/// fix — the caller then keeps the head, as before.
+fn cap_json_object(raw: &str) -> Option<String> {
+    let mut value: serde_json::Value = serde_json::from_str(raw).ok()?;
+    let fields = value.as_object()?.len();
+    let mut shortened = false;
+    // One check more than there are fields: every pass shortens one field, and
+    // the last pass only has to confirm the result fits.
+    for _ in 0..=fields {
+        let serialized = serde_json::to_string(&value).ok()?;
+        if serialized.len() <= PERSISTED_TOOL_OUTPUT_CAP {
+            return shortened.then_some(serialized);
+        }
+        let over = serialized.len() - PERSISTED_TOOL_OUTPUT_CAP;
+        let (key, len) = value
+            .as_object()?
+            .iter()
+            .filter_map(|(key, value)| value.as_str().map(|text| (key.clone(), text.len())))
+            .max_by_key(|(_, len)| *len)?;
+        // Leave room for the note itself plus what serializing it adds (the
+        // note's newlines become two bytes each), or the next pass would trim
+        // the same field again and lose the size it reported.
+        let keep = len.checked_sub(over + truncation_note(len, len).len() + 32)?;
+        if keep == 0 {
+            return None;
+        }
+        let text = value.as_object()?.get(&key)?.as_str()?;
+        let mut end = keep;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let field = format!("{}{}", &text[..end], truncation_note(len, end));
+        value
+            .as_object_mut()?
+            .insert(key, serde_json::Value::String(field));
+        shortened = true;
+    }
+    None
 }
 
 /// Stamp a tool call's output + flip status. Idempotent on the same

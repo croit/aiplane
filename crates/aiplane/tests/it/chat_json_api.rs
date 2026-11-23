@@ -163,6 +163,89 @@ async fn aliased_chat_state(upstream_uri: &str, model: &str, alias: &str) -> Ram
     )
 }
 
+/// One chat pool with two backends that both serve `model`: the first declares
+/// `alias` with an explicit target on it, the second only serves the real id —
+/// the shape in which an alias's target backend is a real choice.
+async fn state_with_alias_on_one_backend(
+    declaring_uri: &str,
+    other_uri: &str,
+    model: &str,
+    alias: &str,
+) -> RamaState {
+    let backend =
+        |name: &str, base_url: &str, alias: HashMap<String, Option<String>>| -> BackendConfig {
+            BackendConfig {
+                provider: Default::default(),
+                priority: Default::default(),
+                alias,
+                supports_edit: false,
+                extra_headers: Default::default(),
+                enabled: true,
+                name: name.into(),
+                base_url: base_url.into(),
+                api_key_env: None,
+                api_key: None,
+                weight: 1,
+                max_inflight: 16,
+                health_path: "/models".into(),
+                models: Vec::new(),
+            }
+        };
+    let pool = db::open(std::path::Path::new(":memory:")).await.unwrap();
+    let mut pools = HashMap::new();
+    pools.insert(
+        "pool".to_string(),
+        UpstreamPoolConfig {
+            voices: Default::default(),
+            offer_voices: Vec::new(),
+            allowed_groups: Vec::new(),
+            fallback_offline: None,
+            level_rank: 0,
+            enforce_limits: true,
+            kind: PoolKind::Chat,
+            strategy: PickerStrategy::RoundRobin,
+            models: Vec::new(),
+            backend: vec![
+                backend(
+                    "declaring",
+                    declaring_uri,
+                    HashMap::from([(alias.to_string(), Some(model.to_string()))]),
+                ),
+                backend("other", other_uri, HashMap::new()),
+            ],
+        },
+    );
+    let registry = upstreams::UpstreamRegistry::new(&pools).unwrap();
+    common::seed_pool_models(&registry, "pool", 0, &[model]);
+    common::seed_pool_models(&registry, "pool", 1, &[model]);
+    let app = AppState::new(
+        Config::default(),
+        pool.clone(),
+        registry,
+        Arc::new(ToolRegistry::new()),
+        Arc::new(Resolver::empty()),
+    );
+    let sessions = SessionStore::new(pool, common::TEST_SECRET);
+    RamaState::new(
+        app,
+        sessions,
+        aiplane_core::server::usage::UsageHandle::disabled(),
+    )
+}
+
+/// How many completion calls a mock upstream has received.
+async fn completion_posts(server: &MockServer) -> usize {
+    server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|request| {
+            request.method.as_str() == "POST" && request.url.path() == "/chat/completions"
+        })
+        .count()
+}
+
 async fn setup(upstream_uri: &str) -> (Arc<RamaState>, String) {
     let state = state_with_chat(upstream_uri).await;
     let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
@@ -3339,6 +3422,57 @@ async fn a_chat_turn_on_an_alias_is_metered_under_the_resolved_model() {
     assert!(
         models.iter().all(|model| model == "Qwen/Qwen3-8B"),
         "a call on the `default` alias must be metered as the model behind it: {models:?}"
+    );
+}
+
+/// An alias's target is a backend and a real model on it (`docs/upstreams.md` →
+/// "Model aliases"): every round that names the alias is served by the backend
+/// declaring it. Resolving the alias to its real id before routing hands the
+/// round to whichever backend the picker reaches first, so a turn on an alias
+/// could be served by a backend the alias never named.
+#[tokio::test]
+async fn a_chat_round_on_an_alias_is_served_by_the_backend_that_declares_it() {
+    let declaring = MockServer::start().await;
+    let other = MockServer::start().await;
+    mount_streaming_upstream(&declaring, &["declared"], 0).await;
+    mount_streaming_upstream(&other, &["elsewhere"], 0).await;
+    let state = Arc::new(
+        state_with_alias_on_one_backend(
+            &declaring.uri(),
+            &other.uri(),
+            "claude-opus-4-8",
+            "explicit",
+        )
+        .await,
+    );
+    let cookie = common::seed_session(&state, "alice", "alice@example.com").await;
+    let app = router(state.clone());
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+
+    // The picker alternates between the two backends, so within two rounds a
+    // decision taken on the resolved id reaches the second one.
+    for _ in 0..2 {
+        let resp = app
+            .serve(json_req(
+                Method::POST,
+                format!("/api/v0/chat/sessions/{}/messages", session.id),
+                &cookie,
+                Some(r#"{"model":"explicit","message":"hi"}"#.into()),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        wait_for_idle(&state, "alice").await;
+    }
+
+    assert_eq!(
+        completion_posts(&other).await,
+        0,
+        "a backend that does not declare `explicit` must never be asked to serve it"
+    );
+    assert!(
+        completion_posts(&declaring).await >= 2,
+        "both rounds naming the alias must reach the backend declaring it"
     );
 }
 

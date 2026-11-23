@@ -167,6 +167,25 @@ pub struct Pinned {
     pub client: reqwest::Client,
 }
 
+/// One redirect a [`get_traced`] followed: the status that sent it on, and the
+/// address it pointed to.
+#[derive(Debug, Clone)]
+pub struct Hop {
+    pub status: u16,
+    pub url: Url,
+}
+
+/// [`get_traced`]'s answer: the last hop's response, the address that was
+/// asked for, and every redirect between the two.
+pub struct Fetched {
+    pub response: reqwest::Response,
+    /// What the caller asked for, before any redirect.
+    pub requested: Url,
+    /// The redirects followed, in order; the last one's `url` is where the
+    /// answer came from. Empty when the address answered directly.
+    pub hops: Vec<Hop>,
+}
+
 /// Whether `ip` may be connected to, and why not.
 pub fn check_ip(ip: IpAddr, allow_private: bool) -> Result<(), String> {
     let class = classify(ip);
@@ -355,7 +374,27 @@ pub async fn get_with(
     timeout: Duration,
     headers: &[(&str, &str)],
 ) -> Result<reqwest::Response, String> {
-    let mut url = Url::parse(raw).map_err(|e| format!("`{raw}` is not a URL ({e})"))?;
+    get_traced(raw, policy, timeout, headers)
+        .await
+        .map(|fetched| fetched.response)
+}
+
+/// [`get_with`], reporting how it got to the answer.
+///
+/// A redirect is not a detail the caller can reconstruct: the response only
+/// carries where it ended up. A caller that shows the address to a model or a
+/// person needs the one that was asked for and the status that moved it, or a
+/// correct answer under a different URL reads as an answer to a different
+/// question.
+pub async fn get_traced(
+    raw: &str,
+    policy: Policy,
+    timeout: Duration,
+    headers: &[(&str, &str)],
+) -> Result<Fetched, String> {
+    let requested = Url::parse(raw).map_err(|e| format!("`{raw}` is not a URL ({e})"))?;
+    let mut url = requested.clone();
+    let mut hops = Vec::new();
     for _ in 0..=MAX_REDIRECTS {
         let pinned = pin_url(url.clone(), policy, timeout).await?;
         let mut request = pinned.client.get(pinned.url);
@@ -371,11 +410,19 @@ pub async fn get_with(
             .get(reqwest::header::LOCATION)
             .and_then(|v| v.to_str().ok());
         let Some(location) = location.filter(|_| resp.status().is_redirection()) else {
-            return Ok(resp);
+            return Ok(Fetched {
+                response: resp,
+                requested,
+                hops,
+            });
         };
         url = url
             .join(location)
             .map_err(|e| format!("{url} redirects to `{location}`, which is not a URL ({e})"))?;
+        hops.push(Hop {
+            status: resp.status().as_u16(),
+            url: url.clone(),
+        });
     }
     Err(format!(
         "{raw} redirects more than {MAX_REDIRECTS} times; giving up"
@@ -632,6 +679,65 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), 200);
         assert_eq!(resp.url().path(), "/new");
+    }
+
+    /// The chain is the one thing a caller cannot recover from the response:
+    /// it names only where the request ended up.
+    #[tokio::test]
+    async fn a_followed_redirect_is_reported_hop_by_hop() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/moved"))
+            .respond_with(ResponseTemplate::new(301).insert_header("location", "/middle"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/middle"))
+            .respond_with(ResponseTemplate::new(308).insert_header("location", "/final"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/final"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("here"))
+            .mount(&server)
+            .await;
+        let fetched = get_traced(
+            &format!("{}/moved", server.uri()),
+            Policy::web(true),
+            T,
+            &[],
+        )
+        .await
+        .unwrap();
+        assert_eq!(fetched.response.status(), 200);
+        assert_eq!(fetched.requested.path(), "/moved");
+        let hops: Vec<(u16, &str)> = fetched
+            .hops
+            .iter()
+            .map(|hop| (hop.status, hop.url.path()))
+            .collect();
+        assert_eq!(hops, [(301, "/middle"), (308, "/final")]);
+        assert_eq!(fetched.response.url().path(), "/final");
+    }
+
+    #[tokio::test]
+    async fn an_answer_without_a_redirect_reports_no_hops() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/direct"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("here"))
+            .mount(&server)
+            .await;
+        let fetched = get_traced(
+            &format!("{}/direct", server.uri()),
+            Policy::web(true),
+            T,
+            &[],
+        )
+        .await
+        .unwrap();
+        assert!(fetched.hops.is_empty());
+        assert_eq!(fetched.requested, *fetched.response.url());
     }
 
     /// A proxy resolves the host itself, after the guard checked it, so a

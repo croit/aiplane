@@ -1885,9 +1885,13 @@ async fn run_one_turn(
         });
         let acquired = match await_unless_cancelled(
             &ctx.cancel,
+            // Routed by the name the caller picked, not the id it
+            // pre-resolved to: an alias's target is a backend and a real model
+            // on it, so routing the id lets any pool serving that id take the
+            // round — `route_access` picks the first one it iterates.
             aiplane_core::server::upstreams::route_or_wait(
                 &d.state.upstreams,
-                &real_model,
+                routing_model,
                 aiplane_core::server::upstreams::PoolKind::Chat,
                 &request_access,
                 if priority.is_some() {
@@ -1928,6 +1932,17 @@ async fn run_one_turn(
                 &acquired,
             )
             .map_err(upstream_err)?;
+        }
+        // What this round is actually served as: the id *this* backend
+        // resolves the requested name to, which is what it can accept and
+        // what the round is metered under. A name that reaches several
+        // backends — an alias group — may resolve differently on each, so the
+        // id resolved before routing is only the turn's pre-flight answer.
+        let real_model = acquired.resolved_model().to_string();
+        if request_body["model"].as_str() != Some(real_model.as_str())
+            && let Some(obj) = request_body.as_object_mut()
+        {
+            obj.insert("model".into(), serde_json::json!(real_model.clone()));
         }
         d.state
             .upstreams

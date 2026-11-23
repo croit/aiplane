@@ -73,6 +73,34 @@ struct FetchArgs {
     raw: bool,
 }
 
+/// Add what the reader needs when the answer came from a different address
+/// than the one asked for.
+///
+/// `fetch_url` follows redirects, so `url` is where the content actually came
+/// from. Without the address that was requested and the status that moved it,
+/// a model that asked for one page and got another reads a correct answer as
+/// an answer to a different question — and, worse, distrusts the URL it can
+/// see because it recognises neither.
+fn with_redirect(mut body: Value, requested_url: &str, redirect_status: Option<u16>) -> Value {
+    let Some(status) = redirect_status else {
+        return body;
+    };
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert("requested_url".into(), json!(requested_url));
+        obj.insert("redirect_status".into(), json!(status));
+    }
+    body
+}
+
+/// The same fact for a result that is prose rather than fields (an image's
+/// content-parts envelope carries no metadata object).
+fn redirect_sentence(requested_url: &str, redirect_status: Option<u16>) -> String {
+    match redirect_status {
+        Some(status) => format!(" Redirected from {requested_url} (HTTP {status})."),
+        None => String::new(),
+    }
+}
+
 impl Tool for FetchUrl {
     fn read_only(&self) -> bool {
         true
@@ -155,14 +183,20 @@ impl Tool for FetchUrl {
                 .unwrap_or(HARD_MAX_BYTES_DEFAULT)
                 .min(HARD_MAX_BYTES);
 
-            let resp = outbound_guard::get(
+            let fetched = outbound_guard::get_traced(
                 url.as_str(),
                 Policy::web(self.allow_private_networks),
                 FETCH_TIMEOUT,
-                concat!("aiplane/", env!("CARGO_PKG_VERSION"), " fetch_url"),
+                &[(
+                    reqwest::header::USER_AGENT.as_str(),
+                    concat!("aiplane/", env!("CARGO_PKG_VERSION"), " fetch_url"),
+                )],
             )
             .await
             .map_err(ToolError::Failed)?;
+            let requested_url = fetched.requested.to_string();
+            let redirect_status = fetched.hops.first().map(|hop| hop.status);
+            let resp = fetched.response;
             let status = resp.status().as_u16();
             let content_type = resp
                 .headers()
@@ -215,7 +249,7 @@ impl Tool for FetchUrl {
                          `capture_webpage` to load it in a real browser."
                     );
                 }
-                return Ok(body);
+                return Ok(with_redirect(body, &requested_url, redirect_status));
             }
 
             // No filename to disambiguate octet-stream — the URL
@@ -232,23 +266,29 @@ impl Tool for FetchUrl {
                     bytes_returned,
                     truncated,
                     original_len,
-                } => Ok(json!({
-                    "url": final_url,
-                    "status": status,
-                    "content_type": content_type,
-                    "kind": "text",
-                    "content": content,
-                    "bytes_returned": bytes_returned,
-                    "bytes_original": original_len,
-                    "truncated": truncated,
-                })),
+                } => Ok(with_redirect(
+                    json!({
+
+                        "url": final_url,
+                        "status": status,
+                        "content_type": content_type,
+                        "kind": "text",
+                        "content": content,
+                        "bytes_returned": bytes_returned,
+                        "bytes_original": original_len,
+                        "truncated": truncated,
+                    }),
+                    &requested_url,
+                    redirect_status,
+                )),
                 BinaryDisposition::Image {
                     data_uri,
                     original_len,
                 } => {
                     let summary = format!(
                         "Fetched image from {final_url} (HTTP {status}, {content_type}, \
-                         {original_len} bytes)."
+                         {original_len} bytes).{}",
+                        redirect_sentence(&requested_url, redirect_status)
                     );
                     Ok(tool_content_parts(vec![
                         json!({"type": "text", "text": summary}),
@@ -279,14 +319,19 @@ impl Tool for FetchUrl {
                                 .to_string(),
                         )
                     };
-                    Ok(json!({
-                        "url": final_url,
-                        "status": status,
-                        "content_type": content_type,
-                        "size": original_len,
-                        "kind": kind,
-                        "note": note,
-                    }))
+                    Ok(with_redirect(
+                        json!({
+
+                            "url": final_url,
+                            "status": status,
+                            "content_type": content_type,
+                            "size": original_len,
+                            "kind": kind,
+                            "note": note,
+                        }),
+                        &requested_url,
+                        redirect_status,
+                    ))
                 }
             }
         })
@@ -552,6 +597,80 @@ mod tests {
             "note should explain why: {}",
             out["note"]
         );
+    }
+
+    #[tokio::test]
+    async fn a_redirected_fetch_names_the_requested_url_and_the_status() {
+        // The model asks for one address and the answer comes from another.
+        // Without that being said, a correct result reads as an answer to a
+        // different question.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/old"))
+            .respond_with(ResponseTemplate::new(301).insert_header("location", "/new"))
+            .mount(&server)
+            .await;
+        let final_url = serve(
+            &server,
+            "/new",
+            "<html><body>relocated</body></html>",
+            "text/html",
+        )
+        .await;
+        let requested = format!("{}/old", server.uri());
+        let out = local()
+            .run(ctx().await, json!({"url": requested}))
+            .await
+            .unwrap();
+        assert_eq!(out["url"], final_url);
+        assert_eq!(out["requested_url"], requested);
+        assert_eq!(out["redirect_status"], 301);
+        assert_eq!(out["content"], "relocated");
+    }
+
+    #[tokio::test]
+    async fn a_direct_fetch_carries_no_redirect_fields() {
+        let server = MockServer::start().await;
+        let url = serve(&server, "/here", "plain", "text/plain").await;
+        let out = local().run(ctx().await, json!({"url": url})).await.unwrap();
+        assert_eq!(out["url"], url);
+        assert!(out.get("requested_url").is_none(), "{out:?}");
+        assert!(out.get("redirect_status").is_none(), "{out:?}");
+    }
+
+    #[tokio::test]
+    async fn a_redirected_image_names_the_redirect_in_its_summary() {
+        // An image comes back as content parts, with no metadata object to
+        // hang `requested_url` on — so the sentence carries it.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/logo-old.png"))
+            .respond_with(ResponseTemplate::new(302).insert_header("location", "/logo.png"))
+            .mount(&server)
+            .await;
+        let png_bytes: Vec<u8> = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, b'I', b'H',
+            b'D', b'R', 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1F, 0x15, 0xC4, 0x89,
+        ];
+        Mock::given(method("GET"))
+            .and(path("/logo.png"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_bytes(png_bytes)
+                    .insert_header("content-type", "image/png"),
+            )
+            .mount(&server)
+            .await;
+        let requested = format!("{}/logo-old.png", server.uri());
+        let out = local()
+            .run(ctx().await, json!({"url": requested}))
+            .await
+            .unwrap();
+        let parts = aiplane_runtime::server::tools::extract_content_parts(&out).unwrap();
+        let summary = parts[0]["text"].as_str().unwrap();
+        assert!(summary.contains(&requested), "{summary}");
+        assert!(summary.contains("HTTP 302"), "{summary}");
     }
 
     #[tokio::test]
