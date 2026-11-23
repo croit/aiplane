@@ -388,6 +388,72 @@ pub(crate) mod tests {
         assert!(out.contains(&huge.len().to_string()));
     }
 
+    /// A tool result's small fields are the record of what happened — where a
+    /// page came from, what status it answered with. Serialized object keys
+    /// are alphabetical, so `content` precedes nearly all of them; shortening
+    /// the value is what keeps them.
+    #[test]
+    fn cap_tool_output_keeps_a_json_objects_fields_and_shortens_its_content() {
+        let content = "x".repeat(PERSISTED_TOOL_OUTPUT_CAP * 3);
+        let payload = serde_json::json!({
+            "url": "https://example.com/new",
+            "requested_url": "https://example.com/old",
+            "redirect_status": 301,
+            "kind": "text",
+            "truncated": false,
+            "content": content,
+        })
+        .to_string();
+        let out = cap_tool_output(&payload);
+        assert!(out.len() <= PERSISTED_TOOL_OUTPUT_CAP, "{}", out.len());
+        let parsed: serde_json::Value = serde_json::from_str(&out).expect("still valid JSON");
+        assert_eq!(parsed["url"], "https://example.com/new");
+        assert_eq!(parsed["redirect_status"], 301);
+        assert_eq!(parsed["kind"], "text");
+        let shortened = parsed["content"].as_str().unwrap();
+        assert!(shortened.len() < content.len());
+        assert!(shortened.contains("truncated by gateway at persist time"));
+        assert!(shortened.contains(&content.len().to_string()));
+    }
+
+    #[test]
+    fn cap_tool_output_shortens_the_largest_json_string_first() {
+        let payload = serde_json::json!({
+            "small": "a".repeat(1_000),
+            "content": "b".repeat(PERSISTED_TOOL_OUTPUT_CAP * 2),
+        })
+        .to_string();
+        let out = cap_tool_output(&payload);
+        let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(parsed["small"].as_str().unwrap().len(), 1_000);
+        assert!(parsed["content"].as_str().unwrap().contains("truncated"));
+    }
+
+    #[test]
+    fn cap_tool_output_doesnt_split_utf8_in_a_json_string() {
+        let content = format!("{}\u{1F600}", "x".repeat(PERSISTED_TOOL_OUTPUT_CAP * 2));
+        let payload = serde_json::json!({ "content": content }).to_string();
+        let out = cap_tool_output(&payload);
+        assert!(std::str::from_utf8(out.as_bytes()).is_ok());
+        let parsed: serde_json::Value = serde_json::from_str(&out).expect("still valid JSON");
+        assert!(parsed["content"].as_str().unwrap().contains("truncated"));
+    }
+
+    /// An object the cap cannot bring down by shortening a string (a huge
+    /// array, say) keeps the old behaviour rather than returning something
+    /// over the cap.
+    #[test]
+    fn cap_tool_output_falls_back_to_the_head_when_a_json_string_cannot_fix_it() {
+        let payload = serde_json::json!({
+            "url": "https://example.com",
+            "rows": vec![1_u8; PERSISTED_TOOL_OUTPUT_CAP * 2],
+        })
+        .to_string();
+        let out = cap_tool_output(&payload);
+        assert!(out.contains("truncated by gateway at persist time"));
+        assert!(out.len() < payload.len());
+    }
+
     #[test]
     fn cap_tool_output_doesnt_split_utf8() {
         // Emoji right at the cap so a naive byte slice would corrupt.
@@ -1493,6 +1559,55 @@ pub(crate) mod tests {
         assert_eq!(calls[0].output_json.as_deref(), Some(r#"{"ok":true}"#));
         assert_eq!(calls[1].id, "call_2");
         assert_eq!(calls[1].status, ToolCallStatus::Running);
+    }
+
+    /// A large page's row still says where it came from. The persisted output
+    /// is capped, and a head cut leaves a multi-megabyte `content` first —
+    /// which is exactly where `url`, the requested address and the redirect
+    /// status sit behind it.
+    #[tokio::test]
+    async fn a_persisted_tool_output_keeps_its_url_when_the_body_is_huge() {
+        let pool = pool().await;
+        let s = create_session(&pool, "u1").await.unwrap();
+        let t = create_assistant_turn_in_progress(&pool, &s.id, "asst-x", "m")
+            .await
+            .unwrap();
+        insert_running_tool_call(
+            &pool,
+            &t.id,
+            "call_1",
+            "fetch_url",
+            r#"{"url":"https://example.com/old"}"#,
+        )
+        .await
+        .unwrap();
+        let output = serde_json::json!({
+            "url": "https://example.com/new",
+            "requested_url": "https://example.com/old",
+            "redirect_status": 301,
+            "status": 200,
+            "content_type": "text/html",
+            "kind": "text",
+            "content": "x".repeat(1_000_000),
+        })
+        .to_string();
+        complete_tool_call(&pool, &t.id, "call_1", &output, ToolCallStatus::Completed)
+            .await
+            .unwrap();
+
+        let turns = list_turns(&pool, &s.id).await.unwrap();
+        let stored = turns[0].tool_calls[0].output_json.clone().unwrap();
+        assert!(
+            stored.len() <= PERSISTED_TOOL_OUTPUT_CAP,
+            "{}",
+            stored.len()
+        );
+        let parsed: serde_json::Value =
+            serde_json::from_str(&stored).expect("the stored row stays a JSON object");
+        assert_eq!(parsed["url"], "https://example.com/new");
+        assert_eq!(parsed["requested_url"], "https://example.com/old");
+        assert_eq!(parsed["redirect_status"], 301);
+        assert_eq!(parsed["content_type"], "text/html");
     }
 
     #[tokio::test]
