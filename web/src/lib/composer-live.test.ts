@@ -51,6 +51,25 @@ test('a conversation waiting for a decision keeps the draft but sends nothing', 
 	assert.match(conversation, /\{#if paused\}<p[^>]*role="status">\{t\('chat-composer-paused'\)\}/);
 });
 
+// A decision the turn waits for is a question to the person in front of the
+// page, so it is answered where they are — not above the very turn that asked
+// it, where it scrolled out of sight while the answer below said nothing.
+test('a paused turn is answered from the composer slot, not from the transcript', () => {
+	const transcriptEnd = conversation.indexOf('</main>');
+	const decision = conversation.indexOf('data-chat-suspension');
+	const composer = conversation.indexOf('data-chat-composer');
+	assert.ok(decision > 0, 'the decision card is rendered');
+	assert.ok(decision > transcriptEnd, 'it is not part of the transcript');
+	assert.ok(decision < composer, 'it stands in the composer slot');
+	assert.ok(
+		conversation.includes('data-turn-paused'),
+		'the transcript keeps one line saying what the turn waits for'
+	);
+	// Giving up is not a decision: stopping the turn must not require
+	// pretending to have approved it.
+	assert.match(conversation, /\{t\('chat-suspension-stop'\)\}/);
+});
+
 test('Enter means one thing again: send', () => {
 	const onKeydown = /function onKeydown[\s\S]*?\n\t\}/.exec(conversation)?.[0] ?? '';
 	assert.ok(onKeydown.includes('void send()'), 'Enter sends');

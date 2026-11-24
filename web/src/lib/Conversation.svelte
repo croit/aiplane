@@ -177,6 +177,14 @@
 	const prompt = $derived(controller?.state.prompt ?? null);
 	// A turn waiting for a decision holds the conversation until it is answered.
 	const paused = $derived(pausedTurn(turns));
+	/**
+	 * The paused turn whose decision the composer slot answers.
+	 *
+	 * Separate from `paused`: that one is the send guard, this one carries what
+	 * the card needs. A turn marked suspended without a suspension row is not
+	 * answerable, and then the composer stays where it is.
+	 */
+	const suspended = $derived(turns.find((entry) => entry.turn.status === 'suspended' && entry.suspension) ?? null);
 	const showsWelcome = $derived(turns.length === 0 && welcome.trim().length > 0);
 	/**
 	 * Whether the page holds nothing but the welcome card.
@@ -1115,23 +1123,14 @@
 						{/if}
 
 						{#if entry.turn.status === 'suspended' && entry.suspension}
-							{@const waiting = entry.suspension}
-			{#if waiting.kind === 'browser_handover' && canWrite}
-				<BrowserHandoverPanel
-					sessionId={id}
-					turnId={entry.turn.id}
-					{waiting}
-					oncomplete={() => { followEnd(); controller?.attach(); }}
-				/>
-			{:else}
-				<SuspensionCard
-					waiting={waitingFrom({ ...waiting, options: canWrite ? waiting.options : [] }, entry.tool_calls)}
-					lead={t(waitingLead(waiting.kind, 'chat', waiting.tool), { tool: waiting.tool ?? '' })}
-					busy={answering === entry.turn.id}
-					error={answerErrors[entry.turn.id] ?? null}
-					onanswer={(answer) => answerSuspension(entry.turn.id, waiting, answer)}
-				/>
-			{/if}
+							<!-- The decision itself lives in the composer slot, pinned at the
+							     bottom. Here it is one line, so a reader who cannot answer
+							     (a shared conversation) still sees what the turn waits for
+							     and why the answer stops where it does. -->
+							<div class="flex items-center gap-2 text-sm text-warning" data-turn-paused>
+								<span class="loading loading-spinner loading-sm"></span>
+								<span>{t(waitingLead(entry.suspension.kind, 'chat', entry.suspension.tool), { tool: entry.suspension.tool ?? '' })}</span>
+							</div>
 						{/if}
 
 						{#if shownAttachments.length > 0}<MessageAttachments attachments={shownAttachments} removable={canWrite && !streaming} onremove={(filename) => removeAttachment(entry.turn.id, filename)} />{/if}
@@ -1248,6 +1247,48 @@
 					</button>
 					<button class="btn btn-ghost btn-sm join-item" onclick={() => answerPrompt(null)}>
 						{t('chat-prompt-skip')}
+					</button>
+				</div>
+			{/if}
+		</div>
+	</div>
+{:else if suspended}
+	{@const waiting = suspended.suspension!}
+	{@const pausedId = suspended.turn.id}
+	<!-- A paused turn is a question to the person in front of the page, so it
+	     takes the composer's place — the same slot the assistant's own prompt
+	     already uses.
+
+	     In the transcript it sat above the very turn that asked it, so on any
+	     conversation longer than a screen the card scrolled out of sight while
+	     the answer below said nothing at all: the turn was in fact blocked on
+	     a decision the user could no longer see. The composer slot is where the
+	     eye already is, it is pinned, and it is honest: while the turn waits on
+	     a decision, typing an ordinary message is not the thing to do. The
+	     transcript keeps one status line, so a reader who may not answer still
+	     knows what blocks the turn.
+
+	     Stopping is not a decision, so it keeps its own way out: giving up on
+	     the turn must stay reachable without pretending to have approved it. -->
+	<div data-chat-suspension class="card mt-3 w-full shrink-0 border border-warning bg-base-100/85 backdrop-blur-sm">
+		<div class="flex flex-col gap-2 p-3">
+			{#if waiting.kind === 'browser_handover'}
+				<!-- The panel brings its own viewport; the slot bounds it so a
+				     handover never squeezes the transcript to a sliver. -->
+				<div class="max-h-[55vh] overflow-y-auto">
+					<BrowserHandoverPanel sessionId={id} turnId={pausedId} {waiting} oncomplete={() => { followEnd(); controller?.attach(); }} />
+				</div>
+			{:else}
+				<SuspensionCard
+					waiting={waitingFrom(waiting, suspended.tool_calls)}
+					lead={t(waitingLead(waiting.kind, 'chat', waiting.tool), { tool: waiting.tool ?? '' })}
+					busy={answering === pausedId}
+					error={answerErrors[pausedId] ?? null}
+					onanswer={(answer) => answerSuspension(pausedId, waiting, answer)}
+				/>
+				<div class="flex justify-end">
+					<button class="btn btn-ghost btn-sm" onclick={stop} title={t('chat-suspension-stop-title')}>
+						{t('chat-suspension-stop')}
 					</button>
 				</div>
 			{/if}

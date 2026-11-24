@@ -455,7 +455,7 @@ Invariants worth knowing before you touch either side:
 - **The DB is the replayer.** There is no `Last-Event-ID` replay. A client that reconnects simply re-attaches, and the first `snapshot` — rebuilt from SQLite — subsumes anything missed. The live turn's deltas continue from what that snapshot carried (`JsonTurnFeed::after`), so a client attaching mid-turn — after answering a pause, or on a reconnect — appends only what is new. The worker runs to completion independently of any HTTP listener and writes its progress to the DB as it goes, so closing a tab mid-stream loses nothing.
 - **Deltas append, unless `full: true`.** `full` marks a cursor reset: the row was rewritten and `text_delta` carries the *whole* text, so the client must replace its buffer rather than append. A client cannot detect a rewrite on its own, which is why the server says so. There are no delete events by design.
 - **Flushes are coalesced** to ≥120 ms per subscriber with a trailing flush, so the final state always lands. Each flush reads one turn, not the conversation.
-- **A suspended turn is answered over JSON, not the stream.** `POST /api/v0/chat/sessions/{id}/turns/{turn_id}/resume` takes `{"decision": "allow_once" | "allow_conversation" | "deny" | "value", "value"?: …, "request_id"?: …}`; owner-only, `202` once the turn's worker runs again, after which the client re-attaches. `409 not_suspended` when the turn is not waiting or `request_id` names an older pause, `400 decision_not_offered` for a decision its `options` lack, `409 turn_in_progress` when no slot is free. A message sent into a paused conversation is refused with `409 decision_pending`, and `…/cancel` on it gives the decision up; the chat page keeps the draft in its composer but will not send it meanwhile, and says why (`pausedTurn`, `chat-composer-paused`). The chat page draws a paused turn as the [suspension card](#suspension-card), led by `chat-waiting-*` and showing the waiting call's arguments from the transcript; only the owner gets its buttons. A person's paused run (a scheduled action or a webhook) is answered from the [inbox](#inbox), which calls this same resume.
+- **A suspended turn is answered over JSON, not the stream.** `POST /api/v0/chat/sessions/{id}/turns/{turn_id}/resume` takes `{"decision": "allow_once" | "allow_conversation" | "deny" | "value", "value"?: …, "request_id"?: …}`; owner-only, `202` once the turn's worker runs again, after which the client re-attaches. `409 not_suspended` when the turn is not waiting or `request_id` names an older pause, `400 decision_not_offered` for a decision its `options` lack, `409 turn_in_progress` when no slot is free. A message sent into a paused conversation is refused with `409 decision_pending`, and `…/cancel` on it gives the decision up; the chat page replaces its composer with the [suspension card](#suspension-card) meanwhile (led by `chat-waiting-*`, showing the waiting call's arguments from the transcript, buttons for the owner only), so the answer to a decision is given where the user is; the transcript keeps one `data-turn-paused` status line, and a suspended turn without a suspension row keeps the composer with the `chat-composer-paused` reason. A person's paused run (a scheduled action or a webhook) is answered from the [inbox](#inbox), which calls this same resume.
 - **The stream ends at `turn_finalized` / `suspended` / `idle`.** The server closes there, so `chat.svelte.ts` closes the `EventSource` too, and fires `onTurnFinalized` on `turn_finalized` and `suspended` alike (the turn stopped running) — letting it auto-reconnect would loop snapshot/idle forever on a quiet session. `applyEvent` folds `suspended` into the turn (`status: suspended`, `suspension`), as a snapshot's row carries it. After a submit (or any suspected change) `attach()` reopens, and the fresh snapshot is the replay.
 - **An interrupted worker leaves a terminal turn.** The shared worker harness catches driver and tool panics, records the assistant turn and any still-running tool calls as `errored`, and broadcasts `Finalized`; its caller then releases the worker slot. On attach, if the owner has no live worker, the events handler also errors any already-present `in_progress` assistant turns before sending the snapshot. It targets only turn IDs read before rechecking the worker registry, so a newly starting turn cannot be mistaken for an orphan. Viewers of a shared conversation never perform this recovery because they cannot see the owner's worker in their own registry lookup.
 - **Organization schedule history uses private principal chat.** Scoped lists
@@ -545,6 +545,12 @@ outbox: a waiting message is a **user turn with no answer after it**, which is
 both what the transcript renders and what the scheduler reads. It therefore
 survives a closed tab, shows up on another device, and cannot be sent twice by
 two browsers.
+
+A turn that waits for a decision is the one case where the composer gives up its
+place: the [suspension card](#suspension-card) stands there instead, with the
+turn's own stop button beside it. Sending is refused server-side meanwhile
+(`409 decision_pending`), so a composer there would only be a field that
+swallows what is typed into it.
 
 Why not a new `chat_turns.status`: that column is read in 66 places (export,
 the FTS triggers, compaction, webhooks, history replay, the startup sweep), and
@@ -1190,6 +1196,16 @@ agent builder's test chat and a person's own chat. Its pure half is
   (`waitingLead`: the chat's `chat-waiting-*`, the test chat's
   `agents-test-waiting-*`), a `note`, a heading snippet (the inbox's), the
   answer callback, and the error to show.
+- **Where the chat page puts it.** In the composer slot, standing in for the
+  composer (`data-chat-suspension`), exactly like the assistant's own
+  `tool_prompt` card: the decision is a question to the person in front of the
+  page, and up in the transcript it scrolled away from the turn it blocks. A
+  browser hand-over's panel does not fit a pinned slot, so it is bounded there
+  (`max-h-[55vh]`, its own scroll). The transcript keeps one `data-turn-paused`
+  line naming what the turn waits for, so a shared conversation's reader — who
+  gets the card without buttons — still sees why the answer stops. Stopping the
+  turn stays its own button beside the card: giving up is not a decision, and
+  must not look like one. The test chat and the inbox keep it inline.
 - **A content confirmation** is an approval whose waiting call is
   `data_classification_confirm`, not a tool: the data classification paused
   the turn before sending content of a `confirm` class
