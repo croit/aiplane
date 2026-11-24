@@ -85,7 +85,7 @@ rust-s3 = { version = "0.38", default-features = false, features = ["tokio-rustl
 # (deflate-only — the LITE archives use standard deflate; avoids the C-backed
 # bzip2/lzma/zstd codecs in zip's default features).
 ip2location = "0.6"
-notify = "8"
+notify = "9"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 symphonia = { version = "0.6", default-features = false, features = ["flac", "isomp4", "mp3", "ogg", "vorbis", "wav"] }
 
