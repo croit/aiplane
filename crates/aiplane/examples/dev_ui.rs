@@ -2245,6 +2245,9 @@ async fn seed_demo_data(state: &RamaState) -> anyhow::Result<()> {
     )
     .await?;
     chatdb::append_content(&state.db, &a, ANSWER_MD).await?;
+    // What the upstream reported for this turn's prompt — the number the
+    // composer's context status line shows.
+    chatdb::set_context_tokens(&state.db, &a, 12_480).await?;
     chatdb::finalize_turn(&state.db, &a, TurnStatus::Completed, None).await?;
     chat_compactions::upsert(
         &state.db,

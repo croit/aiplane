@@ -26,6 +26,13 @@ chat-waiting-answer = Waits for a person's answer.
 chat-composer-paused = This turn waits for your decision; the next message is sent afterwards.
 chat-suspension-stop = Stop this turn
 chat-suspension-stop-title = Give up on this turn without answering. It is recorded as stopped.
+# The context status line under the composer: how much of the model's
+# window the last answer's prompt used, and where older messages get folded.
+chat-context-label-percent = Context: { $percent }%
+chat-context-label-tokens = Context: { $tokens } tokens
+chat-context-detail = { $used } of { $window } tokens, measured on the last answer
+chat-context-folds-at = from { $tokens } tokens the oldest messages are summarised
+
 chat-prompt-heading = The assistant asks
 chat-prompt-placeholder = Type an answer…
 chat-prompt-answer = Answer

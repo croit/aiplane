@@ -757,19 +757,20 @@ pub struct CompactionConfig {
     /// Fallback context window in tokens for models without a per-model
     /// `context_window` set in `/admin/models`. Default 32768.
     pub default_context_window: i64,
-    /// Fraction of the context window (0.0–1.0) at which compaction fires.
-    /// Default 0.7 — compact once the replayed prompt reaches 70% of the
-    /// window, leaving headroom for the model's own answer.
-    pub trigger_ratio: f64,
-    /// How many of the most recent turns to always keep verbatim (never fold
-    /// into the summary). Default 6 — enough that the immediate back-and-forth
-    /// the user is looking at is never lossily summarised.
-    pub keep_recent_turns: usize,
-    /// Anti-thrash floor: re-compaction runs only when at least this many turns
-    /// have aged past the previous cutoff. Default 4 — avoids re-summarising the
-    /// whole history for a one-turn gain.
-    pub min_turns_to_compact: usize,
-    /// Output-token cap for the summariser call. Default 1024.
+    /// Room kept free below the window before compaction fires, as a share of
+    /// it (0.0–1.0, default 0.15). The answer and the summary both need room
+    /// inside the window, so the ceiling is `window - max(share, 16000)`
+    /// tokens — never the whole window.
+    pub buffer_ratio: f64,
+    /// Approximate size of the most recent conversation kept verbatim beside
+    /// the summary. Default 15000 — enough that the back-and-forth the reader
+    /// is looking at is never lossily summarised, while the summary still has
+    /// room to carry everything older.
+    pub keep_tokens: i64,
+    /// Output-token cap for the summariser call. Default 4096 — the summary is
+    /// structured (objective, rules, decisions, work state, every user
+    /// message, context, next steps), so a one-paragraph budget would drop
+    /// exactly what it exists to keep.
     pub summary_max_tokens: i64,
     /// The operator's own summariser prompt. Empty means the built-in
     /// prompt; the gateway never parses the summary, so any wording works.
@@ -781,10 +782,9 @@ impl Default for CompactionConfig {
         Self {
             enabled: true,
             default_context_window: 32_768,
-            trigger_ratio: 0.7,
-            keep_recent_turns: 6,
-            min_turns_to_compact: 4,
-            summary_max_tokens: 1024,
+            buffer_ratio: 0.15,
+            keep_tokens: 15_000,
+            summary_max_tokens: 4096,
             summary_prompt: String::new(),
         }
     }

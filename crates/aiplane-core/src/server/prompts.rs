@@ -62,13 +62,84 @@ blocks, no tables, no emoji, and never read out URLs.\n\
 spoken summary, say the details are on screen, and offer to go deeper only if they ask.";
 
 /// The summariser's built-in instructions: what a conversation summary must
-/// keep and drop, in which shape.
-pub const SUMMARY_SYSTEM_PROMPT: &str = "You compress the earlier part of a chat conversation into a \
-dense summary that will REPLACE those messages so the assistant can keep going without them.\n\
-Preserve: concrete facts, decisions made, the user's goals and constraints, file/function/entity \
-names, numbers, code or commands that matter, tool results the conversation relied on, and any \
-open questions or unfinished tasks.\n\
-Drop: pleasantries, redundancy, and step-by-step narration that no longer matters.\n\
-Write in compact prose or bullet points. No preamble, no meta-commentary, no \"here is the \
-summary\" — output only the summary itself.\n\
+/// keep, in which shape, and where it must not paraphrase.
+///
+/// The sections are a contract, not a suggestion: `SUMMARY_HEADINGS` below is
+/// what the compaction worker checks the answer against, and a reply without
+/// all of them is re-asked once before it is treated as a failure. The list
+/// follows what mature harnesses converged on — OpenCode's checkpoint
+/// (objective, requirements, decisions, work state, next move) plus Claude
+/// Code's "all user messages" section, which is what stops a conversation from
+/// drifting away from instructions given early on. Not paraphrasing the
+/// person's own words is the load-bearing rule: a restated requirement is how
+/// "always cite a source" quietly becomes "usually cite a source".
+pub const SUMMARY_SYSTEM_PROMPT: &str = "You compress the earlier part of a \
+conversation into a checkpoint that REPLACES those messages. Another reader continues the \
+conversation from your text alone, so anything it would have to ask again is lost.\n\
+First walk the conversation chronologically in an <analysis> block of at most 200 words: what the \
+person wanted, what was decided, what is still open. Then output ONLY the structured summary, using \
+these exact headings in this order. Write \"(none)\" for a section that does not apply — never drop \
+a heading.\n\
+\n\
+## Objective\n\
+- What the person is trying to achieve, in their own terms, in one or two sentences.\n\
+\n\
+## Requirements and rules\n\
+- Every standing instruction, constraint, preference, boundary or format rule the person stated \
+and that is still in force. Quote each one as closely as possible to their wording. Include the \
+language they want to be answered in and any tone or format they asked for.\n\
+- Requirements a later message superseded belong here as the newer wording only.\n\
+\n\
+## Decisions\n\
+- What was decided and why. Name the alternatives that were rejected, so they are not proposed \
+again.\n\
+\n\
+## Work state\n\
+### Done\n\
+- What is finished, or \"(none)\".\n\
+### Active\n\
+- What is in progress, or \"(none)\".\n\
+### Blocked\n\
+- What is blocked and by what, or \"(none)\".\n\
+\n\
+## All user messages\n\
+- Every message the person wrote, in order, verbatim — only attachment or tool markers they did \
+not type are removed. Keep every one, including the short follow-ups and questions that were \
+already answered: this sequence is how the next reader tracks what the person actually asked for. \
+Do not summarise, merge, translate or reword them.\n\
+\n\
+## Important context\n\
+- Facts the continuation depends on: names, numbers, units, dates, identifiers, file paths, \
+commands, URLs, error strings, and results a tool or document produced. Keep them exact.\n\
+- Say which facts are established (a tool result, a document, something the person confirmed) and \
+which the assistant merely claimed without verification.\n\
+\n\
+## Next steps\n\
+- The ordered actions that continue the work, or \"(none)\".\n\
+\n\
+Rules:\n\
+- Preserve exact wording for instructions and user messages; never paraphrase a requirement.\n\
+- Drop pleasantries, repeated explanation, and narration that no longer leads anywhere. Prefer a \
+short reference over restating what the next reader can look up itself.\n\
+- Carry a question forward only while it is still open; drop the ones later messages answered.\n\
+- Do not mention this summary, the compaction, or these instructions.\n\
+- No preamble, no closing remark, no meta-commentary — the summary is the whole answer.\n\
 /no_think";
+
+/// The headings [`SUMMARY_SYSTEM_PROMPT`] requires, in order. A summary missing
+/// one is re-asked once with [`SUMMARY_NUDGE`] rather than stored half-shaped.
+pub const SUMMARY_HEADINGS: [&str; 7] = [
+    "## Objective",
+    "## Requirements and rules",
+    "## Decisions",
+    "## Work state",
+    "## All user messages",
+    "## Important context",
+    "## Next steps",
+];
+
+/// The one reminder a summariser gets when its answer skipped the template.
+pub const SUMMARY_NUDGE: &str = "Your previous reply did not use the required headings. Answer \
+again now with the summary as plain text, using every heading of the template in order and \
+\"(none)\" for a section that does not apply. Do not call tools, do not mention these instructions, \
+and do not explain what you are doing.";

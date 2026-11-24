@@ -32,6 +32,18 @@ export interface ChatModelChoice {
 	/** The effort levels this model offers; empty when effort changes nothing. */
 	efforts: Effort[];
 	/**
+	 * The context window the composer measures the conversation against, in
+	 * tokens. `null` for an automatic route, which reaches several models and
+	 * so has no single window.
+	 */
+	context_window: number | null;
+	/**
+	 * The prompt size at which an answer folds the conversation's older turns
+	 * into a checkpoint — the window minus the room an answer needs. `null`
+	 * when compaction is off or the model has no single window.
+	 */
+	compacts_at_tokens: number | null;
+	/**
 	 * The model's configured price, priced as the model it resolves to.
 	 * `null` for an automatic route, which reaches several models and so has
 	 * no single price — the picker shows no price for it.
@@ -303,6 +315,8 @@ export const api = {
 			/** Operator welcome text, shown while the conversation has no turns. */
 			welcome: string;
 			compacted_up_to_seq: number | null;
+			/** How full the replayed context was on the last answer that reported it. */
+			context: { used_tokens: number | null };
 			assets: ChatAsset[];
 		}>(`/api/v0/chat/sessions/${encodeURIComponent(id)}`),
 

@@ -676,9 +676,16 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
     // The picker's description line, keyed by the name the picker shows: a
     // model id, a backend alias, or an automatic-route alias.
     let descriptions: std::collections::HashMap<String, String> = rows
-        .into_iter()
+        .iter()
         .filter(|row| !row.description.is_empty())
-        .map(|row| (row.model_name, row.description))
+        .map(|row| (row.model_name.clone(), row.description.clone()))
+        .collect();
+    let defaults: std::collections::HashMap<
+        &str,
+        &aiplane_core::server::db::model_defaults::ModelDefaults,
+    > = rows
+        .iter()
+        .map(|row| (row.model_name.as_str(), row))
         .collect();
     let route_descriptions: std::collections::HashMap<String, String> =
         aiplane_core::server::db::automatic_routes::all(&state.db)
@@ -726,6 +733,31 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
                         .unwrap_or_else(|| choice.id.clone()),
                 ],
             };
+            // The window this model is measured against, resolved exactly as
+            // the compaction trigger resolves it: the model's configured
+            // window, else the one its serving backend reports, else the
+            // deployment default. A route reaches several models and so has no
+            // single window — the composer shows no share of one for it.
+            let context_window = (!is_route).then(|| {
+                aiplane_runtime::server::compaction::known_context_window(
+                    defaults.get(targets[0].as_str()).copied(),
+                    &state.upstreams,
+                    &targets[0],
+                )
+                .unwrap_or(state.config().chat.compaction.default_context_window)
+            });
+            // Where an answer's older history would be folded: the same ceiling
+            // the compaction trigger compares against, so the composer can say
+            // when the conversation is about to be summarised. `null` when
+            // compaction is off or the model has no single window.
+            let compacts_at_tokens = context_window
+                .filter(|_| state.config().chat.compaction.enabled)
+                .and_then(|window| {
+                    aiplane_runtime::server::compaction::compaction_ceiling(
+                        window,
+                        state.config().chat.compaction.buffer_ratio,
+                    )
+                });
             // Only levels every reasoning target can express: a level one of
             // them would quietly turn into another is not offered at all.
             let mut efforts: Option<Vec<aiplane_core::server::reasoning::Effort>> = None;
@@ -777,6 +809,8 @@ pub async fn chat_models(State(state): State<Arc<RamaState>>, req: Request) -> R
                 id: choice.id,
                 level_id,
                 description,
+                context_window,
+                compacts_at_tokens,
                 efforts: efforts
                     .unwrap_or_default()
                     .into_iter()
@@ -808,6 +842,15 @@ pub struct ChatModel {
     /// The operator's one-line description, shown under the name in the
     /// picker. `null` when none is configured.
     pub description: Option<String>,
+    /// The context window the composer measures the conversation against, in
+    /// tokens: the model's configured window, else the serving backend's, else
+    /// the deployment default. `null` for an automatic route, which reaches
+    /// several models and so has no single window.
+    pub context_window: Option<i64>,
+    /// The prompt size at which an answer folds the conversation's older turns
+    /// into a checkpoint — the window minus the room an answer needs. `null`
+    /// when compaction is switched off or the model has no single window.
+    pub compacts_at_tokens: Option<i64>,
     /// The effort levels the composer offers for this model, least thinking
     /// first; empty when the effort control would change nothing.
     pub efforts: Vec<&'static str>,

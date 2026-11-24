@@ -295,6 +295,13 @@ pub async fn session_get(
             Ok(compaction) => compaction.map(|value| value.up_to_seq),
             Err(err) => return internal(err),
         };
+    let measurement = match chat::latest_context_measurement(&state.db, &session_id).await {
+        Ok(measurement) => measurement,
+        Err(err) => return internal(err),
+    };
+    let context = SessionContext {
+        used_tokens: measurement.map(|found| found.tokens),
+    };
     let assets = match aiplane_features::server::chat_attachments::list_session_attachments(
         &state.db,
         &session_id,
@@ -329,6 +336,7 @@ pub async fn session_get(
             classification,
             welcome: state.config().chat.welcome.clone(),
             compacted_up_to_seq,
+            context,
             assets,
         },
     )
@@ -351,8 +359,23 @@ pub struct SessionDetail {
     /// The highest turn `seq` a compaction summary replaces when the
     /// conversation is replayed to the model; `null` when nothing was compacted.
     pub compacted_up_to_seq: Option<i64>,
+    /// How full the replayed context was on the last answer that reported it.
+    pub context: SessionContext,
     /// Every file attached to or produced in the conversation.
     pub assets: Vec<SessionAsset>,
+}
+
+/// The conversation's context as the upstream measured it — the same number
+/// the compaction trigger compares against the model's ceiling. The window and
+/// the ceiling themselves belong to the model the composer is pointed at, so
+/// they come with `GET /api/v0/models` rather than here.
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub struct SessionContext {
+    /// The largest `prompt_tokens` the upstream reported for the most recent
+    /// turn that reported usage — so the size as of the last answer, not what a
+    /// later checkpoint may already have folded away. `null` until a turn
+    /// reports usage.
+    pub used_tokens: Option<i64>,
 }
 
 #[derive(serde::Serialize, schemars::JsonSchema)]

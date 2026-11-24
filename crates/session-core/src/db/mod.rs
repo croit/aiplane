@@ -519,6 +519,7 @@ pub(crate) mod tests {
                 error_code            TEXT,
                 created_at            TEXT NOT NULL,
                 completed_at          TEXT,
+                context_tokens        INTEGER,
                 FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE,
                 UNIQUE (session_id, seq)
             )"#,

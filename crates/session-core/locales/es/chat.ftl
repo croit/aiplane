@@ -27,6 +27,14 @@ chat-waiting-answer = Espera la respuesta de una persona.
 chat-composer-paused = Este turno espera tu decisión; el siguiente mensaje se enviará después.
 chat-suspension-stop = Detener este turno
 chat-suspension-stop-title = Abandonar este turno sin responder. Se registra como detenido.
+# La línea de estado del contexto bajo el compositor: qué parte de la ventana
+# del modelo ocupó la última respuesta y desde cuándo se resumen los mensajes
+# antiguos.
+chat-context-label-percent = Contexto: { $percent } %
+chat-context-label-tokens = Contexto: { $tokens } tokens
+chat-context-detail = { $used } de { $window } tokens, medido en la última respuesta
+chat-context-folds-at = a partir de { $tokens } tokens se resumen los mensajes más antiguos
+
 chat-prompt-heading = El asistente pregunta
 chat-prompt-placeholder = Escribe una respuesta…
 chat-prompt-answer = Responder

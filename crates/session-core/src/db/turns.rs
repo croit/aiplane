@@ -473,13 +473,30 @@ pub async fn set_context_tokens(
     Ok(())
 }
 
+/// The most recently measured context size for a session: the turn whose
+/// prompt the upstream measured and how big it was. `None` when no turn in
+/// the session carries a measurement yet (e.g. the upstream never reported
+/// usage).
+///
+/// The compaction trigger asks only for the size; the API also reports which
+/// turn it came from, so a client can say the number is as current as the last
+/// answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContextMeasurement {
+    /// `seq` of the turn whose prompt the upstream measured.
+    pub seq: i64,
+    /// The largest `prompt_tokens` that turn's rounds reported.
+    pub tokens: i64,
+}
+
 /// The most recently measured context size for a session — the
-/// `context_tokens` of the latest turn that carried one. `None` when no
-/// turn in the session has a measurement yet (e.g. the upstream never
-/// reported usage). Used by the gateway's auto-compaction threshold check.
-pub async fn latest_context_tokens(pool: &Pool, session_id: &str) -> Result<Option<i64>, DbError> {
+/// `context_tokens` of the latest turn that carried one.
+pub async fn latest_context_measurement(
+    pool: &Pool,
+    session_id: &str,
+) -> Result<Option<ContextMeasurement>, DbError> {
     let row = sqlx::query(
-        r#"SELECT context_tokens
+        r#"SELECT seq, context_tokens
            FROM chat_turns
            WHERE session_id = ? AND context_tokens IS NOT NULL
            ORDER BY seq DESC
@@ -488,9 +505,21 @@ pub async fn latest_context_tokens(pool: &Pool, session_id: &str) -> Result<Opti
     .bind(session_id)
     .fetch_optional(pool)
     .await?;
-    row.map(|r| r.try_get::<i64, _>("context_tokens"))
-        .transpose()
-        .map_err(Into::into)
+    match row {
+        Some(row) => Ok(Some(ContextMeasurement {
+            seq: row.try_get("seq")?,
+            tokens: row.try_get("context_tokens")?,
+        })),
+        None => Ok(None),
+    }
+}
+
+/// How big the session's replayed context had grown by its latest measured
+/// turn, in tokens. Used by the gateway's auto-compaction threshold check.
+pub async fn latest_context_tokens(pool: &Pool, session_id: &str) -> Result<Option<i64>, DbError> {
+    Ok(latest_context_measurement(pool, session_id)
+        .await?
+        .map(|measurement| measurement.tokens))
 }
 
 /// End-of-stream: flip the turn's status and stamp `completed_at`. The
@@ -1371,6 +1400,69 @@ mod pair_tests {
                 .await
                 .unwrap()
                 .is_some()
+        );
+    }
+
+    /// The API reports the measured size as current as the last answer, so it
+    /// needs the turn it came from — not just the number the compaction
+    /// threshold compares against.
+    #[tokio::test]
+    async fn context_measurement_names_the_latest_turn_that_reported_one() {
+        let pool = super::super::tests::pool().await;
+        let session = create_session(&pool, "u1").await.unwrap();
+        assert_eq!(
+            latest_context_measurement(&pool, &session.id)
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            latest_context_tokens(&pool, &session.id).await.unwrap(),
+            None
+        );
+
+        let (_, first) = create_turn_pair_if_idle(
+            &pool,
+            &session.id,
+            "prompt-1",
+            "reply-1",
+            "one",
+            "model",
+            false,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        set_context_tokens(&pool, &first.id, 900).await.unwrap();
+        finalize_turn(&pool, &first.id, TurnStatus::Completed, None)
+            .await
+            .unwrap();
+        let (_, second) = create_turn_pair_if_idle(
+            &pool,
+            &session.id,
+            "prompt-2",
+            "reply-2",
+            "two",
+            "model",
+            false,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        set_context_tokens(&pool, &second.id, 1400).await.unwrap();
+
+        assert_eq!(
+            latest_context_measurement(&pool, &session.id)
+                .await
+                .unwrap(),
+            Some(ContextMeasurement {
+                seq: second.seq,
+                tokens: 1400
+            })
+        );
+        assert_eq!(
+            latest_context_tokens(&pool, &session.id).await.unwrap(),
+            Some(1400)
         );
     }
 }

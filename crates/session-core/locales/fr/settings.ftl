@@ -101,14 +101,12 @@ settings-f-chat-compaction-enabled = Activer le compactage
 settings-f-chat-compaction-enabled-help = Interrupteur principal du résumé des longues conversations.
 settings-f-chat-compaction-default_context_window = Fenêtre de contexte supposée
 settings-f-chat-compaction-default_context_window-help = Fenêtre de contexte en jetons supposée pour un modèle qui n'en déclare aucune.
-settings-f-chat-compaction-trigger_ratio = Seuil de déclenchement
-settings-f-chat-compaction-trigger_ratio-help = Fraction de la fenêtre de contexte qui déclenche le compactage (0,7 = à 70 % de remplissage).
-settings-f-chat-compaction-keep_recent_turns = Tours récents conservés
-settings-f-chat-compaction-keep_recent_turns-help = Tours conservés mot pour mot à la fin de la conversation.
-settings-f-chat-compaction-min_turns_to_compact = Longueur minimale de conversation
-settings-f-chat-compaction-min_turns_to_compact-help = Ne jamais compacter une conversation plus courte que ce nombre de tours.
+settings-f-chat-compaction-buffer_ratio = Marge réservée
+settings-f-chat-compaction-buffer_ratio-help = Part de la fenêtre de contexte laissée libre pour la réponse, au moins 16 000 jetons. 0,15 = compactage à 85 % de remplissage.
+settings-f-chat-compaction-keep_tokens = Contexte récent conservé
+settings-f-chat-compaction-keep_tokens-help = Jetons de la conversation la plus récente conservés mot pour mot à côté du résumé, au plus la moitié de la marge réservée.
 settings-f-chat-compaction-summary_max_tokens = Budget de jetons du résumé
-settings-f-chat-compaction-summary_max_tokens-help = Budget de jetons pour le résumé qui remplace les tours compactés.
+settings-f-chat-compaction-summary_max_tokens-help = Budget de jetons pour le résumé structuré qui remplace les tours compactés.
 settings-f-chat-compaction-summary_prompt = Prompt du résumeur
 settings-f-chat-compaction-summary_prompt-help = Les instructions du résumeur. Laisser vide pour utiliser le prompt intégré.
 

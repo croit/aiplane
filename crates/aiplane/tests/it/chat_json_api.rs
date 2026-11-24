@@ -506,6 +506,53 @@ async fn session_snapshot_includes_compaction_boundary_and_conversation_assets()
     );
 }
 
+/// The composer's context status line reads the size the upstream last
+/// measured from the snapshot. Before any answer reports usage there is nothing
+/// to show, and the snapshot says so.
+#[tokio::test]
+async fn session_snapshot_reports_the_measured_context() {
+    let (state, cookie) = setup("http://unused.invalid").await;
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let (_, assistant) = chat::create_turn_pair_if_idle(
+        &state.db,
+        &session.id,
+        "user-turn",
+        "assistant-turn",
+        "how full am I",
+        "model-a",
+        false,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(assistant.seq, 1);
+
+    let db = state.db.clone();
+    let app = router(state);
+    let snapshot = || async {
+        let response = app
+            .serve(json_req(
+                Method::GET,
+                format!("/api/v0/chat/sessions/{}", session.id),
+                &cookie,
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        serde_json::from_str::<serde_json::Value>(&body_string(response).await).unwrap()
+    };
+
+    let body = snapshot().await;
+    assert_eq!(body["context"]["used_tokens"], Value::Null);
+
+    chat::set_context_tokens(&db, &assistant.id, 64_000)
+        .await
+        .unwrap();
+    let body = snapshot().await;
+    assert_eq!(body["context"]["used_tokens"], 64_000);
+}
+
 #[tokio::test]
 async fn edit_accepts_the_composers_multipart_shape() {
     let (state, cookie) = setup("http://unused.invalid").await;
@@ -2674,6 +2721,10 @@ async fn automatic_route_stays_in_model_picker_while_selector_is_unavailable() {
         .find(|model| model["id"] == "default")
         .unwrap();
     assert!(route["price"].is_null(), "a route has no single price");
+    assert!(
+        route["context_window"].is_null(),
+        "a route reaches several models, so it has no single context window"
+    );
     // A real model with no configured price is the free shape, not `null`.
     let plain = models
         .iter()
@@ -2685,6 +2736,78 @@ async fn automatic_route_stays_in_model_picker_while_selector_is_unavailable() {
     );
     assert!(plain["price"]["input"].is_null());
     assert!(plain["price"]["output"].is_null());
+}
+
+/// The composer shows the conversation's context as a share of the window the
+/// compaction trigger compares against, so the model list has to name that
+/// window: the admin's configured value, else the deployment default while the
+/// backend reports none.
+#[tokio::test]
+async fn model_choices_name_the_context_window_the_composer_measures_against() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/models"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&upstream)
+        .await;
+    let (state, cookie) = setup(&upstream.uri()).await;
+    let db = state.db.clone();
+    let app = router(state);
+
+    let field = |body: serde_json::Value, name: &str| {
+        body["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|model| model["id"] == "model-a")
+            .unwrap_or_else(|| panic!("the pool's model must be offered: {body}"))[name]
+            .clone()
+    };
+    let window = |body: serde_json::Value| field(body, "context_window");
+
+    let response = app
+        .serve(json_req(
+            Method::GET,
+            "/api/v0/models".into(),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_str(&body_string(response).await).unwrap();
+    assert_eq!(
+        window(body.clone()),
+        serde_json::json!(Config::default().chat.compaction.default_context_window)
+    );
+    // The fold point is the window minus the room an answer needs: 15% of
+    // 32 768 is under the 16 000 floor, so the floor decides.
+    assert_eq!(field(body, "compacts_at_tokens"), serde_json::json!(16_768));
+
+    aiplane_core::server::db::model_defaults::set_all(
+        &db,
+        "model-a",
+        &aiplane_core::server::db::model_defaults::AllFields {
+            context_window: Some(200_000),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let response = app
+        .serve(json_req(
+            Method::GET,
+            "/api/v0/models".into(),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_str(&body_string(response).await).unwrap();
+    assert_eq!(window(body.clone()), serde_json::json!(200_000));
+    assert_eq!(
+        field(body, "compacts_at_tokens"),
+        serde_json::json!(170_000)
+    );
 }
 
 /// The streamed round request a turn sent upstream (title calls are not

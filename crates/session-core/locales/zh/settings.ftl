@@ -100,14 +100,12 @@ settings-f-chat-compaction-enabled = 启用压缩
 settings-f-chat-compaction-enabled-help = 概括长会话的总开关。
 settings-f-chat-compaction-default_context_window = 假定的上下文窗口
 settings-f-chat-compaction-default_context_window-help = 对不上报上下文窗口的模型所假定的窗口大小，以 token 计。
-settings-f-chat-compaction-trigger_ratio = 触发阈值
-settings-f-chat-compaction-trigger_ratio-help = 触发压缩的上下文窗口占用比例（0.7 = 占用 70% 时）。
-settings-f-chat-compaction-keep_recent_turns = 保留的最近轮次
-settings-f-chat-compaction-keep_recent_turns-help = 会话末尾原样保留的轮次数。
-settings-f-chat-compaction-min_turns_to_compact = 会话最小长度
-settings-f-chat-compaction-min_turns_to_compact-help = 轮次少于此数的会话永不压缩。
+settings-f-chat-compaction-buffer_ratio = 保留余量
+settings-f-chat-compaction-buffer_ratio-help = 为回答保留的上下文窗口占比，至少 16 000 个 Token。0.15 = 占用 85% 时开始压缩。
+settings-f-chat-compaction-keep_tokens = 原样保留的近期上下文
+settings-f-chat-compaction-keep_tokens-help = 摘要旁原样保留的最新会话 Token 数，最多为保留余量的一半。
 settings-f-chat-compaction-summary_max_tokens = 摘要 token 预算
-settings-f-chat-compaction-summary_max_tokens-help = 用于替换被压缩轮次的摘要的 token 预算。
+settings-f-chat-compaction-summary_max_tokens-help = 用于替换被压缩轮次的结构化摘要的 token 预算。
 settings-f-chat-compaction-summary_prompt = 摘要提示词
 settings-f-chat-compaction-summary_prompt-help = 摘要器工作的指令。留空则使用内置提示词。
 

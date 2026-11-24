@@ -503,9 +503,14 @@ when none exists, so the list never holds two empty chats. `GET
 /api/v0/chat/landing` (what `/` and `/chat` load) always answers `200`;
 `POST …/sessions` (the **New Chat** button) answers `200` for the existing blank
 conversation and `201` for a new one. `GET …/sessions/{id}` returns the session and turns plus
-`compacted_up_to_seq` and the conversation's attachment-marker-derived
-`assets[]`; the SPA uses those fields for the compaction boundary and canvas
-asset browser. Attachment markers are reconciled with those canonical assets by
+`compacted_up_to_seq`, `context` and the conversation's attachment-marker-derived
+`assets[]`; the SPA uses those fields for the compaction boundary, the context
+status line and the canvas asset browser. `context.used_tokens` is the largest
+prompt size the upstream reported for the most recent turn that reported one;
+`GET /api/v0/models` supplies each model's `context_window` and
+`compacts_at_tokens` (the ceiling the compaction trigger compares against), so
+the status line measures against the model the composer is pointed at.
+Attachment markers are reconciled with those canonical assets by
 turn and filename before rendering, so stale marker URLs do not produce duplicate
 or unavailable cards. Relative Markdown image sources resolve through the same
 asset set and are suppressed when the attachment gallery already renders that
@@ -592,6 +597,42 @@ partial answer stays in the transcript *and* in the model's replayed history,
 marked as interrupted, so the second attempt continues from what the reader
 saw. Cancelling is cooperative — the worker notices between upstream chunks —
 so a slot frees when the turn actually ends, not when the button is pressed.
+
+Under the composer, small and right-aligned, the conversation says how full its
+context is: `Context: 19 %`, where the share is the prompt size the last answer
+reported against the context window of the model the composer will send to. Its
+tooltip carries the exact token numbers and the size at which older messages
+start being folded — that model's ceiling, the window minus the room an answer
+needs (`chat.compaction.buffer_ratio`, at least 16 000 tokens). Nothing is shown
+before an answer reports usage, and a model without a single window — an
+automatic route reaches several — shows the token count instead of a share. The
+line turns `text-warning` once the conversation is at that ceiling, so the
+summarising that follows is expected rather than surprising. The number is the
+last measured prompt, so a fold that happened after it becomes visible with the
+next answer.
+
+### Conversation compaction
+
+Once the measured prompt reaches the model's ceiling, the gateway folds the
+older turns into one checkpoint, off the turn's critical path: the assistant
+turn finalises, and the summarising happens behind it, so only the *next* turn
+replays the smaller prompt. The checkpoint replaces everything up to a cutoff;
+the newest conversation — `chat.compaction.keep_tokens`, capped at half the
+room the ceiling leaves — is replayed verbatim beside it, because that is the
+part the reader is looking at. Nothing is deleted: the folded turns stay in the
+transcript above the divider ("Earlier messages condensed to save context").
+
+The checkpoint is structured, not a paragraph: objective, the person's standing
+requirements and rules quoted closely, decisions, work state, **every message
+the person wrote verbatim**, the exact facts and identifiers the conversation
+depends on, and the next steps. The sections are required — a reply that skips
+the template is asked once more and otherwise abandoned rather than stored
+half-shaped — and "all user messages" is what keeps a long conversation from
+drifting away from instructions given at its start. A re-fold carries the
+previous checkpoint and re-sends the person's earlier messages verbatim, so a
+paraphrase cannot become the only copy of a rule. An operator can replace the
+built-in instructions with `chat.compaction.summary_prompt`; the checkpoint
+shape is then whatever that prompt asks for.
 
 ## Parallel conversations
 

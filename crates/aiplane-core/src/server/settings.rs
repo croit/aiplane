@@ -525,9 +525,8 @@ pub static SECTIONS: &[SectionSpec] = &[
         fields: &[
             f("chat.compaction.enabled", Kind::Bool),
             f("chat.compaction.default_context_window", Kind::Int),
-            f("chat.compaction.trigger_ratio", Kind::Float),
-            f("chat.compaction.keep_recent_turns", Kind::Int),
-            f("chat.compaction.min_turns_to_compact", Kind::Int),
+            f("chat.compaction.buffer_ratio", Kind::Float),
+            f("chat.compaction.keep_tokens", Kind::Int),
             f("chat.compaction.summary_max_tokens", Kind::Int),
             f_default(
                 "chat.compaction.summary_prompt",
@@ -1169,12 +1168,8 @@ fn compaction(s: &Settings) -> CompactionConfig {
             "chat.compaction.default_context_window",
             d.default_context_window,
         ),
-        trigger_ratio: s.float("chat.compaction.trigger_ratio", d.trigger_ratio),
-        keep_recent_turns: s.int("chat.compaction.keep_recent_turns", d.keep_recent_turns),
-        min_turns_to_compact: s.int(
-            "chat.compaction.min_turns_to_compact",
-            d.min_turns_to_compact,
-        ),
+        buffer_ratio: s.float("chat.compaction.buffer_ratio", d.buffer_ratio),
+        keep_tokens: s.int("chat.compaction.keep_tokens", d.keep_tokens),
         summary_max_tokens: s.int("chat.compaction.summary_max_tokens", d.summary_max_tokens),
         summary_prompt: s.text_or("chat.compaction.summary_prompt", ""),
     }
@@ -1437,17 +1432,10 @@ pub fn snapshot(c: &Config) -> Vec<(String, String)> {
         comp.default_context_window.to_string(),
     );
     put(
-        "chat.compaction.trigger_ratio",
-        comp.trigger_ratio.to_string(),
+        "chat.compaction.buffer_ratio",
+        comp.buffer_ratio.to_string(),
     );
-    put(
-        "chat.compaction.keep_recent_turns",
-        comp.keep_recent_turns.to_string(),
-    );
-    put(
-        "chat.compaction.min_turns_to_compact",
-        comp.min_turns_to_compact.to_string(),
-    );
+    put("chat.compaction.keep_tokens", comp.keep_tokens.to_string());
     put(
         "chat.compaction.summary_max_tokens",
         comp.summary_max_tokens.to_string(),
@@ -2213,8 +2201,8 @@ mod tests {
             plain.chat.compaction.enabled
         );
         assert_eq!(
-            applied.chat.compaction.trigger_ratio,
-            plain.chat.compaction.trigger_ratio
+            applied.chat.compaction.buffer_ratio,
+            plain.chat.compaction.buffer_ratio
         );
         assert_eq!(applied.usage.retention_days, plain.usage.retention_days);
         assert_eq!(applied.push.enabled, plain.push.enabled);
@@ -2233,7 +2221,7 @@ mod tests {
         let settings = settings_of(&[
             ("chat.ocr.enabled", "true"),
             ("chat.ocr.dpi", "150"),
-            ("chat.compaction.trigger_ratio", "0.9"),
+            ("chat.compaction.buffer_ratio", "0.9"),
             ("sandbox.enabled", "true"),
             ("sandbox.runner_url", "http://runner:9000"),
             ("sandbox.timeout_secs", "45"),
@@ -2246,7 +2234,7 @@ mod tests {
 
         assert!(config.chat.ocr.enabled);
         assert_eq!(config.chat.ocr.dpi, 150);
-        assert_eq!(config.chat.compaction.trigger_ratio, 0.9);
+        assert_eq!(config.chat.compaction.buffer_ratio, 0.9);
         let sandbox = config.sandbox.expect("enabled");
         assert_eq!(sandbox.runner_url, "http://runner:9000");
         assert_eq!(sandbox.timeout_secs, 45);
@@ -2309,7 +2297,7 @@ mod tests {
         let int = field("chat.ocr.dpi").unwrap();
         assert_eq!(int.check("300"), Ok("300".to_owned()));
         assert_eq!(int.check("0"), Ok("0".to_owned()));
-        let float = field("chat.compaction.trigger_ratio").unwrap();
+        let float = field("chat.compaction.buffer_ratio").unwrap();
         assert_eq!(float.check("0.7"), Ok("0.7".to_owned()));
         assert_eq!(
             float.check("0,7"),
@@ -2329,7 +2317,7 @@ mod tests {
             assert_eq!(int.check(bad), Err(Invalid::NotWholeNumber), "{bad:?}");
         }
         assert_eq!(int.check("-1"), Err(Invalid::Negative));
-        let float = field("chat.compaction.trigger_ratio").unwrap();
+        let float = field("chat.compaction.buffer_ratio").unwrap();
         for bad in ["", "high", "NaN", "inf"] {
             assert_eq!(float.check(bad), Err(Invalid::NotNumber), "{bad:?}");
         }
@@ -2508,10 +2496,10 @@ mod tests {
         // like it saved.
         let mut config = Config::default();
         apply(
-            &settings_of(&[("chat.compaction.trigger_ratio", "0,85")]),
+            &settings_of(&[("chat.compaction.buffer_ratio", "0,85")]),
             &mut config,
         );
-        assert_eq!(config.chat.compaction.trigger_ratio, 0.85);
+        assert_eq!(config.chat.compaction.buffer_ratio, 0.85);
     }
 
     #[test]

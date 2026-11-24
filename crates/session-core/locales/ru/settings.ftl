@@ -100,14 +100,12 @@ settings-f-chat-compaction-enabled = Включить сжатие
 settings-f-chat-compaction-enabled-help = Главный переключатель пересказа длинных разговоров.
 settings-f-chat-compaction-default_context_window = Предполагаемое контекстное окно
 settings-f-chat-compaction-default_context_window-help = Контекстное окно в токенах, предполагаемое для модели, которая его не сообщает.
-settings-f-chat-compaction-trigger_ratio = Порог срабатывания
-settings-f-chat-compaction-trigger_ratio-help = Доля контекстного окна, при которой запускается сжатие (0,7 = при заполнении 70 %).
-settings-f-chat-compaction-keep_recent_turns = Сохраняемые последние реплики
-settings-f-chat-compaction-keep_recent_turns-help = Сколько реплик в конце разговора остаётся дословно.
-settings-f-chat-compaction-min_turns_to_compact = Минимальная длина разговора
-settings-f-chat-compaction-min_turns_to_compact-help = Разговоры короче этого числа реплик не сжимаются никогда.
+settings-f-chat-compaction-buffer_ratio = Свободный запас
+settings-f-chat-compaction-buffer_ratio-help = Доля контекстного окна, остающаяся свободной для ответа, не менее 16 000 токенов. 0,15 = сжатие при заполнении 85 %.
+settings-f-chat-compaction-keep_tokens = Сохраняемый свежий контекст
+settings-f-chat-compaction-keep_tokens-help = Сколько токенов последнего разговора остаётся дословно рядом с пересказом — не больше половины свободного запаса.
 settings-f-chat-compaction-summary_max_tokens = Бюджет токенов пересказа
-settings-f-chat-compaction-summary_max_tokens-help = Бюджет токенов для пересказа, который заменяет сжатые реплики.
+settings-f-chat-compaction-summary_max_tokens-help = Бюджет токенов для структурированного пересказа, заменяющего сжатые реплики.
 settings-f-chat-compaction-summary_prompt = Промпт сумматора
 settings-f-chat-compaction-summary_prompt-help = Инструкции, по которым работает сумматор. Оставьте пустым, чтобы использовать встроенный промпт.
 

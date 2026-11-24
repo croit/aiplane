@@ -27,6 +27,14 @@ chat-waiting-answer = Attend la réponse d’une personne.
 chat-composer-paused = Ce tour attend votre décision ; le message suivant partira ensuite.
 chat-suspension-stop = Arrêter ce tour
 chat-suspension-stop-title = Abandonner ce tour sans répondre. Il est enregistré comme arrêté.
+# La ligne d'état du contexte sous le compositeur : la part de la fenêtre du
+# modèle utilisée par la dernière réponse, et le seuil de résumé des anciens
+# messages.
+chat-context-label-percent = Contexte : { $percent } %
+chat-context-label-tokens = Contexte : { $tokens } jetons
+chat-context-detail = { $used } jetons sur { $window }, mesurés lors de la dernière réponse
+chat-context-folds-at = à partir de { $tokens } jetons, les messages les plus anciens sont résumés
+
 chat-prompt-heading = L'assistant demande
 chat-prompt-placeholder = Saisissez une réponse…
 chat-prompt-answer = Répondre

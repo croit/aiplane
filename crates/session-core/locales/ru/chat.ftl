@@ -27,6 +27,13 @@ chat-waiting-answer = Ждёт ответа человека.
 chat-composer-paused = Этот ход ждёт вашего решения; следующее сообщение уйдёт после него.
 chat-suspension-stop = Остановить ход
 chat-suspension-stop-title = Прекратить этот ход, не отвечая. Он будет записан как остановленный.
+# Строка состояния контекста под полем ввода: какую часть окна модели занял
+# запрос последнего ответа и с какого порога старые сообщения сворачиваются.
+chat-context-label-percent = Контекст: { $percent } %
+chat-context-label-tokens = Контекст: { $tokens } токенов
+chat-context-detail = { $used } из { $window } токенов — по последнему ответу
+chat-context-folds-at = начиная с { $tokens } токенов старые сообщения сворачиваются в резюме
+
 chat-prompt-heading = Ассистент спрашивает
 chat-prompt-placeholder = Введите ответ…
 chat-prompt-answer = Ответить

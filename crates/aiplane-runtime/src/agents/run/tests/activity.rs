@@ -589,17 +589,26 @@ async fn plain_agent(world: &World, extra: &[(GrantKind, &str)], tools: &[&str])
 
 #[tokio::test]
 async fn an_agent_conversations_compaction_summary_is_an_exchange_of_its_log() {
-    let main = rounds_and_calls(text("noted"), "The visitor asked five things.").await;
+    // A real checkpoint answer, so the template check passes on the first
+    // reply: a plain sentence would be asked once more and then refused.
+    let checkpoint = "## Objective\n- ask five things\n\n## Requirements and rules\n- (none)\n\n\
+         ## Decisions\n- (none)\n\n## Work state\n### Done\n- (none)\n### Active\n- (none)\n\
+         ### Blocked\n- (none)\n\n## All user messages\n- question 0\n\n\
+         ## Important context\n- (none)\n\n## Next steps\n- (none)";
+    let main = rounds_and_calls(text("noted"), checkpoint).await;
     let world = World::new(&[("support-pool", "support-model", &main)], None).await;
     let agent = plain_agent(&world, &[], &[]).await;
-    let first = visitor_says(&world, &agent, "question 0").await;
+    // Padded so the conversation outgrows the keep budget and the trigger
+    // actually folds something — a handful of one-line turns never would.
+    let body = "x".repeat(8_000);
+    let first = visitor_says(&world, &agent, &format!("question 0 {body}")).await;
     for n in 1..5 {
         run_turn(
             &world.state,
             AgentTurn {
                 agent_id: &agent,
                 session_id: Some(&first.session_id),
-                message: &format!("question {n}"),
+                message: &format!("question {n} {body}"),
                 visitor_id: None,
                 lang: None,
             },
@@ -662,7 +671,7 @@ async fn an_agent_conversations_compaction_summary_is_an_exchange_of_its_log() {
     );
     assert_eq!(
         d["response"]["body"]["choices"][0]["message"]["content"],
-        "The visitor asked five things."
+        checkpoint
     );
     assert_eq!(
         summaries[0].conversation_id.as_deref(),

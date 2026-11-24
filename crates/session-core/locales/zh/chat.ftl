@@ -27,6 +27,13 @@ chat-waiting-answer = 等待人员的回答。
 chat-composer-paused = 本轮正在等待你的决定；下一条消息将在之后发送。
 chat-suspension-stop = 停止本轮
 chat-suspension-stop-title = 放弃本轮而不作答，本轮将记录为已停止。
+# 输入框下方的上下文状态行：最近一次回答占用了模型窗口的多少，以及从多少
+# 开始会把较早的消息汇总。
+chat-context-label-percent = 上下文：{ $percent }%
+chat-context-label-tokens = 上下文：{ $tokens } 个 Token
+chat-context-detail = { $used } / { $window } 个 Token，按最近一次回答测量
+chat-context-folds-at = 达到 { $tokens } 个 Token 后，较早的消息会被汇总
+
 chat-prompt-heading = 助手提问
 chat-prompt-placeholder = 输入答案…
 chat-prompt-answer = 回答

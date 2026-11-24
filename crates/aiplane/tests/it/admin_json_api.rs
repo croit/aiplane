@@ -1749,7 +1749,7 @@ async fn compaction_and_voice_prompt_fields_save_and_clear() {
         find_field(&before, "chat.compaction.summary_prompt")["default"]
             .as_str()
             .unwrap()
-            .starts_with("You compress the earlier part of a chat conversation"),
+            .starts_with("You compress the earlier part of a conversation"),
         "the built-in summariser prompt is what the editor shows and resets to"
     );
     assert!(
@@ -3168,7 +3168,7 @@ async fn settings_save_refuses_values_the_typed_reads_would_replace() {
     let resp = app
         .serve(save(
             "chat.compaction",
-            r#"{"chat.compaction.trigger_ratio":"high"}"#,
+            r#"{"chat.compaction.buffer_ratio":"high"}"#,
         ))
         .await
         .unwrap();
@@ -3180,7 +3180,7 @@ async fn settings_save_refuses_values_the_typed_reads_would_replace() {
         "chat.ocr.dpi",
         "chat.ocr.timeout_secs",
         "feedback.provider",
-        "chat.compaction.trigger_ratio",
+        "chat.compaction.buffer_ratio",
     ] {
         assert_eq!(shown(&after, key), shown(&before, key), "{key} kept");
     }
@@ -3188,14 +3188,14 @@ async fn settings_save_refuses_values_the_typed_reads_would_replace() {
     let resp = app
         .serve(save(
             "chat.compaction",
-            r#"{"chat.compaction.trigger_ratio":"0,6"}"#,
+            r#"{"chat.compaction.buffer_ratio":"0,6"}"#,
         ))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK, "{}", body(resp).await);
     let saved: serde_json::Value =
         serde_json::from_str(&body(app.serve(list()).await.unwrap()).await).unwrap();
-    assert_eq!(shown(&saved, "chat.compaction.trigger_ratio"), "0.6");
+    assert_eq!(shown(&saved, "chat.compaction.buffer_ratio"), "0.6");
 }
 
 /// The metrics card: an allowed-IP entry that is not an address or a network

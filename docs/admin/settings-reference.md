@@ -59,10 +59,9 @@ Category: **Chat**.
 |---|---|---|---|
 | `chat.compaction.enabled` | Boolean | Master switch for summarising long conversations. | No |
 | `chat.compaction.default_context_window` | Integer | Context window in tokens assumed for a model that does not report one. | No |
-| `chat.compaction.trigger_ratio` | Decimal | Fraction of the context window that triggers compaction (0.7 = at 70% full). | No |
-| `chat.compaction.keep_recent_turns` | Integer | Turns kept verbatim at the end of the conversation. | No |
-| `chat.compaction.min_turns_to_compact` | Integer | Never compact a conversation shorter than this many turns. | No |
-| `chat.compaction.summary_max_tokens` | Integer | Token budget for the summary that replaces the compacted turns. | No |
+| `chat.compaction.buffer_ratio` | Decimal | Share of the context window kept free for the answer, at least 16 000 tokens (0.15 = compaction at 85% full). | No |
+| `chat.compaction.keep_tokens` | Integer | Tokens of the newest conversation kept verbatim beside the summary, at most half of the room the ceiling leaves. | No |
+| `chat.compaction.summary_max_tokens` | Integer | Token budget for the structured summary that replaces the compacted turns. | No |
 | `chat.compaction.summary_prompt` | Text | The summariser's instructions. The field shows the built-in prompt while nothing is stored; its reset button restores it. | No |
 
 ### chat.turns

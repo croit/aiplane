@@ -13,6 +13,7 @@
 	import { lastUsedModel, openingModel } from '#lib/conversation-model.js';
 	import type { ChatSession, ConversationPermissions } from '#lib/chat-protocol.js';
 	import { canonicalAttachments } from '#lib/conversation-assets.js';
+	import { contextUsage } from '#lib/context-usage.js';
 	import { renderPromptMarkdown, sanitizeSvgPreview } from '#lib/markdown.js';
 	import { DragDepth, carriesFiles, droppedOnlyDirectories, filesFrom } from '#lib/drop-files.js';
 	import { me } from '#lib/session.svelte.js';
@@ -115,6 +116,10 @@
 		void requestActivation({ auto: true });
 	}
 	let compactedUpToSeq = $state<number | null>(null);
+	/** How full the replayed context was on the last answer that reported it. */
+	let context = $state<{ used_tokens: number | null }>({
+		used_tokens: null
+	});
 	let assets = $state<ChatAsset[]>([]);
 	let clock = $state(Date.now());
 	let editingTurn = $state<{ id: string; content: string } | null>(null);
@@ -219,6 +224,45 @@
 			: EFFORTS
 	);
 	const hasCanvas = $derived(documents.length > 0 || assets.length > 0);
+	/**
+	 * The conversation's context, measured against the model the composer will
+	 * send to — including that model's fold point, which the server resolves
+	 * with the same code the compaction trigger runs. So the line turns amber
+	 * exactly when the next answer would fold.
+	 *
+	 * `null` until an answer reports its prompt size: a brand-new conversation
+	 * has nothing to say and shows nothing.
+	 */
+	const usage = $derived(
+		contextUsage({
+			usedTokens: context.used_tokens,
+			window: selectedModel?.context_window ?? null,
+			compactsAt: selectedModel?.compacts_at_tokens ?? null
+		})
+	);
+	const usageLabel = $derived(
+		usage === null
+			? ''
+			: usage.percent !== null
+				? t('chat-context-label-percent', { percent: n(usage.percent) })
+				: t('chat-context-label-tokens', { tokens: n(usage.tokens) })
+	);
+	// The exact numbers behind the share, and where folding starts: a tooltip
+	// is the only place this fits without turning a status line into a panel.
+	const usageMeasured = $derived(
+		usage === null || usage.window === null
+			? null
+			: t('chat-context-detail', { used: n(usage.tokens), window: n(usage.window) })
+	);
+	const usageDetail = $derived(
+		usageMeasured === null
+			? undefined
+			: usage?.compactsAt == null
+				? usageMeasured
+				: `${usageMeasured} · ${t('chat-context-folds-at', {
+						tokens: n(usage.compactsAt)
+					})}`
+	);
 	// The composer's feedback button captures the page before the dialog opens,
 	// so it needs the same busy state the floating button has elsewhere.
 	const feedbackCapturing = $derived(feedback.shotStatus === 'capturing' && !feedback.open);
@@ -271,6 +315,7 @@
 			session = snap.session;
 			permissions = { can_write: snap.can_write, can_delete: snap.can_delete, delegation: snap.delegation };
 			compactedUpToSeq = snap.compacted_up_to_seq;
+			context = snap.context;
 			effort = snap.effort;
 			classification = snap.classification ?? null;
 			welcome = snap.welcome;
@@ -1428,6 +1473,17 @@
 			</div>
 		{/if}
 	</div>
+	{#if usage}
+		<!-- The conversation's context in the composer's footer: the one place a
+		     reader sees the chat filling up, and what happens when it does —
+		     before the transcript says older messages were condensed. -->
+		<div class="flex w-full shrink-0 justify-end px-3 pb-1 pt-1 text-xs" data-chat-context-usage>
+			<span
+				class={usage.folding ? 'tabular-nums text-warning' : 'tabular-nums text-base-content/50'}
+				title={usageDetail}
+			>{usageLabel}</span>
+		</div>
+	{/if}
 </div>
 {/if}
 {/if}

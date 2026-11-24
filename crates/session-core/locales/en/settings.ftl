@@ -108,14 +108,12 @@ settings-f-chat-compaction-enabled = Enable compaction
 settings-f-chat-compaction-enabled-help = Master switch for summarising long conversations.
 settings-f-chat-compaction-default_context_window = Assumed context window
 settings-f-chat-compaction-default_context_window-help = Context window in tokens assumed for a model that does not report one.
-settings-f-chat-compaction-trigger_ratio = Trigger threshold
-settings-f-chat-compaction-trigger_ratio-help = Fraction of the context window that triggers compaction (0.7 = at 70% full).
-settings-f-chat-compaction-keep_recent_turns = Recent turns kept
-settings-f-chat-compaction-keep_recent_turns-help = Turns kept verbatim at the end of the conversation.
-settings-f-chat-compaction-min_turns_to_compact = Minimum conversation length
-settings-f-chat-compaction-min_turns_to_compact-help = Never compact a conversation shorter than this many turns.
+settings-f-chat-compaction-buffer_ratio = Room kept free
+settings-f-chat-compaction-buffer_ratio-help = Share of the context window kept free for the answer, at least 16 000 tokens. 0.15 = compaction starts at 85% full.
+settings-f-chat-compaction-keep_tokens = Recent context kept
+settings-f-chat-compaction-keep_tokens-help = Tokens of the newest conversation kept verbatim beside the summary, capped at half the window minus the room kept free.
 settings-f-chat-compaction-summary_max_tokens = Summary token budget
-settings-f-chat-compaction-summary_max_tokens-help = Token budget for the summary that replaces the compacted turns.
+settings-f-chat-compaction-summary_max_tokens-help = Token budget for the structured summary that replaces the compacted turns.
 settings-f-chat-compaction-summary_prompt = Summariser prompt
 settings-f-chat-compaction-summary_prompt-help = The instructions the summariser works from. Leave empty to use the built-in prompt.
 

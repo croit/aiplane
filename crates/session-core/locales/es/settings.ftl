@@ -102,14 +102,12 @@ settings-f-chat-compaction-enabled = Activar la compactación
 settings-f-chat-compaction-enabled-help = Interruptor principal para resumir conversaciones largas.
 settings-f-chat-compaction-default_context_window = Ventana de contexto asumida
 settings-f-chat-compaction-default_context_window-help = Ventana de contexto en tokens que se asume para un modelo que no declara ninguna.
-settings-f-chat-compaction-trigger_ratio = Umbral de activación
-settings-f-chat-compaction-trigger_ratio-help = Fracción de la ventana de contexto que dispara la compactación (0,7 = al 70 % de ocupación).
-settings-f-chat-compaction-keep_recent_turns = Turnos recientes conservados
-settings-f-chat-compaction-keep_recent_turns-help = Turnos que se conservan literalmente al final de la conversación.
-settings-f-chat-compaction-min_turns_to_compact = Longitud mínima de conversación
-settings-f-chat-compaction-min_turns_to_compact-help = Nunca compactar una conversación con menos turnos que este número.
+settings-f-chat-compaction-buffer_ratio = Margen reservado
+settings-f-chat-compaction-buffer_ratio-help = Parte de la ventana de contexto que queda libre para la respuesta, como mínimo 16 000 tokens. 0,15 = compactación al 85 % de ocupación.
+settings-f-chat-compaction-keep_tokens = Contexto reciente conservado
+settings-f-chat-compaction-keep_tokens-help = Tokens de la conversación más reciente que se conservan literalmente junto al resumen, como máximo la mitad del margen reservado.
 settings-f-chat-compaction-summary_max_tokens = Presupuesto de tokens del resumen
-settings-f-chat-compaction-summary_max_tokens-help = Presupuesto de tokens para el resumen que sustituye a los turnos compactados.
+settings-f-chat-compaction-summary_max_tokens-help = Presupuesto de tokens para el resumen estructurado que sustituye a los turnos compactados.
 settings-f-chat-compaction-summary_prompt = Prompt del resumidor
 settings-f-chat-compaction-summary_prompt-help = Las instrucciones del resumidor. Déjalo vacío para usar el prompt integrado.
 

@@ -101,14 +101,12 @@ settings-f-chat-compaction-enabled = Verdichtung aktivieren
 settings-f-chat-compaction-enabled-help = Hauptschalter für das Zusammenfassen langer Gespräche.
 settings-f-chat-compaction-default_context_window = Angenommenes Kontextfenster
 settings-f-chat-compaction-default_context_window-help = Kontextfenster in Token, das für ein Modell ohne eigene Angabe angenommen wird.
-settings-f-chat-compaction-trigger_ratio = Auslöseschwelle
-settings-f-chat-compaction-trigger_ratio-help = Anteil des Kontextfensters, der die Verdichtung auslöst (0,7 = bei 70 % Füllung).
-settings-f-chat-compaction-keep_recent_turns = Beibehaltene letzte Züge
-settings-f-chat-compaction-keep_recent_turns-help = Züge, die am Ende des Gesprächs wörtlich erhalten bleiben.
-settings-f-chat-compaction-min_turns_to_compact = Mindestlänge des Gesprächs
-settings-f-chat-compaction-min_turns_to_compact-help = Gespräche mit weniger Zügen werden nie verdichtet.
+settings-f-chat-compaction-buffer_ratio = Freigehaltener Platz
+settings-f-chat-compaction-buffer_ratio-help = Anteil des Kontextfensters, der für die Antwort frei bleibt, mindestens 16 000 Token. 0,15 = Verdichtung ab 85 % Füllung.
+settings-f-chat-compaction-keep_tokens = Wörtlich behaltener Kontext
+settings-f-chat-compaction-keep_tokens-help = Token des neuesten Gesprächs, die neben der Zusammenfassung wörtlich erhalten bleiben – höchstens die Hälfte des freien Platzes.
 settings-f-chat-compaction-summary_max_tokens = Token-Budget der Zusammenfassung
-settings-f-chat-compaction-summary_max_tokens-help = Token-Budget für die Zusammenfassung, die die verdichteten Züge ersetzt.
+settings-f-chat-compaction-summary_max_tokens-help = Token-Budget für die strukturierte Zusammenfassung, die die verdichteten Züge ersetzt.
 settings-f-chat-compaction-summary_prompt = Zusammenfassungs-Prompt
 settings-f-chat-compaction-summary_prompt-help = Die Anweisungen, nach denen der Zusammenfasser arbeitet. Leer lassen für den eingebauten Prompt.
 
