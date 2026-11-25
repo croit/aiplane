@@ -54,3 +54,7 @@ __pycache__/
 # The Impeccable design skill, vendored locally for /impeccable (third-party,
 # Apache 2.0). Deliberately not part of the repo.
 .opencode/
+
+# Paseo's workspace file: host paths and per-machine settings for whoever runs
+# agents in this checkout. Not project configuration.
+paseo.json
