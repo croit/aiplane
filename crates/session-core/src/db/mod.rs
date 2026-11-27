@@ -886,57 +886,78 @@ pub(crate) mod tests {
         );
     }
 
-    /// A claim can be handed back — and only the kind of claim the caller
-    /// says it is undoing. Releasing is what keeps a refused re-send from
-    /// eating the note it stood in for; refusing to release a *delivered*
-    /// note is what keeps that from resurrecting something the model has
-    /// already read.
     #[tokio::test]
-    async fn a_claim_can_be_released_but_a_delivery_cannot() {
+    async fn resending_an_interjection_rolls_back_on_error_and_queues_only_once() {
         let pool = pool().await;
-        let s = create_session(&pool, "u1").await.unwrap();
-        create_assistant_turn_in_progress(&pool, &s.id, "a", "m")
+        let session = create_session(&pool, "u1").await.unwrap();
+        create_assistant_turn_in_progress(&pool, &session.id, "a", "m")
             .await
             .unwrap();
-        let claimed = running_steer(&pool, "a", "re-sent").await;
-        let delivered = running_steer(&pool, "a", "read by the model").await;
-        settle_steer(&pool, &claimed.id, SteerStatus::Resent)
+        let note = running_steer(&pool, "a", "in euros").await;
+        finalize_turn(&pool, "a", TurnStatus::Completed, None)
             .await
             .unwrap();
-        settle_steer(&pool, &delivered.id, SteerStatus::Delivered)
-            .await
-            .unwrap();
-
+        let mut pending = PendingTurn {
+            turn_id: note.id.clone(),
+            session_id: session.id.clone(),
+            user_id: "missing-user".into(),
+            model: "m".into(),
+            voice: false,
+            client_ip: None,
+            secure: false,
+            created_at: Timestamp::now(),
+        };
         assert!(
-            release_steer(&pool, &claimed.id, SteerStatus::Resent)
+            queue_undelivered_steer(&pool, &note, &pending)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            list_steers(&pool, "a").await.unwrap(),
+            std::slice::from_ref(&note)
+        );
+        assert!(
+            get_turn(&pool, &session.id, &note.id)
                 .await
                 .unwrap()
-        );
-        assert!(
-            !release_steer(&pool, &delivered.id, SteerStatus::Resent)
-                .await
-                .unwrap(),
-            "a delivered note is not a claim and cannot be taken back"
+                .is_none()
         );
 
-        let rows = list_steers(&pool, "a").await.unwrap();
-        assert_eq!(rows[0].status, SteerStatus::Pending);
-        assert!(
-            rows[0].settled_at.is_none(),
-            "and it is pending again fully"
+        pending.user_id = "u1".into();
+        queue_undelivered_steer(&pool, &note, &pending)
+            .await
+            .unwrap();
+        queue_undelivered_steer(&pool, &note, &pending)
+            .await
+            .unwrap();
+        assert_eq!(
+            list_pending_for_session(&pool, &session.id).await.unwrap(),
+            std::slice::from_ref(&pending)
         );
-        assert_eq!(rows[1].status, SteerStatus::Delivered);
-
-        // Released means claimable again — that is the point.
-        assert!(
-            settle_steer(&pool, &claimed.id, SteerStatus::Resent)
+        assert_eq!(
+            list_steers(&pool, "a").await.unwrap()[0].status,
+            SteerStatus::Resent
+        );
+        assert_eq!(
+            get_turn(&pool, &session.id, &note.id)
                 .await
                 .unwrap()
+                .unwrap()
+                .user_content
+                .as_deref(),
+            Some("in euros")
         );
+        assert_eq!(
+            take_next_for_user(&pool, "u1", &[]).await.unwrap(),
+            Some(pending)
+        );
+        assert!(has_waiting_turn_or_steer(&pool, &session.id).await.unwrap());
+        create_assistant_turn_in_progress(&pool, &session.id, "next", "m")
+            .await
+            .unwrap();
+        assert!(!has_waiting_turn_or_steer(&pool, &session.id).await.unwrap());
     }
 
-    /// `pending` is not an outcome, so asking to settle *to* it is a caller
-    /// bug rather than a no-op that quietly un-settles a row.
     #[tokio::test]
     async fn settling_to_pending_is_rejected() {
         let pool = pool().await;

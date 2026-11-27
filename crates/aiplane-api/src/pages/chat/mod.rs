@@ -402,35 +402,14 @@ async fn requeue_undelivered_steers(
         .iter()
         .filter(|n| n.status == chat::SteerStatus::Pending)
     {
-        // Claiming through the same `WHERE status = 'pending'` guard the rest
-        // of the code uses: a second finalize, or a client that still holds
-        // the old protocol, cannot queue the same sentence twice.
-        match chat::settle_steer(&state.db, &note.id, chat::SteerStatus::Resent).await {
-            Ok(true) => {}
-            Ok(false) => continue,
-            Err(err) => {
-                tracing::warn!(error = %err, steer = %note.id, "settling an undelivered interjection");
-                continue;
-            }
-        }
         let Some(model) = model.clone() else {
             tracing::warn!(turn = %assistant_turn_id, "no model on the finished turn; cannot queue its interjection");
-            let _ = chat::release_steer(&state.db, &note.id, chat::SteerStatus::Resent).await;
-            continue;
-        };
-        let turn_id = uuid::Uuid::new_v4().to_string();
-        let queued_turn = match chat::create_user_turn(&state.db, session_id, &turn_id, &note.text)
-            .await
-        {
-            Ok(turn) => turn,
-            Err(err) => {
-                tracing::warn!(error = %err, steer = %note.id, "queueing an undelivered interjection");
-                let _ = chat::release_steer(&state.db, &note.id, chat::SteerStatus::Resent).await;
-                continue;
-            }
+            return;
         };
         let pending = chat::PendingTurn {
-            turn_id,
+            // The stream can identify the resent message after the scheduler
+            // has claimed its queue row and before it registers the worker.
+            turn_id: note.id.clone(),
             session_id: session_id.to_string(),
             user_id: user_id.to_string(),
             model,
@@ -441,13 +420,8 @@ async fn requeue_undelivered_steers(
             secure: false,
             created_at: jiff::Timestamp::now(),
         };
-        if let Err(err) = chat::insert_pending_turn(&state.db, &pending).await {
+        if let Err(err) = chat::queue_undelivered_steer(&state.db, note, &pending).await {
             tracing::warn!(error = %err, steer = %note.id, "queueing an undelivered interjection");
-            // Take the turn row back out: a user turn with nothing to answer
-            // it, and nothing queued to produce an answer, is a message that
-            // reads as sent and never runs.
-            let _ = chat::delete_turns_from_seq(&state.db, session_id, queued_turn.seq).await;
-            let _ = chat::release_steer(&state.db, &note.id, chat::SteerStatus::Resent).await;
         }
     }
 }
@@ -1002,21 +976,21 @@ async fn spawn_assistant_worker(
     let turn_id_for_push = assistant_turn_id.to_string();
     tokio::spawn(async move {
         session_core::worker::run_session_turn(pool_for_worker, driver, driver_ctx).await;
-        drop(worker_guard);
-        // Turn's done — ping the user's subscribed browsers (no-op unless push
-        // is enabled and they opted in). Runs after the worker so the row is
-        // finalized and the status is readable.
-        notify_turn_complete(
+        // Anything the user added that no round could carry becomes the next
+        // message. Keep the slot until every addition is queued so another
+        // scheduler cannot start the follow-up with a partial transcript.
+        requeue_undelivered_steers(
             &worker_state,
             &user_id_for_clear,
             &session_id_for_push,
             &turn_id_for_push,
         )
         .await;
-        // Anything the user added that no round could carry becomes the next
-        // message, before the scheduler looks for work — so it is a candidate
-        // for the slot that just freed up.
-        requeue_undelivered_steers(
+        drop(worker_guard);
+        // Turn's done — ping the user's subscribed browsers (no-op unless push
+        // is enabled and they opted in). Runs after the worker so the row is
+        // finalized and the status is readable.
+        notify_turn_complete(
             &worker_state,
             &user_id_for_clear,
             &session_id_for_push,

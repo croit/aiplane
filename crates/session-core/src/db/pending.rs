@@ -50,7 +50,10 @@ fn map_pending(row: &SqliteRow) -> Result<PendingTurn, DbError> {
 }
 
 /// Record that this user turn is waiting for an answer.
-pub async fn insert_pending_turn(pool: &Pool, pending: &PendingTurn) -> Result<(), DbError> {
+pub async fn insert_pending_turn<'e>(
+    executor: impl sqlx::SqliteExecutor<'e>,
+    pending: &PendingTurn,
+) -> Result<(), DbError> {
     sqlx::query(
         r#"INSERT INTO chat_pending_turns
               (turn_id, session_id, user_id, model, voice, client_ip, secure, created_at)
@@ -64,7 +67,7 @@ pub async fn insert_pending_turn(pool: &Pool, pending: &PendingTurn) -> Result<(
     .bind(&pending.client_ip)
     .bind(i64::from(pending.secure))
     .bind(pending.created_at.to_string())
-    .execute(pool)
+    .execute(executor)
     .await?;
     Ok(())
 }
@@ -162,6 +165,31 @@ pub async fn delete_pending_turn(pool: &Pool, turn_id: &str) -> Result<bool, DbE
         .execute(pool)
         .await?;
     Ok(done.rows_affected() > 0)
+}
+
+/// Work an owner can follow over SSE, including the claim-to-worker gap for a resent interjection.
+pub async fn has_waiting_turn_or_steer(pool: &Pool, session_id: &str) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        r#"SELECT
+             EXISTS (SELECT 1 FROM chat_pending_turns WHERE session_id = ?1)
+             OR EXISTS (
+                 SELECT 1 FROM chat_turn_steers s
+                 JOIN chat_turns t ON t.id = s.turn_id
+                 WHERE t.session_id = ?1 AND t.status IN ('completed', 'cancelled', 'errored')
+                   AND t.model IS NOT NULL AND s.status = 'pending'
+             )
+             OR EXISTS (
+                 SELECT 1 FROM chat_turns t
+                 JOIN chat_turn_steers s ON s.id = t.id
+                 WHERE t.session_id = ?1 AND t.role = 'user' AND s.status = 'resent'
+                   AND t.seq > COALESCE((
+                       SELECT MAX(seq) FROM chat_turns WHERE session_id = ?1 AND role = 'assistant'
+                   ), -1)
+             )"#,
+    )
+    .bind(session_id)
+    .fetch_one(pool)
+    .await?)
 }
 
 /// Whether the conversation still has work that will change what it holds: a

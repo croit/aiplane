@@ -480,7 +480,9 @@ pub async fn run_json_turn_stream(
         || JsonTurnFeed::new(&assistant_turn_id),
         JsonTurnFeed::after,
     );
-    let mut dirty = false;
+    // A terminal row may have outlived its final broadcast. A suspended row
+    // can still have a newly registered resume worker about to claim it.
+    let mut dirty = seen.is_some_and(|row| row.turn.status.is_terminal());
     let mut last_emit: Option<tokio::time::Instant> = None;
 
     // Whatever the caller staged (the snapshot, typically) goes out first,
@@ -597,6 +599,11 @@ pub async fn stream_until_started(
 ) {
     use rama::futures::sink::SinkExt;
 
+    let finished_turn = turns
+        .iter()
+        .rev()
+        .find(|row| row.turn.role == db::TurnRole::Assistant && row.turn.status.is_terminal())
+        .map(|row| row.turn.id.clone());
     let mut tx = tx;
     let waiting_turn_ids = waiting_ids(&pool, &session_id).await;
     let snapshot = ChatEvent::Snapshot {
@@ -608,17 +615,15 @@ pub async fn stream_until_started(
         return;
     }
 
-    // The worker may have been registered between the caller's lookup and its
-    // subscribe; check once more before waiting on the channel.
-    let worker = match workers.get(&user_id, &session_id) {
-        Some(worker) => Some(worker),
-        None => {
-            wait_for_start(&workers, &mut starts, &user_id, &session_id, || {
-                tx.is_closed()
-            })
-            .await
-        }
-    };
+    let worker = wait_for_start(
+        &workers,
+        &mut starts,
+        &user_id,
+        &session_id,
+        finished_turn.as_deref(),
+        || tx.is_closed(),
+    )
+    .await;
     let Some(worker) = worker else {
         // Either the wait expired, or the turn started *and finished* inside
         // it. A fresh snapshot covers the second case; `idle` closes the
@@ -646,6 +651,7 @@ pub async fn stream_until_started(
     // already has says `null`. Without this the deltas arrive into a page that
     // still believes it is idle — no stop button, no interrupt, and no
     // reconnect if the stream drops.
+    let broadcast_rx = worker.broadcast.subscribe();
     let initial = match db::list_turns(&pool, &session_id).await {
         Ok(turns) => vec![ChatEvent::Snapshot {
             live_turn_id: Some(worker.turn_id.clone()),
@@ -663,7 +669,7 @@ pub async fn stream_until_started(
         pool,
         session_id,
         worker.turn_id.clone(),
-        worker.broadcast.subscribe(),
+        broadcast_rx,
         initial,
         tx,
     )
@@ -703,8 +709,17 @@ async fn wait_for_start(
     starts: &mut broadcast::Receiver<crate::workers::WorkerStarted>,
     user_id: &str,
     session_id: &str,
+    finished_turn: Option<&str>,
     is_gone: impl Fn() -> bool,
 ) -> Option<crate::workers::ActiveWorker> {
+    let find_worker = || {
+        workers
+            .get(user_id, session_id)
+            .filter(|worker| Some(worker.turn_id.as_str()) != finished_turn)
+    };
+    if let Some(worker) = find_worker() {
+        return Some(worker);
+    }
     let deadline = tokio::time::Instant::now() + WAIT_FOR_START;
     loop {
         // Wake up regularly even when nothing is happening, so a viewer who
@@ -712,15 +727,18 @@ async fn wait_for_start(
         let next = (tokio::time::Instant::now() + DISCONNECT_CHECK).min(deadline);
         match tokio::time::timeout_at(next, starts.recv()).await {
             Ok(Ok(started)) => {
-                if started.user_id == user_id && started.session_id == session_id {
-                    return workers.get(user_id, session_id);
+                if started.user_id == user_id
+                    && started.session_id == session_id
+                    && Some(started.turn_id.as_str()) != finished_turn
+                {
+                    return find_worker();
                 }
             }
             // Lagged: starts were missed while this subscriber was slow, and
             // one of them may have been ours. Ask the registry rather than
             // waiting for the next frame.
             Ok(Err(broadcast::error::RecvError::Lagged(_))) => {
-                if let Some(worker) = workers.get(user_id, session_id) {
+                if let Some(worker) = find_worker() {
                     return Some(worker);
                 }
             }
@@ -1128,6 +1146,35 @@ mod tests {
         );
         assert!(feed.is_finalized(), "the stream closes on a pause");
         assert!(feed.diff(&row).is_empty());
+    }
+
+    #[tokio::test]
+    async fn waiting_for_a_follow_up_ignores_the_previous_workers_start() {
+        use crate::workers::{RegisterOutcome, SessionWorkers};
+
+        let workers = SessionWorkers::default();
+        let mut starts = workers.subscribe_starts();
+        let RegisterOutcome::Registered { worker: previous } = workers.register("u", "old", "s", 1)
+        else {
+            panic!("the old worker should be registered");
+        };
+        let wait = wait_for_start(&workers, &mut starts, "u", "s", Some("old"), || false);
+        tokio::pin!(wait);
+        tokio::select! {
+            biased;
+            _ = &mut wait => panic!("the previous worker's queued event ended the wait"),
+            _ = tokio::task::yield_now() => {}
+        }
+        workers.clear("u", &previous);
+        assert!(matches!(
+            workers.register("u", "next", "s", 1),
+            RegisterOutcome::Registered { .. }
+        ));
+        let worker = tokio::time::timeout(Duration::from_secs(1), wait)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(worker.turn_id, "next");
     }
 
     #[test]

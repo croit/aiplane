@@ -48,15 +48,27 @@ pub(crate) async fn next_turn_seq(pool: &Pool, session_id: &str) -> Result<i64, 
 /// S3 prefix have a stable key the chat-page render-refresh can find
 /// later. Pre-generate at the handler entry and pass both here and to
 /// the upload step.
-pub async fn create_user_turn(
-    pool: &Pool,
+pub async fn create_user_turn<'e>(
+    executor: impl sqlx::SqliteExecutor<'e>,
     session_id: &str,
     turn_id: &str,
     content: &str,
 ) -> Result<Turn, DbError> {
-    let seq = next_turn_seq(pool, session_id).await?;
     let now = Timestamp::now();
-    let turn = Turn {
+    let seq = sqlx::query_scalar(
+        r#"INSERT INTO chat_turns
+              (id, session_id, seq, role, user_content, status, created_at, completed_at)
+           SELECT ?1, ?2, COALESCE(MAX(seq), -1) + 1, 'user', ?3, 'completed', ?4, ?4
+           FROM chat_turns WHERE session_id = ?2
+           RETURNING seq"#,
+    )
+    .bind(turn_id)
+    .bind(session_id)
+    .bind(strip_fts_sentinels(content).as_ref())
+    .bind(now.to_string())
+    .fetch_one(executor)
+    .await?;
+    Ok(Turn {
         id: turn_id.to_string(),
         session_id: session_id.to_string(),
         seq,
@@ -72,23 +84,7 @@ pub async fn create_user_turn(
         error_code: None,
         created_at: now,
         completed_at: Some(now),
-    };
-    sqlx::query(
-        r#"INSERT INTO chat_turns
-              (id, session_id, seq, role, user_content, status, created_at, completed_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#,
-    )
-    .bind(&turn.id)
-    .bind(&turn.session_id)
-    .bind(turn.seq)
-    .bind(turn.role.as_str())
-    .bind(strip_fts_sentinels(content).as_ref())
-    .bind(turn.status.as_str())
-    .bind(turn.created_at.to_string())
-    .bind(turn.completed_at.map(|t| t.to_string()))
-    .execute(pool)
-    .await?;
-    Ok(turn)
+    })
 }
 
 /// Insert an assistant-role turn in `in_progress` state. The worker

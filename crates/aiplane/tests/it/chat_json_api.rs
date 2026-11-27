@@ -1802,6 +1802,100 @@ async fn an_interjection_is_recorded_against_the_running_turn() {
         .await;
 }
 
+#[tokio::test]
+async fn reconnect_waits_for_an_interjection_while_its_previous_worker_is_releasing() {
+    let (state, cookie) = setup("http://unused.invalid").await;
+    let app = router(state.clone());
+    let session = chat::create_session(&state.db, "alice").await.unwrap();
+    let original = "original-answer";
+    chat::create_assistant_turn_in_progress(&state.db, &session.id, original, "model-a")
+        .await
+        .unwrap();
+    let note = chat::insert_steer(&state.db, original, "in euros, please")
+        .await
+        .unwrap()
+        .unwrap();
+    let session_core::workers::RegisterOutcome::Registered { worker: previous } =
+        state.chats.register("alice", original, &session.id, 1)
+    else {
+        panic!("the preceding worker should still be registered")
+    };
+    chat::finalize_turn(&state.db, original, chat::TurnStatus::Completed, None)
+        .await
+        .unwrap();
+
+    let events = app
+        .serve(json_req(
+            Method::GET,
+            format!("/api/v0/chat/sessions/{}/events", session.id),
+            &cookie,
+            None,
+        ))
+        .await
+        .unwrap();
+    state.chats.clear("alice", &previous);
+    let pending = chat::PendingTurn {
+        turn_id: note.id.clone(),
+        session_id: session.id.clone(),
+        user_id: "alice".into(),
+        model: "model-a".into(),
+        voice: false,
+        client_ip: None,
+        secure: false,
+        created_at: jiff::Timestamp::now(),
+    };
+    chat::queue_undelivered_steer(&state.db, &note, &pending)
+        .await
+        .unwrap();
+    assert_eq!(
+        chat::take_next_for_user(&state.db, "alice", &[])
+            .await
+            .unwrap(),
+        Some(pending)
+    );
+    let answer = "follow-up-answer";
+    chat::create_assistant_turn_in_progress(&state.db, &session.id, answer, "model-a")
+        .await
+        .unwrap();
+    let session_core::workers::RegisterOutcome::Registered { worker: follow_up } =
+        state.chats.register("alice", answer, &session.id, 1)
+    else {
+        panic!("the follow-up worker should have a free slot")
+    };
+    chat::finalize_turn(&state.db, answer, chat::TurnStatus::Completed, None)
+        .await
+        .unwrap();
+    let _ = follow_up
+        .broadcast
+        .send(session_core::workers::TurnUpdate::Finalized);
+
+    let body = tokio::time::timeout(Duration::from_secs(3), body_string(events))
+        .await
+        .expect("the stream should end with the follow-up answer");
+    let frames = sse_frames(&body);
+    let snapshot = frames
+        .iter()
+        .rev()
+        .find(|(name, _)| name == "snapshot")
+        .unwrap();
+    let turns = snapshot.1["turns"].as_array().unwrap();
+    assert_eq!(
+        turns
+            .iter()
+            .filter(|row| row["turn"]["user_content"] == note.text)
+            .count(),
+        1,
+        "{frames:?}"
+    );
+    assert_eq!(
+        frames
+            .last()
+            .map(|(name, event)| (name.as_str(), event["turn_id"].as_str())),
+        Some(("turn_finalized", Some(answer))),
+        "{frames:?}"
+    );
+}
+
 /// Discarding a returned interjection settles its row.
 ///
 /// Forgetting it in the browser is not enough: the row stays `pending`, and

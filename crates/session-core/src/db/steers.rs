@@ -10,10 +10,8 @@
 //!    running worker the same note in memory.
 //! 2. The driver folds it into the prompt at a round boundary and settles it
 //!    as [`SteerStatus::Delivered`].
-//! 3. A note the turn ended before reaching stays `Pending`; the client
-//!    submits it as an ordinary next message, which settles it as
-//!    [`SteerStatus::Resent`]. That settle doubles as the claim check that
-//!    stops two tabs from sending it twice.
+//! 3. Finalization queues each unread note as the next message and settles it
+//!    as [`SteerStatus::Resent`] in the same transaction.
 //! 4. The transcript and the replayed history read them back with
 //!    [`list_steers`] / `list_turns`.
 
@@ -152,12 +150,13 @@ pub async fn insert_steer(
 /// Settle a pending interjection, reporting whether *this* caller is the one
 /// that settled it.
 ///
-/// The `status = 'pending'` guard is load-bearing in two places: it keeps a
-/// re-delivery from moving a timestamp the user is already looking at, and it
-/// is what makes re-sending safe when two browser tabs are looking at the same
-/// finished turn — the second one settles nothing, learns it lost, and drops
-/// its submit instead of duplicating the message.
-pub async fn settle_steer(pool: &Pool, id: &str, status: SteerStatus) -> Result<bool, DbError> {
+/// The pending guard keeps a second attempt from moving the settlement
+/// timestamp or queueing a duplicate if two callers try to settle the note.
+pub async fn settle_steer<'e>(
+    executor: impl sqlx::SqliteExecutor<'e>,
+    id: &str,
+    status: SteerStatus,
+) -> Result<bool, DbError> {
     if status == SteerStatus::Pending {
         return Err(DbError::Decode {
             column: "status",
@@ -172,34 +171,24 @@ pub async fn settle_steer(pool: &Pool, id: &str, status: SteerStatus) -> Result<
     .bind(status.as_str())
     .bind(Timestamp::now().to_string())
     .bind(id)
-    .execute(pool)
+    .execute(executor)
     .await?;
     Ok(done.rows_affected() > 0)
 }
 
-/// Hand a claim back: return a settled interjection to `pending`.
-///
-/// The re-send path claims a note *before* submitting the message it stands in
-/// for, so that two tabs cannot both send it. When that submit is then refused
-/// — the conversation is busy, the user is at their parallel-turn ceiling, a
-/// write fails — the claim has to be given back, or the note is marked as
-/// dealt with while the sentence it carried was never sent, and the client
-/// throws its copy away on the next attempt ("already settled"). That is a
-/// silent loss of something the user typed.
-///
-/// Guarded on the status it is undoing, so this can never resurrect a note the
-/// model really was handed.
-pub async fn release_steer(pool: &Pool, id: &str, from: SteerStatus) -> Result<bool, DbError> {
-    let done = sqlx::query(
-        r#"UPDATE chat_turn_steers
-           SET status = 'pending', settled_at = NULL
-           WHERE id = ? AND status = ?"#,
-    )
-    .bind(id)
-    .bind(from.as_str())
-    .execute(pool)
-    .await?;
-    Ok(done.rows_affected() > 0)
+/// Settle an unread interjection and queue its user turn as one database change.
+pub async fn queue_undelivered_steer(
+    pool: &Pool,
+    note: &TurnSteer,
+    pending: &PendingTurn,
+) -> Result<(), DbError> {
+    let mut tx = pool.begin().await?;
+    if settle_steer(&mut *tx, &note.id, SteerStatus::Resent).await? {
+        create_user_turn(&mut *tx, &pending.session_id, &pending.turn_id, &note.text).await?;
+        insert_pending_turn(&mut *tx, pending).await?;
+    }
+    tx.commit().await?;
+    Ok(())
 }
 
 /// Every interjection in a conversation, bucketed by the turn it belongs to.

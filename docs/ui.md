@@ -588,7 +588,11 @@ while the closing answer is being written does not, and at finalize the server
 turns it into the next message itself — in the same place, whether or not a
 browser is open. The transcript says which happened: `pending`, `delivered`,
 `resent`, or `discarded`. Only `delivered` notes replay in the history a later
-turn sees; a `resent` one is already there as its own user turn.
+turn sees; a `resent` one is already there as its own user turn. The server
+records that outcome and queues the new user turn in one transaction. When
+the original stream ends, the conversation reconnects for an unread or
+resent addition. The stream waits for the follow-up worker just as it does
+for other queued messages, and the new user turn appears without a reload.
 
 **Interrupt and re-aim** is the deterministic version: send, then stop. Sending
 folds the text into the running turn, stopping guarantees no round will carry

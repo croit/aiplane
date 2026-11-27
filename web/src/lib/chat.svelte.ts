@@ -76,6 +76,7 @@ export function createConversationController(sessionId: string, eventsUrl = api.
 	// How many times this controller has opened a stream. The first is the
 	// page load; see the `idle` branch in `apply` for why that one is special.
 	let attaches = 0;
+	let followedTurn: string | null = null;
 
 	const controller: ConversationController = {
 		id: sessionId,
@@ -89,9 +90,10 @@ export function createConversationController(sessionId: string, eventsUrl = api.
 			const es = new EventSource(eventsUrl);
 			source = es;
 			es.onopen = () => {
-				retries = 0;
+				if (source === es) retries = 0;
 			};
 			es.onerror = () => {
+				if (source !== es) return;
 				// A dropped connection mid-turn: re-attach — the snapshot
 				// replays whatever was missed. `idle`/finalized streams are
 				// closed in `apply` before EventSource can retry them.
@@ -110,6 +112,7 @@ export function createConversationController(sessionId: string, eventsUrl = api.
 			};
 			for (const name of EVENT_NAMES) {
 				es.addEventListener(name, (ev) => {
+					if (source !== es) return;
 					controller.apply(JSON.parse((ev as MessageEvent).data) as ChatEvent);
 				});
 			}
@@ -125,6 +128,8 @@ export function createConversationController(sessionId: string, eventsUrl = api.
 			if (event.type === 'browser_action' && canWrite()) {
 				void handleBrowserAction(event, { post: api.browserFeedback });
 			}
+			// A callback or an undelivered interjection can open the next stream.
+			if (event.type === 'turn_finalized' || event.type === 'suspended' || event.type === 'idle') closeCurrent();
 			if (event.type === 'sidebar_changed') controller.onSidebarChanged?.();
 			if (event.type === 'turn_finalized' || event.type === 'suspended') controller.onTurnFinalized?.();
 			// A turn that finishes before the re-attach lands — a cached reply,
@@ -136,7 +141,13 @@ export function createConversationController(sessionId: string, eventsUrl = api.
 			// Skipped on the first attach only, because the page load that
 			// created this controller is already reading all of it.
 			if (event.type === 'idle' && attaches > 1) controller.onTurnFinalized?.();
-			if (event.type === 'turn_finalized' || event.type === 'suspended' || event.type === 'idle') closeCurrent();
+			if (event.type === 'turn_finalized' && event.turn_id !== followedTurn && canWrite()) {
+				const turn = state.turns.find((row) => row.turn.id === event.turn_id);
+				if (turn?.steers.some((note) => note.status === 'pending' || note.status === 'resent')) {
+					followedTurn = event.turn_id;
+					controller.attach();
+				}
+			}
 		},
 
 		closeStream: closeCurrent,

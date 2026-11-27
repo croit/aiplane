@@ -1184,7 +1184,9 @@ async fn waiting_turn_ids(state: &Arc<RamaState>, session_id: &str) -> Vec<Strin
 /// * A worker is live for this session → one `snapshot` (with
 ///   `live_turn_id`) then deltas until `turn_finalized`, then the stream
 ///   closes.
-/// * Nothing live → one `snapshot` plus `idle`, and the stream closes
+/// * An owner waiting for a queued message or late addition → a snapshot,
+///   then a new snapshot and live events when its worker starts.
+/// * Nothing live or waiting → one `snapshot` plus `idle`, and the stream closes
 ///   immediately. The client closes its EventSource on `idle`/`turn_finalized`
 ///   so the auto-reconnect doesn't hammer a quiet session.
 ///
@@ -1219,6 +1221,22 @@ pub async fn session_events(
             Err(err) => return internal(err),
         };
         live = state.chats.get(&user.id, &session_id);
+    }
+
+    let mut finished_worker = None;
+    if let Some(worker) = &live {
+        match chat::get_turn(&state.db, &session_id, &worker.turn_id).await {
+            Ok(Some(turn)) if turn.status.is_terminal() => {
+                finished_worker = Some(worker.turn_id.clone());
+                live = None;
+                prior_turns = match chat::list_turns(&state.db, &session_id).await {
+                    Ok(turns) => turns,
+                    Err(err) => return internal(err),
+                };
+            }
+            Ok(_) => {}
+            Err(err) => return internal(err),
+        }
     }
 
     match live {
@@ -1257,21 +1275,41 @@ pub async fn session_events(
                     Err(err) => return internal(err),
                 }
             };
-            // Is anything here sent but not started? Ask the work queue, not
-            // the transcript: "ends on a user turn" *looks* like the same
-            // question and is not. A turn whose assistant row failed to insert
-            // leaves that shape with nothing queued, and would pin a task and
-            // a connection for the whole wait on every attach, forever.
-            //
-            // Only for the owner. Workers are keyed by owner, so a viewer of a
-            // shared conversation could never match one — they would wait out
-            // the full deadline and then be told `idle`.
-            let waiting = owns_session
-                && !chat::list_pending_for_session(&state.db, &session_id)
-                    .await
-                    .unwrap_or_default()
-                    .is_empty();
+            if !owns_session {
+                return quiet_stream(turns);
+            }
+            let waiting = match chat::has_waiting_turn_or_steer(&state.db, &session_id).await {
+                Ok(waiting) => waiting,
+                Err(err) => return internal(err),
+            };
             if !waiting {
+                if let Some(worker) = state
+                    .chats
+                    .get(&user.id, &session_id)
+                    .filter(|worker| Some(&worker.turn_id) != finished_worker.as_ref())
+                {
+                    return live_stream(&state, &worker, session_id).await;
+                }
+                if turns
+                    .iter()
+                    .rev()
+                    .find(|row| row.turn.role == chat::TurnRole::Assistant)
+                    .is_some_and(|row| {
+                        row.turn.status.is_terminal()
+                            && row.steers.iter().any(|note| {
+                                matches!(
+                                    note.status,
+                                    chat::SteerStatus::Pending | chat::SteerStatus::Resent
+                                )
+                            })
+                    })
+                {
+                    // The follow-up can start and finish after the first snapshot.
+                    return match chat::list_turns(&state.db, &session_id).await {
+                        Ok(turns) => quiet_stream(turns),
+                        Err(err) => internal(err),
+                    };
+                }
                 return quiet_stream(turns);
             }
             // Hold the stream open until the scheduler starts it. Ending at

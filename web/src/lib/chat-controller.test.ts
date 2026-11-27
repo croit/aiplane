@@ -55,3 +55,35 @@ test('existing agent-test controller caller retains browser feedback by default'
 		controller.destroy();
 	} finally { globalThis.fetch = originalFetch; }
 });
+
+for (const status of ['pending', 'resent'] as const) {
+	test(`finalizing a turn with a ${status} interjection attaches to its follow-up once`, () => {
+		const original = globalThis.EventSource;
+		const streams: FakeEventSource[] = [];
+		class FakeEventSource {
+			closed = false;
+			listeners = new Map<string, (event: MessageEvent) => void>();
+			constructor() { streams.push(this); }
+			addEventListener(name: string, listener: (event: MessageEvent) => void) {
+				this.listeners.set(name, listener);
+			}
+			close() { this.closed = true; }
+			send(event: { type: string } & Record<string, unknown>) {
+				this.listeners.get(event.type)?.(new MessageEvent(event.type, { data: JSON.stringify(event) }));
+			}
+		}
+		globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+		try {
+			const controller = createConversationController('chat', '/events');
+			controller.attach();
+			streams[0].send({ type: 'steer', turn_id: 'first', id: 'note', text: 'in euros', status });
+			const finalized = { type: 'turn_finalized', turn_id: 'first', status: 'completed' };
+			streams[0].send(finalized);
+			streams[0].send(finalized);
+			assert.deepEqual(streams.map((stream) => stream.closed), [true, false]);
+			controller.destroy();
+		} finally {
+			globalThis.EventSource = original;
+		}
+	});
+}
