@@ -219,6 +219,11 @@ what makes a freshly provisioned volume writable.
 
 ### Updates
 
+The chart gives the pod 70 seconds to terminate. That covers up to 15 seconds
+for open connections, 45 seconds for running turns, and 3 seconds for cancelled
+turns to record their final state. Keep this budget in mind when overriding
+`terminationGracePeriodSeconds` or adding a `preStop` hook that uses part of it.
+
 **By default AIplane updates itself.** The images follow `:production` —
 the moving pointer at the newest official release — and a small CronJob
 restarts the StatefulSet nightly at 04:00 so a moved tag is actually picked up.

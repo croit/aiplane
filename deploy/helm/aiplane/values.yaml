@@ -202,9 +202,9 @@ resources:
     # pod, not the node.
     memory: 2Gi
 
-# -- Grace period for shutdown. The gateway drains connections for 15s on
-# SIGTERM (CONNECTION_DRAIN), so anything below ~20s cuts live chats off.
-terminationGracePeriodSeconds: 45
+# -- Grace period for shutdown. Allow CONNECTION_DRAIN (15s),
+# TURN_DRAIN (45s), and cancellation cleanup.
+terminationGracePeriodSeconds: 70
 
 podAnnotations: {}
 podLabels: {}

@@ -1112,6 +1112,7 @@ const TURN_DRAIN: Duration = Duration::from_secs(45);
 
 /// Polling interval while waiting for turns to finish.
 const TURN_POLL: Duration = Duration::from_millis(250);
+const TURN_CANCEL_POLLS: u32 = 12;
 
 /// Convenience: build the service and start serving on `addr`, shutting down
 /// gracefully on SIGINT / SIGTERM.
@@ -1196,7 +1197,7 @@ async fn drain_turns(chats: &session_core::SessionWorkers, budget: Duration, pol
         remaining,
         "turns still running at the drain deadline; cancelling them"
     );
-    let grace = Instant::now() + (poll * 12);
+    let grace = Instant::now() + (poll * TURN_CANCEL_POLLS);
     while Instant::now() < grace && chats.active_count() > 0 {
         tokio::time::sleep(poll).await;
     }
@@ -1213,6 +1214,37 @@ async fn drain_turns(chats: &session_core::SessionWorkers, budget: Duration, pol
 mod shutdown_tests {
     use super::*;
     use session_core::{RegisterOutcome, SessionWorkers};
+
+    #[test]
+    fn deployment_stop_timeouts_cover_the_shutdown_budget() {
+        let (_, services) = include_str!("../../../../deploy/compose.example.yml")
+            .split_once("\n  aiplane:\n")
+            .unwrap();
+        let compose = services
+            .lines()
+            .take_while(|line| line.trim().is_empty() || line.starts_with("    "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let quadlet = include_str!("../../../../deploy/quadlet/aiplane.container");
+        let helm = include_str!("../../../../deploy/helm/aiplane/values.yaml");
+        let budget = (CONNECTION_DRAIN + TURN_DRAIN + TURN_POLL * TURN_CANCEL_POLLS).as_secs();
+
+        for (config, key) in [
+            (compose.as_str(), "    stop_grace_period:"),
+            (quadlet, "StopTimeout="),
+            (helm, "terminationGracePeriodSeconds:"),
+        ] {
+            let seconds: u64 = config
+                .lines()
+                .find_map(|line| line.strip_prefix(key))
+                .unwrap_or_else(|| panic!("missing {key}"))
+                .trim()
+                .trim_end_matches('s')
+                .parse()
+                .unwrap();
+            assert!(seconds > budget, "{key} must exceed {budget}s");
+        }
+    }
 
     /// The smallest `RamaState` that can be served: in-memory database, no
     /// upstreams, no tools. Enough for the tests here, which never route a

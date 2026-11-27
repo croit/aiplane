@@ -73,6 +73,7 @@ services:
   aiplane:
     image: ghcr.io/croit/aiplane:latest
     restart: unless-stopped
+    stop_grace_period: 70s
     # Loopback only — front with a TLS-terminating reverse proxy in production.
     ports:
       - "127.0.0.1:8080:8080"

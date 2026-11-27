@@ -24,6 +24,12 @@ The gateway uses SQLite and process-local chat workers. Run one application
 instance against its state volume. The Helm chart fixes its StatefulSet at
 one replica. Model servers can have multiple backends and scale separately.
 
+On shutdown, the gateway allows up to 15 seconds for open connections and then
+up to 45 seconds for running turns. It cancels any remaining turns and gives them
+up to 3 seconds to record their final state. The shipped Compose, Quadlet and
+Helm configurations allow 70 seconds for the gateway to exit. Quadlet also sets
+a 90-second systemd stop timeout.
+
 ## Docker Compose
 
 From the repository root, create `deploy/aiplane.env` with restricted

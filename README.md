@@ -213,7 +213,8 @@ Use [Docker Compose](deploy/compose.example.yml),
 [Podman/systemd Quadlet](deploy/quadlet/aiplane.container), or
 [Helm on Kubernetes](deploy/helm/aiplane/). The
 [deployment guide](docs/operations/deployment.md) covers prerequisites, TLS,
-persistence and optional services.
+persistence and optional services. All three give the gateway 70 seconds
+to shut down during a stop or restart.
 
 `/healthz` and `/readyz` serve liveness and setup readiness. A Prometheus
 scrape endpoint, `GET /metrics`, is off by default: switch it on with a scrape

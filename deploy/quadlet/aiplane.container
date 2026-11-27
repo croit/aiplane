@@ -45,6 +45,9 @@ After=network-online.target
 [Container]
 ContainerName=aiplane
 
+# Allow CONNECTION_DRAIN (15s), TURN_DRAIN (45s), and cancellation cleanup.
+StopTimeout=70
+
 # Pin to a content-addressed digest in production. `:latest` is convenient
 # for first-time setup but `systemctl restart` won't see new pushes unless
 # you change the tag.
@@ -96,6 +99,7 @@ Tmpfs=/tmp
 # which can probe `/healthz` from outside the container.
 
 [Service]
+TimeoutStopSec=90s
 Restart=on-failure
 RestartSec=5s
 
