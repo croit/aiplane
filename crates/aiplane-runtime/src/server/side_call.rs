@@ -246,7 +246,6 @@ pub struct SideCall<'a> {
     pub instructions: &'a str,
     /// Data for the model, never instructions.
     pub input: &'a str,
-    pub temperature: f64,
     pub max_tokens: Option<i64>,
     /// Append Qwen3's `/no_think` directive to the input. Other model
     /// families read it as text, so only a caller whose input tolerates the
@@ -572,7 +571,6 @@ async fn send(
     let mut body = json!({
         "model": acquired.resolved_model(),
         "messages": messages,
-        "temperature": call.temperature,
         "stream": false,
         "chat_template_kwargs": { "enable_thinking": false },
     });

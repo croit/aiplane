@@ -81,7 +81,6 @@ impl RubricJudge for ModelJudge {
                 access: &self.access,
                 instructions: INSTRUCTIONS,
                 input: &input,
-                temperature: 0.0,
                 max_tokens: None,
                 no_think: false,
                 timeout: JUDGE_TIMEOUT,

@@ -93,7 +93,6 @@ fn call<'a>(access: &'a PoolAccess, input: &'a str, no_think: bool) -> SideCall<
         access,
         instructions: "Answer.",
         input,
-        temperature: 0.0,
         max_tokens: Some(64),
         no_think,
         timeout: Duration::from_secs(10),
@@ -180,7 +179,9 @@ async fn a_call_is_a_usage_row_of_its_payer() {
     let answered = ask_text(&state, &alice(), call(&PoolAccess::all(), "hello", false)).await;
 
     assert_eq!(answered.answer.unwrap(), "Short title");
-    assert_eq!(sent(&server).await[0]["messages"][1]["content"], "hello");
+    let requests = sent(&server).await;
+    assert_eq!(requests[0]["messages"][1]["content"], "hello");
+    assert!(requests[0].get("temperature").is_none());
     assert_eq!(
         usage_rows(&state).await,
         [(
@@ -191,6 +192,20 @@ async fn a_call_is_a_usage_row_of_its_payer() {
             42
         )]
     );
+}
+
+#[tokio::test]
+async fn a_side_call_uses_the_configured_sampling_default() {
+    let server = upstream(json!("Short title")).await;
+    let state = gateway(&server).await;
+    aiplane_core::server::db::model_defaults::upsert(&state.db, MODEL, "temperature = 0.5")
+        .await
+        .unwrap();
+
+    let answered = ask_text(&state, &alice(), call(&PoolAccess::all(), "hello", false)).await;
+
+    assert_eq!(answered.answer.unwrap(), "Short title");
+    assert_eq!(sent(&server).await[0]["temperature"], 0.5);
 }
 
 #[tokio::test]

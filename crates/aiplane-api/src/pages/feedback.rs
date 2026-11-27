@@ -317,7 +317,6 @@ async fn extract_fields(
             access: &PoolAccess::all(),
             instructions: EXTRACT_SYSTEM_PROMPT,
             input: &input,
-            temperature: 0.2,
             max_tokens: Some(1200),
             no_think: true,
             timeout: EXTRACT_TIMEOUT,

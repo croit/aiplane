@@ -438,7 +438,6 @@ async fn chat_detection(
             access: &PoolAccess::all(),
             instructions: &instructions,
             input: &input,
-            temperature: 0.0,
             max_tokens: Some(512),
             no_think: true,
             timeout: CHAT_DETECTOR_TIMEOUT,

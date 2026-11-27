@@ -217,7 +217,6 @@ async fn call_upstream(
             access: &PoolAccess::all(),
             instructions: SYSTEM_PROMPT,
             input: user_msg,
-            temperature: 0.0,
             max_tokens: Some(256),
             no_think: true,
             timeout: TIMEOUT,

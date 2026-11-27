@@ -185,7 +185,6 @@ pub async fn skills_draft(State(state): State<Arc<RamaState>>, req: Request) -> 
             access: &access,
             instructions: WORKFLOW_DRAFT_INSTRUCTIONS,
             input: &input,
-            temperature: 0.2,
             max_tokens: Some(1800),
             no_think: true,
             timeout: WORKFLOW_DRAFT_TIMEOUT,

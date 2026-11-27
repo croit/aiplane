@@ -39,6 +39,10 @@ anthropic-version: 2023-06-01
 
 and both **Test connection** and normal traffic then work against `https://api.anthropic.com/v1`. A refusal that carries the provider's own body — the banner shows it, e.g. `anthropic-version: header is required` — is the signal that a header like this one is missing.
 
+Gateway side calls such as title generation and compaction omit `temperature`
+by default. Keep unsupported sampling parameters out of the model request
+defaults when using Claude through this endpoint.
+
 The map is validated on save and on test, so a malformed entry is a `400` at the form:
 
 - at most 16 headers per backend, each value at most 512 characters;

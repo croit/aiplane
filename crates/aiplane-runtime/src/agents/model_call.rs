@@ -92,7 +92,6 @@ impl ModelCall {
                 access: &self.access,
                 instructions: question.instructions,
                 input: &question.input,
-                temperature: 0.0,
                 max_tokens: None,
                 no_think: false,
                 timeout: CHOICE_TIMEOUT,

@@ -266,7 +266,6 @@ async fn ask_summary(
             access,
             instructions: summary_instructions(cfg),
             input,
-            temperature: 0.0,
             max_tokens: Some(cfg.summary_max_tokens),
             no_think: true,
             timeout: TIMEOUT,
