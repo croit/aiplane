@@ -121,10 +121,8 @@ pub async fn run_session_turn(pool: Pool, driver: Box<dyn SessionDriver>, ctx: S
             .turn
             .reasoning_started_at
             .unwrap_or(turn.turn.created_at);
-        let elapsed_ms = (jiff::Timestamp::now() - anchor).total(jiff::Unit::Millisecond);
-        if let Ok(ms) = elapsed_ms {
-            let _ = db::set_reasoning_elapsed(&pool, &assistant_turn_id, ms.max(0.0) as i64).await;
-        }
+        let elapsed_ms = (jiff::Timestamp::now() - anchor).as_millis_f64().max(0.0) as i64;
+        let _ = db::set_reasoning_elapsed(&pool, &assistant_turn_id, elapsed_ms).await;
     }
 
     // A driver that paused the turn has already written its suspension and

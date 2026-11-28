@@ -9,6 +9,11 @@
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
+// Schemars does not implement JsonSchema for Jiff 1 timestamps.
+#[derive(schemars::JsonSchema)]
+#[schemars(inline, with = "String", extend("format" = "date-time"))]
+pub struct TimestampSchema;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
 pub struct Me {
     pub id: String,
@@ -47,8 +52,11 @@ pub struct Me {
 pub struct TokenSummary {
     pub id: String,
     pub name: String,
+    #[schemars(with = "TimestampSchema")]
     pub created_at: Timestamp,
+    #[schemars(with = "Option<TimestampSchema>")]
     pub last_used_at: Option<Timestamp>,
+    #[schemars(with = "TimestampSchema")]
     pub expires_at: Timestamp,
     pub revoked: bool,
     /// Master "tool use" switch — `false` (the default) means this token
@@ -174,4 +182,26 @@ pub struct ErrorBody {
     /// validator's `issues`.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TokenSummary;
+    use serde_json::json;
+
+    #[test]
+    fn token_timestamps_keep_their_openapi_formats_and_nullability() {
+        let schema = schemars::schema_for!(TokenSummary);
+        let properties = &schema.as_value()["properties"];
+        for name in ["created_at", "expires_at"] {
+            assert_eq!(
+                properties[name],
+                json!({"type": "string", "format": "date-time"})
+            );
+        }
+        assert_eq!(
+            properties["last_used_at"],
+            json!({"type": ["string", "null"], "format": "date-time"})
+        );
+    }
 }

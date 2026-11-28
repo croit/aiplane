@@ -168,14 +168,14 @@ fn text(v: &Value, key: &str) -> Option<String> {
 }
 
 fn day_of(at: Timestamp) -> String {
-    at.to_zoned(TimeZone::UTC).date().to_string()
+    at.to_zoned_datetime(TimeZone::UTC).date().to_string()
 }
 
 fn empty_days(range: Range) -> BTreeMap<String, Day> {
     let mut days = BTreeMap::new();
     let mut at = range
         .from
-        .to_zoned(TimeZone::UTC)
+        .to_zoned_datetime(TimeZone::UTC)
         .start_of_day()
         .map_or(range.from, |z| z.timestamp());
     while at < range.to {

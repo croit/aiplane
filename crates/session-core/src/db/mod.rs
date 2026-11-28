@@ -70,9 +70,11 @@ pub struct Session {
     /// fills it in. Renderer falls back to the first user message
     /// truncated.
     pub title: Option<String>,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub created_at: Timestamp,
     /// Bumped whenever a turn is created in this session — sidebar
     /// listing sorts most-recent first off this column.
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub updated_at: Timestamp,
     /// When true, any signed-in user who knows this session's id may
     /// *read* it (the UUID is the capability). Mutations stay owner-only
@@ -206,6 +208,7 @@ pub struct Turn {
     /// client-side thinking timer counts up from (and a mid-stream reload
     /// resumes from). `None` until the turn reasons, or never for a turn
     /// that produces no reasoning.
+    #[schemars(with = "Option<shared::api::TimestampSchema>")]
     pub reasoning_started_at: Option<Timestamp>,
     pub status: TurnStatus,
     pub error_message: Option<String>,
@@ -214,7 +217,9 @@ pub struct Turn {
     /// looping turn looped too.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub created_at: Timestamp,
+    #[schemars(with = "Option<shared::api::TimestampSchema>")]
     pub completed_at: Option<Timestamp>,
 }
 
@@ -228,7 +233,9 @@ pub struct ToolCall {
     pub arguments_json: String,
     pub output_json: Option<String>,
     pub status: ToolCallStatus,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub created_at: Timestamp,
+    #[schemars(with = "Option<shared::api::TimestampSchema>")]
     pub completed_at: Option<Timestamp>,
 }
 

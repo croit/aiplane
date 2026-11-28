@@ -58,7 +58,9 @@ pub struct CaseView {
     pub script: Value,
     pub expect: Value,
     pub rubric: Option<String>,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub created_at: Timestamp,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub updated_at: Timestamp,
 }
 
@@ -164,7 +166,9 @@ pub struct RunView {
     pub source: String,
     pub version: Option<i64>,
     pub started_by: String,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub started_at: Timestamp,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub finished_at: Timestamp,
     pub passed: i64,
     pub failed: i64,

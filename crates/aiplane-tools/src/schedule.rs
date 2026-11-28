@@ -113,7 +113,7 @@ fn action_json(action: &scheduled::ScheduledAction) -> Value {
             c.upcoming(Timestamp::now(), &tz, PREVIEW_RUNS)
                 .iter()
                 .map(|t| {
-                    t.to_zoned(tz.clone())
+                    t.to_zoned_datetime(tz.clone())
                         .strftime("%Y-%m-%d %H:%M")
                         .to_string()
                 })
@@ -274,7 +274,7 @@ impl Tool for ScheduleAction {
             let pretty: Vec<String> = next_runs
                 .iter()
                 .map(|t| {
-                    t.to_zoned(tz.clone())
+                    t.to_zoned_datetime(tz.clone())
                         .strftime("%Y-%m-%d %H:%M")
                         .to_string()
                 })

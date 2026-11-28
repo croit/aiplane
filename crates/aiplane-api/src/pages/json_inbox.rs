@@ -289,6 +289,7 @@ pub struct ChannelView {
     pub details: bool,
     pub lang: String,
     pub created_by: String,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub created_at: jiff::Timestamp,
 }
 

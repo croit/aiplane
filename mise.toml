@@ -259,7 +259,7 @@ docker run --rm --platform linux/amd64 -e UPGRADE="$upgrade" \
         apt-get install -y -qq --no-install-recommends python3 python3-venv >/dev/null 2>&1
         python3 -m venv /tmp/v
         /tmp/v/bin/pip install -q --upgrade pip uv >/dev/null 2>&1
-        /tmp/v/bin/uv pip compile --generate-hashes --universal $UPGRADE \
+        /tmp/v/bin/uv pip compile --generate-hashes --no-strip-extras --universal $UPGRADE \
             --python-version 3.13 -o requirements.txt requirements.in
     '
 echo "wrote sandbox-image/requirements.txt ($(grep -c -- --hash=sha256: sandbox-image/requirements.txt) hashes)"

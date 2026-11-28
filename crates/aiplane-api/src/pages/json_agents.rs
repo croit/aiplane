@@ -218,8 +218,11 @@ pub struct AgentView {
     pub display: String,
     pub description: String,
     pub created_by: String,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub created_at: Timestamp,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub updated_at: Timestamp,
+    #[schemars(with = "Option<shared::api::TimestampSchema>")]
     pub disabled_at: Option<Timestamp>,
     pub live_version: Option<i64>,
     /// The caller's access to the agent.
@@ -237,6 +240,7 @@ pub struct AgentView {
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct ShareOriginView {
     pub by: OwnerView,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub at: Timestamp,
 }
 
@@ -479,6 +483,7 @@ pub struct VersionView {
     /// The agent spec as published (`docs/agents.md` → "Agent definition").
     pub spec: Value,
     pub published_by: String,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub published_at: Timestamp,
 }
 
@@ -1044,6 +1049,7 @@ pub struct AgentAuditEntry {
     pub actor_id: Option<String>,
     /// The event's own fields, which differ by `kind`.
     pub detail: Value,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub created_at: Timestamp,
 }
 
@@ -1347,7 +1353,7 @@ pub(super) fn analytics_bound(
         ))
     })?;
     let start = day
-        .to_zoned(jiff::tz::TimeZone::UTC)
+        .to_zoned_datetime(jiff::tz::TimeZone::UTC)
         .map_err(|err| bad_request(format!("`{name}` is out of range: {err}")))?
         .timestamp();
     Ok(if end_of_day {

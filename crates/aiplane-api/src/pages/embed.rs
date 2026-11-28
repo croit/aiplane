@@ -327,6 +327,7 @@ pub struct StartBody {
 pub struct VisitorSessionStarted {
     /// The visitor token (`gwv_…`) every later call sends as `Authorization: Bearer`.
     pub token: String,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub expires_at: Timestamp,
     /// How long the conversation lasts without activity.
     pub idle_ttl_secs: i64,
@@ -505,6 +506,7 @@ pub async fn current_session(State(state): State<Arc<RamaState>>, req: Request) 
 
 #[derive(serde::Serialize, schemars::JsonSchema)]
 pub struct VisitorConversation {
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub expires_at: Timestamp,
     pub idle_ttl_secs: i64,
     pub agent: EmbedAgent,

@@ -346,6 +346,7 @@ pub struct SearchHit {
     /// substitute).
     pub title: Option<String>,
     /// Last activity timestamp.
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub updated_at: Timestamp,
     /// Whether the conversation is pinned.
     pub pinned: bool,

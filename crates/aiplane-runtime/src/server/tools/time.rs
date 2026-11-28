@@ -107,7 +107,7 @@ impl Tool for CurrentTimestamp {
             };
 
             let now = Timestamp::now();
-            let zoned = now.to_zoned(tz);
+            let zoned = now.to_zoned_datetime(tz);
             Ok(json!({
                 "iso8601": zoned.timestamp().to_string(),
                 "unix_seconds": now.as_second(),

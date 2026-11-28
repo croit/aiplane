@@ -506,7 +506,9 @@ impl CacheState {
 }
 
 fn today_utc() -> Date {
-    Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC).date()
+    Timestamp::now()
+        .to_zoned_datetime(jiff::tz::TimeZone::UTC)
+        .date()
 }
 
 /// The cache's archive segments, in the order they must be decoded.
@@ -686,7 +688,7 @@ fn rel_path(thread: &mail::Thread, modified_at: Option<Timestamp>) -> String {
     let when = thread.messages.first().and_then(|m| m.date).or(modified_at);
     let (year, month) = match when {
         Some(ts) => {
-            let z = ts.to_zoned(jiff::tz::TimeZone::UTC);
+            let z = ts.to_zoned_datetime(jiff::tz::TimeZone::UTC);
             (z.year().to_string(), format!("{:02}", z.month()))
         }
         None => ("undated".to_string(), "00".to_string()),

@@ -115,7 +115,9 @@ pub struct InboxItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<Value>,
     pub options: Vec<DecisionKind>,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub created_at: Timestamp,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub expires_at: Timestamp,
 }
 

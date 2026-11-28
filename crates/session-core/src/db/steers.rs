@@ -71,8 +71,10 @@ pub struct TurnSteer {
     pub seq: i64,
     pub text: String,
     pub status: SteerStatus,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub created_at: Timestamp,
     /// When it stopped being `Pending`. `None` while it still is.
+    #[schemars(with = "Option<shared::api::TimestampSchema>")]
     pub settled_at: Option<Timestamp>,
 }
 

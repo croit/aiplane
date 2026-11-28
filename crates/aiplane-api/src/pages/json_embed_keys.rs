@@ -29,7 +29,9 @@ pub struct EmbedKeyView {
     /// The `Origin`s a website may use the key from.
     pub origins: Vec<String>,
     pub created_by: String,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub created_at: jiff::Timestamp,
+    #[schemars(with = "Option<shared::api::TimestampSchema>")]
     pub revoked_at: Option<jiff::Timestamp>,
 }
 

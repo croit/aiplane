@@ -531,6 +531,7 @@ pub struct BudgetLine {
     pub used: f64,
     pub exceeded: bool,
     /// When the sliding window next advances.
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub refreshes_at: Timestamp,
 }
 

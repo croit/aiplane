@@ -140,7 +140,9 @@ pub struct PrincipalView {
     pub display: String,
     pub description: String,
     pub created_by: String,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub created_at: Timestamp,
+    #[schemars(with = "Option<shared::api::TimestampSchema>")]
     pub disabled_at: Option<Timestamp>,
 }
 
@@ -174,6 +176,7 @@ pub struct GrantView {
     #[serde(rename = "ref")]
     pub reference: String,
     pub granted_by: String,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub granted_at: Timestamp,
     /// A `model` grant's pools, `null` for every pool serving it; absent on
     /// every other kind.
@@ -199,8 +202,11 @@ pub struct SystemTokenView {
     pub id: String,
     pub name: String,
     pub created_by: String,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub created_at: Timestamp,
+    #[schemars(with = "Option<shared::api::TimestampSchema>")]
     pub last_used_at: Option<Timestamp>,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub expires_at: Timestamp,
     pub revoked: bool,
 }
@@ -253,6 +259,7 @@ pub struct PrincipalAuditEntry {
     pub chain: Option<serde_json::Value>,
     /// The event's own fields, which differ by `kind`.
     pub detail: serde_json::Value,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub created_at: Timestamp,
 }
 

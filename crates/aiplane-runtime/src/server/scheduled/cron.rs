@@ -127,7 +127,7 @@ impl Cron {
         let next_min_ms = (ms.div_euclid(60_000) + 1) * 60_000;
         let mut t = Timestamp::from_millisecond(next_min_ms).ok()?;
         for _ in 0..MAX_SEARCH_MINUTES {
-            let z = t.to_zoned(tz.clone());
+            let z = t.to_zoned_datetime(tz.clone());
             let dow = z.weekday().to_sunday_zero_offset() as u8;
             if self.matches(
                 z.minute() as u8,

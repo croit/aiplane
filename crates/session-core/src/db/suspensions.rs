@@ -354,6 +354,7 @@ pub struct SuspensionView {
     pub bundled: Vec<BundledCallView>,
     /// The decisions the viewer may send; empty when someone else answers.
     pub options: Vec<DecisionKind>,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub expires_at: Timestamp,
 }
 

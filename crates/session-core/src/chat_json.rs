@@ -395,8 +395,7 @@ impl JsonTurnFeed {
                 model: turn.model.clone(),
                 duration_ms: turn
                     .completed_at
-                    .and_then(|done| (done - turn.created_at).total(jiff::Unit::Millisecond).ok())
-                    .map(|ms| ms as i64)
+                    .map(|done| (done - turn.created_at).as_millis_f64() as i64)
                     .filter(|ms| *ms >= 0),
             });
         }

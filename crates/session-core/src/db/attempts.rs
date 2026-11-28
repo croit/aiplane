@@ -25,6 +25,7 @@ pub struct TurnAttempt {
     pub stop_reason: String,
     pub reasoning: String,
     pub content: String,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub created_at: Timestamp,
 }
 

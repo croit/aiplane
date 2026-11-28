@@ -497,11 +497,11 @@ pub struct Bounds {
 /// rather than read from the clock so this is pure and unit-testable.
 pub fn period_bounds(period: Period, tz_name: &str, now: Timestamp) -> Bounds {
     let tz = jiff::tz::TimeZone::get(tz_name).unwrap_or(jiff::tz::TimeZone::UTC);
-    let today = now.to_zoned(tz.clone()).date();
+    let today = now.to_zoned_datetime(tz.clone()).date();
 
     // Start of a civil day, in `tz`, as a UTC instant.
     let day_start = |date: jiff::civil::Date| -> Timestamp {
-        date.to_zoned(tz.clone())
+        date.to_zoned_datetime(tz.clone())
             .map(|z| z.timestamp())
             .unwrap_or(now)
     };

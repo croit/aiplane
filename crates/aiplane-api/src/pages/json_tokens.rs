@@ -318,8 +318,11 @@ pub struct TokenDetail {
     pub priority: Option<Priority>,
     pub id: String,
     pub name: String,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub created_at: Timestamp,
+    #[schemars(with = "Option<shared::api::TimestampSchema>")]
     pub last_used_at: Option<Timestamp>,
+    #[schemars(with = "shared::api::TimestampSchema")]
     pub expires_at: Timestamp,
     pub revoked: bool,
     pub tools_enabled: bool,
