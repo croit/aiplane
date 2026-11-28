@@ -14,7 +14,7 @@
 	]);
 </script>
 
-<div class="stats stats-vertical w-full border border-base-300 bg-base-100 shadow sm:stats-horizontal">
+<div class="stats w-full border border-base-300 bg-base-100 shadow">
 	{#each cards as card (card.title)}
 		<div class="stat">
 			<div class="stat-title">{card.title}</div>

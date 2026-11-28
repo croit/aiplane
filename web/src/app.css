@@ -843,13 +843,10 @@ h1, h2, h3, .card-title {
     }
     .stats {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
         border: 1px solid var(--color-base-300);
         border-radius: var(--radius-box);
         background-color: var(--color-base-200);
-    }
-    .stats-vertical {
-        grid-template-columns: 1fr;
     }
     .stat {
         display: flex;
@@ -858,6 +855,7 @@ h1, h2, h3, .card-title {
         padding: 1rem 1.25rem;
     }
     .stat-value {
+        overflow-wrap: anywhere;
         font-size: 1.5rem;
         font-weight: 600;
     }

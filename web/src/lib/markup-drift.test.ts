@@ -124,6 +124,16 @@ test('every component class the sources use is defined in app.css', () => {
 	);
 });
 
+test('usage stats let the grid fit as many readable columns as the available space allows', () => {
+	const css = readFileSync(new URL('../app.css', import.meta.url), 'utf8');
+	const stats = /\.stats\s*\{([^}]*)\}/.exec(css);
+	assert.ok(stats, '.stats has no rule in app.css');
+	assert.match(stats[1], /grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(min\(100%,\s*[1-9]\d*rem\),\s*1fr\)\)/);
+
+	const usage = readFileSync(new URL('./components/usage/UsageStats.svelte', import.meta.url), 'utf8');
+	assert.doesNotMatch(usage, /\bstats-(?:vertical|horizontal)\b/, 'usage stats should use the adaptive grid');
+});
+
 // A modal has to read as a layer ABOVE the page. In the dark theme the box
 // and the page are both near-black, so without an edge of their own a dialog
 // has no visible boundary: the box carries a `base-300` border plus a deep
