@@ -96,7 +96,7 @@ jobs:
 
       # install_args limits this to gitleaks; pulling the full toolset (Rust,
       # Node, typst) would cost minutes for a 1.3 s scan.
-      - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           install_args: gitleaks
 
@@ -156,7 +156,7 @@ jobs:
 
       # Installs the toolchain pinned in mise.toml (Rust + components, Node,
       # typst, cargo-binstall) and caches it across runs.
-      - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
       # Belt-and-suspenders: mise.toml requests the rustfmt/clippy components,
       # but on the GitHub runner (which ships its own rustup) that doesn't
       # always take, so `cargo fmt`/`clippy` via the pinned toolchain fail.
@@ -246,7 +246,7 @@ jobs:
       # rather than in the `ci` job, whose shallow checkout cannot derive a
       # version, and not taken from the `extension` job, so a failed store
       # publish on a tag cannot hold back the image.
-      - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           install_args: node@24
       - name: mise run stage-extension
@@ -312,7 +312,7 @@ jobs:
       # this workflow, cosign signs the pushed DIGEST (never a tag, which can
       # move), and the signature lands in GHCR beside the image plus Rekor's
       # public log. No key exists to leak.
-      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - uses: sigstore/cosign-installer@881c63bd87e38389154debd8331404ce7ca8a3ab # v4.1.4
         if: github.event_name != 'pull_request'
       - name: Sign the pushed image
         if: github.event_name != 'pull_request'
@@ -391,7 +391,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - uses: sigstore/cosign-installer@881c63bd87e38389154debd8331404ce7ca8a3ab # v4.1.4
       - name: Sign the pushed image
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -464,7 +464,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - uses: sigstore/cosign-installer@881c63bd87e38389154debd8331404ce7ca8a3ab # v4.1.4
       - name: Sign the pushed image
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -525,7 +525,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - uses: sigstore/cosign-installer@881c63bd87e38389154debd8331404ce7ca8a3ab # v4.1.4
         if: github.event_name != 'pull_request'
       - name: Sign the pushed image
         if: github.event_name != 'pull_request'
@@ -551,7 +551,7 @@ jobs:
           fetch-depth: 0
 
       # Node alone: packaging is a copy, a JSON edit and a zip.
-      - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           install_args: node@24
 
@@ -648,7 +648,7 @@ jobs:
       # are pinned here rather than in mise.toml's [tools] so a developer who
       # never touches the chart does not download them on every `mise install`;
       # `mise run helm-lint` pins the same versions.
-      - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
           install_args: helm@3.19.0 kubeconform@0.7.0
 
@@ -672,7 +672,7 @@ jobs:
       # `--app-version` stays the plain number in both cases: it is what the
       # chart derives its image tags from, and the images are tagged
       # `v<plain version>`.
-      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - uses: sigstore/cosign-installer@881c63bd87e38389154debd8331404ce7ca8a3ab # v4.1.4
         if: github.event_name != 'pull_request'
       - name: Package + push chart
         if: github.event_name != 'pull_request'
