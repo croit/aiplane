@@ -1290,7 +1290,7 @@ mod tests {
             .collect();
         assert_eq!(sent.len(), 1);
         let body = &sent[0];
-        assert_eq!(body["temperature"], json!(0.0));
+        assert!(body.get("temperature").is_none());
         assert_eq!(body["response_format"]["type"], "json_schema");
         assert_eq!(body["response_format"]["json_schema"]["strict"], true);
         let schema = &body["response_format"]["json_schema"]["schema"];
