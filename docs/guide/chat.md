@@ -10,6 +10,8 @@ Choose the model from the header before sending a message. The available list is
 
 The composer offers the effort levels **off**, **low**, **medium**, **high** and **xhigh**. A new conversation starts at **low**, which is enough for most questions; choose a higher level for hard multi-step problems. Higher levels also allow more tool rounds per answer (off 8, low and medium 16, high 32, xhigh 64). The picker lists only the levels the selected model can express — a model that always reasons offers no **off** — and is disabled when the model has no supported reasoning parameter. It is a model request setting, not a guaranteed response time or quality level.
 
+After a reply reports its prompt size, the context indicator appears just above the thinking dropdown. Hover over the percentage to see the measured and available token counts.
+
 Select **Tools** in the composer to inspect capabilities available to this conversation. Search or browse groups and select their state:
 
 | State | Effect |

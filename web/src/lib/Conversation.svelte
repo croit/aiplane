@@ -1340,7 +1340,9 @@
 		</div>
 	</div>
 {:else}
-<div data-chat-composer class="card mt-3 w-full shrink-0 border border-base-300 bg-base-100/85 backdrop-blur-sm">
+<!-- Keep the space above the card available before usage arrives. -->
+<div class="relative mt-6 w-full shrink-0 [anchor-scope:--chat-thinking]">
+<div data-chat-composer class="card border border-base-300 bg-base-100/85 backdrop-blur-sm">
 	<div class="flex flex-col gap-1 p-2">
 		{#if paused}<p class="m-0 px-2 text-sm text-warning" role="status">{t('chat-composer-paused')}</p>{/if}
 		{#if classification?.active && models.length === 0}
@@ -1354,7 +1356,7 @@
 		<div class="flex flex-wrap items-center gap-2">
 			<CapabilityPicker capabilities={tools} onset={setCapability} />
 			<select
-				class="select select-xs w-auto max-w-48"
+				class="select select-xs w-auto max-w-48 [anchor-name:--chat-thinking]"
 				aria-label={t('chat-render-effort-title')}
 				title={effortApplies ? t('chat-render-effort-tooltip') : t('chat-render-effort-unsupported')}
 				disabled={!effortApplies}
@@ -1473,16 +1475,12 @@
 			</div>
 		{/if}
 	</div>
+</div>
 	{#if usage}
-		<!-- The conversation's context in the composer's footer: the one place a
-		     reader sees the chat filling up, and what happens when it does —
-		     before the transcript says older messages were condensed. -->
-		<div class="flex w-full shrink-0 justify-end px-3 pb-1 pt-1 text-xs" data-chat-context-usage>
-			<span
-				class={usage.folding ? 'tabular-nums text-warning' : 'tabular-nums text-base-content/50'}
-				title={usageDetail}
-			>{usageLabel}</span>
-		</div>
+		<span data-chat-context-usage
+			class="absolute end-2 bottom-full mb-0.5 text-xs tabular-nums end-[anchor(--chat-thinking_end,0.5rem)]! {usage.folding ? 'text-warning' : 'text-base-content/50'}"
+			title={usageDetail}
+		>{usageLabel}</span>
 	{/if}
 </div>
 {/if}

@@ -602,13 +602,14 @@ marked as interrupted, so the second attempt continues from what the reader
 saw. Cancelling is cooperative — the worker notices between upstream chunks —
 so a slot frees when the turn actually ends, not when the button is pressed.
 
-Under the composer, small and right-aligned, the conversation says how full its
-context is: `Context: 19 %`, where the share is the prompt size the last answer
-reported against the context window of the model the composer will send to. Its
-tooltip carries the exact token numbers and the size at which older messages
-start being folded — that model's ceiling, the window minus the room an answer
-needs (`chat.compaction.buffer_ratio`, at least 16 000 tokens). Nothing is shown
-before an answer reports usage, and a model without a single window — an
+Above the composer's top border, aligned with the thinking dropdown, the
+context indicator shows how much of the selected model's context window the
+last measured prompt used. The indicator floats in the gap above the card, so
+it can appear without moving the input. Its tooltip carries the exact token
+numbers and the size at which older messages start being folded — the model's
+context window minus the room an answer needs (`chat.compaction.buffer_ratio`,
+at least 16 000 tokens). The indicator appears once an answer reports usage.
+A model without a single window — an
 automatic route reaches several — shows the token count instead of a share. The
 line turns `text-warning` once the conversation is at that ceiling, so the
 summarising that follows is expected rather than surprising. The number is the

@@ -37,6 +37,12 @@ function composerTextarea(source: string): string {
 
 const sendFn = /async function send\(\)[\s\S]*?\n\t\}/.exec(conversation)?.[0] ?? '';
 
+test('context usage floats above the composer instead of adding a row to the card', () => {
+	const indicator = /<span\b[^>]*\bdata-chat-context-usage\b[^>]*>/.exec(conversation)?.[0] ?? '';
+	assert.match(indicator, /class="[^"]*\babsolute\b[^"]*\bbottom-full\b/);
+	assert.match(conversation, /<\/div>\n\t\{#if usage\}\n\t\t<span data-chat-context-usage\b/);
+});
+
 test('the composer textarea is never disabled', () => {
 	const tag = composerTextarea(conversation);
 	assert.ok(tag.includes('bind:value={draft}'), 'sanity: found the composer textarea');
